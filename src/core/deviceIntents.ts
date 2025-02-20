@@ -19,7 +19,7 @@ export class DeviceIntentService {
   async getLatestDeviceKeyValueData(device_id: string, identifier: string) {
     try {
       const deviceData = this.devicesData.find(
-        (d) => d.deivce_id === device_id
+        (d) => d.device_id === device_id
       );
       if (!deviceData) return null;
 
@@ -221,9 +221,11 @@ export class DeviceIntentService {
   async processDeviceIntents() {
     try {
       const results = [];
-      for (const intent of this.intents.filter(
+      const activeIntents = this.intents.filter(
         (d) => d.enable && d.type === "OFFLINE"
-      )) {
+      );
+
+      for (const intent of activeIntents) {
         const result = await this.processDeviceIntent(intent);
         if (result) {
           results.push({

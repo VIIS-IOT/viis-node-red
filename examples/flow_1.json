@@ -1,0 +1,238 @@
+[
+  {
+    "id": "30088a9736031f22",
+    "type": "viis-automation-node",
+    "z": "42623b094c3c9f34",
+    "name": "Automation Offlien process",
+    "configNode": "0aa55ec929d04d4e",
+    "x": 760,
+    "y": 1540,
+    "wires": [["1f879c3088952c9b"], ["48897e4f7d448f41"]]
+  },
+  {
+    "id": "b64c4e9142b9d52c",
+    "type": "debug",
+    "z": "42623b094c3c9f34",
+    "name": "debug 10",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1120,
+    "y": 1320,
+    "wires": []
+  },
+  {
+    "id": "76291dbdef83a2c5",
+    "type": "viis-device-events",
+    "z": "42623b094c3c9f34",
+    "name": "Subscribe",
+    "configNode": "0aa55ec929d04d4e",
+    "x": 140,
+    "y": 1160,
+    "wires": [["6e03c23261a864ab"]]
+  },
+  {
+    "id": "6e03c23261a864ab",
+    "type": "debug",
+    "z": "42623b094c3c9f34",
+    "name": "debug 11",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 360,
+    "y": 1160,
+    "wires": []
+  },
+  {
+    "id": "74d7a3ffae69eb44",
+    "type": "debug",
+    "z": "42623b094c3c9f34",
+    "name": "debug 12",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1240,
+    "y": 1520,
+    "wires": []
+  },
+  {
+    "id": "0a25303ab28d00ad",
+    "type": "viis-upload-telemetry",
+    "z": "42623b094c3c9f34",
+    "name": "Upload data",
+    "configNode": "0aa55ec929d04d4e",
+    "protocol": "MQTT",
+    "enableBackup": false,
+    "backupLimit": -1,
+    "x": 550,
+    "y": 1260,
+    "wires": [["1a6da9705cdc3100"]]
+  },
+  {
+    "id": "d441e1e944701f2d",
+    "type": "function",
+    "z": "42623b094c3c9f34",
+    "name": "function 14",
+    "func": "\nmsg.payload = {\n    \"temp\": Math.random()*5 + 17,\n    \"humid\": Math.random()*40 + 60,\n    \"power\": global.get(\"power\") || false\n}\nreturn msg",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 1260,
+    "wires": [["0a25303ab28d00ad"]]
+  },
+  {
+    "id": "20775cc24a120e57",
+    "type": "inject",
+    "z": "42623b094c3c9f34",
+    "name": "",
+    "props": [
+      {
+        "p": "topic",
+        "vt": "str"
+      },
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "60",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 170,
+    "y": 1260,
+    "wires": [["d441e1e944701f2d"]]
+  },
+  {
+    "id": "1a6da9705cdc3100",
+    "type": "debug",
+    "z": "42623b094c3c9f34",
+    "name": "debug 14",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 740,
+    "y": 1260,
+    "wires": []
+  },
+  {
+    "id": "48897e4f7d448f41",
+    "type": "function",
+    "z": "42623b094c3c9f34",
+    "name": "Log intents",
+    "func": "\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1050,
+    "y": 1580,
+    "wires": [["74d7a3ffae69eb44"]]
+  },
+  {
+    "id": "1f879c3088952c9b",
+    "type": "function",
+    "z": "42623b094c3c9f34",
+    "name": "Process result",
+    "func": "\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 940,
+    "y": 1460,
+    "wires": [["b64c4e9142b9d52c"]]
+  },
+  {
+    "id": "2b717c3456424628",
+    "type": "function",
+    "z": "42623b094c3c9f34",
+    "name": "Mapping",
+    "func": "msg.payload = {\n    devices_data: [\n        {\n            \"device_id\": \"6cfac360-c810-11ef-a65d-91e5cd31cd0c\",\n            \"latest_data\": Object.keys(msg.payload).map((el)=>{\n                return {\n                    key: el,\n                    value: msg.payload[el],\n                    ts: 0 // ingnore on offline\n                }\n            })\n        }\n    ]\n}\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 1540,
+    "wires": [["30088a9736031f22"]]
+  },
+  {
+    "id": "2e922a2b66d48f68",
+    "type": "function",
+    "z": "42623b094c3c9f34",
+    "name": "function 15",
+    "func": "\nmsg.payload = {\n    \"temp\": Math.random()*5 + 17,\n    \"humid\": Math.random()*40 + 60,\n    \"power\": global.get(\"power\") || false\n}\nreturn msg",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 290,
+    "y": 1540,
+    "wires": [["2b717c3456424628"]]
+  },
+  {
+    "id": "acce9a3a2f46b33a",
+    "type": "inject",
+    "z": "42623b094c3c9f34",
+    "name": "",
+    "props": [
+      {
+        "p": "topic",
+        "vt": "str"
+      },
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "60",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 110,
+    "y": 1540,
+    "wires": [["2e922a2b66d48f68"]]
+  },
+  {
+    "id": "0aa55ec929d04d4e",
+    "type": "viis-config-node",
+    "name": "Nhiệt độ 2",
+    "device": {
+      "id": "6cfac360-c810-11ef-a65d-91e5cd31cd0c",
+      "accessToken": "5449e58e-fadf-42b1-92b7-ec40ee9c8a14"
+    }
+  }
+]

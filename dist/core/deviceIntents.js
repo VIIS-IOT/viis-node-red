@@ -18,7 +18,7 @@ class DeviceIntentService {
     getLatestDeviceKeyValueData(device_id, identifier) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const deviceData = this.devicesData.find((d) => d.deivce_id === device_id);
+                const deviceData = this.devicesData.find((d) => d.device_id === device_id);
                 if (!deviceData)
                     return null;
                 const keyData = deviceData.latest_data.find((d) => d.key === identifier);
@@ -187,7 +187,8 @@ class DeviceIntentService {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 const results = [];
-                for (const intent of this.intents.filter((d) => d.enable && d.type === "OFFLINE")) {
+                const activeIntents = this.intents.filter((d) => d.enable && d.type === "OFFLINE");
+                for (const intent of activeIntents) {
                     const result = yield this.processDeviceIntent(intent);
                     if (result) {
                         results.push({

@@ -131,6 +131,6 @@ export interface TsData {
 }
 
 export interface DeviceLatestData {
-  deivce_id: string;
+  device_id: string;
   latest_data: TsData[];
 }
