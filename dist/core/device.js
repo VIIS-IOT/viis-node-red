@@ -13,6 +13,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendTelemetryByHttp = sendTelemetryByHttp;
+exports.getDeviceIntentsByToken = getDeviceIntentsByToken;
 const axios_1 = __importDefault(require("axios"));
 const const_1 = require("../const");
 function sendTelemetryByHttp(token, telemetryData) {
@@ -29,6 +30,17 @@ function sendTelemetryByHttp(token, telemetryData) {
                 console.error("Error sending telemetry:", error);
             }
             return false;
+        }
+    });
+}
+function getDeviceIntentsByToken(token) {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            const response = yield axios_1.default.get(`${const_1.httpServerUrl}/api/v2/device-intent/by-device-token/${token}`, { headers: { "Content-Type": "application/json" } });
+            return response.data.result;
+        }
+        catch (error) {
+            throw error;
         }
     });
 }

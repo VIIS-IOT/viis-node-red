@@ -1,5 +1,6 @@
 import axios, { AxiosResponse } from "axios";
 import { httpServerUrl } from "../const";
+import { DeviceIntent } from "./type";
 
 export async function sendTelemetryByHttp(
   token: string,
@@ -19,5 +20,19 @@ export async function sendTelemetryByHttp(
       console.error("Error sending telemetry:", error);
     }
     return false;
+  }
+}
+
+export async function getDeviceIntentsByToken(
+  token: string
+): Promise<DeviceIntent[]> {
+  try {
+    const response = await axios.get(
+      `${httpServerUrl}/api/v2/device-intent/by-device-token/${token}`,
+      { headers: { "Content-Type": "application/json" } }
+    );
+    return response.data.result;
+  } catch (error) {
+    throw error;
   }
 }
