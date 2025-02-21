@@ -16,23 +16,16 @@ class DeviceIntentService {
         this.devicesData = devicesData;
     }
     getLatestDeviceKeyValueData(device_id, identifier) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                const deviceData = this.devicesData.find((d) => d.device_id === device_id);
-                if (!deviceData)
-                    return null;
-                const keyData = deviceData.latest_data.find((d) => d.key === identifier);
-                return keyData;
-            }
-            catch (error) {
-                throw error;
-            }
-        });
+        const deviceData = this.devicesData.find((d) => d.device_id === device_id);
+        if (!deviceData)
+            return null;
+        const keyData = deviceData.latest_data.find((d) => d.key === identifier);
+        return keyData;
     }
     getIntentPredicateResult(node, interval_windown_secs) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const latestDeviceData = yield this.getLatestDeviceKeyValueData(node.device_id, node.identifier);
+                const latestDeviceData = this.getLatestDeviceKeyValueData(node.device_id, node.identifier);
                 if (!latestDeviceData)
                     return false;
                 //Ignore ts check
@@ -194,7 +187,8 @@ class DeviceIntentService {
                         results.push({
                             id: intent.id,
                             schedule_plan_actions: intent.schedule_plan_actions,
-                            device_actions: intent.device_actions.map((d) => {
+                            device_actions: intent.device_actions
+                                .map((d) => {
                                 let value = undefined;
                                 if (d.function.data_type === "Bool") {
                                     value = Boolean(d.bool_v);
@@ -210,6 +204,10 @@ class DeviceIntentService {
                                     key: d.function.identifier,
                                     value: value,
                                 };
+                            })
+                                .filter((d) => {
+                                const curValue = this.getLatestDeviceKeyValueData(d.device_id, d.key);
+                                return curValue ? (curValue === null || curValue === void 0 ? void 0 : curValue.value) !== d.value : true;
                             }),
                         });
                     }

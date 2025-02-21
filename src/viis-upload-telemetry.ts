@@ -119,14 +119,6 @@ module.exports = function (RED: NodeAPI) {
         });
       }
     });
-
-    configNode.on("mqtt-message", (data: { message: any }) => {
-      node.send({
-        payload: {
-          message: data.message,
-        },
-      });
-    });
   }
 
   RED.nodes.registerType("viis-upload-telemetry", ViisUploadTelemetry); // Đổi tên ở đây

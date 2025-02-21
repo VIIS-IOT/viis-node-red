@@ -16,18 +16,12 @@ export class DeviceIntentService {
     this.devicesData = devicesData;
   }
 
-  async getLatestDeviceKeyValueData(device_id: string, identifier: string) {
-    try {
-      const deviceData = this.devicesData.find(
-        (d) => d.device_id === device_id
-      );
-      if (!deviceData) return null;
+  getLatestDeviceKeyValueData(device_id: string, identifier: string) {
+    const deviceData = this.devicesData.find((d) => d.device_id === device_id);
+    if (!deviceData) return null;
 
-      const keyData = deviceData.latest_data.find((d) => d.key === identifier);
-      return keyData;
-    } catch (error) {
-      throw error;
-    }
+    const keyData = deviceData.latest_data.find((d) => d.key === identifier);
+    return keyData;
   }
 
   async getIntentPredicateResult(
@@ -35,7 +29,7 @@ export class DeviceIntentService {
     interval_windown_secs: number
   ): Promise<boolean> {
     try {
-      const latestDeviceData = await this.getLatestDeviceKeyValueData(
+      const latestDeviceData = this.getLatestDeviceKeyValueData(
         node.device_id,
         node.identifier
       );
@@ -231,25 +225,33 @@ export class DeviceIntentService {
           results.push({
             id: intent.id,
             schedule_plan_actions: intent.schedule_plan_actions,
-            device_actions: intent.device_actions.map((d) => {
-              let value = undefined;
-              if (d.function.data_type === "Bool") {
-                value = Boolean(d.bool_v);
-              } else if (
-                ["Value", "Accumulate", "Raw", "Enum"].includes(
-                  d.function.data_type || ""
-                )
-              ) {
-                value = Number(d.dbl_v);
-              } else {
-                value = String(d.str_v);
-              }
-              return {
-                device_id: d.device_id,
-                key: d.function.identifier,
-                value: value,
-              };
-            }),
+            device_actions: intent.device_actions
+              .map((d) => {
+                let value = undefined;
+                if (d.function.data_type === "Bool") {
+                  value = Boolean(d.bool_v);
+                } else if (
+                  ["Value", "Accumulate", "Raw", "Enum"].includes(
+                    d.function.data_type || ""
+                  )
+                ) {
+                  value = Number(d.dbl_v);
+                } else {
+                  value = String(d.str_v);
+                }
+                return {
+                  device_id: d.device_id,
+                  key: d.function.identifier,
+                  value: value,
+                };
+              })
+              .filter((d: any) => {
+                const curValue = this.getLatestDeviceKeyValueData(
+                  d.device_id,
+                  d.key
+                );
+                return curValue ? curValue?.value !== d.value : true;
+              }),
           });
         }
       }
