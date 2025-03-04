@@ -21,13 +21,17 @@
       "viis-automation-node": "dist/viis-automation-node.js",
       "viis-config-node": "dist/viis-config-node.js",
       "viis-device-events": "dist/viis-device-events.js",
-      "viis-upload-events": "dist/viis-upload-telemetry.js"
+      "viis-upload-events": "dist/viis-upload-telemetry.js",
+      "viis-test-modbus": "dist/viis-test-modbus.js"
     }
   },
   "dependencies": {
     "axios": "^1.7.9",
     "dayjs": "^1.11.13",
+    "dotenv": "^16.4.7",
+    "modbus-serial": "^8.0.19",
     "mqtt": "^5.10.3",
+    "mysql2": "^3.12.0",
     "uuid": "^11.0.5"
   }
 }
