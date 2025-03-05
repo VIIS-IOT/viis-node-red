@@ -12,6 +12,7 @@ class MqttClientCore extends events_1.EventEmitter {
         super();
         this.client = null;
         this.subscribedTopics = new Set();
+        this.messageQueue = [];
         this.config = Object.assign({ reconnectPeriod: 5000, connectTimeout: 30000, keepalive: 60 }, config);
         this.node = node;
         this.initializeClient();
@@ -26,40 +27,31 @@ class MqttClientCore extends events_1.EventEmitter {
             connectTimeout: this.config.connectTimeout,
             keepalive: this.config.keepalive,
         };
-        try {
-            this.client = mqtt_1.default.connect(this.config.broker, options);
-            // Xử lý sự kiện kết nối
-            this.client.on("connect", () => {
-                this.node.status({ fill: "green", shape: "dot", text: "Connected" });
-                this.emit("mqtt-status", { status: "connected" });
-                // Tự động resubscribe các topic đã đăng ký trước đó
-                this.resubscribeTopics();
-            });
-            // Xử lý sự kiện ngắt kết nối
-            this.client.on("close", () => {
-                this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
-                this.emit("mqtt-status", { status: "disconnected" });
-            });
-            // Xử lý sự kiện lỗi
-            this.client.on("error", (error) => {
-                this.node.error(`MQTT Error: ${error.message}`);
-                this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
-                this.emit("mqtt-status", { status: "error", error: error.message });
-            });
-            // Xử lý message nhận được
-            this.client.on("message", (topic, message, packet) => {
-                const mqttMessage = {
-                    topic,
-                    message: message.toString(), // Chuyển Buffer thành string
-                    qos: packet.qos,
-                    retain: packet.retain,
-                };
-                this.emit("mqtt-message", { message: mqttMessage });
-            });
-        }
-        catch (error) {
-            this.node.error(`Failed to initialize MQTT client: ${error}`);
-        }
+        this.client = mqtt_1.default.connect(this.config.broker, options);
+        this.client.on("connect", () => {
+            this.node.status({ fill: "green", shape: "dot", text: "Connected" });
+            this.emit("mqtt-status", { status: "connected" });
+            this.resubscribeTopics();
+            this.flushQueue(); // Publish queued messages on connect
+        });
+        this.client.on("close", () => {
+            this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
+            this.emit("mqtt-status", { status: "disconnected" });
+        });
+        this.client.on("error", (error) => {
+            this.node.error(`MQTT Error: ${error.message}`);
+            this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
+            this.emit("mqtt-status", { status: "error", error: error.message });
+        });
+        this.client.on("message", (topic, message, packet) => {
+            const mqttMessage = {
+                topic,
+                message: message.toString(),
+                qos: packet.qos,
+                retain: packet.retain,
+            };
+            this.emit("mqtt-message", { message: mqttMessage });
+        });
     }
     // Subscribe topic
     subscribe(topic, qos = this.config.qos) {
@@ -96,7 +88,8 @@ class MqttClientCore extends events_1.EventEmitter {
     // Publish message
     publish(topic, message, options) {
         if (!this.client || !this.client.connected) {
-            this.node.warn(`Cannot publish to ${topic}: MQTT client not connected`);
+            this.node.warn(`Cannot publish to ${topic}: MQTT client not connected, queuing message`);
+            this.messageQueue.push({ topic, message, options });
             return;
         }
         const publishOptions = Object.assign({ qos: this.config.qos }, options);
@@ -108,6 +101,22 @@ class MqttClientCore extends events_1.EventEmitter {
                 this.node.log(`Published to topic: ${topic}`);
             }
         });
+    }
+    flushQueue() {
+        if (!this.client || !this.client.connected)
+            return;
+        while (this.messageQueue.length > 0) {
+            const { topic, message, options } = this.messageQueue.shift();
+            this.client.publish(topic, message, Object.assign({ qos: this.config.qos }, options), (err) => {
+                if (err) {
+                    this.node.error(`Failed to publish queued message to ${topic}: ${err.message}`);
+                    this.messageQueue.unshift({ topic, message, options }); // Re-queue on failure
+                }
+                else {
+                    this.node.log(`Published queued message to topic: ${topic}`);
+                }
+            });
+        }
     }
     // Resubscribe tất cả các topic khi reconnect
     resubscribeTopics() {

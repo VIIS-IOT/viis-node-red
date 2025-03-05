@@ -1,0 +1,84 @@
+<script type="text/html" data-template-name="viis-telemetry">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalCoil"><i class="fa fa-clock-o"></i> Coil Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalCoil" placeholder="1000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalInput"><i class="fa fa-clock-o"></i> Input Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalInput" placeholder="1000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalHolding"><i class="fa fa-clock-o"></i> Holding Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalHolding" placeholder="5000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-coilStartAddress"><i class="fa fa-map-marker"></i> Coil Start Address</label>
+        <input type="text" id="node-input-coilStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-coilQuantity"><i class="fa fa-list"></i> Coil Quantity</label>
+        <input type="text" id="node-input-coilQuantity" placeholder="32">
+    </div>
+    <div class="form-row">
+        <label for="node-input-inputStartAddress"><i class="fa fa-map-marker"></i> Input Start Address</label>
+        <input type="text" id="node-input-inputStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-inputQuantity"><i class="fa fa-list"></i> Input Quantity</label>
+        <input type="text" id="node-input-inputQuantity" placeholder="26">
+    </div>
+    <div class="form-row">
+        <label for="node-input-holdingStartAddress"><i class="fa fa-map-marker"></i> Holding Start Address</label>
+        <input type="text" id="node-input-holdingStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-holdingQuantity"><i class="fa fa-list"></i> Holding Quantity</label>
+        <input type="text" id="node-input-holdingQuantity" placeholder="29">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-telemetry">
+    <p>A node to periodically poll Modbus Coils, Input Registers, and Holding Registers, then publish telemetry data to ThingsBoard and local EMQX.</p>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Telemetry data as key-value pairs (numbers or booleans) sent to ThingsBoard and EMQX local.</dd>
+    </dl>
+    <h3>Details</h3>
+    <p>This node uses a shared instance of ModbusClientCore and two MqttClientCore instances (one for ThingsBoard, one for EMQX local) to poll data from Modbus mappings defined in environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>). It publishes changes to <code>v1/devices/me/telemetry</code> (ThingsBoard) and <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX local).</p>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-telemetry", {
+        category: "function",
+        color: "#a6bbcf",
+        defaults: {
+            name: { value: "" },
+            pollIntervalCoil: { value: "1000", required: true, validate: RED.validators.number() },
+            pollIntervalInput: { value: "1000", required: true, validate: RED.validators.number() },
+            pollIntervalHolding: { value: "5000", required: true, validate: RED.validators.number() },
+            coilStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            coilQuantity: { value: "32", required: true, validate: RED.validators.number() },
+            inputStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            inputQuantity: { value: "26", required: true, validate: RED.validators.number() },
+            holdingStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            holdingQuantity: { value: "29", required: true, validate: RED.validators.number() }
+        },
+        inputs: 0,
+        outputs: 1,
+        icon: "../../icons/logo.png",
+        label: function () {
+            return this.name || "viis-telemetry";
+        },
+        oneditprepare: function () {
+            // Optional: Có thể thêm logic để hiển thị thông tin từ process.env nếu cần
+        },
+        oneditsave: function () {
+            // Optional: Có thể thêm logic xử lý khi lưu cấu hình
+        }
+    });
+</script>

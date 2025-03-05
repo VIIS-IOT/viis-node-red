@@ -1,0 +1,46 @@
+<script type="text/html" data-template-name="viis-rpc-control">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-mqttBroker"><i class="fa fa-exchange"></i> MQTT Broker</label>
+        <select id="node-input-mqttBroker">
+            <option value="thingsboard">ThingsBoard</option>
+            <option value="local">EMQX Local</option>
+        </select>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-rpc-control">
+    <p>A node to receive RPC control payloads via MQTT, map them to Modbus addresses, write to Modbus, verify by reading back, and publish the result via MQTT.</p>
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>RPC control payload received from MQTT (e.g., <code>{ "set_ph": 7.0 }</code>).</dd>
+    </dl>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Telemetry data with timestamp sent to MQTT (e.g., <code>{ "ts": 1630000000000, "set_ph": 7.0 }</code>).</dd>
+    </dl>
+    <h3>Details</h3>
+    <p>This node subscribes to an MQTT topic (<code>v1/devices/me/rpc/request/+</code> for ThingsBoard or <code>v1/devices/me/rpc/request/${deviceId}</code> for EMQX Local), processes the RPC payload, maps it to Modbus addresses using environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>), writes to Modbus, reads back for verification, and publishes the result to <code>v1/devices/me/telemetry</code> (ThingsBoard) or <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX Local).</p>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-rpc-control", {
+        category: "function",
+        color: "#a6bbcf",
+        defaults: {
+            name: { value: "" },
+            mqttBroker: { value: "thingsboard", required: true }
+        },
+        inputs: 0,
+        outputs: 1,
+        icon: "../../icons/logo.png",
+        label: function () {
+            return this.name || "viis-rpc-control";
+        }
+    });
+</script>

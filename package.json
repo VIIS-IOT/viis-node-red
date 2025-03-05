@@ -5,7 +5,7 @@
   "main": "./dist/viis-automation-node.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "rm -rf dist && npx tsc && cp -r src/icons dist/icons && find ./src -maxdepth 1 -name '*.html' -exec cp {} dist/ \\;"
+    "build": "rm -rf dist && npx tsc && cp -r src/icons dist/icons && find ./src -name '*.html' -exec bash -c 'target=\"dist/$(echo \"{}\" | sed \"s/^.\\/src\\///\")\"; mkdir -p \"$(dirname \"$target\")\" && cp \"{}\" \"$target\"' \\;"
   },
   "keywords": [],
   "author": "VIIS - Viet Nam IoT Solution",
@@ -22,7 +22,9 @@
       "viis-config-node": "dist/viis-config-node.js",
       "viis-device-events": "dist/viis-device-events.js",
       "viis-upload-events": "dist/viis-upload-telemetry.js",
-      "viis-test-modbus": "dist/viis-test-modbus.js"
+      "viis-test-modbus": "dist/viis-test-modbus.js",
+      "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry.js",
+      "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js"
     }
   },
   "dependencies": {
