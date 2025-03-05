@@ -23,6 +23,17 @@ module.exports = function (RED) {
         const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
         const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
         const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+        // Parse configKeys từ config
+        let configKeys = {};
+        try {
+            configKeys = JSON.parse(config.configKeys || "{}");
+        }
+        catch (error) {
+            node.error(`Failed to parse configKeys: ${error.message}`);
+            node.status({ fill: "red", shape: "ring", text: "Invalid configKeys fuck" });
+        }
+        // Lưu configKeys vào global variable
+        node.context().global.set("configKeys", configKeys);
         // Cấu hình Modbus từ biến môi trường
         const modbusConfig = {
             type: process.env.MODBUS_TYPE || "TCP",
@@ -95,6 +106,15 @@ module.exports = function (RED) {
                 const payload = JSON.parse(message.message.toString());
                 const rpcBody = payload.params || payload;
                 node.log(`Received RPC payload: ${JSON.stringify(rpcBody)}`);
+                // Kiểm tra xem payload có phải là config hay không
+                if (payload.method === "set_state" && payload.params) {
+                    const params = payload.params;
+                    const isConfig = Object.keys(params).some(key => configKeys[key]);
+                    if (isConfig) {
+                        handleConfigRequest(params);
+                        return;
+                    }
+                }
                 handleRpcRequest(rpcBody);
             }
             catch (error) {
@@ -102,6 +122,14 @@ module.exports = function (RED) {
                 node.status({ fill: "red", shape: "ring", text: "Parse error" });
             }
         });
+        // Xử lý yêu cầu config (không ghi Modbus)
+        function handleConfigRequest(params) {
+            const mqttPayload = Object.assign({ ts: Date.now() }, params);
+            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+            node.send({ payload: mqttPayload });
+            node.status({ fill: "yellow", shape: "dot", text: "Config processed" });
+            node.log(`Processed config payload: ${JSON.stringify(mqttPayload)}`);
+        }
         // Xử lý yêu cầu RPC
         function handleRpcRequest(rpcBody) {
             return __awaiter(this, void 0, void 0, function* () {

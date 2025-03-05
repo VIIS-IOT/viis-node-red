@@ -119,8 +119,8 @@ module.exports = function (RED: NodeAPI) {
         let inputInterval: NodeJS.Timeout | null = null;
         let holdingInterval: NodeJS.Timeout | null = null;
         let isPollingPaused = false;
+
         // State lưu trữ để kiểm tra thay đổi
-        // Khai báo biến lưu trạng thái trước đó riêng cho từng loại
         let previousStateCoils: TelemetryData = {};
         let previousStateInput: TelemetryData = {};
         let previousStateHolding: TelemetryData = {};
@@ -133,7 +133,6 @@ module.exports = function (RED: NodeAPI) {
             { key: "pump_pressure", operation: "divide", factor: 100 },
             { key: "set_ph", operation: "divide", factor: 10 },
             { key: "set_ec", operation: "divide", factor: 1000 },
-            // Ví dụ thêm các tỉ lệ khác
             { key: "flow_rate", operation: "multiply", factor: 10 },
             { key: "temperature", operation: "divide", factor: 100 },
             { key: "power_level", operation: "multiply", factor: 1000 }
@@ -161,8 +160,12 @@ module.exports = function (RED: NodeAPI) {
                         const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
                         if (key) currentState[key] = value;
                     });
+
+                    // Lưu dữ liệu vào global variable coilRegisterData
+                    node.context().global.set("coilRegisterData", currentState);
+
                     processState(currentState, "Coils");
-                    break; // Thoát vòng lặp nếu thành công
+                    break;
                 } catch (error) {
                     retryCount++;
                     const err = error as Error;
@@ -170,12 +173,13 @@ module.exports = function (RED: NodeAPI) {
                     if (retryCount === maxRetries) {
                         node.send({ payload: `Coil polling failed after ${maxRetries} attempts: ${err.message}` });
                     } else {
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây trước khi thử lại
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
             }
         }
-        // Hàm polling dữ liệu từ Input Registers với retry logic
+
+        // Hàm polling dữ liệu từ Input Registers
         async function pollInputRegisters() {
             const maxRetries = 3;
             let retryCount = 0;
@@ -190,8 +194,12 @@ module.exports = function (RED: NodeAPI) {
                         );
                         if (key) currentState[key] = applyScaling(key, value);
                     });
+
+                    // Lưu dữ liệu vào global variable inputRegisterData
+                    node.context().global.set("inputRegisterData", currentState);
+
                     processState(currentState, "Input Registers");
-                    break; // Thoát vòng lặp nếu thành công
+                    break;
                 } catch (error) {
                     retryCount++;
                     const err = error as Error;
@@ -199,13 +207,13 @@ module.exports = function (RED: NodeAPI) {
                     if (retryCount === maxRetries) {
                         node.send({ payload: `Input polling failed after ${maxRetries} attempts: ${err.message}` });
                     } else {
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây trước khi thử lại
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
             }
         }
 
-        // Hàm polling dữ liệu từ Holding Registers với retry logic
+        // Hàm polling dữ liệu từ Holding Registers
         async function pollHoldingRegisters() {
             const maxRetries = 3;
             let retryCount = 0;
@@ -220,8 +228,12 @@ module.exports = function (RED: NodeAPI) {
                         );
                         if (key) currentState[key] = applyScaling(key, value);
                     });
+
+                    // Lưu dữ liệu vào global variable holdingRegisterData
+                    node.context().global.set("holdingRegisterData", currentState);
+
                     processState(currentState, "Holding Registers");
-                    break; // Thoát vòng lặp nếu thành công
+                    break;
                 } catch (error) {
                     retryCount++;
                     const err = error as Error;
@@ -229,15 +241,13 @@ module.exports = function (RED: NodeAPI) {
                     if (retryCount === maxRetries) {
                         node.send({ payload: `Holding polling failed after ${maxRetries} attempts: ${err.message}` });
                     } else {
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây trước khi thử lại
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
             }
         }
 
-
-
-        // Hàm xử lý state chung với kiểm tra riêng biệt theo nguồn
+        // Hàm xử lý state chung
         function processState(currentState: TelemetryData, source: string) {
             let previousStateForSource: TelemetryData;
 
@@ -262,13 +272,9 @@ module.exports = function (RED: NodeAPI) {
                 const mqttPayload = { ts: timestamp, ...currentState };
                 const payloadString = JSON.stringify(mqttPayload);
 
-                // Publish to ThingsBoard
                 thingsboardClient.publish(thingsboardConfig.publishTopic, payloadString);
-
-                // Publish to EMQX Local
                 localClient.publish(localConfig.pubSubTopic, payloadString);
 
-                // Update previous state
                 switch (source) {
                     case "Coils":
                         previousStateCoils = { ...currentState };
@@ -294,7 +300,6 @@ module.exports = function (RED: NodeAPI) {
                 node.status({ fill: "yellow", shape: "ring", text: `${source}: No change` });
             }
         }
-
 
         // Hàm kiểm tra thay đổi đáng kể
         function hasSignificantChange(current: TelemetryData, previous: TelemetryData): boolean {
@@ -345,12 +350,6 @@ module.exports = function (RED: NodeAPI) {
             isPollingPaused = true;
         }
 
-        // // Bắt đầu polling
-        // coilInterval = setInterval(pollCoils, pollIntervalCoil);
-        // inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
-        // holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
-
-        // Dọn dẹp khi node đóng
         node.on("close", () => {
             if (coilInterval) clearInterval(coilInterval);
             if (inputInterval) clearInterval(inputInterval);
@@ -393,7 +392,6 @@ module.exports = function (RED: NodeAPI) {
             }
         });
 
-        // Helper function to resume polling
         function resumePollingIfAllConnected() {
             if (modbusClient.isConnectedCheck() && thingsboardClient.isConnected() && localClient.isConnected()) {
                 isPollingPaused = false;

@@ -14,7 +14,7 @@ interface RpcData {
 }
 
 module.exports = function (RED: NodeAPI) {
-    function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
+    function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef & { configKeys: string }) {
         RED.nodes.createNode(this, config);
         const node = this;
 
@@ -24,6 +24,17 @@ module.exports = function (RED: NodeAPI) {
         const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}") as { [key: string]: number };
         const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}") as { [key: string]: number };
 
+        // Parse configKeys từ config
+        let configKeys: { [key: string]: string } = {};
+        try {
+            configKeys = JSON.parse(config.configKeys || "{}");
+        } catch (error) {
+            node.error(`Failed to parse configKeys: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Invalid configKeys fuck" });
+        }
+
+        // Lưu configKeys vào global variable
+        node.context().global.set("configKeys", configKeys);
         // Cấu hình Modbus từ biến môi trường
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
@@ -106,13 +117,33 @@ module.exports = function (RED: NodeAPI) {
                 const payload = JSON.parse(message.message.toString());
                 const rpcBody = payload.params || payload;
                 node.log(`Received RPC payload: ${JSON.stringify(rpcBody)}`);
-
+                // Kiểm tra xem payload có phải là config hay không
+                if (payload.method === "set_state" && payload.params) {
+                    const params = payload.params;
+                    const isConfig = Object.keys(params).some(key => configKeys[key]);
+                    if (isConfig) {
+                        handleConfigRequest(params);
+                        return;
+                    }
+                }
                 handleRpcRequest(rpcBody);
             } catch (error) {
                 node.error(`Failed to parse MQTT message: ${(error as Error).message}`);
                 node.status({ fill: "red", shape: "ring", text: "Parse error" });
             }
         });
+
+        // Xử lý yêu cầu config (không ghi Modbus)
+        function handleConfigRequest(params: RpcData) {
+            const mqttPayload = {
+                ts: Date.now(),
+                ...params,
+            };
+            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+            node.send({ payload: mqttPayload });
+            node.status({ fill: "yellow", shape: "dot", text: "Config processed" });
+            node.log(`Processed config payload: ${JSON.stringify(mqttPayload)}`);
+        }
 
         // Xử lý yêu cầu RPC
         async function handleRpcRequest(rpcBody: RpcData) {

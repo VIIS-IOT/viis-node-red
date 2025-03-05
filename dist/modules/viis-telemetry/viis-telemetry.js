@@ -95,7 +95,6 @@ module.exports = function (RED) {
         let holdingInterval = null;
         let isPollingPaused = false;
         // State lưu trữ để kiểm tra thay đổi
-        // Khai báo biến lưu trạng thái trước đó riêng cho từng loại
         let previousStateCoils = {};
         let previousStateInput = {};
         let previousStateHolding = {};
@@ -107,7 +106,6 @@ module.exports = function (RED) {
             { key: "pump_pressure", operation: "divide", factor: 100 },
             { key: "set_ph", operation: "divide", factor: 10 },
             { key: "set_ec", operation: "divide", factor: 1000 },
-            // Ví dụ thêm các tỉ lệ khác
             { key: "flow_rate", operation: "multiply", factor: 10 },
             { key: "temperature", operation: "divide", factor: 100 },
             { key: "power_level", operation: "multiply", factor: 1000 }
@@ -135,8 +133,10 @@ module.exports = function (RED) {
                             if (key)
                                 currentState[key] = value;
                         });
+                        // Lưu dữ liệu vào global variable coilRegisterData
+                        node.context().global.set("coilRegisterData", currentState);
                         processState(currentState, "Coils");
-                        break; // Thoát vòng lặp nếu thành công
+                        break;
                     }
                     catch (error) {
                         retryCount++;
@@ -146,13 +146,13 @@ module.exports = function (RED) {
                             node.send({ payload: `Coil polling failed after ${maxRetries} attempts: ${err.message}` });
                         }
                         else {
-                            yield new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây trước khi thử lại
+                            yield new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
                 }
             });
         }
-        // Hàm polling dữ liệu từ Input Registers với retry logic
+        // Hàm polling dữ liệu từ Input Registers
         function pollInputRegisters() {
             return __awaiter(this, void 0, void 0, function* () {
                 const maxRetries = 3;
@@ -166,8 +166,10 @@ module.exports = function (RED) {
                             if (key)
                                 currentState[key] = applyScaling(key, value);
                         });
+                        // Lưu dữ liệu vào global variable inputRegisterData
+                        node.context().global.set("inputRegisterData", currentState);
                         processState(currentState, "Input Registers");
-                        break; // Thoát vòng lặp nếu thành công
+                        break;
                     }
                     catch (error) {
                         retryCount++;
@@ -177,13 +179,13 @@ module.exports = function (RED) {
                             node.send({ payload: `Input polling failed after ${maxRetries} attempts: ${err.message}` });
                         }
                         else {
-                            yield new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây trước khi thử lại
+                            yield new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
                 }
             });
         }
-        // Hàm polling dữ liệu từ Holding Registers với retry logic
+        // Hàm polling dữ liệu từ Holding Registers
         function pollHoldingRegisters() {
             return __awaiter(this, void 0, void 0, function* () {
                 const maxRetries = 3;
@@ -197,8 +199,10 @@ module.exports = function (RED) {
                             if (key)
                                 currentState[key] = applyScaling(key, value);
                         });
+                        // Lưu dữ liệu vào global variable holdingRegisterData
+                        node.context().global.set("holdingRegisterData", currentState);
                         processState(currentState, "Holding Registers");
-                        break; // Thoát vòng lặp nếu thành công
+                        break;
                     }
                     catch (error) {
                         retryCount++;
@@ -208,13 +212,13 @@ module.exports = function (RED) {
                             node.send({ payload: `Holding polling failed after ${maxRetries} attempts: ${err.message}` });
                         }
                         else {
-                            yield new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây trước khi thử lại
+                            yield new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
                 }
             });
         }
-        // Hàm xử lý state chung với kiểm tra riêng biệt theo nguồn
+        // Hàm xử lý state chung
         function processState(currentState, source) {
             let previousStateForSource;
             switch (source) {
@@ -235,11 +239,8 @@ module.exports = function (RED) {
                 const timestamp = Date.now();
                 const mqttPayload = Object.assign({ ts: timestamp }, currentState);
                 const payloadString = JSON.stringify(mqttPayload);
-                // Publish to ThingsBoard
                 thingsboardClient.publish(thingsboardConfig.publishTopic, payloadString);
-                // Publish to EMQX Local
                 localClient.publish(localConfig.pubSubTopic, payloadString);
-                // Update previous state
                 switch (source) {
                     case "Coils":
                         previousStateCoils = Object.assign({}, currentState);
@@ -317,11 +318,6 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "Waiting for all clients to connect" });
             isPollingPaused = true;
         }
-        // // Bắt đầu polling
-        // coilInterval = setInterval(pollCoils, pollIntervalCoil);
-        // inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
-        // holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
-        // Dọn dẹp khi node đóng
         node.on("close", () => {
             if (coilInterval)
                 clearInterval(coilInterval);
@@ -372,7 +368,6 @@ module.exports = function (RED) {
                 resumePollingIfAllConnected();
             }
         });
-        // Helper function to resume polling
         function resumePollingIfAllConnected() {
             if (modbusClient.isConnectedCheck() && thingsboardClient.isConnected() && localClient.isConnected()) {
                 isPollingPaused = false;

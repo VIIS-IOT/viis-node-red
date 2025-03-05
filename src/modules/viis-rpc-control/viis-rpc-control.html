@@ -10,22 +10,26 @@
             <option value="local">EMQX Local</option>
         </select>
     </div>
+    <div class="form-row">
+        <label for="node-input-configKeys"><i class="fa fa-cog"></i> Config Keys (JSON)</label>
+        <textarea id="node-input-configKeys" placeholder='{"max_temp": "number", "power": "boolean"}'></textarea>
+    </div>
 </script>
 
 <script type="text/html" data-help-name="viis-rpc-control">
-    <p>A node to receive RPC control payloads via MQTT, map them to Modbus addresses, write to Modbus, verify by reading back, and publish the result via MQTT.</p>
+    <p>A node to receive RPC control payloads via MQTT, map them to Modbus addresses, write to Modbus, verify by reading back, and publish the result via MQTT. It also supports configuration keys that bypass Modbus writes.</p>
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">object</span></dt>
-        <dd>RPC control payload received from MQTT (e.g., <code>{ "set_ph": 7.0 }</code>).</dd>
+        <dd>RPC control payload received from MQTT (e.g., <code>{ "set_ph": 7.0 }</code> or <code>{"method":"set_state","params":{"max_temp":40}}</code>).</dd>
     </dl>
     <h3>Outputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">object</span></dt>
-        <dd>Telemetry data with timestamp sent to MQTT (e.g., <code>{ "ts": 1630000000000, "set_ph": 7.0 }</code>).</dd>
+        <dd>Telemetry data with timestamp sent to MQTT (e.g., <code>{ "ts": 1630000000000, "set_ph": 7.0 }</code> or config data).</dd>
     </dl>
     <h3>Details</h3>
-    <p>This node subscribes to an MQTT topic (<code>v1/devices/me/rpc/request/+</code> for ThingsBoard or <code>v1/devices/me/rpc/request/${deviceId}</code> for EMQX Local), processes the RPC payload, maps it to Modbus addresses using environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>), writes to Modbus, reads back for verification, and publishes the result to <code>v1/devices/me/telemetry</code> (ThingsBoard) or <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX Local).</p>
+    <p>This node subscribes to an MQTT topic and processes RPC payloads. If the payload contains a <code>method</code> field (e.g., <code>set_state</code>) and <code>params</code> with keys listed in <code>Config Keys</code>, it treats them as configuration data, stores them in the global variable <code>configKeys</code>, and skips Modbus operations.</p>
 </script>
 
 <script type="text/javascript">
@@ -34,13 +38,24 @@
         color: "#a6bbcf",
         defaults: {
             name: { value: "" },
-            mqttBroker: { value: "thingsboard", required: true }
+            mqttBroker: { value: "thingsboard", required: true },
+            configKeys: { value: '{"max_temp": "number", "power": "boolean"}' } // Giá trị mặc định
         },
         inputs: 0,
         outputs: 1,
         icon: "../../icons/logo.png",
         label: function () {
             return this.name || "viis-rpc-control";
+        },
+        oneditprepare: function () {
+            // Optional: Validate JSON input
+            $("#node-input-configKeys").on("change", function () {
+                try {
+                    JSON.parse($(this).val());
+                } catch (e) {
+                    RED.notify("Invalid JSON in Config Keys: " + e.message, "error");
+                }
+            });
         }
     });
 </script>
