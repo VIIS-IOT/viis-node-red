@@ -148,17 +148,17 @@ module.exports = function (RED: NodeAPI) {
         // Xử lý yêu cầu RPC
         async function handleRpcRequest(rpcBody: RpcData) {
             let address: number | undefined, value: number | boolean | undefined, fc: number | undefined;
-            //node.warn(`modbusCoils at start: ${JSON.stringify(modbusCoils)}`);
-            //node.warn(`rpc body: ${JSON.stringify(rpcBody)}`);
+            node.warn(`modbusCoils at start: ${JSON.stringify(modbusCoils)}`);
+            node.warn(`rpc body: ${JSON.stringify(rpcBody)}`);
 
             for (const key in rpcBody) {
                 if (rpcBody.hasOwnProperty(key)) {
                     let rawValue = rpcBody[key];
-                    //node.warn(`Processing key: ${key}, rawValue: ${rawValue}, type: ${typeof rawValue}`);
-                    //node.warn(`modbusCoils[${key}] = ${modbusCoils[key]}, typeof: ${typeof modbusCoils[key]}`);
-                    //node.warn(`modbusCoils content during check: ${JSON.stringify(modbusCoils)}`);
+                    node.warn(`Processing key: ${key}, rawValue: ${rawValue}, type: ${typeof rawValue}`);
+                    node.warn(`modbusHoldingRegisters[${key}] = ${modbusHoldingRegisters[key]}, typeof: ${typeof modbusHoldingRegisters[key]}`);
+                    node.warn(`modbusHoldingRegisters content during check: ${JSON.stringify(modbusHoldingRegisters)}`);
 
-                    if (modbusHoldingRegisters[key]) {
+                    if (modbusHoldingRegisters[key] !== undefined) {
                         address = modbusHoldingRegisters[key];
                         value = rawValue as number;
                         fc = 6;
@@ -170,14 +170,14 @@ module.exports = function (RED: NodeAPI) {
                         fc = 5;
                         //node.warn(`Mapped to Coil: address=${address}, value=${value}, fc=${fc}`);
                         break;
-                    } else if (modbusInputRegisters[key]) {
+                    } else if (modbusInputRegisters[key] !== undefined) {
                         address = modbusInputRegisters[key];
                         value = rawValue as number;
                         fc = 4;
                         //node.warn(`Mapped to Input Register: address=${address}, value=${value}, fc=${fc}`);
                         break;
                     } else {
-                        node.warn(`No mapping found for key: ${key}`);
+                        node.warn(`No mapping found for key fuck: ${key}`);
                     }
                 }
             }
