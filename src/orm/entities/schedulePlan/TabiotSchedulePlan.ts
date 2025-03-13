@@ -38,4 +38,7 @@ export class TabiotSchedulePlan extends CustomBaseEntity {
 
     @Column({ type: 'date', nullable: true })
     end_date?: string;
+
+    @Column({ type: 'tinyint', default: 0 })
+    is_deleted: number;
 }
