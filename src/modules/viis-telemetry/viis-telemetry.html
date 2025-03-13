@@ -40,8 +40,10 @@
         <input type="text" id="node-input-holdingQuantity" placeholder="29">
     </div>
     <div class="form-row">
-        <label for="node-input-scaleConfigs"><i class="fa fa-list"></i> Scale Configss</label>
-        <textarea id="node-input-scaleConfigs" placeholder='[{"key": "current_ph", "operation": "divide", "factor": 10}]' style="width: 100%; min-height: 150px;"></textarea>
+        <label for="node-input-scaleConfigs"><i class="fa fa-list"></i> Scale Configs</label>
+        <!-- Ẩn textarea gốc để dùng CodeMirror thay thế -->
+        <textarea id="node-input-scaleConfigs" style="display:none;" placeholder='[{"key": "current_ph", "operation": "divide", "factor": 10}]'></textarea>
+        <div id="scaleConfigsEditor" style="border: 1px solid #ddd; min-height:150px;"></div>
     </div>
 </script>
 
@@ -55,6 +57,11 @@
     <h3>Details</h3>
     <p>This node uses a shared instance of ModbusClientCore and two MqttClientCore instances (one for ThingsBoard, one for EMQX local) to poll data from Modbus mappings defined in environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>). It publishes changes to <code>v1/devices/me/telemetry</code> (ThingsBoard) and <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX local).</p>
 </script>
+
+<!-- Include CodeMirror CSS và JS -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script>
 
 <script type="text/javascript">
     RED.nodes.registerType("viis-telemetry", {
@@ -91,16 +98,44 @@
             return this.name || "viis-telemetry";
         },
         oneditprepare: function () {
-            var that = this;
-            var scaleConfigsField = $("#node-input-scaleConfigs");
+            // Khởi tạo CodeMirror cho scaleConfigs
+            var initialScaleConfigs = this.scaleConfigs || "[]";
+            var scaleConfigsEditor = CodeMirror(document.getElementById('scaleConfigsEditor'), {
+                value: "",
+                mode: { name: "javascript", json: true },
+                lineNumbers: true,
+                theme: "default"
+            });
+
+            // Set giá trị ban đầu cho editor
             try {
-                var configs = JSON.parse(scaleConfigsField.val() || "[]");
-                scaleConfigsField.val(JSON.stringify(configs, null, 2));
+                var parsedScale = JSON.parse(initialScaleConfigs);
+                var formattedScale = JSON.stringify(parsedScale, null, 2);
+                scaleConfigsEditor.setValue(formattedScale);
             } catch (e) {
-                console.log("Error parsing scaleConfigs:", e);
+                scaleConfigsEditor.setValue(initialScaleConfigs);
             }
+
+            // Tự động định dạng lại JSON khi editor mất focus
+            scaleConfigsEditor.on("blur", function () {
+                try {
+                    var jsonObj = JSON.parse(scaleConfigsEditor.getValue());
+                    var formatted = JSON.stringify(jsonObj, null, 2);
+                    scaleConfigsEditor.setValue(formatted);
+                    RED.notify("Valid scaleConfigs JSON", "success");
+                } catch (e) {
+                    RED.notify("Invalid scaleConfigs JSON: " + e.message, "error");
+                }
+            });
+
+            // Đồng bộ nội dung của CodeMirror với textarea ẩn để lưu trữ
+            scaleConfigsEditor.on("change", function () {
+                $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
+            });
+            $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
         },
         oneditsave: function () {
+            // Compact JSON cho scaleConfigs trước khi lưu
             var scaleConfigsField = $("#node-input-scaleConfigs");
             try {
                 var configs = JSON.parse(scaleConfigsField.val() || "[]");

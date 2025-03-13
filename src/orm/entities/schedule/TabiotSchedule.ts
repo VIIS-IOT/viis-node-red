@@ -1,12 +1,12 @@
-import { Entity, PrimaryColumn, Column } from 'typeorm';
+import { Entity, PrimaryColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { CustomBaseEntity } from '../base/Base';
+import { TabiotSchedulePlan } from '../schedulePlan/TabiotSchedulePlan';
 
 @Entity('tabiot_schedule')
 export class TabiotSchedule extends CustomBaseEntity {
+
     @PrimaryColumn({ type: 'varchar', length: 255 })
     name: string;
-
-    // Các trường "creation" và "modified" đã được kế thừa từ CustomBaseEntity
 
     @Column({ type: 'varchar', length: 255, nullable: true })
     device_id?: string;
@@ -32,7 +32,7 @@ export class TabiotSchedule extends CustomBaseEntity {
     @Column({
         type: 'enum',
         enum: ['', 'circulate', 'period', 'fixed', 'interval'],
-        default: ''
+        default: '',
     })
     type: '' | 'circulate' | 'period' | 'fixed' | 'interval';
 
@@ -48,13 +48,8 @@ export class TabiotSchedule extends CustomBaseEntity {
     @Column({ type: 'tinyint', nullable: true })
     is_from_local?: number;
 
-    // Trường modified đã được kế thừa từ CustomBaseEntity
-
     @Column({ type: 'smallint', nullable: true })
     is_synced?: number;
-
-    @Column({ type: 'varchar', length: 255, nullable: true })
-    schedule_plan_id?: string;
 
     @Column({ type: 'tinyint', default: 0 })
     is_deleted: number;
@@ -62,7 +57,14 @@ export class TabiotSchedule extends CustomBaseEntity {
     @Column({
         type: 'enum',
         enum: ['running', 'stopped', 'finished', ''],
-        default: ''
+        default: '',
     })
     status: 'running' | 'stopped' | 'finished' | '';
+
+    @Column({ type: 'varchar', length: 255, nullable: true })
+    schedule_plan_id?: string;
+
+    @ManyToOne(() => TabiotSchedulePlan, { onDelete: 'SET NULL' })
+    @JoinColumn({ name: 'schedule_plan_id' })
+    schedulePlan?: TabiotSchedulePlan;
 }

@@ -17,10 +17,16 @@
     </div>
     <div class="form-row">
         <label for="node-input-scaleConfigs"><i class="fa fa-balance-scale"></i> Scale Configs</label>
-        <textarea id="node-input-scaleConfigs" style="width: 100%; min-height: 150px;" 
-            placeholder='[{"key": "set_ph", "operation": "multiply", "factor": 10, direction: "write"}, {"key": "set_ec", "operation": "multiply", "factor": 1000, direction: "read"}]'></textarea>
+        <!-- Ẩn textarea gốc để dùng CodeMirror thay thế -->
+        <textarea id="node-input-scaleConfigs" style="display:none;"></textarea>
+        <div id="scaleConfigsEditor" style="border: 1px solid #ddd; min-height:150px;"></div>
     </div>
 </script>
+
+<!-- Include CodeMirror CSS và JS -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script>
 
 <script type="text/javascript">
     RED.nodes.registerType("viis-rpc-control", {
@@ -61,47 +67,85 @@
             return this.name || "viis-rpc-control";
         },
         oneditprepare: function () {
-            const that = this;
-
-            // Format JSON in textareas
-            ['configKeys', 'scaleConfigs'].forEach(function (field) {
-                const element = $(`#node-input-${field}`);
-                try {
-                    const value = element.val();
-                    if (value) {
-                        const formatted = JSON.stringify(JSON.parse(value), null, 2);
-                        element.val(formatted);
-                    }
-                } catch (e) {
-                    console.log(`Error formatting ${field}:`, e);
+            // Format JSON trong configKeys
+            const configKeysEl = $("#node-input-configKeys");
+            try {
+                const value = configKeysEl.val();
+                if (value) {
+                    const formatted = JSON.stringify(JSON.parse(value), null, 2);
+                    configKeysEl.val(formatted);
                 }
-
-                // Add validation on change
-                element.on("change", function () {
-                    try {
-                        const parsed = JSON.parse($(this).val());
-                        const formatted = JSON.stringify(parsed, null, 2);
-                        $(this).val(formatted);
-                        RED.notify(`Valid ${field} JSON`, "success");
-                    } catch (e) {
-                        RED.notify(`Invalid ${field} JSON: ${e.message}`, "error");
-                    }
-                });
+            } catch (e) {
+                console.log("Error formatting configKeys:", e);
+            }
+            configKeysEl.on("change", function () {
+                try {
+                    const parsed = JSON.parse($(this).val());
+                    const formatted = JSON.stringify(parsed, null, 2);
+                    $(this).val(formatted);
+                    RED.notify("Valid configKeys JSON", "success");
+                } catch (e) {
+                    RED.notify("Invalid configKeys JSON: " + e.message, "error");
+                }
             });
+
+            // Khởi tạo CodeMirror cho scaleConfigs
+            var initialScaleConfigs = this.scaleConfigs || '[]';
+            var scaleConfigsEditor = CodeMirror(document.getElementById('scaleConfigsEditor'), {
+                value: "",
+                mode: { name: "javascript", json: true },
+                lineNumbers: true,
+                theme: "default"
+            });
+
+            // Set giá trị ban đầu cho editor
+            try {
+                var parsedScale = JSON.parse(initialScaleConfigs);
+                var formattedScale = JSON.stringify(parsedScale, null, 2);
+                scaleConfigsEditor.setValue(formattedScale);
+            } catch (e) {
+                scaleConfigsEditor.setValue(initialScaleConfigs);
+            }
+
+            // Khi editor mất focus, tự động format lại JSON
+            scaleConfigsEditor.on("blur", function () {
+                try {
+                    var jsonObj = JSON.parse(scaleConfigsEditor.getValue());
+                    var formatted = JSON.stringify(jsonObj, null, 2);
+                    scaleConfigsEditor.setValue(formatted);
+                    RED.notify("Valid scaleConfigs JSON", "success");
+                } catch (e) {
+                    RED.notify("Invalid scaleConfigs JSON: " + e.message, "error");
+                }
+            });
+
+            // Đồng bộ nội dung editor với textarea ẩn
+            scaleConfigsEditor.on("change", function () {
+                $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
+            });
+            $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
         },
         oneditsave: function () {
-            // Compact JSON before saving
-            ['configKeys', 'scaleConfigs'].forEach(function (field) {
-                const element = $(`#node-input-${field}`);
-                try {
-                    const value = element.val();
-                    if (value) {
-                        element.val(JSON.stringify(JSON.parse(value)));
-                    }
-                } catch (e) {
-                    console.log(`Error compacting ${field}:`, e);
+            // Compact JSON trước khi lưu cho configKeys
+            const configKeysEl = $("#node-input-configKeys");
+            try {
+                const value = configKeysEl.val();
+                if (value) {
+                    configKeysEl.val(JSON.stringify(JSON.parse(value)));
                 }
-            });
+            } catch (e) {
+                console.log("Error compacting configKeys:", e);
+            }
+            // Compact JSON cho scaleConfigs
+            const scaleConfigsEl = $("#node-input-scaleConfigs");
+            try {
+                const value = scaleConfigsEl.val();
+                if (value) {
+                    scaleConfigsEl.val(JSON.stringify(JSON.parse(value)));
+                }
+            } catch (e) {
+                console.log("Error compacting scaleConfigs:", e);
+            }
         }
     });
 </script>
