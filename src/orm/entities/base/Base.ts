@@ -2,10 +2,21 @@ import { Exclude } from 'class-transformer';
 import { Column, CreateDateColumn, DeleteDateColumn, UpdateDateColumn } from 'typeorm';
 
 export class CustomBaseEntity {
-    @CreateDateColumn({ type: 'timestamp', precision: 6, nullable: true })
+    @CreateDateColumn({
+        type: 'datetime',
+        precision: 6,
+        default: () => 'CURRENT_TIMESTAMP(6)',
+        nullable: true
+    })
     creation?: Date;
 
-    @UpdateDateColumn({ type: 'timestamp', precision: 6, nullable: true })
+    @UpdateDateColumn({
+        type: 'datetime',
+        precision: 6,
+        default: () => 'CURRENT_TIMESTAMP(6)',
+        onUpdate: 'CURRENT_TIMESTAMP(6)',
+        nullable: true
+    })
     modified?: Date;
 
     @Exclude()
