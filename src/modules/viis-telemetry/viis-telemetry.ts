@@ -13,7 +13,7 @@ interface ViisTelemetryNodeDef extends NodeDef {
     inputQuantity: string;
     holdingStartAddress: string;
     holdingQuantity: string;
-    scaleConfigs: string; // Thêm thuộc tính để cấu hình scaling từ Node-RED editor
+    scaleConfigs: string; // Cấu hình scaling từ Node-RED editor
 }
 
 // Định nghĩa interface cho dữ liệu telemetry
@@ -26,6 +26,7 @@ interface ScaleConfig {
     key: string;
     operation: 'multiply' | 'divide';
     factor: number;
+    direction: 'read' | 'write'; // Thêm direction
 }
 
 module.exports = function (RED: NodeAPI) {
@@ -120,19 +121,25 @@ module.exports = function (RED: NodeAPI) {
         let scaleConfigs: ScaleConfig[] = [];
         try {
             scaleConfigs = JSON.parse(config.scaleConfigs || "[]") as ScaleConfig[];
+            // Validate scaleConfigs
+            scaleConfigs.forEach(conf => {
+                if (!conf.key || !conf.operation || typeof conf.factor !== 'number' || !['read', 'write'].includes(conf.direction)) {
+                    throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
+                }
+            });
         } catch (error) {
             node.error(`Failed to parse scaleConfigs: ${(error as Error).message}`);
             node.status({ fill: "red", shape: "ring", text: "Invalid scaleConfigs" });
             // Cung cấp cấu hình mặc định nếu parse thất bại
             scaleConfigs = [
-                { key: "current_ec", operation: "divide", factor: 1000 },
-                { key: "current_ph", operation: "divide", factor: 10 },
-                { key: "pump_pressure", operation: "divide", factor: 100 },
-                { key: "set_ph", operation: "divide", factor: 10 },
-                { key: "set_ec", operation: "divide", factor: 1000 },
-                { key: "flow_rate", operation: "multiply", factor: 10 },
-                { key: "temperature", operation: "divide", factor: 100 },
-                { key: "power_level", operation: "multiply", factor: 1000 }
+                { key: "current_ec", operation: "divide", factor: 1000, direction: "read" },
+                { key: "current_ph", operation: "divide", factor: 10, direction: "read" },
+                { key: "pump_pressure", operation: "divide", factor: 100, direction: "read" },
+                { key: "set_ph", operation: "divide", factor: 10, direction: "read" },
+                { key: "set_ec", operation: "divide", factor: 1000, direction: "read" },
+                { key: "flow_rate", operation: "multiply", factor: 10, direction: "read" },
+                { key: "temperature", operation: "divide", factor: 100, direction: "read" },
+                { key: "power_level", operation: "multiply", factor: 1000, direction: "read" }
             ];
         }
 
@@ -148,9 +155,10 @@ module.exports = function (RED: NodeAPI) {
         const CHANGE_THRESHOLD = 0.1;
 
         // Hàm áp dụng scaling
-        function applyScaling(key: string, value: number): number {
-            const scaleConfig = scaleConfigs.find(config => config.key === key);
+        function applyScaling(key: string, value: number, direction: 'read' | 'write'): number {
+            const scaleConfig = scaleConfigs.find(config => config.key === key && config.direction === direction);
             if (!scaleConfig) return value;
+            node.warn(`Scaling key: ${key}, value: ${value}, direction: ${direction}, config: ${JSON.stringify(scaleConfig)}`);
             return scaleConfig.operation === "multiply"
                 ? value * scaleConfig.factor
                 : value / scaleConfig.factor;
@@ -167,7 +175,7 @@ module.exports = function (RED: NodeAPI) {
                     const currentState: TelemetryData = {};
                     (result.data as boolean[]).forEach((value: boolean, index: number) => {
                         const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
-                        if (key) currentState[key] = value;
+                        if (key) currentState[key] = value; // Không cần scale cho boolean
                     });
 
                     // Lưu dữ liệu vào global variable coilRegisterData
@@ -201,7 +209,7 @@ module.exports = function (RED: NodeAPI) {
                         const key = Object.keys(modbusInputRegisters).find(
                             (k) => modbusInputRegisters[k] === index + inputStartAddress
                         );
-                        if (key) currentState[key] = applyScaling(key, value);
+                        if (key) currentState[key] = applyScaling(key, value, 'read'); // Áp dụng scaling cho read
                     });
 
                     // Lưu dữ liệu vào global variable inputRegisterData
@@ -235,7 +243,7 @@ module.exports = function (RED: NodeAPI) {
                         const key = Object.keys(modbusHoldingRegisters).find(
                             (k) => modbusHoldingRegisters[k] === index + holdingStartAddress
                         );
-                        if (key) currentState[key] = applyScaling(key, value);
+                        if (key) currentState[key] = applyScaling(key, value, 'read'); // Áp dụng scaling cho read
                     });
 
                     // Lưu dữ liệu vào global variable holdingRegisterData

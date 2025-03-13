@@ -27,8 +27,10 @@ module.exports = function (RED) {
         let configKeys = {};
         let scaleConfigs = [];
         try {
-            configKeys = JSON.parse(config.configKeys);
+            configKeys = JSON.parse(config.configKeys || '[]');
+            node.warn(`configKeys is ${JSON.stringify(configKeys)}`);
             scaleConfigs = JSON.parse(config.scaleConfigs || '[]');
+            node.warn(`scale config is ${JSON.stringify(scaleConfigs)}`);
             // Validate configKeys
             Object.entries(configKeys).forEach(([key, type]) => {
                 if (!['number', 'boolean', 'string'].includes(type)) {
@@ -37,7 +39,7 @@ module.exports = function (RED) {
             });
             // Validate scaleConfigs
             scaleConfigs.forEach(conf => {
-                if (!conf.key || !conf.operation || typeof conf.factor !== 'number') {
+                if (!conf.key || !conf.operation || typeof conf.factor !== 'number' || !['read', 'write'].includes(conf.direction)) {
                     throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
                 }
             });
@@ -92,13 +94,14 @@ module.exports = function (RED) {
         }
         // Utility functions
         function scaleValue(key, value, direction) {
-            const config = scaleConfigs.find(c => c.key === key);
-            node.warn(`scaling key value ${key}, ${value}, dirction ${direction}`);
-            node.warn(`config is ${JSON.stringify(config)}`);
+            node.warn(`all scaleConfigs ${JSON.stringify(scaleConfigs)}`);
+            const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
+            node.warn(`Scaling key: ${key}, value: ${value}, direction: ${direction}`);
+            node.warn(`Config: ${JSON.stringify(config)}`);
             if (!config)
                 return value;
-            const shouldMultiply = (config.operation === 'multiply');
-            node.warn(`shouldMultiply ${shouldMultiply}`);
+            const shouldMultiply = config.operation === 'multiply';
+            node.warn(`shouldMultiply: ${shouldMultiply}`);
             return shouldMultiply ? value * config.factor : value / config.factor;
         }
         function validateAndConvertValue(key, value) {
@@ -139,16 +142,20 @@ module.exports = function (RED) {
             }
             return null;
         }
-        function writeToModbus(mapping, value) {
+        function writeToModbus(key, mapping, value) {
             return __awaiter(this, void 0, void 0, function* () {
                 try {
+                    let writeValue = value;
+                    if (typeof value === 'number') {
+                        writeValue = scaleValue(key, value, 'write'); // Sử dụng key thay vì address
+                    }
                     if (mapping.fc === 6) {
-                        yield modbusClient.writeRegister(mapping.address, value);
+                        yield modbusClient.writeRegister(mapping.address, writeValue);
                     }
                     else if (mapping.fc === 5) {
                         yield modbusClient.writeCoil(mapping.address, value);
                     }
-                    node.log(`Wrote to Modbus: address=${mapping.address}, value=${value}, fc=${mapping.fc}`);
+                    node.log(`Wrote to Modbus: address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
                 }
                 catch (error) {
                     const err = error;
@@ -156,7 +163,7 @@ module.exports = function (RED) {
                 }
             });
         }
-        function readFromModbus(mapping) {
+        function readFromModbus(key, mapping) {
             return __awaiter(this, void 0, void 0, function* () {
                 try {
                     const readFc = mapping.fc === 6 ? 3 : mapping.fc === 5 ? 1 : 4;
@@ -170,7 +177,11 @@ module.exports = function (RED) {
                     else {
                         result = yield modbusClient.readInputRegisters(mapping.address, 1);
                     }
-                    return result.data[0];
+                    let readValue = result.data[0];
+                    if (typeof readValue === 'number') {
+                        readValue = scaleValue(key, readValue, 'read'); // Sử dụng key thay vì address
+                    }
+                    return readValue;
                 }
                 catch (error) {
                     const err = error;
@@ -179,11 +190,9 @@ module.exports = function (RED) {
             });
         }
         function publishResult(key, value) {
-            // Apply scaling only here when publishing the read result
-            const scaledValue = typeof value === 'number' ? scaleValue(key, value, 'read') : value;
             const mqttPayload = {
                 ts: Date.now(),
-                [key]: scaledValue,
+                [key]: value,
             };
             mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
             node.send({ payload: mqttPayload });
@@ -197,35 +206,44 @@ module.exports = function (RED) {
         }
         function handleRpcRequest(rpcBody) {
             return __awaiter(this, void 0, void 0, function* () {
+                node.warn("Start handleRpcRequest");
+                node.warn(`RPC Body received: ${JSON.stringify(rpcBody)}`);
                 try {
                     // Handle configuration request
                     if (rpcBody.method === 'set_state' && rpcBody.params) {
+                        node.warn("Handling config request");
                         const configParams = Object.entries(rpcBody.params)
                             .filter(([key]) => key in configKeys)
                             .reduce((acc, [key, value]) => (Object.assign(Object.assign({}, acc), { [key]: validateAndConvertValue(key, value) })), {});
                         if (Object.keys(configParams).length > 0) {
                             handleConfigRequest(configParams);
+                            node.warn("Config request handled");
                             return;
                         }
                     }
                     // Handle Modbus request
+                    node.warn("Handling modbus request");
                     const params = rpcBody.params || rpcBody;
                     const [key, rawValue] = Object.entries(params)[0];
                     const value = validateAndConvertValue(key, rawValue);
+                    node.warn(`Extracted key: ${key}, rawValue: ${rawValue}, validated value: ${value}`);
                     const mapping = findModbusMapping(key);
                     if (!mapping) {
                         throw new Error(`No Modbus mapping found for key: ${key}`);
                     }
-                    // Write the raw validated value directly without scaling
-                    yield writeToModbus(mapping, value);
-                    // Read back the value from Modbus
-                    const readValue = yield readFromModbus(mapping);
-                    // Apply scaling only to the read value before publishing
+                    node.warn(`Modbus mapping found: ${JSON.stringify(mapping)}`);
+                    // Write to Modbus with scaling applied if direction is 'write'
+                    yield writeToModbus(key, mapping, value);
+                    // Read back from Modbus with scaling applied if direction is 'read'
+                    const readValue = yield readFromModbus(key, mapping);
+                    node.warn(`Modbus read value: ${readValue}`);
                     publishResult(key, readValue);
+                    node.warn("Modbus request handled and result published");
                 }
                 catch (error) {
                     const err = error;
                     node.error(`RPC handling error: ${err.message}`);
+                    node.warn(`RPC handling error: ${err.message}`);
                     node.status({ fill: "red", shape: "ring", text: "RPC error" });
                 }
             });

@@ -22,7 +22,6 @@
       "viis-config-node": "dist/viis-config-node.js",
       "viis-device-events": "dist/viis-device-events.js",
       "viis-upload-events": "dist/viis-upload-telemetry.js",
-      "viis-test-modbus": "dist/viis-test-modbus.js",
       "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry.js",
       "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js"
     }

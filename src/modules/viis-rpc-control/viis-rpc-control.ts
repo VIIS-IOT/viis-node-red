@@ -13,6 +13,7 @@ interface ScaleConfig {
     key: string;
     operation: 'multiply' | 'divide';
     factor: number;
+    direction: 'read' | 'write';
 }
 
 interface ConfigKey {
@@ -45,10 +46,11 @@ module.exports = function (RED: NodeAPI) {
         // Parse configurations
         let configKeys: ConfigKey = {};
         let scaleConfigs: ScaleConfig[] = [];
-
         try {
-            configKeys = JSON.parse(config.configKeys);
+            configKeys = JSON.parse(config.configKeys || '[]');
+            node.warn(`configKeys is ${JSON.stringify(configKeys)}`);
             scaleConfigs = JSON.parse(config.scaleConfigs || '[]');
+            node.warn(`scale config is ${JSON.stringify(scaleConfigs)}`);
 
             // Validate configKeys
             Object.entries(configKeys).forEach(([key, type]) => {
@@ -59,7 +61,7 @@ module.exports = function (RED: NodeAPI) {
 
             // Validate scaleConfigs
             scaleConfigs.forEach(conf => {
-                if (!conf.key || !conf.operation || typeof conf.factor !== 'number') {
+                if (!conf.key || !conf.operation || typeof conf.factor !== 'number' || !['read', 'write'].includes(conf.direction)) {
                     throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
                 }
             });
@@ -120,14 +122,14 @@ module.exports = function (RED: NodeAPI) {
 
         // Utility functions
         function scaleValue(key: string, value: number, direction: 'read' | 'write'): number {
-            const config = scaleConfigs.find(c => c.key === key);
-            node.warn(`scaling key value ${key}, ${value}, dirction ${direction}`)
-            node.warn(`config is ${JSON.stringify(config)}`)
+            node.warn(`all scaleConfigs ${JSON.stringify(scaleConfigs)}`);
+            const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
+            node.warn(`Scaling key: ${key}, value: ${value}, direction: ${direction}`);
+            node.warn(`Config: ${JSON.stringify(config)}`);
             if (!config) return value;
 
-            const shouldMultiply = (config.operation === 'multiply')
-            node.warn(`shouldMultiply ${shouldMultiply}`)
-
+            const shouldMultiply = config.operation === 'multiply';
+            node.warn(`shouldMultiply: ${shouldMultiply}`);
             return shouldMultiply ? value * config.factor : value / config.factor;
         }
 
@@ -168,21 +170,25 @@ module.exports = function (RED: NodeAPI) {
             return null;
         }
 
-        async function writeToModbus(mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
+        async function writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
             try {
+                let writeValue = value;
+                if (typeof value === 'number') {
+                    writeValue = scaleValue(key, value, 'write'); // Sử dụng key thay vì address
+                }
                 if (mapping.fc === 6) {
-                    await modbusClient.writeRegister(mapping.address, value as number);
+                    await modbusClient.writeRegister(mapping.address, writeValue as number);
                 } else if (mapping.fc === 5) {
                     await modbusClient.writeCoil(mapping.address, value as boolean);
                 }
-                node.log(`Wrote to Modbus: address=${mapping.address}, value=${value}, fc=${mapping.fc}`);
+                node.log(`Wrote to Modbus: address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
             } catch (error) {
                 const err = error as Error;
                 throw new Error(`Modbus write failed: ${err.message}`);
             }
         }
 
-        async function readFromModbus(mapping: ModbusMappingResult): Promise<number | boolean> {
+        async function readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean> {
             try {
                 const readFc = mapping.fc === 6 ? 3 : mapping.fc === 5 ? 1 : 4;
                 let result: ModbusData;
@@ -195,7 +201,11 @@ module.exports = function (RED: NodeAPI) {
                     result = await modbusClient.readInputRegisters(mapping.address, 1);
                 }
 
-                return result.data[0];
+                let readValue = result.data[0];
+                if (typeof readValue === 'number') {
+                    readValue = scaleValue(key, readValue, 'read'); // Sử dụng key thay vì address
+                }
+                return readValue;
             } catch (error) {
                 const err = error as Error;
                 throw new Error(`Modbus read failed: ${err.message}`);
@@ -203,11 +213,9 @@ module.exports = function (RED: NodeAPI) {
         }
 
         function publishResult(key: string, value: number | boolean): void {
-            // Apply scaling only here when publishing the read result
-            const scaledValue = typeof value === 'number' ? scaleValue(key, value, 'read') : value;
             const mqttPayload = {
                 ts: Date.now(),
-                [key]: scaledValue,
+                [key]: value,
             };
 
             mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
@@ -226,9 +234,13 @@ module.exports = function (RED: NodeAPI) {
         }
 
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
+            node.warn("Start handleRpcRequest");
+            node.warn(`RPC Body received: ${JSON.stringify(rpcBody)}`);
+
             try {
                 // Handle configuration request
                 if (rpcBody.method === 'set_state' && rpcBody.params) {
+                    node.warn("Handling config request");
                     const configParams = Object.entries(rpcBody.params)
                         .filter(([key]) => key in configKeys)
                         .reduce((acc, [key, value]) => ({
@@ -238,30 +250,36 @@ module.exports = function (RED: NodeAPI) {
 
                     if (Object.keys(configParams).length > 0) {
                         handleConfigRequest(configParams);
+                        node.warn("Config request handled");
                         return;
                     }
                 }
 
                 // Handle Modbus request
+                node.warn("Handling modbus request");
                 const params = rpcBody.params || rpcBody;
                 const [key, rawValue] = Object.entries(params)[0];
                 const value = validateAndConvertValue(key, rawValue);
+                node.warn(`Extracted key: ${key}, rawValue: ${rawValue}, validated value: ${value}`);
 
                 const mapping = findModbusMapping(key);
                 if (!mapping) {
                     throw new Error(`No Modbus mapping found for key: ${key}`);
                 }
+                node.warn(`Modbus mapping found: ${JSON.stringify(mapping)}`);
 
-                // Write the raw validated value directly without scaling
-                await writeToModbus(mapping, value);
-                // Read back the value from Modbus
-                const readValue = await readFromModbus(mapping);
-                // Apply scaling only to the read value before publishing
+                // Write to Modbus with scaling applied if direction is 'write'
+                await writeToModbus(key, mapping, value);
+                // Read back from Modbus with scaling applied if direction is 'read'
+                const readValue = await readFromModbus(key, mapping);
+                node.warn(`Modbus read value: ${readValue}`);
                 publishResult(key, readValue);
+                node.warn("Modbus request handled and result published");
 
             } catch (error) {
                 const err = error as Error;
                 node.error(`RPC handling error: ${err.message}`);
+                node.warn(`RPC handling error: ${err.message}`);
                 node.status({ fill: "red", shape: "ring", text: "RPC error" });
             }
         }
