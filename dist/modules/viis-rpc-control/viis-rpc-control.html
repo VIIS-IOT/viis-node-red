@@ -12,8 +12,9 @@
     </div>
     <div class="form-row">
         <label for="node-input-configKeys"><i class="fa fa-cog"></i> Config Keys</label>
-        <textarea id="node-input-configKeys" style="width: 100%; min-height: 150px;" 
-            placeholder='{"max_temp": "number", "power": "boolean", "mode": "string"}'></textarea>
+        <!-- Ẩn textarea gốc để dùng CodeMirror thay thế -->
+        <textarea id="node-input-configKeys" style="display:none;" placeholder='{"max_temp": "number", "power": "boolean", "mode": "string"}'></textarea>
+        <div id="configKeysEditor" style="border: 1px solid #ddd; min-height:150px;"></div>
     </div>
     <div class="form-row">
         <label for="node-input-scaleConfigs"><i class="fa fa-balance-scale"></i> Scale Configs</label>
@@ -67,29 +68,43 @@
             return this.name || "viis-rpc-control";
         },
         oneditprepare: function () {
-            // Format JSON trong configKeys
-            const configKeysEl = $("#node-input-configKeys");
+            // ---------------------------
+            // Khởi tạo CodeMirror cho configKeys
+            // ---------------------------
+            var initialConfigKeys = this.configKeys || '{"max_temp": "number", "power": "boolean"}';
+            var configKeysEditor = CodeMirror(document.getElementById('configKeysEditor'), {
+                value: "",
+                mode: { name: "javascript", json: true },
+                lineNumbers: true,
+                theme: "default"
+            });
             try {
-                const value = configKeysEl.val();
-                if (value) {
-                    const formatted = JSON.stringify(JSON.parse(value), null, 2);
-                    configKeysEl.val(formatted);
-                }
+                var parsedConfig = JSON.parse(initialConfigKeys);
+                var formattedConfig = JSON.stringify(parsedConfig, null, 2);
+                configKeysEditor.setValue(formattedConfig);
             } catch (e) {
-                console.log("Error formatting configKeys:", e);
+                configKeysEditor.setValue(initialConfigKeys);
             }
-            configKeysEl.on("change", function () {
+            // Khi editor mất focus, tự động format lại JSON
+            configKeysEditor.on("blur", function () {
                 try {
-                    const parsed = JSON.parse($(this).val());
-                    const formatted = JSON.stringify(parsed, null, 2);
-                    $(this).val(formatted);
+                    var jsonObj = JSON.parse(configKeysEditor.getValue());
+                    var formatted = JSON.stringify(jsonObj, null, 2);
+                    configKeysEditor.setValue(formatted);
                     RED.notify("Valid configKeys JSON", "success");
                 } catch (e) {
                     RED.notify("Invalid configKeys JSON: " + e.message, "error");
                 }
             });
+            // Đồng bộ nội dung editor với textarea ẩn
+            configKeysEditor.on("change", function () {
+                $("#node-input-configKeys").val(configKeysEditor.getValue());
+            });
+            $("#node-input-configKeys").val(configKeysEditor.getValue());
 
+            // ---------------------------
             // Khởi tạo CodeMirror cho scaleConfigs
+            // ---------------------------
             var initialScaleConfigs = this.scaleConfigs || '[]';
             var scaleConfigsEditor = CodeMirror(document.getElementById('scaleConfigsEditor'), {
                 value: "",
@@ -97,8 +112,6 @@
                 lineNumbers: true,
                 theme: "default"
             });
-
-            // Set giá trị ban đầu cho editor
             try {
                 var parsedScale = JSON.parse(initialScaleConfigs);
                 var formattedScale = JSON.stringify(parsedScale, null, 2);
@@ -106,7 +119,6 @@
             } catch (e) {
                 scaleConfigsEditor.setValue(initialScaleConfigs);
             }
-
             // Khi editor mất focus, tự động format lại JSON
             scaleConfigsEditor.on("blur", function () {
                 try {
@@ -118,7 +130,6 @@
                     RED.notify("Invalid scaleConfigs JSON: " + e.message, "error");
                 }
             });
-
             // Đồng bộ nội dung editor với textarea ẩn
             scaleConfigsEditor.on("change", function () {
                 $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
@@ -126,23 +137,19 @@
             $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
         },
         oneditsave: function () {
-            // Compact JSON trước khi lưu cho configKeys
-            const configKeysEl = $("#node-input-configKeys");
+            // Compact JSON cho configKeys trước khi lưu
+            var configKeysField = $("#node-input-configKeys");
             try {
-                const value = configKeysEl.val();
-                if (value) {
-                    configKeysEl.val(JSON.stringify(JSON.parse(value)));
-                }
+                var configs = JSON.parse(configKeysField.val());
+                configKeysField.val(JSON.stringify(configs));
             } catch (e) {
                 console.log("Error compacting configKeys:", e);
             }
-            // Compact JSON cho scaleConfigs
-            const scaleConfigsEl = $("#node-input-scaleConfigs");
+            // Compact JSON cho scaleConfigs trước khi lưu
+            var scaleConfigsField = $("#node-input-scaleConfigs");
             try {
-                const value = scaleConfigsEl.val();
-                if (value) {
-                    scaleConfigsEl.val(JSON.stringify(JSON.parse(value)));
-                }
+                var configs = JSON.parse(scaleConfigsField.val());
+                scaleConfigsField.val(JSON.stringify(configs));
             } catch (e) {
                 console.log("Error compacting scaleConfigs:", e);
             }
