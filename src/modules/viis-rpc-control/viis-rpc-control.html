@@ -11,25 +11,15 @@
         </select>
     </div>
     <div class="form-row">
-        <label for="node-input-configKeys"><i class="fa fa-cog"></i> Config Keys (JSON)</label>
-        <textarea id="node-input-configKeys" placeholder='{"max_temp": "number", "power": "boolean"}'></textarea>
+        <label for="node-input-configKeys"><i class="fa fa-cog"></i> Config Keys</label>
+        <textarea id="node-input-configKeys" style="width: 100%; min-height: 150px;" 
+            placeholder='{"max_temp": "number", "power": "boolean", "mode": "string"}'></textarea>
     </div>
-</script>
-
-<script type="text/html" data-help-name="viis-rpc-control">
-    <p>A node to receive RPC control payloads via MQTT, map them to Modbus addresses, write to Modbus, verify by reading back, and publish the result via MQTT. It also supports configuration keys that bypass Modbus writes.</p>
-    <h3>Inputs</h3>
-    <dl class="message-properties">
-        <dt>payload <span class="property-type">object</span></dt>
-        <dd>RPC control payload received from MQTT (e.g., <code>{ "set_ph": 7.0 }</code> or <code>{"method":"set_state","params":{"max_temp":40}}</code>).</dd>
-    </dl>
-    <h3>Outputs</h3>
-    <dl class="message-properties">
-        <dt>payload <span class="property-type">object</span></dt>
-        <dd>Telemetry data with timestamp sent to MQTT (e.g., <code>{ "ts": 1630000000000, "set_ph": 7.0 }</code> or config data).</dd>
-    </dl>
-    <h3>Details</h3>
-    <p>This node subscribes to an MQTT topic and processes RPC payloads. If the payload contains a <code>method</code> field (e.g., <code>set_state</code>) and <code>params</code> with keys listed in <code>Config Keys</code>, it treats them as configuration data, stores them in the global variable <code>configKeys</code>, and skips Modbus operations.</p>
+    <div class="form-row">
+        <label for="node-input-scaleConfigs"><i class="fa fa-balance-scale"></i> Scale Configs</label>
+        <textarea id="node-input-scaleConfigs" style="width: 100%; min-height: 150px;" 
+            placeholder='[{"key": "set_ph", "operation": "multiply", "factor": 10}, {"key": "set_ec", "operation": "multiply", "factor": 1000}]'></textarea>
+    </div>
 </script>
 
 <script type="text/javascript">
@@ -39,21 +29,77 @@
         defaults: {
             name: { value: "" },
             mqttBroker: { value: "thingsboard", required: true },
-            configKeys: { value: '{"max_temp": "number", "power": "boolean"}' } // Giá trị mặc định
+            configKeys: {
+                value: '{"max_temp": "number", "power": "boolean"}',
+                required: true,
+                validate: function (v) {
+                    try {
+                        const parsed = JSON.parse(v);
+                        return typeof parsed === 'object' && parsed !== null;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+            },
+            scaleConfigs: {
+                value: '[]',
+                required: false,
+                validate: function (v) {
+                    try {
+                        const parsed = JSON.parse(v);
+                        return Array.isArray(parsed);
+                    } catch (e) {
+                        return false;
+                    }
+                }
+            }
         },
-        inputs: 0,
+        inputs: 1,
         outputs: 1,
         icon: "../../icons/logo.png",
         label: function () {
             return this.name || "viis-rpc-control";
         },
         oneditprepare: function () {
-            // Optional: Validate JSON input
-            $("#node-input-configKeys").on("change", function () {
+            const that = this;
+
+            // Format JSON in textareas
+            ['configKeys', 'scaleConfigs'].forEach(function (field) {
+                const element = $(`#node-input-${field}`);
                 try {
-                    JSON.parse($(this).val());
+                    const value = element.val();
+                    if (value) {
+                        const formatted = JSON.stringify(JSON.parse(value), null, 2);
+                        element.val(formatted);
+                    }
                 } catch (e) {
-                    RED.notify("Invalid JSON in Config Keys: " + e.message, "error");
+                    console.log(`Error formatting ${field}:`, e);
+                }
+
+                // Add validation on change
+                element.on("change", function () {
+                    try {
+                        const parsed = JSON.parse($(this).val());
+                        const formatted = JSON.stringify(parsed, null, 2);
+                        $(this).val(formatted);
+                        RED.notify(`Valid ${field} JSON`, "success");
+                    } catch (e) {
+                        RED.notify(`Invalid ${field} JSON: ${e.message}`, "error");
+                    }
+                });
+            });
+        },
+        oneditsave: function () {
+            // Compact JSON before saving
+            ['configKeys', 'scaleConfigs'].forEach(function (field) {
+                const element = $(`#node-input-${field}`);
+                try {
+                    const value = element.val();
+                    if (value) {
+                        element.val(JSON.stringify(JSON.parse(value)));
+                    }
+                } catch (e) {
+                    console.log(`Error compacting ${field}:`, e);
                 }
             });
         }

@@ -21,7 +21,7 @@ module.exports = function (RED) {
         const modbusConfig = {
             type: process.env.MODBUS_TYPE || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
+            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "1502", 10),
             serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
             baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
             parity: process.env.MODBUS_PARITY || "none",
@@ -90,6 +90,26 @@ module.exports = function (RED) {
         const inputQuantity = parseInt(config.inputQuantity || "26", 10);
         const holdingStartAddress = parseInt(config.holdingStartAddress || "0", 10);
         const holdingQuantity = parseInt(config.holdingQuantity || "29", 10);
+        // Parse cấu hình scaling từ config
+        let scaleConfigs = [];
+        try {
+            scaleConfigs = JSON.parse(config.scaleConfigs || "[]");
+        }
+        catch (error) {
+            node.error(`Failed to parse scaleConfigs: ${error.message}`);
+            node.status({ fill: "red", shape: "ring", text: "Invalid scaleConfigs" });
+            // Cung cấp cấu hình mặc định nếu parse thất bại
+            scaleConfigs = [
+                { key: "current_ec", operation: "divide", factor: 1000 },
+                { key: "current_ph", operation: "divide", factor: 10 },
+                { key: "pump_pressure", operation: "divide", factor: 100 },
+                { key: "set_ph", operation: "divide", factor: 10 },
+                { key: "set_ec", operation: "divide", factor: 1000 },
+                { key: "flow_rate", operation: "multiply", factor: 10 },
+                { key: "temperature", operation: "divide", factor: 100 },
+                { key: "power_level", operation: "multiply", factor: 1000 }
+            ];
+        }
         let coilInterval = null;
         let inputInterval = null;
         let holdingInterval = null;
@@ -99,17 +119,6 @@ module.exports = function (RED) {
         let previousStateInput = {};
         let previousStateHolding = {};
         const CHANGE_THRESHOLD = 0.1;
-        // Cấu hình scaling
-        const scaleConfigs = [
-            { key: "current_ec", operation: "divide", factor: 1000 },
-            { key: "current_ph", operation: "divide", factor: 10 },
-            { key: "pump_pressure", operation: "divide", factor: 100 },
-            { key: "set_ph", operation: "divide", factor: 10 },
-            { key: "set_ec", operation: "divide", factor: 1000 },
-            { key: "flow_rate", operation: "multiply", factor: 10 },
-            { key: "temperature", operation: "divide", factor: 100 },
-            { key: "power_level", operation: "multiply", factor: 1000 }
-        ];
         // Hàm áp dụng scaling
         function applyScaling(key, value) {
             const scaleConfig = scaleConfigs.find(config => config.key === key);

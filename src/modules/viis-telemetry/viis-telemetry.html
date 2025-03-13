@@ -39,6 +39,10 @@
         <label for="node-input-holdingQuantity"><i class="fa fa-list"></i> Holding Quantity</label>
         <input type="text" id="node-input-holdingQuantity" placeholder="29">
     </div>
+    <div class="form-row">
+        <label for="node-input-scaleConfigs"><i class="fa fa-list"></i> Scale Configss</label>
+        <textarea id="node-input-scaleConfigs" placeholder='[{"key": "current_ph", "operation": "divide", "factor": 10}]' style="width: 100%; min-height: 150px;"></textarea>
+    </div>
 </script>
 
 <script type="text/html" data-help-name="viis-telemetry">
@@ -66,7 +70,19 @@
             inputStartAddress: { value: "0", required: true, validate: RED.validators.number() },
             inputQuantity: { value: "26", required: true, validate: RED.validators.number() },
             holdingStartAddress: { value: "0", required: true, validate: RED.validators.number() },
-            holdingQuantity: { value: "29", required: true, validate: RED.validators.number() }
+            holdingQuantity: { value: "29", required: true, validate: RED.validators.number() },
+            scaleConfigs: {
+                value: "[]",
+                required: false,
+                validate: function (v) {
+                    try {
+                        JSON.parse(v);
+                        return true;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+            }
         },
         inputs: 0,
         outputs: 1,
@@ -75,10 +91,23 @@
             return this.name || "viis-telemetry";
         },
         oneditprepare: function () {
-            // Optional: Có thể thêm logic để hiển thị thông tin từ process.env nếu cần
+            var that = this;
+            var scaleConfigsField = $("#node-input-scaleConfigs");
+            try {
+                var configs = JSON.parse(scaleConfigsField.val() || "[]");
+                scaleConfigsField.val(JSON.stringify(configs, null, 2));
+            } catch (e) {
+                console.log("Error parsing scaleConfigs:", e);
+            }
         },
         oneditsave: function () {
-            // Optional: Có thể thêm logic xử lý khi lưu cấu hình
+            var scaleConfigsField = $("#node-input-scaleConfigs");
+            try {
+                var configs = JSON.parse(scaleConfigsField.val() || "[]");
+                scaleConfigsField.val(JSON.stringify(configs));
+            } catch (e) {
+                console.log("Error saving scaleConfigs:", e);
+            }
         }
     });
 </script>

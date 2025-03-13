@@ -13,6 +13,7 @@ interface ViisTelemetryNodeDef extends NodeDef {
     inputQuantity: string;
     holdingStartAddress: string;
     holdingQuantity: string;
+    scaleConfigs: string; // Thêm thuộc tính để cấu hình scaling từ Node-RED editor
 }
 
 // Định nghĩa interface cho dữ liệu telemetry
@@ -36,7 +37,7 @@ module.exports = function (RED: NodeAPI) {
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
+            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "1502", 10),
             serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
             baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
             parity: (process.env.MODBUS_PARITY as "none" | "even" | "odd") || "none",
@@ -115,6 +116,26 @@ module.exports = function (RED: NodeAPI) {
         const holdingStartAddress = parseInt(config.holdingStartAddress || "0", 10);
         const holdingQuantity = parseInt(config.holdingQuantity || "29", 10);
 
+        // Parse cấu hình scaling từ config
+        let scaleConfigs: ScaleConfig[] = [];
+        try {
+            scaleConfigs = JSON.parse(config.scaleConfigs || "[]") as ScaleConfig[];
+        } catch (error) {
+            node.error(`Failed to parse scaleConfigs: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Invalid scaleConfigs" });
+            // Cung cấp cấu hình mặc định nếu parse thất bại
+            scaleConfigs = [
+                { key: "current_ec", operation: "divide", factor: 1000 },
+                { key: "current_ph", operation: "divide", factor: 10 },
+                { key: "pump_pressure", operation: "divide", factor: 100 },
+                { key: "set_ph", operation: "divide", factor: 10 },
+                { key: "set_ec", operation: "divide", factor: 1000 },
+                { key: "flow_rate", operation: "multiply", factor: 10 },
+                { key: "temperature", operation: "divide", factor: 100 },
+                { key: "power_level", operation: "multiply", factor: 1000 }
+            ];
+        }
+
         let coilInterval: NodeJS.Timeout | null = null;
         let inputInterval: NodeJS.Timeout | null = null;
         let holdingInterval: NodeJS.Timeout | null = null;
@@ -125,18 +146,6 @@ module.exports = function (RED: NodeAPI) {
         let previousStateInput: TelemetryData = {};
         let previousStateHolding: TelemetryData = {};
         const CHANGE_THRESHOLD = 0.1;
-
-        // Cấu hình scaling
-        const scaleConfigs: ScaleConfig[] = [
-            { key: "current_ec", operation: "divide", factor: 1000 },
-            { key: "current_ph", operation: "divide", factor: 10 },
-            { key: "pump_pressure", operation: "divide", factor: 100 },
-            { key: "set_ph", operation: "divide", factor: 10 },
-            { key: "set_ec", operation: "divide", factor: 1000 },
-            { key: "flow_rate", operation: "multiply", factor: 10 },
-            { key: "temperature", operation: "divide", factor: 100 },
-            { key: "power_level", operation: "multiply", factor: 1000 }
-        ];
 
         // Hàm áp dụng scaling
         function applyScaling(key: string, value: number): number {
