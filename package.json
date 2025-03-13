@@ -5,7 +5,12 @@
   "main": "./dist/viis-automation-node.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "rm -rf dist && npx tsc && cp -r src/icons dist/icons && find ./src -name '*.html' -exec bash -c 'target=\"dist/$(echo \"{}\" | sed \"s/^.\\/src\\///\")\"; mkdir -p \"$(dirname \"$target\")\" && cp \"{}\" \"$target\"' \\;"
+    "build": "rm -rf dist && npx tsc && cp -r src/icons dist/icons && find ./src -name '*.html' -exec bash -c 'target=\"dist/$(echo \"{}\" | sed \"s/^.\\/src\\///\")\"; mkdir -p \"$(dirname \"$target\")\" && cp \"{}\" \"$target\"' \\;",
+    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
+    "migration:generate": "npm run typeorm -- migration:generate src/orm/migrations/migrate -d src/orm/dataSource.ts",
+    "migration:run": "npm run typeorm -- migration:run -d src/orm/dataSource.ts",
+    "migration:create": "npm run typeorm -- migration:create -d src/orm/dataSource.ts",
+    "migration:revert": "npm run typeorm -- migration:revert -d src/orm/dataSource.ts"
   },
   "keywords": [],
   "author": "VIIS - Viet Nam IoT Solution",
@@ -28,11 +33,16 @@
   },
   "dependencies": {
     "axios": "^1.7.9",
+    "class-transformer": "^0.5.1",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.7",
     "modbus-serial": "^8.0.19",
     "mqtt": "^5.10.3",
-    "mysql2": "^3.12.0",
+    "mysql2": "^3.13.0",
+    "reflect-metadata": "^0.2.2",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typeorm": "^0.3.21",
     "uuid": "^11.0.5"
   }
 }
