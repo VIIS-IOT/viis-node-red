@@ -6,16 +6,18 @@ import { TabiotSchedule } from '../../orm/entities/schedule/TabiotSchedule';
 
 @Service()
 export class SyncScheduleService extends AxiosService {
+    private accessToken: string;
     constructor() {
         super({
             baseURL: configs.serverUrl,
             withCredentials: true,
         });
+        this.accessToken = process.env.DEVICE_ACCESS_TOKEN || 'NA'
     }
 
     async logSchedule(body: any) {
         const response: any = await this.instance.post(`/api/v2/scheduleLog`, body, {
-            headers: this.getAuthorizationAdminToken(),
+            // headers: this.getAuthorizationToken(),
             withCredentials: true,
         });
         return { status: response.status, data: response.data } as unknown as Array<string>;
@@ -23,26 +25,20 @@ export class SyncScheduleService extends AxiosService {
 
     async syncLocalToServer(body: Partial<TabiotSchedule>) {
         const response: any = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
-            headers: this.getAuthorizationAdminToken(),
+            // headers: this.getAuthorizationToken(),
             withCredentials: true,
         });
         return { status: response.status, data: response.data } as unknown as Array<string>;
     }
 
-    getAuthorizationAdminToken(tenantId?: string) {
-        try {
-            if (!tenantId)
-                return {
-                    Authorization: `Bearer ${configs.bearerAuthThingsboard}`,
-                };
-            else {
-                return {
-                    Authorization: `Bearer ${configs.bearerAuthThingsboard}`,
-                };
-            }
-        } catch (error) {
-            throw error;
-        }
-    }
+    // getAuthorizationToken() {
+    //     try {
+    //         return {
+    //             Authorization: `Bearer ${configs.bearerAuthThingsboard}`,
+    //         };
+    //     } catch (error) {
+    //         throw error;
+    //     }
+    // }
 
 }

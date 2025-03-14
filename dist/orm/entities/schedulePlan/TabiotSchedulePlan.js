@@ -59,6 +59,10 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'date', nullable: true }),
     __metadata("design:type", String)
 ], TabiotSchedulePlan.prototype, "end_date", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'tinyint', default: 0 }),
+    __metadata("design:type", Number)
+], TabiotSchedulePlan.prototype, "is_deleted", void 0);
 exports.TabiotSchedulePlan = TabiotSchedulePlan = __decorate([
     (0, typeorm_1.Entity)('tabiot_schedule_plan')
 ], TabiotSchedulePlan);

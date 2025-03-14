@@ -7,7 +7,6 @@ import { ScheduleService } from "./viis-schedule-executor-service";
 import ClientRegistry from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
-import { MySqlClientCore } from "../../core/mysql-client";
 
 interface ScheduleExecutorNodeDef extends NodeDef {
     name: string;
@@ -156,5 +155,5 @@ module.exports = function (RED: NodeAPI) {
         });
     }
 
-    RED.nodes.registerType("schedule-executor", ScheduleExecutorNode);
+    RED.nodes.registerType("viis-schedule-executor", ScheduleExecutorNode);
 };

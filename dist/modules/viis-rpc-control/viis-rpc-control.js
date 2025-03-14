@@ -271,13 +271,13 @@ module.exports = function (RED) {
                 client_registry_1.default.releaseClient("modbus", node)
             ])
                 .then(() => {
-                    node.log("Node closed and clients released");
-                    done();
-                })
+                node.log("Node closed and clients released");
+                done();
+            })
                 .catch((error) => {
-                    node.error(`Cleanup error: ${error.message}`);
-                    done();
-                });
+                node.error(`Cleanup error: ${error.message}`);
+                done();
+            });
         });
     }
     RED.nodes.registerType("viis-rpc-control", ViisRpcControlNode);
