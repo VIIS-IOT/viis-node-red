@@ -11,6 +11,8 @@ export class TabiotSchedule extends CustomBaseEntity {
     @Column({ type: 'varchar', length: 255, nullable: true })
     device_id?: string;
 
+    device_label?: string;
+
     @Column({ type: 'mediumtext', nullable: true })
     action?: string;
 

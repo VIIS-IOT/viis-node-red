@@ -28,7 +28,8 @@
       "viis-device-events": "dist/viis-device-events.js",
       "viis-upload-events": "dist/viis-upload-telemetry.js",
       "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry.js",
-      "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js"
+      "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js",
+      "viis-schedule-executor": "dist/modules/viis-schedule-executor/viis-schedule-executor.js"
     }
   },
   "dependencies": {
@@ -42,6 +43,7 @@
     "reflect-metadata": "^0.2.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
+    "typedi": "^0.10.0",
     "typeorm": "^0.3.21",
     "uuid": "^11.0.5"
   }
