@@ -65,7 +65,7 @@ class MqttClientCore extends events_1.EventEmitter {
             }
             else {
                 this.subscribedTopics.add(topic);
-                this.node.log(`Subscribed to topic: ${topic}`);
+                //this.node.log(`Subscribed to topic: ${topic}`);
             }
         });
     }
@@ -81,7 +81,7 @@ class MqttClientCore extends events_1.EventEmitter {
             }
             else {
                 this.subscribedTopics.delete(topic);
-                this.node.log(`Unsubscribed from topic: ${topic}`);
+                //this.node.log(`Unsubscribed from topic: ${topic}`);
             }
         });
     }
@@ -98,7 +98,7 @@ class MqttClientCore extends events_1.EventEmitter {
                 this.node.error(`Failed to publish to ${topic}: ${err.message}`);
             }
             else {
-                this.node.log(`Published to topic: ${topic}`);
+                //this.node.log(`Published to topic: ${topic}`);
             }
         });
     }
@@ -113,7 +113,7 @@ class MqttClientCore extends events_1.EventEmitter {
                     this.messageQueue.unshift({ topic, message, options }); // Re-queue on failure
                 }
                 else {
-                    this.node.log(`Published queued message to topic: ${topic}`);
+                    //this.node.log(`Published queued message to topic: ${topic}`);
                 }
             });
         }
@@ -134,7 +134,7 @@ class MqttClientCore extends events_1.EventEmitter {
     disconnect() {
         if (this.client) {
             this.client.end(() => {
-                this.node.log("MQTT client disconnected manually");
+                //this.node.log("MQTT client disconnected manually");
             });
         }
     }

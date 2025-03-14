@@ -330,11 +330,11 @@ module.exports = function (RED: NodeAPI) {
 
                 if (typeof currVal === "number" && typeof prevVal === "number") {
                     if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
-                        node.log(`Change detected in ${key}: ${prevVal} -> ${currVal}`);
+                        //node.log(`Change detected in ${key}: ${prevVal} -> ${currVal}`);
                         return true;
                     }
                 } else if (currVal !== prevVal) {
-                    node.log(`Change detected in ${key}: ${prevVal} -> ${currVal}`);
+                    //node.log(`Change detected in ${key}: ${prevVal} -> ${currVal}`);
                     return true;
                 }
             }
@@ -343,7 +343,7 @@ module.exports = function (RED: NodeAPI) {
 
         modbusClient.on("modbus-status", (status: { status: string; error?: string }) => {
             if (status.status === "disconnected" && !isPollingPaused) {
-                node.log("Pausing polling due to Modbus disconnection...");
+                //node.log("Pausing polling due to Modbus disconnection...");
                 isPollingPaused = true;
                 if (coilInterval) clearInterval(coilInterval);
                 if (inputInterval) clearInterval(inputInterval);
@@ -352,7 +352,7 @@ module.exports = function (RED: NodeAPI) {
                 inputInterval = null;
                 holdingInterval = null;
             } else if (status.status === "connected" && isPollingPaused) {
-                node.log("Resuming polling after Modbus reconnection...");
+                //node.log("Resuming polling after Modbus reconnection...");
                 resumePollingIfAllConnected();
             }
         });
@@ -374,12 +374,12 @@ module.exports = function (RED: NodeAPI) {
             ClientRegistry.releaseClient("modbus", node);
             ClientRegistry.releaseClient("thingsboard", node);
             ClientRegistry.releaseClient("local", node);
-            node.log("Node closed and client references released");
+            //node.log("Node closed and client references released");
         });
 
         thingsboardClient.on("mqtt-status", (status: { status: string; error?: string }) => {
             if (status.status === "disconnected" && !isPollingPaused) {
-                node.log("Pausing polling due to ThingsBoard MQTT disconnection...");
+                //node.log("Pausing polling due to ThingsBoard MQTT disconnection...");
                 isPollingPaused = true;
                 if (coilInterval) clearInterval(coilInterval);
                 if (inputInterval) clearInterval(inputInterval);
@@ -388,14 +388,14 @@ module.exports = function (RED: NodeAPI) {
                 inputInterval = null;
                 holdingInterval = null;
             } else if (status.status === "connected" && isPollingPaused && localClient.isConnected()) {
-                node.log("Resuming polling after ThingsBoard MQTT reconnection...");
+                //node.log("Resuming polling after ThingsBoard MQTT reconnection...");
                 resumePollingIfAllConnected();
             }
         });
 
         localClient.on("mqtt-status", (status: { status: string; error?: string }) => {
             if (status.status === "disconnected" && !isPollingPaused) {
-                node.log("Pausing polling due to Local MQTT disconnection...");
+                //node.log("Pausing polling due to Local MQTT disconnection...");
                 isPollingPaused = true;
                 if (coilInterval) clearInterval(coilInterval);
                 if (inputInterval) clearInterval(inputInterval);
@@ -404,7 +404,7 @@ module.exports = function (RED: NodeAPI) {
                 inputInterval = null;
                 holdingInterval = null;
             } else if (status.status === "connected" && isPollingPaused && thingsboardClient.isConnected()) {
-                node.log("Resuming polling after Local MQTT reconnection...");
+                //node.log("Resuming polling after Local MQTT reconnection...");
                 resumePollingIfAllConnected();
             }
         });

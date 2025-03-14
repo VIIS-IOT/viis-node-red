@@ -1,5 +1,4 @@
 import { NodeAPI, NodeDef, Node } from "node-red";
-import { Container } from "typedi";
 
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore } from "../../core/mqtt-client";
@@ -11,7 +10,8 @@ import moment from "moment";
 interface ScheduleExecutorNodeDef extends NodeDef {
     name: string;
     mqttBroker: string;
-    // Các trường cấu hình bổ sung nếu cần
+    scheduleInterval: number;
+    description: string;
 }
 
 
@@ -29,10 +29,17 @@ module.exports = function (RED: NodeAPI) {
         RED.nodes.createNode(this, config);
         const node = this;
         node.name = config.name;
+        const scheduleInterval = config.scheduleInterval; // Sử dụng nếu cần
+        node.warn(`Schedule interval set to: ${scheduleInterval}`);
 
-        // Lấy service từ container (đã đăng ký với typedi)
-        const scheduleService = Container.get(ScheduleService);
-
+        let scheduleService: ScheduleService;
+        try {
+            scheduleService = new ScheduleService(node); // Truyền node vào constructor
+            node.warn("ScheduleService initialized successfully");
+        } catch (error) {
+            node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
+            return;
+        }
         // Khởi tạo Modbus và MQTT client thông qua ClientRegistry
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
@@ -69,72 +76,70 @@ module.exports = function (RED: NodeAPI) {
 
         node.on("input", async function (msg, send, done) {
             try {
-                // 1. Đọc danh sách schedule từ DB qua ORM
+                // Lấy tất cả schedules từ DB, không lọc trước
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
                 node.warn(`Found ${schedules.length} schedule(s).`);
 
-                // 2. Lọc ra các schedule đang đến thời gian chạy
-                const dueSchedules = schedules.filter(schedule => scheduleService.isScheduleDue(schedule));
-                node.warn(`Có ${dueSchedules.length} schedule(s) đến giờ chạy.`);
-
-                // 3. Với mỗi schedule, thực hiện quy trình:
-                //    Nếu schedule chưa ở trạng thái running thì cập nhật status và sync
-                //    -> mapScheduleToModbus → executeModbusCommands (retry 3 lần) → verifyModbusWrite
-                //    Nếu đã hết giờ thực thi (now > end_time): update status thành finished, reset modbus (ghi false/0)
-                for (const schedule of dueSchedules) {
-                    const now = moment().utcOffset(420);
+                for (const schedule of schedules) {
+                    const now = moment().utc().add(7, 'hours');
+                    const scheduleStart = moment(schedule.start_time, "HH:mm:ss");
                     const scheduleEnd = moment(schedule.end_time, "HH:mm:ss");
+                    const isDue = scheduleService.isScheduleDue(schedule); // Kiểm tra xem có trong khung giờ chạy không
 
-                    // Nếu schedule đang running và chưa hết giờ thì bỏ qua xử lý
-                    if (schedule.status === "running" && now.isBefore(scheduleEnd)) {
-                        node.warn(`Schedule ${schedule.name} đã ở trạng thái running và chưa hết giờ, bỏ qua xử lý.`);
-                        continue;
-                    }
-
-                    // Nếu schedule chưa running thì cập nhật status running và xử lý các bước modbus
-                    if (schedule.status !== "running") {
+                    // Trường hợp 1: Schedule đang trong khung giờ chạy và chưa running
+                    if (isDue && schedule.status !== "running") {
                         await scheduleService.updateScheduleStatus(schedule, "running");
-                        node.warn(`Updated schedule ${schedule.name} status to running.`);
-                        await scheduleService.syncScheduleLog(schedule, true);
-                    }
+                        node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to running.`);
 
-                    // Tiến hành xử lý modbus như trước
-                    const commands: ModbusCmd[] = scheduleService.mapScheduleToModbus(schedule);
-                    if (!commands || commands.length === 0) {
-                        node.warn(`Không có lệnh modbus nào được map cho schedule ${schedule.name}.`);
-                        continue;
-                    }
-
-                    let writeSuccess = false;
-                    let attempt = 0;
-                    while (!writeSuccess && attempt < 3) {
-                        attempt++;
-                        node.warn(`Ghi modbus cho schedule ${schedule.name}, lần thử ${attempt}`);
-                        try {
-                            await scheduleService.executeModbusCommands(modbusClient, commands);
-                            const verified = await scheduleService.verifyModbusWrite(modbusClient, commands);
-                            if (verified) {
-                                writeSuccess = true;
-                                node.warn(`Schedule ${schedule.name} ghi và xác thực thành công tại lần thử ${attempt}.`);
-                            } else {
-                                node.warn(`Xác thực thất bại cho schedule ${schedule.name} tại lần thử ${attempt}.`);
+                        const commands: ModbusCmd[] = scheduleService.mapScheduleToModbus(schedule);
+                        if (commands.length > 0) {
+                            let writeSuccess = false;
+                            let attempt = 0;
+                            while (!writeSuccess && attempt < 3) {
+                                attempt++;
+                                node.warn(`Ghi modbus cho id: ${schedule.name}, label: ${schedule.label}, lần thử ${attempt}`);
+                                try {
+                                    await scheduleService.executeModbusCommands(modbusClient, commands);
+                                    writeSuccess = await scheduleService.verifyModbusWrite(modbusClient, commands);
+                                    if (writeSuccess) {
+                                        node.warn(`Ghi và xác thực thành công cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
+                                    } else {
+                                        node.warn(`Xác thực thất bại cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
+                                    }
+                                } catch (error) {
+                                    node.error(`Lỗi ghi modbus cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}: ${(error as Error).message}`);
+                                }
                             }
-                        } catch (error) {
-                            node.error(`Lỗi ghi modbus cho schedule ${schedule.name} tại lần thử ${attempt}: ${(error as Error).message}`);
+
+                            // Publish và sync log bất kể thành công hay thất bại
+                            scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
+                            await scheduleService.syncScheduleLog(schedule, writeSuccess);
+                        } else {
+                            node.warn(`No modbus commands mapped for id: ${schedule.name}, label: ${schedule.label}.`);
                         }
                     }
 
-                    // Nếu thời gian hiện tại đã vượt qua end_time, cập nhật status thành finished và reset modbus.
-                    if (now.isAfter(scheduleEnd)) {
+                    // Trường hợp 2: Schedule đang running nhưng đã quá end_time
+                    else if (schedule.status === "running" && now.isAfter(scheduleEnd)) {
                         await scheduleService.updateScheduleStatus(schedule, "finished");
-                        node.warn(`Updated schedule ${schedule.name} status to finished.`);
-                        await scheduleService.resetModbusCommands(modbusClient, commands);
-                        scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
-                        await scheduleService.syncScheduleLog(schedule, writeSuccess);
+                        node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
+
+                        const commands: ModbusCmd[] = scheduleService.mapScheduleToModbus(schedule); // Lấy lại commands đã ghi lúc running
+                        if (commands.length > 0) {
+                            await scheduleService.resetModbusCommands(modbusClient, commands);
+                            node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label}.`);
+                        }
+
+                        // Publish và sync log khi finished
+                        scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                        await scheduleService.syncScheduleLog(schedule, true);
+                    }
+
+                    // Trường hợp khác: Bỏ qua (ví dụ: đã finished hoặc chưa đến giờ chạy)
+                    else {
+                        node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} skipped (status: ${schedule.status}, due: ${isDue}).`);
                     }
                 }
-
-
 
                 node.status({ fill: "green", shape: "dot", text: "Schedules processed" });
                 send(msg);
@@ -146,13 +151,12 @@ module.exports = function (RED: NodeAPI) {
             }
         });
 
-
         node.on("close", function (done) {
-            // Giải phóng client
             ClientRegistry.releaseClient("modbus", node);
             mqttClient.disconnect();
             done();
         });
+
     }
 
     RED.nodes.registerType("viis-schedule-executor", ScheduleExecutorNode);

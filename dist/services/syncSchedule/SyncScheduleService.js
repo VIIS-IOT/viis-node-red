@@ -22,33 +22,44 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SyncScheduleService = void 0;
-const typedi_1 = require("typedi");
 const AxiosService_1 = require("../AxiosService");
 const configs_1 = __importDefault(require("../../configs"));
+const typedi_1 = require("typedi");
 let SyncScheduleService = class SyncScheduleService extends AxiosService_1.AxiosService {
     constructor() {
         super({
-            baseURL: configs_1.default.serverUrl,
+            baseURL: configs_1.default.serverUrl || "http://localhost:8080", // Default fallback
             withCredentials: true,
         });
-        this.accessToken = process.env.DEVICE_ACCESS_TOKEN || 'NA';
+        this.accessToken = process.env.DEVICE_ACCESS_TOKEN || "NA";
+        console.log("SyncScheduleService constructor called with baseURL:", configs_1.default.serverUrl);
     }
     logSchedule(body) {
         return __awaiter(this, void 0, void 0, function* () {
-            const response = yield this.instance.post(`/api/v2/scheduleLog`, body, {
-                // headers: this.getAuthorizationToken(),
-                withCredentials: true,
-            });
-            return { status: response.status, data: response.data };
+            try {
+                const response = yield this.instance.post(`/api/v2/scheduleLog`, body, {
+                    withCredentials: true,
+                });
+                return { status: response.status, data: response.data };
+            }
+            catch (error) {
+                console.error(`Error in logSchedule: ${error.message}`);
+                throw error;
+            }
         });
     }
     syncLocalToServer(body) {
         return __awaiter(this, void 0, void 0, function* () {
-            const response = yield this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
-                // headers: this.getAuthorizationToken(),
-                withCredentials: true,
-            });
-            return { status: response.status, data: response.data };
+            try {
+                const response = yield this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
+                    withCredentials: true,
+                });
+                return { status: response.status, data: response.data };
+            }
+            catch (error) {
+                console.error(`Error in syncLocalToServer: ${error.message}`);
+                throw error;
+            }
         });
     }
 };

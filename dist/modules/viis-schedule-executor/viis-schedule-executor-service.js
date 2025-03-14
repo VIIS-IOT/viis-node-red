@@ -55,188 +55,297 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleService = void 0;
-const typedi_1 = __importStar(require("typedi"));
 const TabiotSchedule_1 = require("../../orm/entities/schedule/TabiotSchedule");
 const moment_1 = __importDefault(require("moment"));
 const dataSource_1 = require("../../orm/dataSource");
 const SyncScheduleService_1 = require("../../services/syncSchedule/SyncScheduleService");
+const typedi_1 = __importStar(require("typedi"));
+require('dotenv').config();
 let ScheduleService = class ScheduleService {
-    constructor() {
-        this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
+    constructor(node) {
+        this.node = node; // Lưu node để truy cập global context
+        try {
+            this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
+            console.log("SyncScheduleService initialized successfully");
+        }
+        catch (error) {
+            console.error(`Failed to initialize SyncScheduleService: ${error.message}`);
+            this.syncScheduleService = undefined;
+        }
+    }
+    // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
+    scaleValue(key, value, direction) {
+        var _a;
+        const scaleConfigs = ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("scaleConfigs")) || [];
+        const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
+        if (!config) {
+            console.log(`No scale config for ${key} in ${direction}, returning ${value}`);
+            return value;
+        }
+        const shouldMultiply = config.operation === 'multiply';
+        const result = shouldMultiply ? value * config.factor : value / config.factor;
+        console.log(`Scaled ${key} (${direction}): ${value} -> ${result} (operation: ${config.operation}, factor: ${config.factor})`);
+        return result;
     }
     /**
      * Lấy danh sách schedule từ DB
      */
     getDueSchedules() {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!dataSource_1.AppDataSource.isInitialized) {
-                yield dataSource_1.AppDataSource.initialize();
+            try {
+                if (!dataSource_1.AppDataSource.isInitialized) {
+                    console.log("Initializing AppDataSource...");
+                    yield dataSource_1.AppDataSource.initialize();
+                    console.log("AppDataSource initialized successfully");
+                }
+                const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
+                const schedules = yield repository
+                    .createQueryBuilder("schedule")
+                    .leftJoin("tabiot_device", "device", "schedule.device_id = device.name")
+                    .leftJoin("schedule.schedulePlan", "schedulePlan")
+                    .addSelect("device.label", "device_label")
+                    .where("schedule.enable = :enable", { enable: 1 })
+                    .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
+                    .printSql()
+                    .getMany();
+                console.log(`schedules sql: ${JSON.stringify(schedules)}`);
+                console.log(`Retrieved ${schedules.length} schedules from DB`);
+                return schedules;
             }
-            const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
-            // Ví dụ: chỉ lấy các schedule enable, chưa bị xóa và plan cũng enable.
-            const schedules = yield repository.createQueryBuilder("schedule")
-                .leftJoin("tabiot_device", "device", "schedule.device_id = device.id")
-                .leftJoin("schedule.schedulePlan", "schedulePlan") // Join với bảng schedulePlan qua relation
-                .addSelect("device.label", "device_label")
-                .where("schedule.enable = :enable", { enable: 1 })
-                .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 }) // Thêm điều kiện plan enable
-                .getMany();
-            return schedules;
+            catch (error) {
+                console.error(`Error in getDueSchedules: ${error.message}`);
+                return []; // Trả về mảng rỗng thay vì throw lỗi
+            }
         });
     }
     /**
      * Kiểm tra xem schedule có đang trong khung thời gian thực thi hay không
-     * (dựa trên start_time và end_time, định dạng HH:mm:ss, UTC+7)
      */
     isScheduleDue(schedule) {
-        if (!schedule.start_time || !schedule.end_time) {
-            return false;
+        try {
+            if (!schedule.start_time || !schedule.end_time) {
+                console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
+                return false;
+            }
+            const now = (0, moment_1.default)().utc().add(7, 'hours');
+            const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
+            const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
+            const isDue = now.isBetween(startTime, endTime, undefined, "[]");
+            console.log({ now, startTime, endTime, isDue });
+            console.log(`Schedule ${schedule.name} isDue: ${isDue}`);
+            return isDue;
         }
-        const now = (0, moment_1.default)().utcOffset(420);
-        const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
-        const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
-        // Sử dụng khoảng thời gian bao gồm cả biên
-        return now.isBetween(startTime, endTime, undefined, '[]');
+        catch (error) {
+            console.error(`Error in isScheduleDue for ${schedule.name}: ${error.message}`);
+            return false; // Trả về false nếu có lỗi
+        }
     }
     /**
-     * Map schedule (dựa trên trường action) thành danh sách các lệnh modbus.
-     * Mapping được thực hiện dựa vào các biến môi trường MODBUS_COILS và MODBUS_HOLDING_REGISTERS.
+     * Map schedule thành danh sách các lệnh modbus
      */
     mapScheduleToModbus(schedule) {
         const commands = [];
-        if (schedule.action) {
-            try {
-                const actionObj = JSON.parse(schedule.action);
-                const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-                const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-                for (const key in actionObj) {
-                    if (actionObj.hasOwnProperty(key)) {
-                        const value = actionObj[key];
+        if (!schedule.action) {
+            console.warn(`Schedule ${schedule.name} has no action defined`);
+            return commands;
+        }
+        try {
+            const actionObj = JSON.parse(schedule.action);
+            const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
+            const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+            for (const key in actionObj) {
+                if (actionObj.hasOwnProperty(key)) {
+                    const value = actionObj[key];
+                    // Chỉ thêm lệnh nếu value là truthy
+                    if (value) {
                         if (modbusCoils.hasOwnProperty(key)) {
                             commands.push({
                                 key,
                                 value: Boolean(value),
-                                fc: 5, // Coil write
+                                fc: 5,
                                 unitid: 1,
                                 address: modbusCoils[key],
-                                quantity: 1
+                                quantity: 1,
                             });
+                            console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                         }
                         else if (modbusHolding.hasOwnProperty(key)) {
                             commands.push({
                                 key,
                                 value: Number(value),
-                                fc: 6, // Holding register write
+                                fc: 6,
                                 unitid: 1,
                                 address: modbusHolding[key],
-                                quantity: 1
+                                quantity: 1,
                             });
+                            console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
                         }
                         else {
-                            console.warn(`No modbus mapping found for key: ${key}`);
+                            console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}`);
                         }
                     }
                 }
             }
-            catch (error) {
-                throw new Error(`Error parsing action for schedule ${schedule.name}: ${error.message}`);
-            }
+        }
+        catch (error) {
+            console.error(`Error parsing action for schedule ${schedule.name}: ${error.message}`);
         }
         return commands;
     }
     /**
-     * Gửi các lệnh modbus qua modbusClient.
+     * Gửi các lệnh modbus qua modbusClient
      */
     executeModbusCommands(modbusClient, commands) {
         return __awaiter(this, void 0, void 0, function* () {
             for (const cmd of commands) {
-                if (cmd.fc === 5) {
-                    yield modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                try {
+                    let writeValue = cmd.value;
+                    if (typeof cmd.value === 'number') {
+                        writeValue = this.scaleValue(cmd.key, cmd.value, 'write'); // Scale nếu có config
+                    }
+                    if (cmd.fc === 5) {
+                        yield modbusClient.writeCoil(cmd.address, Boolean(writeValue));
+                        console.log(`Wrote coil at ${cmd.address} with value ${writeValue}`);
+                    }
+                    else if (cmd.fc === 6) {
+                        yield modbusClient.writeRegister(cmd.address, Number(writeValue));
+                        console.log(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
+                    }
+                    yield this.delay(100);
                 }
-                else if (cmd.fc === 6) {
-                    yield modbusClient.writeRegister(cmd.address, Number(cmd.value));
+                catch (error) {
+                    console.error(`Error executing modbus command ${cmd.key}: ${error.message}`);
                 }
-                yield this.delay(100);
             }
         });
     }
     /**
-     * Xác thực việc ghi modbus bằng cách đọc lại giá trị.
+     * Xác thực việc ghi modbus
      */
     verifyModbusWrite(modbusClient, commands) {
         return __awaiter(this, void 0, void 0, function* () {
             for (const cmd of commands) {
-                let readResult;
-                if (cmd.fc === 5) {
-                    readResult = yield modbusClient.readCoils(cmd.address, 1);
-                    if (Boolean(readResult.data[0]) !== Boolean(cmd.value)) {
+                try {
+                    let readResult;
+                    let readValue;
+                    if (cmd.fc === 5) {
+                        readResult = yield modbusClient.readCoils(cmd.address, 1);
+                        readValue = Boolean(readResult.data[0]);
+                    }
+                    else if (cmd.fc === 6) {
+                        readResult = yield modbusClient.readHoldingRegisters(cmd.address, 1);
+                        // Đọc giá trị thô và scale nếu có config cho 'read'
+                        const rawValue = Number(readResult.data[0]);
+                        readValue = this.scaleValue(cmd.key, rawValue, 'read');
+                    }
+                    else {
+                        continue;
+                    }
+                    // So sánh với giá trị gốc (cmd.value)
+                    console.log(`Verifying ${cmd.key}: readValue = ${readValue} (${typeof readValue}), expected = ${cmd.value} (${typeof cmd.value})`);
+                    if (readValue !== cmd.value) {
+                        console.warn(`Verification failed for ${cmd.key} at ${cmd.address}: expected ${cmd.value}, got ${readValue}`);
                         return false;
                     }
+                    console.log(`Verified ${cmd.key} at ${cmd.address} successfully`);
                 }
-                else if (cmd.fc === 6) {
-                    readResult = yield modbusClient.readHoldingRegisters(cmd.address, 1);
-                    if (Number(readResult.data[0]) !== Number(cmd.value)) {
-                        return false;
-                    }
+                catch (error) {
+                    console.error(`Error verifying modbus write for ${cmd.key}: ${error.message}`);
+                    return false;
                 }
             }
             return true;
         });
     }
     /**
-     * Publish thông báo qua MQTT với payload gồm scheduleId, status, và timestamp.
+     * Publish thông báo qua MQTT
      */
     publishMqttNotification(mqttClient, schedule, success) {
-        const payload = {
-            scheduleId: schedule.name,
-            label: schedule.label,
-            device_label: schedule.device_label,
-            status: schedule.status,
-            timestamp: Date.now()
-        };
-        const topic = "v1/devices/me/telemetry";
-        mqttClient.publish(topic, JSON.stringify(payload));
+        try {
+            const payload = {
+                scheduleId: schedule.name,
+                label: schedule.label,
+                device_label: schedule.device_label,
+                status: schedule.status,
+                timestamp: Date.now(),
+            };
+            const topic = "v1/devices/me/telemetry";
+            mqttClient.publish(topic, JSON.stringify(payload));
+            console.log(`Published MQTT notification for ${schedule.name}`);
+        }
+        catch (error) {
+            console.error(`Error publishing MQTT for ${schedule.name}: ${error.message}`);
+        }
     }
     /**
-     * Sync schedule log (có thể gọi API hoặc update DB).
-     * Ở đây demo bằng console.log; bạn có thể thay thế bằng HTTP call (sử dụng HttpService).
+     * Sync schedule log
      */
     syncScheduleLog(schedule, success) {
         return __awaiter(this, void 0, void 0, function* () {
-            console.log(`Sync schedule log for schedule ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
-            // TODO: Thực hiện HTTP call hoặc update DB theo nghiệp vụ của bạn.
-            yield this.syncScheduleService.logSchedule(schedule);
+            try {
+                console.log(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
+                if (this.syncScheduleService) {
+                    yield this.syncScheduleService.logSchedule(schedule);
+                    console.log(`Logged schedule ${schedule.name} successfully`);
+                }
+                else {
+                    console.warn("SyncScheduleService is not available, skipping log");
+                }
+            }
+            catch (error) {
+                console.error(`Error syncing log for ${schedule.name}: ${error.message}`);
+            }
         });
     }
     /**
-     * Cập nhật trạng thái của schedule (running hoặc finished) trong DB.
+     * Cập nhật trạng thái của schedule
      */
     updateScheduleStatus(schedule, status) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!dataSource_1.AppDataSource.isInitialized) {
-                yield dataSource_1.AppDataSource.initialize();
+            try {
+                if (!dataSource_1.AppDataSource.isInitialized) {
+                    console.log("Initializing AppDataSource...");
+                    yield dataSource_1.AppDataSource.initialize();
+                    console.log("AppDataSource initialized successfully");
+                }
+                const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
+                schedule.status = status;
+                yield repository.save(schedule);
+                console.log(`Updated status of ${schedule.name} to ${status}`);
+                if (this.syncScheduleService) {
+                    yield this.syncScheduleService.syncLocalToServer(schedule);
+                    console.log(`Synced ${schedule.name} to server`);
+                }
+                else {
+                    console.warn("SyncScheduleService is not available, skipping sync");
+                }
             }
-            const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
-            schedule.status = status;
-            yield repository.save(schedule);
-            yield this.syncScheduleService.syncLocalToServer(schedule);
+            catch (error) {
+                console.error(`Error updating status for ${schedule.name}: ${error.message}`);
+            }
         });
     }
     /**
-     * Reset lại các lệnh modbus đã được thực thi sang giá trị falsey:
-     * - Với coil (fc=5): giá trị false.
-     * - Với holding register (fc=6): giá trị 0.
+     * Reset lại các lệnh modbus
      */
     resetModbusCommands(modbusClient, commands) {
         return __awaiter(this, void 0, void 0, function* () {
+            // Reset chỉ các địa chỉ đã ghi lúc running
             for (const cmd of commands) {
-                if (cmd.fc === 5) {
-                    yield modbusClient.writeCoil(cmd.address, false);
+                try {
+                    if (cmd.fc === 5) {
+                        yield modbusClient.writeCoil(cmd.address, false);
+                        console.log(`Reset coil at ${cmd.address} to false`);
+                    }
+                    else if (cmd.fc === 6) {
+                        yield modbusClient.writeRegister(cmd.address, 0);
+                        console.log(`Reset register at ${cmd.address} to 0`);
+                    }
+                    yield this.delay(100);
                 }
-                else if (cmd.fc === 6) {
-                    yield modbusClient.writeRegister(cmd.address, 0);
+                catch (error) {
+                    console.error(`Error resetting modbus command ${cmd.key}: ${error.message}`);
                 }
-                yield this.delay(100);
             }
         });
     }
@@ -247,5 +356,5 @@ let ScheduleService = class ScheduleService {
 exports.ScheduleService = ScheduleService;
 exports.ScheduleService = ScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [Object])
 ], ScheduleService);

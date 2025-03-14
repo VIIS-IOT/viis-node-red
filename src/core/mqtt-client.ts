@@ -94,7 +94,7 @@ export class MqttClientCore extends EventEmitter {
                 this.node.error(`Failed to subscribe to ${topic}: ${err.message}`);
             } else {
                 this.subscribedTopics.add(topic);
-                this.node.log(`Subscribed to topic: ${topic}`);
+                //this.node.log(`Subscribed to topic: ${topic}`);
             }
         });
     }
@@ -110,7 +110,7 @@ export class MqttClientCore extends EventEmitter {
                 this.node.error(`Failed to unsubscribe from ${topic}: ${err.message}`);
             } else {
                 this.subscribedTopics.delete(topic);
-                this.node.log(`Unsubscribed from topic: ${topic}`);
+                //this.node.log(`Unsubscribed from topic: ${topic}`);
             }
         });
     }
@@ -127,7 +127,7 @@ export class MqttClientCore extends EventEmitter {
             if (err) {
                 this.node.error(`Failed to publish to ${topic}: ${err.message}`);
             } else {
-                this.node.log(`Published to topic: ${topic}`);
+                //this.node.log(`Published to topic: ${topic}`);
             }
         });
     }
@@ -142,7 +142,7 @@ export class MqttClientCore extends EventEmitter {
                     this.node.error(`Failed to publish queued message to ${topic}: ${err.message}`);
                     this.messageQueue.unshift({ topic, message, options }); // Re-queue on failure
                 } else {
-                    this.node.log(`Published queued message to topic: ${topic}`);
+                    //this.node.log(`Published queued message to topic: ${topic}`);
                 }
             });
         }
@@ -164,7 +164,7 @@ export class MqttClientCore extends EventEmitter {
     public disconnect(): void {
         if (this.client) {
             this.client.end(() => {
-                this.node.log("MQTT client disconnected manually");
+                //this.node.log("MQTT client disconnected manually");
             });
         }
     }

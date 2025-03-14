@@ -28,9 +28,9 @@ module.exports = function (RED) {
         let scaleConfigs = [];
         try {
             configKeys = JSON.parse(config.configKeys || '[]');
-            node.warn(`configKeys is ${JSON.stringify(configKeys)}`);
+            //node.warn(`configKeys is ${JSON.stringify(configKeys)}`);
             scaleConfigs = JSON.parse(config.scaleConfigs || '[]');
-            node.warn(`scale config is ${JSON.stringify(scaleConfigs)}`);
+            //node.warn(`scale config is ${JSON.stringify(scaleConfigs)}`);
             // Validate configKeys
             Object.entries(configKeys).forEach(([key, type]) => {
                 if (!['number', 'boolean', 'string'].includes(type)) {
@@ -45,6 +45,7 @@ module.exports = function (RED) {
             });
             // Store configKeys globally
             node.context().global.set("configKeys", configKeys);
+            node.context().global.set("scaleConfigs", scaleConfigs);
         }
         catch (error) {
             const err = error;
@@ -94,14 +95,14 @@ module.exports = function (RED) {
         }
         // Utility functions
         function scaleValue(key, value, direction) {
-            node.warn(`all scaleConfigs ${JSON.stringify(scaleConfigs)}`);
+            //node.warn(`all scaleConfigs ${JSON.stringify(scaleConfigs)}`);
             const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
-            node.warn(`Scaling key: ${key}, value: ${value}, direction: ${direction}`);
-            node.warn(`Config: ${JSON.stringify(config)}`);
+            //node.warn(`Scaling key: ${key}, value: ${value}, direction: ${direction}`);
+            //node.warn(`Config: ${JSON.stringify(config)}`);
             if (!config)
                 return value;
             const shouldMultiply = config.operation === 'multiply';
-            node.warn(`shouldMultiply: ${shouldMultiply}`);
+            //node.warn(`shouldMultiply: ${shouldMultiply}`);
             return shouldMultiply ? value * config.factor : value / config.factor;
         }
         function validateAndConvertValue(key, value) {
@@ -155,7 +156,7 @@ module.exports = function (RED) {
                     else if (mapping.fc === 5) {
                         yield modbusClient.writeCoil(mapping.address, value);
                     }
-                    node.log(`Wrote to Modbus: address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+                    //node.log(`Wrote to Modbus: address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
                 }
                 catch (error) {
                     const err = error;
@@ -206,44 +207,44 @@ module.exports = function (RED) {
         }
         function handleRpcRequest(rpcBody) {
             return __awaiter(this, void 0, void 0, function* () {
-                node.warn("Start handleRpcRequest");
-                node.warn(`RPC Body received: ${JSON.stringify(rpcBody)}`);
+                //node.warn("Start handleRpcRequest");
+                //node.warn(`RPC Body received: ${JSON.stringify(rpcBody)}`);
                 try {
                     // Handle configuration request
                     if (rpcBody.method === 'set_state' && rpcBody.params) {
-                        node.warn("Handling config request");
+                        //node.warn("Handling config request");
                         const configParams = Object.entries(rpcBody.params)
                             .filter(([key]) => key in configKeys)
                             .reduce((acc, [key, value]) => (Object.assign(Object.assign({}, acc), { [key]: validateAndConvertValue(key, value) })), {});
                         if (Object.keys(configParams).length > 0) {
                             handleConfigRequest(configParams);
-                            node.warn("Config request handled");
+                            //node.warn("Config request handled");
                             return;
                         }
+                        // Handle Modbus request
+                        //node.warn("Handling modbus request");
+                        const params = rpcBody.params || rpcBody;
+                        const [key, rawValue] = Object.entries(params)[0];
+                        const value = validateAndConvertValue(key, rawValue);
+                        //node.warn(`Extracted key: ${key}, rawValue: ${rawValue}, validated value: ${value}`);
+                        const mapping = findModbusMapping(key);
+                        if (!mapping) {
+                            throw new Error(`No Modbus mapping found for key: ${key}`);
+                        }
+                        //node.warn(`Modbus mapping found: ${JSON.stringify(mapping)}`);
+                        // Write to Modbus with scaling applied if direction is 'write'
+                        yield writeToModbus(key, mapping, value);
+                        // Read back from Modbus with scaling applied if direction is 'read'
+                        const readValue = yield readFromModbus(key, mapping);
+                        //node.warn(`Modbus read value: ${readValue}`);
+                        publishResult(key, readValue);
+                        //node.warn("Modbus request handled and result published");
                     }
-                    // Handle Modbus request
-                    node.warn("Handling modbus request");
-                    const params = rpcBody.params || rpcBody;
-                    const [key, rawValue] = Object.entries(params)[0];
-                    const value = validateAndConvertValue(key, rawValue);
-                    node.warn(`Extracted key: ${key}, rawValue: ${rawValue}, validated value: ${value}`);
-                    const mapping = findModbusMapping(key);
-                    if (!mapping) {
-                        throw new Error(`No Modbus mapping found for key: ${key}`);
-                    }
-                    node.warn(`Modbus mapping found: ${JSON.stringify(mapping)}`);
-                    // Write to Modbus with scaling applied if direction is 'write'
-                    yield writeToModbus(key, mapping, value);
-                    // Read back from Modbus with scaling applied if direction is 'read'
-                    const readValue = yield readFromModbus(key, mapping);
-                    node.warn(`Modbus read value: ${readValue}`);
-                    publishResult(key, readValue);
-                    node.warn("Modbus request handled and result published");
                 }
                 catch (error) {
                     const err = error;
                     node.error(`RPC handling error: ${err.message}`);
-                    node.warn(`RPC handling error: ${err.message}`);
+                    //node.warn(`RPC handling error: ${err.message}`);
                     node.status({ fill: "red", shape: "ring", text: "RPC error" });
                 }
             });
@@ -255,7 +256,7 @@ module.exports = function (RED) {
                 return;
             try {
                 const payload = JSON.parse(message.message.toString());
-                node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
+                //node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
                 handleRpcRequest(payload);
             }
             catch (error) {
@@ -271,7 +272,7 @@ module.exports = function (RED) {
                 client_registry_1.default.releaseClient("modbus", node)
             ])
                 .then(() => {
-                node.log("Node closed and clients released");
+                //node.log("Node closed and clients released");
                 done();
             })
                 .catch((error) => {
