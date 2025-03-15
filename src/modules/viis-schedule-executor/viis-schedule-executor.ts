@@ -79,6 +79,7 @@ module.exports = function (RED: NodeAPI) {
                 // Lấy tất cả schedules từ DB, không lọc trước
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
                 node.warn(`Found ${schedules.length} schedule(s).`);
+                console.log(`schedules are ${schedules}`)
 
                 for (const schedule of schedules) {
                     const now = moment().utc().add(7, 'hours');

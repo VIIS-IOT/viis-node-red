@@ -45,11 +45,11 @@ export class CustomBaseEntity {
 
     @Exclude()
     @Column({ type: 'smallint', default: 0 })
-    docstatus: number = 0;
+    docstatus?: number = 0;
 
     @Exclude()
     @Column({ type: 'bigint', default: 0 })
-    idx: number = 0;
+    idx?: number = 0;
 
     @DeleteDateColumn({ nullable: true, type: 'datetime' })
     deleted: Date = new Date();

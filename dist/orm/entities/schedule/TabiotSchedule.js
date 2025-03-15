@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TabiotSchedule = void 0;
+exports.TabiotScheduleLog = exports.TabiotSchedule = void 0;
 const typeorm_1 = require("typeorm");
 const Base_1 = require("../base/Base");
 const TabiotSchedulePlan_1 = require("../schedulePlan/TabiotSchedulePlan");
@@ -100,3 +100,30 @@ __decorate([
 exports.TabiotSchedule = TabiotSchedule = __decorate([
     (0, typeorm_1.Entity)('tabiot_schedule')
 ], TabiotSchedule);
+let TabiotScheduleLog = class TabiotScheduleLog extends Base_1.CustomBaseEntity {
+};
+exports.TabiotScheduleLog = TabiotScheduleLog;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)({ type: 'varchar', length: 255 }),
+    __metadata("design:type", String)
+], TabiotScheduleLog.prototype, "name", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'time', nullable: true }),
+    __metadata("design:type", String)
+], TabiotScheduleLog.prototype, "start_time", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'time', nullable: true }),
+    __metadata("design:type", String)
+], TabiotScheduleLog.prototype, "end_time", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 255, nullable: true }),
+    __metadata("design:type", String)
+], TabiotScheduleLog.prototype, "schedule_id", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => TabiotSchedule, { onDelete: 'SET NULL' }),
+    (0, typeorm_1.JoinColumn)({ name: 'schedule_id' }),
+    __metadata("design:type", TabiotSchedule)
+], TabiotScheduleLog.prototype, "schedule", void 0);
+exports.TabiotScheduleLog = TabiotScheduleLog = __decorate([
+    (0, typeorm_1.Entity)('tabiot_schedule_log')
+], TabiotScheduleLog);

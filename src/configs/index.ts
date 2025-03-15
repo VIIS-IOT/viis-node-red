@@ -13,7 +13,7 @@ export default {
      * Your favorite port
      */
     port: Number(process.env.PORT || 3000),
-    serverUrl: process.env.BACKEND_URL || 'https://iot.viis.tech',
+    serverUrl: process.env.VIIS_BACKEND || 'https://iot.viis.tech',
     erpUrl: process.env.ERP_URL || 'https://erp.viis.tech',
     noderedUrl: 'http://54.255.158.241:1880',
     thingsboardUrl: process.env.THINGSBOARD_URL || 'https://device-iotcore.viis.tech/',

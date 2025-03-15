@@ -68,6 +68,7 @@ module.exports = function (RED) {
                     // Lấy tất cả schedules từ DB, không lọc trước
                     const schedules = yield scheduleService.getDueSchedules();
                     node.warn(`Found ${schedules.length} schedule(s).`);
+                    console.log(`schedules are ${schedules}`);
                     for (const schedule of schedules) {
                         const now = (0, moment_1.default)().utc().add(7, 'hours');
                         const scheduleStart = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");

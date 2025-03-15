@@ -1,4 +1,4 @@
-import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
+import { TabiotSchedule, TabiotScheduleLog } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore } from "../../core/mqtt-client";
@@ -76,7 +76,7 @@ export class ScheduleService {
                 .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
                 .printSql()
                 .getMany();
-            console.log(`schedules sql: ${JSON.stringify(schedules)}`)
+            // console.log(`schedules sql: ${JSON.stringify(schedules)}`)
             console.log(`Retrieved ${schedules.length} schedules from DB`);
             return schedules;
         } catch (error) {
@@ -121,11 +121,19 @@ export class ScheduleService {
             const actionObj = JSON.parse(schedule.action);
             const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
             const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-
+            // console.log("actionObj", actionObj, "for schedule", schedule.label);
             for (const key in actionObj) {
                 if (actionObj.hasOwnProperty(key)) {
-                    const value = actionObj[key];
-                    // Chỉ thêm lệnh nếu value là truthy
+                    let value = actionObj[key];
+                    // Chuyển đổi chuỗi boolean thành kiểu boolean
+                    if (typeof value === "string") {
+                        if (value.toLowerCase() === "true") {
+                            value = true;
+                        } else if (value.toLowerCase() === "false") {
+                            value = false;
+                        }
+                    }
+                    // Chỉ xử lý các key có giá trị truthy sau khi xử lý
                     if (value) {
                         if (modbusCoils.hasOwnProperty(key)) {
                             commands.push({
@@ -136,7 +144,7 @@ export class ScheduleService {
                                 address: modbusCoils[key],
                                 quantity: 1,
                             });
-                            console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
+                            // console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                         } else if (modbusHolding.hasOwnProperty(key)) {
                             commands.push({
                                 key,
@@ -156,8 +164,10 @@ export class ScheduleService {
         } catch (error) {
             console.error(`Error parsing action for schedule ${schedule.name}: ${(error as Error).message}`);
         }
+
         return commands;
     }
+
 
     /**
      * Gửi các lệnh modbus qua modbusClient
@@ -226,13 +236,16 @@ export class ScheduleService {
      */
     publishMqttNotification(mqttClient: MqttClientCore, schedule: TabiotSchedule, success: boolean): void {
         try {
-            const payload = {
+            const active_schedule = {
                 scheduleId: schedule.name,
                 label: schedule.label,
                 device_label: schedule.device_label,
                 status: schedule.status,
                 timestamp: Date.now(),
             };
+            const payload = {
+                "active_schedule": JSON.stringify(active_schedule)
+            }
             const topic = "v1/devices/me/telemetry";
             mqttClient.publish(topic, JSON.stringify(payload));
             console.log(`Published MQTT notification for ${schedule.name}`);
@@ -248,7 +261,13 @@ export class ScheduleService {
         try {
             console.log(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
             if (this.syncScheduleService) {
-                await this.syncScheduleService.logSchedule(schedule);
+                const scheduleLogBody: TabiotScheduleLog = {
+                    start_time: schedule.start_time,
+                    end_time: schedule.end_time,
+                    schedule_id: schedule.name,
+                    deleted: null
+                }
+                await this.syncScheduleService.logSchedule(scheduleLogBody);
                 console.log(`Logged schedule ${schedule.name} successfully`);
             } else {
                 console.warn("SyncScheduleService is not available, skipping log");

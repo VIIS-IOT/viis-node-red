@@ -19,24 +19,30 @@ export class SyncScheduleService extends AxiosService {
 
     async logSchedule(body: any) {
         try {
+            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleLog`;
+            console.debug("Calling API logSchedule:", fullPath, "with body:", body);
             const response: any = await this.instance.post(`/api/v2/scheduleLog`, body, {
                 withCredentials: true,
             });
             return { status: response.status, data: response.data };
         } catch (error) {
             console.error(`Error in logSchedule: ${(error as Error).message}`);
+            // console.log(error)
             throw error;
         }
     }
 
     async syncLocalToServer(body: Partial<TabiotSchedule>) {
         try {
+            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer`;
+            console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
             const response: any = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
                 withCredentials: true,
             });
             return { status: response.status, data: response.data };
         } catch (error) {
             console.error(`Error in syncLocalToServer: ${(error as Error).message}`);
+            console.log(error)
             throw error;
         }
     }

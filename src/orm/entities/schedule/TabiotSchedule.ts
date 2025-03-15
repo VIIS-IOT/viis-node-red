@@ -70,3 +70,24 @@ export class TabiotSchedule extends CustomBaseEntity {
     @JoinColumn({ name: 'schedule_plan_id' })
     schedulePlan?: TabiotSchedulePlan;
 }
+
+
+@Entity('tabiot_schedule_log')
+export class TabiotScheduleLog extends CustomBaseEntity {
+
+    @PrimaryColumn({ type: 'varchar', length: 255 })
+    name?: string;
+
+    @Column({ type: 'time', nullable: true })
+    start_time?: string;
+
+    @Column({ type: 'time', nullable: true })
+    end_time?: string;
+
+    @Column({ type: 'varchar', length: 255, nullable: true })
+    schedule_id?: string;
+
+    @ManyToOne(() => TabiotSchedule, { onDelete: 'SET NULL' })
+    @JoinColumn({ name: 'schedule_id' })
+    schedule?: TabiotSchedule;
+}
