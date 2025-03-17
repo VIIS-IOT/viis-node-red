@@ -260,13 +260,25 @@ export class ScheduleService {
     async syncScheduleLog(schedule: TabiotSchedule, success: boolean): Promise<void> {
         try {
             console.log(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
+
             if (this.syncScheduleService) {
+                // Assuming schedule.start_time and schedule.end_time are in a time-only format like "HH:mm"
+                const now = moment(); // Current date and time
+                const todayDate = now.format('YYYY-MM-DD'); // Just the date portion
+
+                // Combine today's date with the schedule times and format as full datetime
+                const startTime = moment(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm')
+                    .toISOString();
+                const endTime = moment(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm')
+                    .toISOString();
+
                 const scheduleLogBody: TabiotScheduleLog = {
-                    start_time: schedule.start_time,
-                    end_time: schedule.end_time,
+                    start_time: startTime,
+                    end_time: endTime,
                     schedule_id: schedule.name,
                     deleted: null
-                }
+                };
+
                 await this.syncScheduleService.logSchedule(scheduleLogBody);
                 console.log(`Logged schedule ${schedule.name} successfully`);
             } else {
@@ -293,7 +305,7 @@ export class ScheduleService {
             console.log(`Updated status of ${schedule.name} to ${status}`);
 
             if (this.syncScheduleService) {
-                await this.syncScheduleService.syncLocalToServer(schedule);
+                await this.syncScheduleService.syncLocalToServer([schedule]);
                 console.log(`Synced ${schedule.name} to server`);
             } else {
                 console.warn("SyncScheduleService is not available, skipping sync");

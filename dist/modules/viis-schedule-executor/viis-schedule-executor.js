@@ -65,6 +65,54 @@ module.exports = function (RED) {
         node.on("input", function (msg, send, done) {
             return __awaiter(this, void 0, void 0, function* () {
                 try {
+                    // Kiểm tra xem input có phải là RPC command không
+                    if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "schedule-disable-by-backend") {
+                        const payload = msg.payload;
+                        const params = payload.params || {};
+                        const scheduleId = params.scheduleId;
+                        if (!scheduleId) {
+                            node.error("Missing scheduleId in schedule-disable-by-backend RPC command");
+                            node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
+                            done(new Error("Missing scheduleId"));
+                            return;
+                        }
+                        // Lấy schedule từ DB dựa trên scheduleId
+                        const schedules = yield scheduleService.getDueSchedules();
+                        const schedule = schedules.find(s => s.name === scheduleId);
+                        if (!schedule) {
+                            node.warn(`Schedule with id ${scheduleId} not found`);
+                            node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
+                            send(msg);
+                            done();
+                            return;
+                        }
+                        // Chỉ xử lý nếu schedule đang running
+                        if (schedule.status === "running") {
+                            // Cập nhật status thành finished và disable schedule
+                            schedule.status = "finished";
+                            schedule.enable = 0;
+                            yield scheduleService.updateScheduleStatus(schedule, "finished");
+                            node.warn(`Disabled and finished schedule id: ${schedule.name}, label: ${schedule.label} via RPC`);
+                            // Reset các lệnh modbus nếu có
+                            const commands = scheduleService.mapScheduleToModbus(schedule);
+                            if (commands.length > 0) {
+                                yield scheduleService.resetModbusCommands(modbusClient, commands);
+                                node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label} via RPC`);
+                            }
+                            // Publish MQTT notification và sync log
+                            scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                            yield scheduleService.syncScheduleLog(schedule, true);
+                        }
+                        else {
+                            node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
+                            schedule.enable = 0;
+                            yield scheduleService.updateScheduleStatus(schedule, schedule.status);
+                        }
+                        node.status({ fill: "green", shape: "dot", text: "RPC processed" });
+                        send(msg);
+                        done();
+                        return;
+                    }
                     // Lấy tất cả schedules từ DB, không lọc trước
                     const schedules = yield scheduleService.getDueSchedules();
                     node.warn(`Found ${schedules.length} schedule(s).`);

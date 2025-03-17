@@ -32,7 +32,7 @@ export class SyncScheduleService extends AxiosService {
         }
     }
 
-    async syncLocalToServer(body: Partial<TabiotSchedule>) {
+    async syncLocalToServer(body: Partial<TabiotSchedule>[]) {
         try {
             const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer`;
             console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);

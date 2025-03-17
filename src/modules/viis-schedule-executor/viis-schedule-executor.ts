@@ -24,6 +24,13 @@ interface ModbusCmd {
     quantity: number
 }
 
+interface RpcPayload {
+    method: string;
+    params?: {
+        scheduleId?: string;
+    };
+}
+
 module.exports = function (RED: NodeAPI) {
     function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
         RED.nodes.createNode(this, config);
@@ -76,6 +83,62 @@ module.exports = function (RED: NodeAPI) {
 
         node.on("input", async function (msg, send, done) {
             try {
+
+                // Kiểm tra xem input có phải là RPC command không
+                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && (msg.payload as RpcPayload).method === "schedule-disable-by-backend") {
+                    const payload = msg.payload as RpcPayload;
+                    const params = payload.params || {};
+                    const scheduleId = params.scheduleId;
+
+                    if (!scheduleId) {
+                        node.error("Missing scheduleId in schedule-disable-by-backend RPC command");
+                        node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
+                        done(new Error("Missing scheduleId"));
+                        return;
+                    }
+
+                    // Lấy schedule từ DB dựa trên scheduleId
+                    const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
+                    const schedule = schedules.find(s => s.name === scheduleId);
+
+                    if (!schedule) {
+                        node.warn(`Schedule with id ${scheduleId} not found`);
+                        node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
+                        send(msg);
+                        done();
+                        return;
+                    }
+
+                    // Chỉ xử lý nếu schedule đang running
+                    if (schedule.status === "running") {
+                        // Cập nhật status thành finished và disable schedule
+                        schedule.status = "finished";
+                        schedule.enable = 0;
+                        await scheduleService.updateScheduleStatus(schedule, "finished");
+                        node.warn(`Disabled and finished schedule id: ${schedule.name}, label: ${schedule.label} via RPC`);
+
+                        // Reset các lệnh modbus nếu có
+                        const commands: ModbusCmd[] = scheduleService.mapScheduleToModbus(schedule);
+                        if (commands.length > 0) {
+                            await scheduleService.resetModbusCommands(modbusClient, commands);
+                            node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label} via RPC`);
+                        }
+
+                        // Publish MQTT notification và sync log
+                        scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                        await scheduleService.syncScheduleLog(schedule, true);
+                    } else {
+                        node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
+                        schedule.enable = 0;
+                        await scheduleService.updateScheduleStatus(schedule, schedule.status as "running" | "finished");
+                    }
+
+                    node.status({ fill: "green", shape: "dot", text: "RPC processed" });
+                    send(msg);
+                    done();
+                    return;
+                }
+
                 // Lấy tất cả schedules từ DB, không lọc trước
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
                 node.warn(`Found ${schedules.length} schedule(s).`);

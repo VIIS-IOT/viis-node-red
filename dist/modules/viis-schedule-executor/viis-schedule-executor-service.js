@@ -298,9 +298,17 @@ let ScheduleService = class ScheduleService {
             try {
                 console.log(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
                 if (this.syncScheduleService) {
+                    // Assuming schedule.start_time and schedule.end_time are in a time-only format like "HH:mm"
+                    const now = (0, moment_1.default)(); // Current date and time
+                    const todayDate = now.format('YYYY-MM-DD'); // Just the date portion
+                    // Combine today's date with the schedule times and format as full datetime
+                    const startTime = (0, moment_1.default)(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm')
+                        .toISOString();
+                    const endTime = (0, moment_1.default)(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm')
+                        .toISOString();
                     const scheduleLogBody = {
-                        start_time: schedule.start_time,
-                        end_time: schedule.end_time,
+                        start_time: startTime,
+                        end_time: endTime,
                         schedule_id: schedule.name,
                         deleted: null
                     };
@@ -332,7 +340,7 @@ let ScheduleService = class ScheduleService {
                 yield repository.save(schedule);
                 console.log(`Updated status of ${schedule.name} to ${status}`);
                 if (this.syncScheduleService) {
-                    yield this.syncScheduleService.syncLocalToServer(schedule);
+                    yield this.syncScheduleService.syncLocalToServer([schedule]);
                     console.log(`Synced ${schedule.name} to server`);
                 }
                 else {
