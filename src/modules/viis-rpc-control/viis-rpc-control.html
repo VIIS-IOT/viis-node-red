@@ -32,12 +32,12 @@
 <script type="text/javascript">
     RED.nodes.registerType("viis-rpc-control", {
         category: "function",
-        color: "#a6bbcf",
+        color: "#ADB2D4",
         defaults: {
             name: { value: "" },
             mqttBroker: { value: "thingsboard", required: true },
             configKeys: {
-                value: '{"max_temp": "number", "power": "boolean"}',
+                value: '{"max_temp": 87, "max_humid": 90}',
                 required: true,
                 validate: function (v) {
                     try {
@@ -63,7 +63,7 @@
         },
         inputs: 1,
         outputs: 1,
-        icon: "../../icons/logo.png",
+        icon: "logo.png",
         label: function () {
             return this.name || "viis-rpc-control";
         },

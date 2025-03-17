@@ -17,7 +17,11 @@ interface ScaleConfig {
 }
 
 interface ConfigKey {
-    [key: string]: 'number' | 'boolean' | 'string';
+    [key: string]: 'number' | 'boolean' | 'string'; // Danh sách key và kiểu mong muốn
+}
+
+interface ConfigKeyValues {
+    [key: string]: number | boolean | string; // Lưu giá trị thực tế từ RPC
 }
 
 interface RpcMessage {
@@ -47,7 +51,7 @@ module.exports = function (RED: NodeAPI) {
         let configKeys: ConfigKey = {};
         let scaleConfigs: ScaleConfig[] = [];
         try {
-            configKeys = JSON.parse(config.configKeys || '[]');
+            configKeys = JSON.parse(config.configKeys || '{}');
             //node.warn(`configKeys is ${JSON.stringify(configKeys)}`);
             scaleConfigs = JSON.parse(config.scaleConfigs || '[]');
             //node.warn(`scale config is ${JSON.stringify(scaleConfigs)}`);
@@ -66,9 +70,14 @@ module.exports = function (RED: NodeAPI) {
                 }
             });
 
-            // Store configKeys globally
+            // Store configKeys globally (danh sách key cần detect)
             node.context().global.set("configKeys", configKeys);
-            node.context().global.set("scaleConfigs", scaleConfigs)
+            // Khởi tạo configKeyValues nếu chưa tồn tại
+            if (!node.context().global.get("configKeyValues")) {
+                node.context().global.set("configKeyValues", {});
+            }
+            // Store scaleConfigs globally
+            node.context().global.set("scaleConfigs", scaleConfigs);
         } catch (error) {
             const err = error as Error;
             node.error(`Configuration parsing error: ${err.message}`);
@@ -136,8 +145,7 @@ module.exports = function (RED: NodeAPI) {
 
         function validateAndConvertValue(key: string, value: any): any {
             const expectedType = configKeys[key];
-            if (!expectedType) return value;
-
+            if (!expectedType) return value; // Nếu không phải config key, trả về nguyên giá trị
             try {
                 switch (expectedType) {
                     case 'number':
@@ -225,6 +233,20 @@ module.exports = function (RED: NodeAPI) {
         }
 
         function handleConfigRequest(params: Record<string, any>): void {
+            const currentConfigKeyValues: ConfigKeyValues = node.context().global.get("configKeyValues") as ConfigKeyValues || {};
+            const updatedConfigKeyValues = { ...currentConfigKeyValues };
+
+            // Lưu tất cả các config key vào configKeyValues
+            Object.entries(params).forEach(([key, rawValue]) => {
+                if (key in configKeys) {
+                    const value = validateAndConvertValue(key, rawValue);
+                    updatedConfigKeyValues[key] = value;
+                }
+            });
+
+            // Cập nhật global variable configKeyValues
+            node.context().global.set("configKeyValues", updatedConfigKeyValues);
+
             const mqttPayload = {
                 ts: Date.now(),
                 ...params,
@@ -250,8 +272,7 @@ module.exports = function (RED: NodeAPI) {
                         }), {});
 
                     if (Object.keys(configParams).length > 0) {
-                        handleConfigRequest(configParams);
-                        //node.warn("Config request handled");
+                        handleConfigRequest(configParams); // Gọi với toàn bộ params để lưu config                        //node.warn("Config request handled");
                         return;
                     }
 

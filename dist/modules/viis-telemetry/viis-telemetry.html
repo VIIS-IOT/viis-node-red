@@ -66,7 +66,7 @@
 <script type="text/javascript">
     RED.nodes.registerType("viis-telemetry", {
         category: "function",
-        color: "#a6bbcf",
+        color: "#99BC85",
         defaults: {
             name: { value: "" },
             pollIntervalCoil: { value: "1000", required: true, validate: RED.validators.number() },
@@ -93,7 +93,7 @@
         },
         inputs: 0,
         outputs: 1,
-        icon: "../../icons/logo.png",
+        icon: "logo.png",
         label: function () {
             return this.name || "viis-telemetry";
         },

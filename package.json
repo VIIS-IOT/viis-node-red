@@ -29,7 +29,8 @@
       "viis-upload-events": "dist/viis-upload-telemetry.js",
       "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry.js",
       "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js",
-      "viis-schedule-executor": "dist/modules/viis-schedule-executor/viis-schedule-executor.js"
+      "viis-schedule-executor": "dist/modules/viis-schedule-executor/viis-schedule-executor.js",
+      "viis-device-protection": "dist/modules/viis-device-protection/viis-device-protection.js"
     }
   },
   "dependencies": {
