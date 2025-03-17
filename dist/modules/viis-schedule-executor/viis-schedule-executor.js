@@ -113,6 +113,9 @@ module.exports = function (RED) {
                         done();
                         return;
                     }
+                    else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method !== "schedule-disable-by-backend") {
+                        return null;
+                    }
                     // Lấy tất cả schedules từ DB, không lọc trước
                     const schedules = yield scheduleService.getDueSchedules();
                     node.warn(`Found ${schedules.length} schedule(s).`);

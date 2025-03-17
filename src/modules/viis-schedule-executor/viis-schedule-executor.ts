@@ -138,6 +138,9 @@ module.exports = function (RED: NodeAPI) {
                     done();
                     return;
                 }
+                else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && (msg.payload as RpcPayload).method !== "schedule-disable-by-backend") {
+                    return null
+                }
 
                 // Lấy tất cả schedules từ DB, không lọc trước
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();

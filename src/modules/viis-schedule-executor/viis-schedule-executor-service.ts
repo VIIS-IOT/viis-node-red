@@ -122,6 +122,8 @@ export class ScheduleService {
             const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
             const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
             // console.log("actionObj", actionObj, "for schedule", schedule.label);
+            // console.log("modbusCoils", modbusCoils)
+            // console.log("modbusHolding", modbusHolding)
             for (const key in actionObj) {
                 if (actionObj.hasOwnProperty(key)) {
                     let value = actionObj[key];
