@@ -7,7 +7,7 @@ import { SyncScheduleService } from "../../services/syncSchedule/SyncScheduleSer
 import Container, { Service } from "typedi";
 import { Node } from "node-red";
 
-require('dotenv').config();
+// require('dotenv').config();
 
 export interface ModbusCmd {
     key: string;

@@ -60,7 +60,6 @@ const moment_1 = __importDefault(require("moment"));
 const dataSource_1 = require("../../orm/dataSource");
 const SyncScheduleService_1 = require("../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importStar(require("typedi"));
-require('dotenv').config();
 let ScheduleService = class ScheduleService {
     constructor(node) {
         this.node = node; // Lưu node để truy cập global context

@@ -19,7 +19,7 @@ export class SyncScheduleService extends AxiosService {
 
     async logSchedule(body: any) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleLog`;
+            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleLog/v2?access_token=${this.accessToken}`;
             console.debug("Calling API logSchedule:", fullPath, "with body:", body);
             const response: any = await this.instance.post(`/api/v2/scheduleLog`, body, {
                 withCredentials: true,
@@ -34,7 +34,7 @@ export class SyncScheduleService extends AxiosService {
 
     async syncLocalToServer(body: Partial<TabiotSchedule>[]) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer`;
+            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
             console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
             const response: any = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
                 withCredentials: true,

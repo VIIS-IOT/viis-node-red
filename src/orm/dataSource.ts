@@ -6,7 +6,7 @@ import * as path from 'path';
 // Chú ý đây là path trong docker container.
 // Cụ thể thì env lưu ở /usr/src/node-red, còn source viis-node-red lưu ở /usr/src/node-red/viis-node-red
 // File dataSource thì nằm ở /usr/src/node-red/viis-node-red/src/orm/dataSource.ts
-dotenv.config({ path: path.resolve(__dirname, '../../../', '.env') });
+// dotenv.config({ path: path.resolve(__dirname, '../../../', '.env') });
 
 import { DataSource } from "typeorm";
 

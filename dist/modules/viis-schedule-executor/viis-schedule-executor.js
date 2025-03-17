@@ -166,7 +166,7 @@ module.exports = function (RED) {
                             }
                             // Publish và sync log khi finished
                             scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            yield scheduleService.syncScheduleLog(schedule, true);
+                            // await scheduleService.syncScheduleLog(schedule, true);
                         }
                         // Trường hợp khác: Bỏ qua (ví dụ: đã finished hoặc chưa đến giờ chạy)
                         else {
