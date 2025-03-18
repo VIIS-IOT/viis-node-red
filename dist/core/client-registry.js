@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const modbus_client_1 = require("./modbus-client");
 const mqtt_client_1 = require("./mqtt-client");
+const mysql_client_1 = require("./mysql-client");
 // Registry để lưu trữ các instance chung
 class ClientRegistry {
     // Lấy hoặc tạo instance ModbusClientCore
@@ -31,6 +32,13 @@ class ClientRegistry {
         this.referenceCount.local++;
         return this.localMqttInstance;
     }
+    static getMySqlClient(config, node) {
+        if (!this.mysqlInstance) {
+            this.mysqlInstance = new mysql_client_1.MySqlClientCore(config, node);
+            node.log("Created new MySQL client instance");
+        }
+        return this.mysqlInstance;
+    }
     // Giảm reference count và ngắt kết nối nếu không còn node nào sử dụng
     static releaseClient(type, node) {
         if (type === "modbus" && this.modbusInstance) {
@@ -57,10 +65,16 @@ class ClientRegistry {
                 node.log("Disconnected and cleared Local MqttClientCore instance");
             }
         }
+        else if (type === "mysql" && this.mysqlInstance) {
+            this.mysqlInstance.disconnect();
+            this.mysqlInstance = null;
+            node.log("Disconnected and cleared MySQL client instance");
+        }
     }
 }
 ClientRegistry.modbusInstance = null;
 ClientRegistry.thingsboardMqttInstance = null;
 ClientRegistry.localMqttInstance = null;
+ClientRegistry.mysqlInstance = null;
 ClientRegistry.referenceCount = { modbus: 0, thingsboard: 0, local: 0 };
 exports.default = ClientRegistry;

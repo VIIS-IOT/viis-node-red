@@ -257,55 +257,45 @@ module.exports = function (RED: NodeAPI) {
         }
 
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
-            //node.warn("Start handleRpcRequest");
-            //node.warn(`RPC Body received: ${JSON.stringify(rpcBody)}`);
-
             try {
-                // Handle configuration request
                 if (rpcBody.method === 'set_state' && rpcBody.params) {
-                    //node.warn("Handling config request");
-                    const configParams = Object.entries(rpcBody.params)
-                        .filter(([key]) => key in configKeys)
-                        .reduce((acc, [key, value]) => ({
-                            ...acc,
-                            [key]: validateAndConvertValue(key, value)
-                        }), {});
+                    // Duyệt từng key trong params
+                    for (const [key, rawValue] of Object.entries(rpcBody.params)) {
+                        // Kiểm tra xem key có mapping trong Modbus không
+                        const mapping = findModbusMapping(key);
+                        if (mapping) {
+                            // Nếu có mapping, thực hiện ghi/đọc Modbus
+                            const value = validateAndConvertValue(key, rawValue);
+                            await writeToModbus(key, mapping, value);
+                            const readValue = await readFromModbus(key, mapping);
+                            publishResult(key, readValue);
+                        } else {
+                            // Nếu không có mapping, coi đây là config key
+                            // Có thể thực hiện validate chuyển đổi nếu muốn
+                            const value = validateAndConvertValue(key, rawValue);
+                            const currentConfig = node.context().global.get("configKeyValues") || {};
+                            currentConfig[key] = value;
+                            node.context().global.set("configKeyValues", currentConfig);
 
-                    if (Object.keys(configParams).length > 0) {
-                        handleConfigRequest(configParams); // Gọi với toàn bộ params để lưu config                        //node.warn("Config request handled");
-                        return;
+                            // Gửi thông báo qua MQTT và output của node
+                            const mqttPayload = {
+                                ts: Date.now(),
+                                [key]: value,
+                                note: "Config key updated (no Modbus mapping)"
+                            };
+                            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+                            node.send({ payload: mqttPayload });
+                            node.status({ fill: "green", shape: "dot", text: "Config updated" });
+                        }
                     }
-
-
-                    // Handle Modbus request
-                    //node.warn("Handling modbus request");
-                    const params = rpcBody.params || rpcBody;
-                    const [key, rawValue] = Object.entries(params)[0];
-                    const value = validateAndConvertValue(key, rawValue);
-                    //node.warn(`Extracted key: ${key}, rawValue: ${rawValue}, validated value: ${value}`);
-
-                    const mapping = findModbusMapping(key);
-                    if (!mapping) {
-                        throw new Error(`No Modbus mapping found for key: ${key}`);
-                    }
-                    //node.warn(`Modbus mapping found: ${JSON.stringify(mapping)}`);
-
-                    // Write to Modbus with scaling applied if direction is 'write'
-                    await writeToModbus(key, mapping, value);
-                    // Read back from Modbus with scaling applied if direction is 'read'
-                    const readValue = await readFromModbus(key, mapping);
-                    //node.warn(`Modbus read value: ${readValue}`);
-                    publishResult(key, readValue);
-                    //node.warn("Modbus request handled and result published");
                 }
-
             } catch (error) {
                 const err = error as Error;
                 node.error(`RPC handling error: ${err.message}`);
-                //node.warn(`RPC handling error: ${err.message}`);
                 node.status({ fill: "red", shape: "ring", text: "RPC error" });
             }
         }
+
 
         // Set up MQTT subscription
         mqttClient.subscribe(subscribeTopic);

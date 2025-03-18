@@ -1,12 +1,14 @@
 import { Node } from "node-red";
 import { ModbusClientCore, ModbusConfig } from "./modbus-client";
 import { MqttClientCore, MqttConfig } from "./mqtt-client";
+import { MySqlClientCore } from "./mysql-client";
 
 // Registry để lưu trữ các instance chung
 class ClientRegistry {
     private static modbusInstance: ModbusClientCore | null = null;
     private static thingsboardMqttInstance: MqttClientCore | null = null;
     private static localMqttInstance: MqttClientCore | null = null;
+    private static mysqlInstance: MySqlClientCore | null = null;
     private static referenceCount = { modbus: 0, thingsboard: 0, local: 0 };
 
     // Lấy hoặc tạo instance ModbusClientCore
@@ -39,8 +41,16 @@ class ClientRegistry {
         return this.localMqttInstance;
     }
 
+    static getMySqlClient(config: any, node: Node): MySqlClientCore {
+        if (!this.mysqlInstance) {
+            this.mysqlInstance = new MySqlClientCore(config, node);
+            node.log("Created new MySQL client instance");
+        }
+        return this.mysqlInstance;
+    }
+
     // Giảm reference count và ngắt kết nối nếu không còn node nào sử dụng
-    static releaseClient(type: "modbus" | "thingsboard" | "local", node: Node) {
+    static releaseClient(type: "modbus" | "thingsboard" | "local" | "mysql", node: Node) {
         if (type === "modbus" && this.modbusInstance) {
             this.referenceCount.modbus--;
             if (this.referenceCount.modbus <= 0) {
@@ -62,6 +72,10 @@ class ClientRegistry {
                 this.localMqttInstance = null;
                 node.log("Disconnected and cleared Local MqttClientCore instance");
             }
+        } else if (type === "mysql" && this.mysqlInstance) {
+            this.mysqlInstance.disconnect();
+            this.mysqlInstance = null;
+            node.log("Disconnected and cleared MySQL client instance");
         }
     }
 }
