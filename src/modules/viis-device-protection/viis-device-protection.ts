@@ -68,21 +68,23 @@ module.exports = function (RED: NodeAPI) {
                 return;
             }
 
+            // Lấy dữ liệu telemetry từ biến global coilRegisterData
+            const coilData = node.context().global.get("coilRegisterData") || {};
+
             for (const [key, value] of Object.entries(configKeyValues)) {
                 // Chỉ xử lý các key liên quan đến giới hạn thời gian (có hậu tố _MAX_TIME)
                 if (!key.endsWith("_MAX_TIME")) continue;
 
                 const coilKey = key.replace("_MAX_TIME", ""); // Ví dụ: COIL_OUTPUT_WATER_IN_MAX_TIME -> COIL_OUTPUT_WATER_IN
-                const address = modbusCoils[coilKey];
-                if (address === undefined) continue; // Bỏ qua nếu không có mapping
-
                 const maxTime = Number(value); // Thời gian tối đa (giây)
                 if (isNaN(maxTime) || maxTime <= 0) {
                     node.warn(`Invalid max time for ${key}: ${value}`);
                     continue;
                 }
 
-                const isCoilOn = await readCoil(address);
+                // Lấy trạng thái của coil từ dữ liệu telemetry
+                const isCoilOn = coilData[coilKey];
+
                 if (isCoilOn) {
                     if (!coilTimers[coilKey]) {
                         // Bắt đầu đếm thời gian nếu coil vừa bật
@@ -96,8 +98,9 @@ module.exports = function (RED: NodeAPI) {
                         const elapsedTime = Date.now() - coilTimers[coilKey].startTime;
                         if (elapsedTime > coilTimers[coilKey].maxTime) {
                             node.warn(`Coil ${coilKey} exceeded max time (${maxTime}s). Turning off.`);
-                            await writeCoil(address, false); // Tắt coil
-                            delete coilTimers[coilKey]; // Xóa timer
+                            // Giữ lại thao tác tắt coil qua Modbus nếu cần (ví dụ khi cần gửi lệnh về PLC)
+                            await writeCoil(modbusCoils[coilKey], false);
+                            delete coilTimers[coilKey];
                             node.send({ payload: { [coilKey]: false, reason: "Exceeded max time" } });
                         }
                     }
@@ -112,6 +115,7 @@ module.exports = function (RED: NodeAPI) {
 
             node.status({ fill: "green", shape: "dot", text: "Running" });
         }
+
 
         // Chạy kiểm tra định kỳ mỗi 1 giây
         const interval = setInterval(checkProtection, 1000);

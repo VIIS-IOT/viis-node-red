@@ -77,20 +77,20 @@ module.exports = function (RED) {
                     node.status({ fill: "yellow", shape: "ring", text: "No configKeyValues" });
                     return;
                 }
+                // Lấy dữ liệu telemetry từ biến global coilRegisterData
+                const coilData = node.context().global.get("coilRegisterData") || {};
                 for (const [key, value] of Object.entries(configKeyValues)) {
                     // Chỉ xử lý các key liên quan đến giới hạn thời gian (có hậu tố _MAX_TIME)
                     if (!key.endsWith("_MAX_TIME"))
                         continue;
                     const coilKey = key.replace("_MAX_TIME", ""); // Ví dụ: COIL_OUTPUT_WATER_IN_MAX_TIME -> COIL_OUTPUT_WATER_IN
-                    const address = modbusCoils[coilKey];
-                    if (address === undefined)
-                        continue; // Bỏ qua nếu không có mapping
                     const maxTime = Number(value); // Thời gian tối đa (giây)
                     if (isNaN(maxTime) || maxTime <= 0) {
                         node.warn(`Invalid max time for ${key}: ${value}`);
                         continue;
                     }
-                    const isCoilOn = yield readCoil(address);
+                    // Lấy trạng thái của coil từ dữ liệu telemetry
+                    const isCoilOn = coilData[coilKey];
                     if (isCoilOn) {
                         if (!coilTimers[coilKey]) {
                             // Bắt đầu đếm thời gian nếu coil vừa bật
@@ -105,8 +105,9 @@ module.exports = function (RED) {
                             const elapsedTime = Date.now() - coilTimers[coilKey].startTime;
                             if (elapsedTime > coilTimers[coilKey].maxTime) {
                                 node.warn(`Coil ${coilKey} exceeded max time (${maxTime}s). Turning off.`);
-                                yield writeCoil(address, false); // Tắt coil
-                                delete coilTimers[coilKey]; // Xóa timer
+                                // Giữ lại thao tác tắt coil qua Modbus nếu cần (ví dụ khi cần gửi lệnh về PLC)
+                                yield writeCoil(modbusCoils[coilKey], false);
+                                delete coilTimers[coilKey];
                                 node.send({ payload: { [coilKey]: false, reason: "Exceeded max time" } });
                             }
                         }
