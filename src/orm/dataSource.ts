@@ -14,7 +14,7 @@ import { DataSource } from "typeorm";
 
 export const AppDataSource = new DataSource({
     type: "mysql", // hoặc loại DB bạn đang sử dụng
-    host: process.env.DATABASE_HOST || '192.168.27.135',
+    host: process.env.DATABASE_HOST || '192.168.1.15',
     port: parseInt(process.env.DATABASE_PORT || '3308'),
     username: process.env.DATABASE_USERNAME || 'root',
     password: process.env.DATABASE_PASSWORD || 'admin@123',

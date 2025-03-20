@@ -2,6 +2,7 @@ import { NodeAPI, NodeDef, Node } from "node-red";
 import { ModbusData } from "../../core/modbus-client";
 import ClientRegistry from "../../core/client-registry";
 import { MySqlConfig } from "../../core/mysql-client";
+import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";  // <-- Import thêm
 
 interface ViisTelemetryNodeDef extends NodeDef {
     pollIntervalCoil: string;
@@ -32,6 +33,7 @@ module.exports = function (RED: NodeAPI) {
         RED.nodes.createNode(this, config);
         const node = this;
 
+        // Cấu hình Modbus
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
@@ -49,6 +51,7 @@ module.exports = function (RED: NodeAPI) {
         const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}") as { [key: string]: number };
         const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}") as { [key: string]: number };
 
+        // Cấu hình cho local MQTT broker
         const localConfig = {
             host: process.env.EMQX_HOST || "emqx",
             port: process.env.EMQX_PORT ? parseInt(process.env.EMQX_PORT, 10) : 1883,
@@ -61,6 +64,15 @@ module.exports = function (RED: NodeAPI) {
             clientId: `node-red-local-${Math.random().toString(16).substr(2, 8)}`,
             username: localConfig.username,
             password: localConfig.password,
+            qos: 1 as const,
+        };
+
+        // Cấu hình cho ThingsBoard MQTT broker
+        const thingsboardMqttConfig: MqttConfig = {
+            broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
+            clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substr(2, 8)}`,
+            username: process.env.DEVICE_ACCESS_TOKEN || "",
+            password: process.env.THINGSBOARD_PASSWORD || "",
             qos: 1 as const,
         };
 
@@ -111,13 +123,14 @@ module.exports = function (RED: NodeAPI) {
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
         const localClient = ClientRegistry.getLocalMqttClient(localMqttConfig, node);
         const mysqlClient = ClientRegistry.getMySqlClient(mysqlConfig, node);
+        const thingsboardClient = new MqttClientCore(thingsboardMqttConfig, node); // <-- Khởi tạo ThingsBoard MQTT client
 
-        if (!modbusClient || !localClient || !mysqlClient) {
+        if (!modbusClient || !localClient || !mysqlClient || !thingsboardClient) {
             node.error("Failed to retrieve clients from registry");
             node.status({ fill: "red", shape: "ring", text: "Client initialization failed" });
             return;
         } else {
-            console.log("All clients initialized successfully: Modbus, MQTT, MySQL");
+            console.log("All clients initialized successfully: Modbus, Local MQTT, MySQL, ThingsBoard MQTT");
         }
 
         let previousStateCoils: TelemetryData = {};
@@ -167,9 +180,18 @@ module.exports = function (RED: NodeAPI) {
                         value,
                     }))
                     .concat({ ts: Math.floor(timestamp / 1000), key: "deviceId", value: deviceId });
-
+                const mqttPayload = Object.entries(changedKeys)
+                    .map(([key, value]) => ({
+                        ts: timestamp,
+                        [key]: value,
+                    }))
+                // Publish lên local broker
                 localClient.publish(localConfig.pubSubTopic, JSON.stringify(republishPayload));
-                console.log(`${source}: Published changed data to MQTT`, republishPayload);
+                console.log(`${source}: Published changed data to Local MQTT`, republishPayload);
+
+                // Publish lên ThingsBoard
+                thingsboardClient.publish("v1/devices/me/telemetry", JSON.stringify(mqttPayload));
+                console.log(`${source}: Published changed data to ThingsBoard MQTT`, mqttPayload);
 
                 for (const [key, changedValue] of Object.entries(changedKeys)) {
                     let valueType: string, columnName: string, sqlValue: number | boolean | string = changedValue;
@@ -309,6 +331,7 @@ ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
             }
         }
 
+        // Lắng nghe sự kiện trạng thái của modbus
         modbusClient.on("modbus-status", (status: { status: string; error?: string }) => {
             if (status.status === "disconnected" && !isPollingPaused) {
                 isPollingPaused = true;
@@ -324,6 +347,7 @@ ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
             }
         });
 
+        // Lắng nghe sự kiện trạng thái của local MQTT
         localClient.on("mqtt-status", (status: { status: string; error?: string }) => {
             if (status.status === "disconnected" && !isPollingPaused) {
                 isPollingPaused = true;
@@ -333,14 +357,30 @@ ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
                 coilInterval = null;
                 inputInterval = null;
                 holdingInterval = null;
-                node.warn("MQTT disconnected, polling paused");
-            } else if (status.status === "connected" && isPollingPaused && modbusClient.isConnectedCheck()) {
+                node.warn("Local MQTT disconnected, polling paused");
+            } else if (status.status === "connected" && isPollingPaused && modbusClient.isConnectedCheck() && thingsboardClient.isConnected()) {
+                resumePollingIfAllConnected();
+            }
+        });
+
+        // Lắng nghe sự kiện trạng thái của ThingsBoard MQTT
+        thingsboardClient.on("mqtt-status", (status: { status: string; error?: string }) => {
+            if (status.status === "disconnected" && !isPollingPaused) {
+                isPollingPaused = true;
+                if (coilInterval) clearInterval(coilInterval);
+                if (inputInterval) clearInterval(inputInterval);
+                if (holdingInterval) clearInterval(holdingInterval);
+                coilInterval = null;
+                inputInterval = null;
+                holdingInterval = null;
+                node.warn("ThingsBoard MQTT disconnected, polling paused");
+            } else if (status.status === "connected" && isPollingPaused && modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
                 resumePollingIfAllConnected();
             }
         });
 
         function resumePollingIfAllConnected() {
-            if (modbusClient.isConnectedCheck() && localClient.isConnected()) {
+            if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
                 isPollingPaused = false;
                 coilInterval = setInterval(pollCoils, pollIntervalCoil);
                 inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
@@ -349,7 +389,7 @@ ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
             }
         }
 
-        if (modbusClient.isConnectedCheck() && localClient.isConnected()) {
+        if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
             coilInterval = setInterval(pollCoils, pollIntervalCoil);
             inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
             holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
@@ -366,6 +406,7 @@ ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
             ClientRegistry.releaseClient("modbus", node);
             ClientRegistry.releaseClient("local", node);
             ClientRegistry.releaseClient("mysql", node);
+            thingsboardClient.disconnect(); // Giải phóng kết nối ThingsBoard
             console.log("Node closed, resources released");
         });
     }
