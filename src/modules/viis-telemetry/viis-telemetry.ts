@@ -218,9 +218,11 @@ module.exports = function (RED: NodeAPI) {
                         sqlValue = `'${String(changedValue)}'`;
                     }
 
-                    const query = `INSERT INTO tabiot_device_telemetry (device_id, timestamp, key_name, value_type, ${columnName})
-VALUES ('${deviceId}', ${Math.floor(timestamp / 1000)}, '${key}', '${valueType}', ${sqlValue})
-ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
+                    const query = `
+                    INSERT INTO tabiot_device_telemetry
+                    (device_id, timestamp, key_name, value_type, ${columnName})
+                    VALUES ('${deviceId}', ${Math.floor(timestamp / 1000)}, '${key}', '${valueType}', ${sqlValue})
+                    ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
                     try {
                         await mysqlClient.query(query);
                         node.log(`Database updated for key ${key}`);
