@@ -6,15 +6,14 @@ import * as path from 'path';
 // Chú ý đây là path trong docker container.
 // Cụ thể thì env lưu ở /usr/src/node-red, còn source viis-node-red lưu ở /usr/src/node-red/viis-node-red
 // File dataSource thì nằm ở /usr/src/node-red/viis-node-red/src/orm/dataSource.ts
-dotenv.config({ path: path.resolve(__dirname, '../../../', '.env') });
-// dotenv.config({ path: path.resolve(__dirname, '.env') });
-
+dotenv.config({ path: path.resolve(__dirname, '../../../../../', '.env') });
+// dotenv.config({ path: path.resolve(__dirname, '../../../', '.env') });
 
 import { DataSource } from "typeorm";
 
 export const AppDataSource = new DataSource({
     type: "mysql", // hoặc loại DB bạn đang sử dụng
-    host: process.env.DATABASE_HOST || '192.168.1.15',
+    host: process.env.DATABASE_HOST || '192.168.27.1401',
     port: parseInt(process.env.DATABASE_PORT || '3308'),
     username: process.env.DATABASE_USERNAME || 'root',
     password: process.env.DATABASE_PASSWORD || 'admin@123',

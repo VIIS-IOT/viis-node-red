@@ -103,7 +103,7 @@ module.exports = function (RED: NodeAPI) {
                     throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
                 }
             });
-            console.log("Scale configs parsed successfully:", scaleConfigs);
+            // console.log("Scale configs parsed successfully:", scaleConfigs);
         } catch (error) {
             node.error(`Failed to parse scaleConfigs: ${(error as Error).message}`);
             node.status({ fill: "red", shape: "ring", text: "Invalid scaleConfigs" });
@@ -261,7 +261,7 @@ module.exports = function (RED: NodeAPI) {
                         if (key) currentState[key] = value;
                     });
                     node.context().global.set("coilRegisterData", currentState);
-                    console.log("Coils polled successfully:", currentState);
+                    // console.log("Coils polled successfully:", currentState);
                     await processState(currentState, "Coils");
                     break;
                 } catch (error) {
@@ -289,7 +289,7 @@ module.exports = function (RED: NodeAPI) {
                         if (key) currentState[key] = applyScaling(key, value, "read");
                     });
                     node.context().global.set("inputRegisterData", currentState);
-                    console.log("Input Registers polled successfully:", currentState);
+                    // console.log("Input Registers polled successfully:", currentState);
                     await processState(currentState, "Input Registers");
                     break;
                 } catch (error) {
@@ -317,7 +317,7 @@ module.exports = function (RED: NodeAPI) {
                         if (key) currentState[key] = applyScaling(key, value, "read");
                     });
                     node.context().global.set("holdingRegisterData", currentState);
-                    console.log("Holding Registers polled successfully:", currentState);
+                    // console.log("Holding Registers polled successfully:", currentState);
                     await processState(currentState, "Holding Registers");
                     break;
                 } catch (error) {
@@ -395,7 +395,7 @@ module.exports = function (RED: NodeAPI) {
             coilInterval = setInterval(pollCoils, pollIntervalCoil);
             inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
             holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
-            console.log("Polling started for Coils, Input, and Holding Registers");
+            // console.log("Polling started for Coils, Input, and Holding Registers");
         } else {
             node.status({ fill: "red", shape: "ring", text: "Waiting for all clients to connect" });
             isPollingPaused = true;
