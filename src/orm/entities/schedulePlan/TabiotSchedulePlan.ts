@@ -1,5 +1,6 @@
-import { Entity, PrimaryColumn, Column } from 'typeorm';
+import { Entity, PrimaryColumn, Column, OneToMany } from 'typeorm';
 import { CustomBaseEntity } from '../base/Base';
+import { TabiotSchedule } from '../schedule/TabiotSchedule';
 
 @Entity('tabiot_schedule_plan')
 export class TabiotSchedulePlan extends CustomBaseEntity {
@@ -18,8 +19,6 @@ export class TabiotSchedulePlan extends CustomBaseEntity {
         default: 'inactive'
     })
     status!: 'active' | 'inactive';
-
-    // Các trường creation, modified và is_deleted sẽ được kế thừa từ CustomBaseEntity
 
     @Column({ type: 'tinyint', nullable: true })
     enable?: number;
@@ -41,4 +40,8 @@ export class TabiotSchedulePlan extends CustomBaseEntity {
 
     @Column({ type: 'tinyint', default: 0 })
     is_deleted: number;
+
+    // Add OneToMany relation to TabiotSchedule
+    @OneToMany(() => TabiotSchedule, (schedule) => schedule.schedulePlan)
+    schedules?: TabiotSchedule[];
 }

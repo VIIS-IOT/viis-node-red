@@ -1,59 +1,49 @@
-import { Node } from "node-red";
-import { ModbusClientCore, ModbusConfig } from "./modbus-client";
-import { MqttClientCore, MqttConfig } from "./mqtt-client";
-import { MySqlClientCore } from "./mysql-client";
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const modbus_client_1 = require("./modbus-client");
+const mqtt_client_1 = require("./mqtt-client");
+const mysql_client_1 = require("./mysql-client");
 // Registry để lưu trữ các instance chung
 class ClientRegistry {
-    private static modbusInstance: ModbusClientCore | null = null;
-    private static thingsboardMqttInstance: MqttClientCore | null = null;
-    private static localMqttInstance: MqttClientCore | null = null;
-    private static mysqlInstance: MySqlClientCore | null = null;
-    private static referenceCount = { modbus: 0, thingsboard: 0, local: 0 };
-
     // Lấy hoặc tạo instance ModbusClientCore
-    static getModbusClient(config: ModbusConfig, node: Node): ModbusClientCore {
+    static getModbusClient(config, node) {
         if (!this.modbusInstance) {
-            this.modbusInstance = new ModbusClientCore(config, node);
+            this.modbusInstance = new modbus_client_1.ModbusClientCore(config, node);
             node.log("Created new ModbusClientCore instance");
         }
         this.referenceCount.modbus++;
         return this.modbusInstance;
     }
-
     // Lấy hoặc tạo instance MqttClientCore cho ThingsBoard
-    static getThingsboardMqttClient(config: MqttConfig, node: Node): MqttClientCore {
+    static getThingsboardMqttClient(config, node) {
         if (!this.thingsboardMqttInstance) {
-            this.thingsboardMqttInstance = new MqttClientCore(config, node);
+            this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
             node.log("Created new Thingsboard MqttClientCore instance");
         }
         else {
-            node.log("Using registerd Thingsboard MqttClientCore instance")
+            node.log("Using registerd Thingsboard MqttClientCore instance");
         }
         this.referenceCount.thingsboard++;
         return this.thingsboardMqttInstance;
     }
-
     // Lấy hoặc tạo instance MqttClientCore cho EMQX local
-    static getLocalMqttClient(config: MqttConfig, node: Node): MqttClientCore {
+    static getLocalMqttClient(config, node) {
         if (!this.localMqttInstance) {
-            this.localMqttInstance = new MqttClientCore(config, node);
+            this.localMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
             node.log("Created new Local MqttClientCore instance");
         }
         this.referenceCount.local++;
         return this.localMqttInstance;
     }
-
-    static getMySqlClient(config: any, node: Node): MySqlClientCore {
+    static getMySqlClient(config, node) {
         if (!this.mysqlInstance) {
-            this.mysqlInstance = new MySqlClientCore(config, node);
+            this.mysqlInstance = new mysql_client_1.MySqlClientCore(config, node);
             node.log("Created new MySQL client instance");
         }
         return this.mysqlInstance;
     }
-
     // Giảm reference count và ngắt kết nối nếu không còn node nào sử dụng
-    static releaseClient(type: "modbus" | "thingsboard" | "local" | "mysql", node: Node) {
+    static releaseClient(type, node) {
         if (type === "modbus" && this.modbusInstance) {
             this.referenceCount.modbus--;
             if (this.referenceCount.modbus <= 0) {
@@ -61,26 +51,33 @@ class ClientRegistry {
                 this.modbusInstance = null;
                 node.log("Disconnected and cleared ModbusClientCore instance");
             }
-        } else if (type === "thingsboard" && this.thingsboardMqttInstance) {
+        }
+        else if (type === "thingsboard" && this.thingsboardMqttInstance) {
             this.referenceCount.thingsboard--;
             if (this.referenceCount.thingsboard <= 0) {
                 this.thingsboardMqttInstance.disconnect();
                 this.thingsboardMqttInstance = null;
                 node.log("Disconnected and cleared Thingsboard MqttClientCore instance");
             }
-        } else if (type === "local" && this.localMqttInstance) {
+        }
+        else if (type === "local" && this.localMqttInstance) {
             this.referenceCount.local--;
             if (this.referenceCount.local <= 0) {
                 this.localMqttInstance.disconnect();
                 this.localMqttInstance = null;
                 node.log("Disconnected and cleared Local MqttClientCore instance");
             }
-        } else if (type === "mysql" && this.mysqlInstance) {
+        }
+        else if (type === "mysql" && this.mysqlInstance) {
             this.mysqlInstance.disconnect();
             this.mysqlInstance = null;
             node.log("Disconnected and cleared MySQL client instance");
         }
     }
 }
-
-export default ClientRegistry;
+ClientRegistry.modbusInstance = null;
+ClientRegistry.thingsboardMqttInstance = null;
+ClientRegistry.localMqttInstance = null;
+ClientRegistry.mysqlInstance = null;
+ClientRegistry.referenceCount = { modbus: 0, thingsboard: 0, local: 0 };
+exports.default = ClientRegistry;

@@ -1,0 +1,43 @@
+<script type="text/javascript">
+  RED.nodes.registerType("viis-config-node", {
+    category: "config",
+    defaults: {
+      name: { value: "" },
+      device: { value: {}, required: true },
+    },
+    label: function () {
+      return this.name || "VIIS Config Node";
+    },
+    icon: "icons/logo.png",
+    oneditprepare: function () {
+      const node = this;
+      const device = node.device || {};
+      $("#node-input-name").val(node.name || "");
+      $("#device-id").val(device.id || "");
+      $("#device-token").val(device.accessToken || "");
+    },
+    oneditsave: function () {
+      const node = this;
+      node.device = {
+        id: $("#device-id").val().trim(),
+        accessToken: $("#device-token").val().trim(),
+      };
+      node.name = $("#node-input-name").val().trim();
+    },
+  });
+</script>
+
+<script type="text/html" data-template-name="viis-config-node">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label><i class="fa fa-desktop"></i> Device ID</label>
+    <input type="text" id="device-id" placeholder="Device ID" />
+  </div>
+  <div class="form-row">
+    <label><i class="fa fa-key"></i> Token</label>
+    <input type="text" id="device-token" placeholder="Access Token" />
+  </div>
+</script>

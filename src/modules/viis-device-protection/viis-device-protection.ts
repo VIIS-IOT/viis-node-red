@@ -63,7 +63,7 @@ module.exports = function (RED: NodeAPI) {
         async function checkProtection() {
             const configKeyValues = node.context().global.get("configKeyValues") || {};
             if (!configKeyValues || Object.keys(configKeyValues).length === 0) {
-                node.warn("No configKeyValues found in global context");
+                // node.warn("No configKeyValues found in global context");
                 node.status({ fill: "yellow", shape: "ring", text: "No configKeyValues" });
                 return;
             }

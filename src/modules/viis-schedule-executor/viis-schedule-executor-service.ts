@@ -302,9 +302,17 @@ export class ScheduleService {
                 console.log("AppDataSource initialized successfully");
             }
             const repository = AppDataSource.getRepository(TabiotSchedule);
+
+            // Cập nhật trạng thái
             schedule.status = status;
+
+            // Override giá trị modified, cộng thêm 7 giờ
+            const nowPlus7 = moment().utc().add(7, 'hours').toDate();
+            schedule.modified = nowPlus7;
+
+            // Lưu entity với giá trị modified đã chỉnh sửa
             await repository.save(schedule);
-            console.log(`Updated status of ${schedule.name} to ${status}`);
+            console.log(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
 
             if (this.syncScheduleService) {
                 await this.syncScheduleService.syncLocalToServer([schedule]);
