@@ -43,21 +43,28 @@ module.exports = function (RED) {
             timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
             reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
         };
-        const mqttConfig = config.mqttBroker === "thingsboard"
-            ? {
-                broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-                clientId: `node-red-thingsboard-${Math.random().toString(16).substr(2, 8)}`,
-                username: process.env.DEVICE_ACCESS_TOKEN || "",
-                password: process.env.THINGSBOARD_PASSWORD || "",
-                qos: 1,
-            }
-            : {
-                broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
-                clientId: `node-red-local-${Math.random().toString(16).substr(2, 8)}`,
-                username: process.env.EMQX_USERNAME || "",
-                password: process.env.EMQX_PASSWORD || "",
-                qos: 1,
-            };
+        // const mqttConfig = config.mqttBroker === "thingsboard"
+        //     ? {
+        //         broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
+        //         clientId: `node-red-thingsboard-${Math.random().toString(16).substr(2, 8)}`,
+        //         username: process.env.DEVICE_ACCESS_TOKEN || "",
+        //         password: process.env.THINGSBOARD_PASSWORD || "",
+        //         qos: 1 as 0 | 1 | 2,
+        //     }
+        //     : {
+        //         broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
+        //         clientId: `node-red-local-${Math.random().toString(16).substr(2, 8)}`,
+        //         username: process.env.EMQX_USERNAME || "",
+        //         password: process.env.EMQX_PASSWORD || "",
+        //         qos: 1 as 0 | 1 | 2,
+        //     };
+        const mqttConfig = {
+            broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
+            clientId: `node-red-thingsboard-${Math.random().toString(16).substr(2, 8)}`,
+            username: process.env.DEVICE_ACCESS_TOKEN || "",
+            password: process.env.THINGSBOARD_PASSWORD || "",
+            qos: 1,
+        };
         const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
         const mqttClient = config.mqttBroker === "thingsboard"
             ? client_registry_1.default.getThingsboardMqttClient(mqttConfig, node)
