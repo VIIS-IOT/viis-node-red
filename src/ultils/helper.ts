@@ -1,4 +1,4 @@
-import moment from 'moment';
+import * as crypto from 'crypto';
 
 const { v4: uuidv4 } = require('uuid');
 
@@ -421,3 +421,15 @@ export function parseFilterParams(filterParams: any[]): string {
 
     return sqlCondition;
 }
+
+
+export const generateHashKey = (...args: (string | number)[]): string => {
+    // Generate a random string if no arguments are provided
+    const inputString = args.length > 0 ? args.join('') : crypto.randomBytes(16).toString('hex');
+
+    // Tạo hash sử dụng MD5 và chuyển đổi sang mã hex
+    const hash = crypto.createHash('md5').update(inputString).digest('hex');
+
+    // Cắt bớt hash nếu cần thiết, ví dụ: 12 ký tự đầu tiên
+    return hash.substring(0, 16);
+};
