@@ -108,22 +108,21 @@ export class ScheduleService {
     }
 
     /**
-     * Map schedule thành danh sách các lệnh modbus
-     */
-    mapScheduleToModbus(schedule: TabiotSchedule): ModbusCmd[] {
-        const commands: ModbusCmd[] = [];
+ * Map schedule thành danh sách các lệnh modbus
+ */
+    mapScheduleToModbus(schedule: TabiotSchedule): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] } {
+        const holdingCommands: ModbusCmd[] = [];
+        const coilCommands: ModbusCmd[] = [];
         if (!schedule.action) {
             console.warn(`Schedule ${schedule.name} has no action defined`);
-            return commands;
+            return { holdingCommands, coilCommands };
         }
 
         try {
             const actionObj = JSON.parse(schedule.action);
             const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
             const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-            // console.log("actionObj", actionObj, "for schedule", schedule.label);
-            // console.log("modbusCoils", modbusCoils)
-            // console.log("modbusHolding", modbusHolding)
+
             for (const key in actionObj) {
                 if (actionObj.hasOwnProperty(key)) {
                     let value = actionObj[key];
@@ -137,18 +136,8 @@ export class ScheduleService {
                     }
                     // Chỉ xử lý các key có giá trị truthy sau khi xử lý
                     if (value) {
-                        if (modbusCoils.hasOwnProperty(key)) {
-                            commands.push({
-                                key,
-                                value: Boolean(value),
-                                fc: 5,
-                                unitid: 1,
-                                address: modbusCoils[key],
-                                quantity: 1,
-                            });
-                            // console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
-                        } else if (modbusHolding.hasOwnProperty(key)) {
-                            commands.push({
+                        if (modbusHolding.hasOwnProperty(key)) {
+                            holdingCommands.push({
                                 key,
                                 value: Number(value),
                                 fc: 6,
@@ -157,6 +146,16 @@ export class ScheduleService {
                                 quantity: 1,
                             });
                             console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
+                        } else if (modbusCoils.hasOwnProperty(key)) {
+                            coilCommands.push({
+                                key,
+                                value: Boolean(value),
+                                fc: 5,
+                                unitid: 1,
+                                address: modbusCoils[key],
+                                quantity: 1,
+                            });
+                            console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                         } else {
                             console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}`);
                         }
@@ -167,31 +166,35 @@ export class ScheduleService {
             console.error(`Error parsing action for schedule ${schedule.name}: ${(error as Error).message}`);
         }
 
-        return commands;
+        return { holdingCommands, coilCommands };
     }
 
 
     /**
-     * Gửi các lệnh modbus qua modbusClient
-     */
-    async executeModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<void> {
-        for (const cmd of commands) {
+ * Gửi các lệnh modbus qua modbusClient
+ */
+    async executeModbusCommands(modbusClient: ModbusClientCore, commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] }): Promise<void> {
+        // Thực hiện holding commands trước
+        for (const cmd of commands.holdingCommands) {
             try {
-                let writeValue = cmd.value;
-                if (typeof cmd.value === 'number') {
-                    writeValue = this.scaleValue(cmd.key, cmd.value, 'write'); // Scale nếu có config
-                }
-
-                if (cmd.fc === 5) {
-                    await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
-                    console.log(`Wrote coil at ${cmd.address} with value ${writeValue}`);
-                } else if (cmd.fc === 6) {
-                    await modbusClient.writeRegister(cmd.address, Number(writeValue));
-                    console.log(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
-                }
+                let writeValue = this.scaleValue(cmd.key, cmd.value as number, 'write'); // Scale nếu có config
+                await modbusClient.writeRegister(cmd.address, Number(writeValue));
+                console.log(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
                 await this.delay(100);
             } catch (error) {
-                console.error(`Error executing modbus command ${cmd.key}: ${(error as Error).message}`);
+                console.error(`Error executing modbus holding command ${cmd.key}: ${(error as Error).message}`);
+            }
+        }
+
+        // Sau đó thực hiện coil commands
+        for (const cmd of commands.coilCommands) {
+            try {
+                let writeValue = cmd.value;
+                await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
+                console.log(`Wrote coil at ${cmd.address} with value ${writeValue}`);
+                await this.delay(100);
+            } catch (error) {
+                console.error(`Error executing modbus coil command ${cmd.key}: ${(error as Error).message}`);
             }
         }
     }

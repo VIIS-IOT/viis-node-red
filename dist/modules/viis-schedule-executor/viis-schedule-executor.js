@@ -60,15 +60,16 @@ module.exports = function (RED) {
         //     };
         const mqttConfig = {
             broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-            clientId: `node-red-thingsboard-${Math.random().toString(16).substr(2, 8)}`,
+            clientId: `node-red-tb-${Math.random().toString(16).substr(2, 8)}`,
             username: process.env.DEVICE_ACCESS_TOKEN || "",
             password: process.env.THINGSBOARD_PASSWORD || "",
             qos: 1,
         };
         const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
-        const mqttClient = config.mqttBroker === "thingsboard"
-            ? client_registry_1.default.getThingsboardMqttClient(mqttConfig, node)
-            : client_registry_1.default.getLocalMqttClient(mqttConfig, node);
+        // const mqttClient: MqttClientCore = config.mqttBroker === "thingsboard"
+        //     ? ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+        //     : ClientRegistry.getLocalMqttClient(mqttConfig, node);
+        const mqttClient = client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
         node.on("input", function (msg, send, done) {
             return __awaiter(this, void 0, void 0, function* () {
                 try {
@@ -101,9 +102,9 @@ module.exports = function (RED) {
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             node.warn(`Disabled and finished schedule id: ${schedule.name}, label: ${schedule.label} via RPC`);
                             // Reset các lệnh modbus nếu có
-                            const commands = scheduleService.mapScheduleToModbus(schedule);
-                            if (commands.length > 0) {
-                                yield scheduleService.resetModbusCommands(modbusClient, commands);
+                            const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
+                            if (holdingCommands.length > 0 || coilCommands.length > 0) {
+                                yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
                                 node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label} via RPC`);
                             }
                             // Publish MQTT notification và sync log
@@ -136,16 +137,16 @@ module.exports = function (RED) {
                         if (isDue && schedule.status !== "running") {
                             yield scheduleService.updateScheduleStatus(schedule, "running");
                             node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to running.`);
-                            const commands = scheduleService.mapScheduleToModbus(schedule);
-                            if (commands.length > 0) {
+                            const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
+                            if (holdingCommands.length > 0 || coilCommands.length > 0) {
                                 let writeSuccess = false;
                                 let attempt = 0;
                                 while (!writeSuccess && attempt < 3) {
                                     attempt++;
                                     node.warn(`Ghi modbus cho id: ${schedule.name}, label: ${schedule.label}, lần thử ${attempt}`);
                                     try {
-                                        yield scheduleService.executeModbusCommands(modbusClient, commands);
-                                        writeSuccess = yield scheduleService.verifyModbusWrite(modbusClient, commands);
+                                        yield scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
+                                        writeSuccess = yield scheduleService.verifyModbusWrite(modbusClient, [...holdingCommands, ...coilCommands]);
                                         if (writeSuccess) {
                                             node.warn(`Ghi và xác thực thành công cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
                                         }
@@ -170,14 +171,14 @@ module.exports = function (RED) {
                         else if (schedule.status === "running" && now.isAfter(scheduleEnd)) {
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
-                            const commands = scheduleService.mapScheduleToModbus(schedule); // Lấy lại commands đã ghi lúc running
-                            if (commands.length > 0) {
-                                yield scheduleService.resetModbusCommands(modbusClient, commands);
+                            const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
+                            if (holdingCommands.length > 0 || coilCommands.length > 0) {
+                                yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
                                 node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label}.`);
                             }
                             // Publish và sync log khi finished
                             scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            // await scheduleService.syncScheduleLog(schedule, true);
+                            // await scheduleService.syncScheduleLog(schedule, true); // Đoạn này bị comment trong code gốc, giữ nguyên
                         }
                         // Trường hợp khác: Bỏ qua (ví dụ: đã finished hoặc chưa đến giờ chạy)
                         else {
