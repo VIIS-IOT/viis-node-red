@@ -274,24 +274,25 @@ let ScheduleService = class ScheduleService {
      * Publish thông báo qua MQTT
      */
     publishMqttNotification(mqttClient, schedule, success) {
-        try {
-            const active_schedule = {
-                scheduleId: schedule.name,
-                label: schedule.label,
-                device_label: schedule.device_label,
-                status: schedule.status,
-                timestamp: Date.now(),
-            };
-            const payload = {
-                "active_schedule": JSON.stringify(active_schedule)
-            };
-            const topic = "v1/devices/me/telemetry";
-            mqttClient.publish(topic, JSON.stringify(payload));
-            console.log(`Published MQTT notification for ${schedule.name}`);
-        }
-        catch (error) {
-            console.error(`Error publishing MQTT for ${schedule.name}: ${error.message}`);
-        }
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const active_schedule = {
+                    scheduleId: schedule.name,
+                    label: schedule.label,
+                    device_label: schedule.device_label,
+                    status: schedule.status,
+                    timestamp: Date.now(),
+                };
+                const payload = { "active_schedule": JSON.stringify(active_schedule) };
+                const topic = "v1/devices/me/telemetry";
+                yield mqttClient.publish(topic, JSON.stringify(payload));
+                console.log(`Published MQTT notification for ${schedule.name}`);
+            }
+            catch (error) {
+                console.error(`Error publishing MQTT for ${schedule.name}: ${error.message}`);
+                throw error;
+            }
+        });
     }
     /**
      * Sync schedule log

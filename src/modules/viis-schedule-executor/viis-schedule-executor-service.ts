@@ -239,7 +239,7 @@ export class ScheduleService {
     /**
      * Publish thông báo qua MQTT
      */
-    publishMqttNotification(mqttClient: MqttClientCore, schedule: TabiotSchedule, success: boolean): void {
+    async publishMqttNotification(mqttClient: MqttClientCore, schedule: TabiotSchedule, success: boolean): Promise<void> {
         try {
             const active_schedule = {
                 scheduleId: schedule.name,
@@ -248,14 +248,13 @@ export class ScheduleService {
                 status: schedule.status,
                 timestamp: Date.now(),
             };
-            const payload = {
-                "active_schedule": JSON.stringify(active_schedule)
-            }
+            const payload = { "active_schedule": JSON.stringify(active_schedule) };
             const topic = "v1/devices/me/telemetry";
-            mqttClient.publish(topic, JSON.stringify(payload));
+            await mqttClient.publish(topic, JSON.stringify(payload));
             console.log(`Published MQTT notification for ${schedule.name}`);
         } catch (error) {
             console.error(`Error publishing MQTT for ${schedule.name}: ${(error as Error).message}`);
+            throw error;
         }
     }
 

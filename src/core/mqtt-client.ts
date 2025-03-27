@@ -2,19 +2,17 @@ import { NodeAPI, Node } from "node-red";
 import mqtt, { MqttClient, IClientOptions, IClientPublishOptions } from "mqtt";
 import { EventEmitter } from "events";
 
-// Định nghĩa interface cho cấu hình MQTT
 export interface MqttConfig {
-    broker?: string; // Ví dụ: mqtt://localhost:1883
+    broker?: string;
     clientId?: string;
     username?: string;
     password?: string;
-    reconnectPeriod?: number; // Thời gian chờ trước khi reconnect (ms)
-    connectTimeout?: number; // Timeout cho kết nối (ms)
-    keepalive?: number; // Keepalive interval (s)
-    qos: 0 | 1 | 2; // Quality of Service mặc định
+    reconnectPeriod?: number;
+    connectTimeout?: number;
+    keepalive?: number;
+    qos: 0 | 1 | 2;
 }
 
-// Định nghĩa interface cho message nhận được
 export interface MqttMessage {
     topic: string;
     message: string | Buffer;
@@ -27,15 +25,16 @@ export class MqttClientCore extends EventEmitter {
     private client: MqttClient | null = null;
     private config: MqttConfig;
     private node: Node;
+    private connectionPromise: Promise<void> | null = null;
     private subscribedTopics: Set<string> = new Set();
-    private messageQueue: { topic: string; message: string | Buffer; options?: IClientPublishOptions }[] = [];
+
     constructor(config: MqttConfig, node: Node) {
         super();
         this.config = {
-            reconnectPeriod: 5000, // 5 giây reconnect
-            connectTimeout: 30000, // 30 giây timeout
-            keepalive: 60, // 60 giây keepalive
-            ...config, // Ghi đè bởi config từ người dùng
+            reconnectPeriod: 5000,
+            connectTimeout: 30000,
+            keepalive: 60,
+            ...config,
         };
         this.node = node;
         this.initializeClient();
@@ -54,22 +53,25 @@ export class MqttClientCore extends EventEmitter {
 
         this.client = mqtt.connect(this.config.broker!, options);
 
-        this.client.on("connect", () => {
-            this.node.status({ fill: "green", shape: "dot", text: "Connected" });
-            this.emit("mqtt-status", { status: "connected" });
-            this.resubscribeTopics();
-            this.flushQueue(); // Publish queued messages on connect
+        // Khai báo rõ ràng this.connectionPromise là Promise<void>
+        this.connectionPromise = new Promise<void>((resolve, reject) => {
+            this.client!.on("connect", () => {
+                this.node.status({ fill: "green", shape: "dot", text: "Connected" });
+                this.emit("mqtt-status", { status: "connected" });
+                this.resubscribeTopics();
+                resolve(); // Không trả về giá trị, chỉ resolve void
+            });
+
+            this.client!.on("error", (error) => {
+                this.node.error(`MQTT Error: ${error.message}`);
+                this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
+                reject(error); // Reject với Error
+            });
         });
 
         this.client.on("close", () => {
             this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
             this.emit("mqtt-status", { status: "disconnected" });
-        });
-
-        this.client.on("error", (error) => {
-            this.node.error(`MQTT Error: ${error.message}`);
-            this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
-            this.emit("mqtt-status", { status: "error", error: error.message });
         });
 
         this.client.on("message", (topic, message, packet) => {
@@ -83,70 +85,79 @@ export class MqttClientCore extends EventEmitter {
         });
     }
 
+    // Chờ kết nối trước khi sử dụng
+    public async waitForConnection(timeoutMs: number = 30000): Promise<void> {
+        if (this.client?.connected) return; // Đã kết nối thì return ngay
+        if (!this.connectionPromise) throw new Error("Client not initialized");
+
+        // Promise.race với kiểu rõ ràng là Promise<void>
+        await Promise.race([
+            this.connectionPromise,
+            new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Connection timeout")), timeoutMs)),
+        ]);
+    }
+
     // Subscribe topic
-    public subscribe(topic: string, qos: 0 | 1 | 2 = this.config.qos): void {
-        if (!this.client || !this.client.connected) {
-            this.subscribedTopics.add(topic); // Lưu topic để resubscribe khi reconnect
-            return;
+    public async subscribe(topic: string, qos: 0 | 1 | 2 = this.config.qos): Promise<void> {
+        if (!this.client) throw new Error("MQTT client not initialized");
+        if (!this.client.connected) {
+            await this.waitForConnection();
         }
-        this.client.subscribe(topic, { qos }, (err) => {
-            if (err) {
-                this.node.error(`Failed to subscribe to ${topic}: ${err.message}`);
-            } else {
-                this.subscribedTopics.add(topic);
-                //this.node.log(`Subscribed to topic: ${topic}`);
-            }
+        return new Promise((resolve, reject) => {
+            this.client!.subscribe(topic, { qos }, (err) => {
+                if (err) {
+                    this.node.error(`Failed to subscribe to ${topic}: ${err.message}`);
+                    reject(err);
+                } else {
+                    this.subscribedTopics.add(topic);
+                    this.node.log(`Subscribed to topic: ${topic}`);
+                    resolve();
+                }
+            });
         });
     }
 
     // Unsubscribe topic
-    public unsubscribe(topic: string): void {
-        if (!this.client || !this.client.connected) {
-            this.subscribedTopics.delete(topic);
-            return;
+    public async unsubscribe(topic: string): Promise<void> {
+        if (!this.client) throw new Error("MQTT client not initialized");
+        if (!this.client.connected) {
+            await this.waitForConnection();
         }
-        this.client.unsubscribe(topic, (err) => {
-            if (err) {
-                this.node.error(`Failed to unsubscribe from ${topic}: ${err.message}`);
-            } else {
-                this.subscribedTopics.delete(topic);
-                //this.node.log(`Unsubscribed from topic: ${topic}`);
-            }
-        });
-    }
-
-    // Publish message
-    public publish(topic: string, message: string | Buffer, options?: IClientPublishOptions): void {
-        if (!this.client || !this.client.connected) {
-            this.node.warn(`Cannot publish to ${topic}: MQTT client not connected, queuing message`);
-            this.messageQueue.push({ topic, message, options });
-            return;
-        }
-        const publishOptions = { qos: this.config.qos, ...options };
-        this.client.publish(topic, message, publishOptions, (err) => {
-            if (err) {
-                this.node.error(`Failed to publish to ${topic}: ${err.message}`);
-            } else {
-                //this.node.log(`Published to topic: ${topic}`);
-            }
-        });
-    }
-
-    private flushQueue(): void {
-        if (!this.client || !this.client.connected) return;
-
-        while (this.messageQueue.length > 0) {
-            const { topic, message, options } = this.messageQueue.shift()!;
-            this.client.publish(topic, message, { qos: this.config.qos, ...options }, (err) => {
+        return new Promise((resolve, reject) => {
+            this.client!.unsubscribe(topic, (err) => {
                 if (err) {
-                    this.node.error(`Failed to publish queued message to ${topic}: ${err.message}`);
-                    this.messageQueue.unshift({ topic, message, options }); // Re-queue on failure
+                    this.node.error(`Failed to unsubscribe from ${topic}: ${err.message}`);
+                    reject(err);
                 } else {
-                    //this.node.log(`Published queued message to topic: ${topic}`);
+                    this.subscribedTopics.delete(topic);
+                    this.node.log(`Unsubscribed from topic: ${topic}`);
+                    resolve();
                 }
             });
-        }
+        });
     }
+
+    // Publish message, chỉ khi đã kết nối
+    public async publish(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
+        if (!this.client) throw new Error("MQTT client not initialized");
+        if (!this.client.connected) {
+            this.node.warn(`MQTT client not connected to ${this.config.broker}, waiting for connection...`);
+            await this.waitForConnection();
+        }
+        return new Promise((resolve, reject) => {
+            this.client!.publish(topic, message, { qos: this.config.qos, ...options }, (err) => {
+                if (err) {
+                    this.node.error(`Failed to publish to ${topic}: ${err.message}`);
+                    reject(err);
+                } else {
+                    this.node.log(`Published to topic: ${topic}`);
+                    resolve();
+                }
+            });
+        });
+    }
+
+
 
     // Resubscribe tất cả các topic khi reconnect
     private resubscribeTopics(): void {
@@ -155,6 +166,8 @@ export class MqttClientCore extends EventEmitter {
             this.client.subscribe(topic, { qos: this.config.qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to resubscribe to ${topic}: ${err.message}`);
+                } else {
+                    this.node.log(`Resubscribed to topic: ${topic}`);
                 }
             });
         }
@@ -164,7 +177,7 @@ export class MqttClientCore extends EventEmitter {
     public disconnect(): void {
         if (this.client) {
             this.client.end(() => {
-                //this.node.log("MQTT client disconnected manually");
+                this.node.log("MQTT client disconnected manually");
             });
         }
     }

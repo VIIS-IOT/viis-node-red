@@ -56,5 +56,5 @@ exports.AppDataSource = new typeorm_1.DataSource({
     // Tương tự cho migrations
     migrations: [__dirname + "/migrations/**/*.{js,ts}"],
     synchronize: false, // Sử dụng false trong production, dùng migration thay cho synchronize
-    logging: false,
+    logging: true,
 });

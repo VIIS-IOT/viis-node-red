@@ -52,5 +52,5 @@ export class CustomBaseEntity {
     idx?: number = 0;
 
     @DeleteDateColumn({ nullable: true, type: 'datetime' })
-    deleted: Date = new Date();
+    deleted: Date = null;
 }

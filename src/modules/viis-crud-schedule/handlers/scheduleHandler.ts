@@ -79,7 +79,7 @@ export class ScheduleHandler {
                 take: size,
                 skip: (page - 1) * size,
                 order: { [field]: direction.toUpperCase() },
-                relations: ['schedulePlan'],
+                relations: { schedulePlan: true },
             });
 
             // const scheduleDtos = plainToInstance(TabiotScheduleDto, schedules.map(s => ({
@@ -154,6 +154,7 @@ export class ScheduleHandler {
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,
+                deleted: null,
                 creation: this.adjustToUTC7(new Date()),
                 modified: this.adjustToUTC7(new Date()),
             };
@@ -177,12 +178,19 @@ export class ScheduleHandler {
     }
 
     private async handlePut(path: string, msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
-        if (!path.startsWith(`${API_PATHS.SCHEDULE}/`)) {
+        if (!path.startsWith(`${API_PATHS.SCHEDULE}`)) {
             throw new Error('Invalid PUT endpoint');
         }
 
-        const name = path.split('/').pop();
-        const payload = msg.payload as any;
+        const payload: any = msg.payload;
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Invalid payload: Payload must be an object');
+        }
+
+        const name = payload.id;
+        if (!name || typeof name !== 'string') {
+            throw new Error('No valid schedule name provided in payload');
+        }
 
         try {
             // Validate payload against DTO
@@ -203,6 +211,9 @@ export class ScheduleHandler {
                 status: dto.status,
                 schedule_plan_id: dto.schedule_plan_id,
                 is_from_local: 1,
+                is_synced: 0,
+                is_deleted: 0,
+                deleted: null,
                 modified: this.adjustToUTC7(new Date()),
             };
 
@@ -260,6 +271,7 @@ export class ScheduleHandler {
                 {
                     is_deleted: 1,
                     is_from_local: 1,
+                    is_synced: 0,
                     modified: this.adjustToUTC7(new Date()),
                 }
             );

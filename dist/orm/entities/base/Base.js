@@ -16,7 +16,7 @@ class CustomBaseEntity {
     constructor() {
         this.docstatus = 0;
         this.idx = 0;
-        this.deleted = new Date();
+        this.deleted = null;
     }
 }
 exports.CustomBaseEntity = CustomBaseEntity;

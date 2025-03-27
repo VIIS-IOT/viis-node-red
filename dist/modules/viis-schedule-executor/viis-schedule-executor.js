@@ -20,18 +20,17 @@ module.exports = function (RED) {
         RED.nodes.createNode(this, config);
         const node = this;
         node.name = config.name;
-        const scheduleInterval = config.scheduleInterval; // Sử dụng nếu cần
+        const scheduleInterval = config.scheduleInterval;
         node.warn(`Schedule interval set to: ${scheduleInterval}`);
         let scheduleService;
         try {
-            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node); // Truyền node vào constructor
+            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node);
             node.warn("ScheduleService initialized successfully");
         }
         catch (error) {
             node.error(`Failed to initialize ScheduleService: ${error.message}`);
             return;
         }
-        // Khởi tạo Modbus và MQTT client thông qua ClientRegistry
         const modbusConfig = {
             type: process.env.MODBUS_TYPE || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
@@ -43,21 +42,6 @@ module.exports = function (RED) {
             timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
             reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
         };
-        // const mqttConfig = config.mqttBroker === "thingsboard"
-        //     ? {
-        //         broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-        //         clientId: `node-red-thingsboard-${Math.random().toString(16).substr(2, 8)}`,
-        //         username: process.env.DEVICE_ACCESS_TOKEN || "",
-        //         password: process.env.THINGSBOARD_PASSWORD || "",
-        //         qos: 1 as 0 | 1 | 2,
-        //     }
-        //     : {
-        //         broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
-        //         clientId: `node-red-local-${Math.random().toString(16).substr(2, 8)}`,
-        //         username: process.env.EMQX_USERNAME || "",
-        //         password: process.env.EMQX_PASSWORD || "",
-        //         qos: 1 as 0 | 1 | 2,
-        //     };
         const mqttConfig = {
             broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
             clientId: `node-red-tb-${Math.random().toString(16).substr(2, 8)}`,
@@ -66,14 +50,12 @@ module.exports = function (RED) {
             qos: 1,
         };
         const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
-        // const mqttClient: MqttClientCore = config.mqttBroker === "thingsboard"
-        //     ? ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
-        //     : ClientRegistry.getLocalMqttClient(mqttConfig, node);
-        const mqttClient = client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
         node.on("input", function (msg, send, done) {
             return __awaiter(this, void 0, void 0, function* () {
                 try {
-                    // Kiểm tra xem input có phải là RPC command không
+                    const mqttClient = yield client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
+                    node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
+                    // Xử lý RPC command
                     if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "schedule-disable-by-backend") {
                         const payload = msg.payload;
                         const params = payload.params || {};
@@ -84,7 +66,6 @@ module.exports = function (RED) {
                             done(new Error("Missing scheduleId"));
                             return;
                         }
-                        // Lấy schedule từ DB dựa trên scheduleId
                         const schedules = yield scheduleService.getDueSchedules();
                         const schedule = schedules.find(s => s.name === scheduleId);
                         if (!schedule) {
@@ -94,21 +75,17 @@ module.exports = function (RED) {
                             done();
                             return;
                         }
-                        // Chỉ xử lý nếu schedule đang running
                         if (schedule.status === "running") {
-                            // Cập nhật status thành finished và disable schedule
                             schedule.status = "finished";
                             schedule.enable = 0;
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             node.warn(`Disabled and finished schedule id: ${schedule.name}, label: ${schedule.label} via RPC`);
-                            // Reset các lệnh modbus nếu có
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
                             if (holdingCommands.length > 0 || coilCommands.length > 0) {
                                 yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
                                 node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label} via RPC`);
                             }
-                            // Publish MQTT notification và sync log
-                            scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                            yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
                             yield scheduleService.syncScheduleLog(schedule, true);
                         }
                         else {
@@ -121,19 +98,16 @@ module.exports = function (RED) {
                         done();
                         return;
                     }
-                    else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method !== "schedule-disable-by-backend") {
+                    else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
                         return null;
                     }
-                    // Lấy tất cả schedules từ DB, không lọc trước
                     const schedules = yield scheduleService.getDueSchedules();
                     node.warn(`Found ${schedules.length} schedule(s).`);
-                    console.log(`schedules are ${schedules}`);
                     for (const schedule of schedules) {
                         const now = (0, moment_1.default)().utc().add(7, 'hours');
                         const scheduleStart = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
                         const scheduleEnd = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
-                        const isDue = scheduleService.isScheduleDue(schedule); // Kiểm tra xem có trong khung giờ chạy không
-                        // Trường hợp 1: Schedule đang trong khung giờ chạy và chưa running
+                        const isDue = scheduleService.isScheduleDue(schedule);
                         if (isDue && schedule.status !== "running") {
                             yield scheduleService.updateScheduleStatus(schedule, "running");
                             node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to running.`);
@@ -158,16 +132,13 @@ module.exports = function (RED) {
                                         node.error(`Lỗi ghi modbus cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}: ${error.message}`);
                                     }
                                 }
-                                node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
-                                // Publish và sync log bất kể thành công hay thất bại
-                                scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
+                                yield scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
                                 yield scheduleService.syncScheduleLog(schedule, writeSuccess);
                             }
                             else {
                                 node.warn(`No modbus commands mapped for id: ${schedule.name}, label: ${schedule.label}.`);
                             }
                         }
-                        // Trường hợp 2: Schedule đang running nhưng đã quá end_time
                         else if (schedule.status === "running" && now.isAfter(scheduleEnd)) {
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
@@ -176,11 +147,9 @@ module.exports = function (RED) {
                                 yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
                                 node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label}.`);
                             }
-                            // Publish và sync log khi finished
-                            scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            // await scheduleService.syncScheduleLog(schedule, true); // Đoạn này bị comment trong code gốc, giữ nguyên
+                            yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                            // await scheduleService.syncScheduleLog(schedule, true); // Đoạn này bị comment trong code gốc
                         }
-                        // Trường hợp khác: Bỏ qua (ví dụ: đã finished hoặc chưa đến giờ chạy)
                         else {
                             node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} skipped (status: ${schedule.status}, due: ${isDue}).`);
                         }
@@ -198,7 +167,7 @@ module.exports = function (RED) {
         });
         node.on("close", function (done) {
             client_registry_1.default.releaseClient("modbus", node);
-            mqttClient.disconnect();
+            client_registry_1.default.releaseClient("thingsboard", node);
             done();
         });
     }

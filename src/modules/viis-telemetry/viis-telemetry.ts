@@ -2,7 +2,7 @@ import { NodeAPI, NodeDef, Node } from "node-red";
 import { ModbusData } from "../../core/modbus-client";
 import ClientRegistry from "../../core/client-registry";
 import { MySqlConfig } from "../../core/mysql-client";
-import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";  // <-- Import thêm
+import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";
 
 interface ViisTelemetryNodeDef extends NodeDef {
     pollIntervalCoil: string;
@@ -29,7 +29,7 @@ interface ScaleConfig {
 }
 
 module.exports = function (RED: NodeAPI) {
-    function ViisTelemetryNode(this: Node, config: ViisTelemetryNodeDef) {
+    async function ViisTelemetryNode(this: Node, config: ViisTelemetryNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
 
@@ -103,7 +103,6 @@ module.exports = function (RED: NodeAPI) {
                     throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
                 }
             });
-            // console.log("Scale configs parsed successfully:", scaleConfigs);
         } catch (error) {
             node.error(`Failed to parse scaleConfigs: ${(error as Error).message}`);
             node.status({ fill: "red", shape: "ring", text: "Invalid scaleConfigs" });
@@ -120,10 +119,11 @@ module.exports = function (RED: NodeAPI) {
             node.warn(`Using default scaleConfigs due to parsing failure: ${JSON.stringify(scaleConfigs)}`);
         }
 
+        // Lấy các client với await
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
-        const localClient = ClientRegistry.getLocalMqttClient(localMqttConfig, node);
+        const localClient = await ClientRegistry.getLocalMqttClient(localMqttConfig, node);
         const mysqlClient = ClientRegistry.getMySqlClient(mysqlConfig, node);
-        const thingsboardClient = new MqttClientCore(thingsboardMqttConfig, node); // <-- Khởi tạo ThingsBoard MQTT client
+        const thingsboardClient = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
 
         if (!modbusClient || !localClient || !mysqlClient || !thingsboardClient) {
             node.error("Failed to retrieve clients from registry");
@@ -180,17 +180,17 @@ module.exports = function (RED: NodeAPI) {
                         value,
                     }))
                     .concat({ ts: Math.floor(timestamp / 1000), key: "deviceId", value: deviceId });
-                const mqttPayload = Object.entries(changedKeys)
-                    .map(([key, value]) => ({
-                        ts: timestamp,
-                        [key]: value,
-                    }))
+                const mqttPayload = Object.entries(changedKeys).map(([key, value]) => ({
+                    ts: timestamp,
+                    [key]: value,
+                }));
+
                 // Publish lên local broker
-                localClient.publish(localConfig.pubSubTopic, JSON.stringify(republishPayload));
+                await localClient.publish(localConfig.pubSubTopic, JSON.stringify(republishPayload));
                 console.log(`${source}: Published changed data to Local MQTT`, republishPayload);
 
                 // Publish lên ThingsBoard
-                thingsboardClient.publish("v1/devices/me/telemetry", JSON.stringify(mqttPayload));
+                await thingsboardClient.publish("v1/devices/me/telemetry", JSON.stringify(mqttPayload));
                 console.log(`${source}: Published changed data to ThingsBoard MQTT`, mqttPayload);
 
                 for (const [key, changedValue] of Object.entries(changedKeys)) {
@@ -254,14 +254,12 @@ module.exports = function (RED: NodeAPI) {
             let retryCount = 0;
             while (retryCount < maxRetries) {
                 try {
-                    const result: ModbusData = await modbusClient.readCoils(coilStartAddress, coilQuantity);
-                    const currentState: TelemetryData = {};
+                    const result: ModbusData = await modbusClient.readCoils(coilStartAddress, coilQuantity); const currentState: TelemetryData = {};
                     (result.data as boolean[]).forEach((value, index) => {
                         const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
                         if (key) currentState[key] = value;
                     });
                     node.context().global.set("coilRegisterData", currentState);
-                    // console.log("Coils polled successfully:", currentState);
                     await processState(currentState, "Coils");
                     break;
                 } catch (error) {
@@ -289,7 +287,6 @@ module.exports = function (RED: NodeAPI) {
                         if (key) currentState[key] = applyScaling(key, value, "read");
                     });
                     node.context().global.set("inputRegisterData", currentState);
-                    // console.log("Input Registers polled successfully:", currentState);
                     await processState(currentState, "Input Registers");
                     break;
                 } catch (error) {
@@ -317,7 +314,6 @@ module.exports = function (RED: NodeAPI) {
                         if (key) currentState[key] = applyScaling(key, value, "read");
                     });
                     node.context().global.set("holdingRegisterData", currentState);
-                    // console.log("Holding Registers polled successfully:", currentState);
                     await processState(currentState, "Holding Registers");
                     break;
                 } catch (error) {
@@ -360,7 +356,7 @@ module.exports = function (RED: NodeAPI) {
                 inputInterval = null;
                 holdingInterval = null;
                 node.warn("Local MQTT disconnected, polling paused");
-            } else if (status.status === "connected" && isPollingPaused && modbusClient.isConnectedCheck() && thingsboardClient.isConnected()) {
+            } else if (status.status === "connected" && isPollingPaused && modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
                 resumePollingIfAllConnected();
             }
         });
@@ -391,11 +387,11 @@ module.exports = function (RED: NodeAPI) {
             }
         }
 
+        // Khởi động polling nếu tất cả client đã kết nối
         if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
             coilInterval = setInterval(pollCoils, pollIntervalCoil);
             inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
             holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
-            // console.log("Polling started for Coils, Input, and Holding Registers");
         } else {
             node.status({ fill: "red", shape: "ring", text: "Waiting for all clients to connect" });
             isPollingPaused = true;
@@ -408,7 +404,7 @@ module.exports = function (RED: NodeAPI) {
             ClientRegistry.releaseClient("modbus", node);
             ClientRegistry.releaseClient("local", node);
             ClientRegistry.releaseClient("mysql", node);
-            thingsboardClient.disconnect(); // Giải phóng kết nối ThingsBoard
+            thingsboardClient.disconnect();
             console.log("Node closed, resources released");
         });
     }

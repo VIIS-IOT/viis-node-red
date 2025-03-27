@@ -77,7 +77,7 @@ class ScheduleHandler {
                     take: size,
                     skip: (page - 1) * size,
                     order: { [field]: direction.toUpperCase() },
-                    relations: ['schedulePlan'],
+                    relations: { schedulePlan: true },
                 });
                 // const scheduleDtos = plainToInstance(TabiotScheduleDto, schedules.map(s => ({
                 //     ...s,
@@ -134,6 +134,7 @@ class ScheduleHandler {
                     is_deleted: 0,
                     is_synced: 0,
                     is_from_local: 1,
+                    deleted: null,
                     creation: this.adjustToUTC7(new Date()),
                     modified: this.adjustToUTC7(new Date()),
                 };
@@ -152,11 +153,17 @@ class ScheduleHandler {
     }
     handlePut(path, msg) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE}/`)) {
+            if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE}`)) {
                 throw new Error('Invalid PUT endpoint');
             }
-            const name = path.split('/').pop();
             const payload = msg.payload;
+            if (!payload || typeof payload !== 'object') {
+                throw new Error('Invalid payload: Payload must be an object');
+            }
+            const name = payload.id;
+            if (!name || typeof name !== 'string') {
+                throw new Error('No valid schedule name provided in payload');
+            }
             try {
                 // Validate payload against DTO
                 const dto = yield (0, validation_1.validateDto)(schedule_dto_1.TabiotScheduleDto, payload);
@@ -175,6 +182,9 @@ class ScheduleHandler {
                     status: dto.status,
                     schedule_plan_id: dto.schedule_plan_id,
                     is_from_local: 1,
+                    is_synced: 0,
+                    is_deleted: 0,
+                    deleted: null,
                     modified: this.adjustToUTC7(new Date()),
                 };
                 const result = yield this.scheduleRepo.update({ name }, updateData);
@@ -222,6 +232,7 @@ class ScheduleHandler {
                 const result = yield this.scheduleRepo.update({ name }, {
                     is_deleted: 1,
                     is_from_local: 1,
+                    is_synced: 0,
                     modified: this.adjustToUTC7(new Date()),
                 });
                 if (result.affected === 0) {

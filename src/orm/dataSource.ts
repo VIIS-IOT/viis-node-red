@@ -23,5 +23,5 @@ export const AppDataSource = new DataSource({
     // Tương tự cho migrations
     migrations: [__dirname + "/migrations/**/*.{js,ts}"],
     synchronize: false, // Sử dụng false trong production, dùng migration thay cho synchronize
-    logging: false,
+    logging: true,
 });

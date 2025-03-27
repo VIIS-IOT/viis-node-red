@@ -16,7 +16,6 @@ const constants_1 = require("../constants");
 const helper_1 = require("../../../ultils/helper");
 const class_transformer_1 = require("class-transformer");
 const validation_1 = require("../utils/validation");
-const schedule_dto_1 = require("../dto/schedule.dto");
 const schedulePlan_dto_1 = require("../dto/schedulePlan.dto");
 class SchedulePlanHandler {
     constructor(dbService, node) {
@@ -86,6 +85,7 @@ class SchedulePlanHandler {
               tabiot_schedule_plan.is_synced,
               tabiot_schedule_plan.is_from_local,
               tabiot_schedule_plan.device_id,
+              tabiot_schedule_plan.deleted,
               DATE_FORMAT(tabiot_schedule_plan.start_date, '%Y-%m-%d') AS start_date,
               DATE_FORMAT(tabiot_schedule_plan.end_date, '%Y-%m-%d') AS end_date,
               IFNULL(
@@ -190,6 +190,9 @@ class SchedulePlanHandler {
                     is_deleted: 0,
                     is_synced: 0,
                     is_from_local: 1,
+                    deleted: null,
+                    creation: new Date(Date.now() + 7 * 60 * 60 * 1000), // +7 giờ
+                    modified: new Date(Date.now() + 7 * 60 * 60 * 1000), // +7 giờ
                 };
                 const plan = this.planRepo.create(planData);
                 const savedPlan = yield this.planRepo.save(plan);
@@ -207,17 +210,38 @@ class SchedulePlanHandler {
     }
     handlePut(path, msg) {
         return __awaiter(this, void 0, void 0, function* () {
-            let payload = msg.payload;
-            if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE_PLAN}/`)) {
+            if (path !== constants_1.API_PATHS.SCHEDULE_PLAN) {
                 throw new Error('Invalid PUT endpoint');
             }
-            const name = path.split('/').pop();
+            const payload = msg.payload;
             if (!payload || typeof payload !== 'object') {
                 throw new Error('Invalid payload: Payload must be an object');
+            }
+            const name = payload.name;
+            if (!name || typeof name !== 'string') {
+                throw new Error('No valid schedule plan name provided in payload');
             }
             try {
                 // Validate payload against DTO
                 const dto = yield (0, validation_1.validateDto)(schedulePlan_dto_1.TabiotSchedulePlanDto, payload);
+                logger_1.logger.info(this.node, `Validated DTO: ${JSON.stringify(dto)}`);
+                // Check if entity exists first
+                const existingPlan = yield this.planRepo.findOne({
+                    where: { name: name },
+                    // relations: { schedules: true },
+                });
+                if (!existingPlan) {
+                    throw new Error(`Schedule plan with name ${name} not found`);
+                }
+                // const existingPlan = await this.planRepo.query(
+                //     `SELECT * FROM tabiot_schedule_plan tsp 
+                //      LEFT JOIN tabiot_schedule ts ON tsp.name = ts.schedule_plan_id 
+                //      WHERE tsp.name = ? LIMIT 1`,
+                //     [name]
+                // );
+                // if (!existingPlan || existingPlan.length === 0) {
+                //     throw new Error(`Schedule plan with name ${name} not found`);
+                // }
                 // Map DTO to entity
                 const updateData = {
                     label: dto.label,
@@ -227,27 +251,41 @@ class SchedulePlanHandler {
                     device_id: dto.device_id,
                     start_date: dto.start_date || '1998-01-22',
                     end_date: dto.end_date || '2030-01-08',
+                    deleted: null,
+                    modified: new Date(Date.now() + 7 * 60 * 60 * 1000), // Cập nhật thời gian modified
                 };
-                const result = yield this.planRepo.update({ name }, updateData);
+                logger_1.logger.info(this.node, `Updating schedule plan ${name} with data: ${JSON.stringify(updateData)}`);
+                const result = yield this.planRepo.update(name, updateData);
+                logger_1.logger.info(this.node, `Update result: ${JSON.stringify(result)}`);
+                // Since we already checked existence, affected === 0 would be unexpected
                 if (result.affected === 0) {
-                    throw new Error(`Schedule plan with name ${name} not found`);
+                    logger_1.logger.info(this.node, `Update affected 0 rows for existing plan ${name}`);
                 }
-                const updated = yield this.planRepo.findOne({
-                    where: { name },
-                    relations: ['schedules'],
-                });
-                if (!updated) {
-                    throw new Error(`Failed to retrieve updated schedule plan`);
-                }
-                // Transform to DTO for response
-                const responseDto = (0, class_transformer_1.plainToInstance)(schedulePlan_dto_1.TabiotSchedulePlanDto, Object.assign(Object.assign({}, updated), { enable: updated.enable === 1, schedules: (0, class_transformer_1.plainToInstance)(schedule_dto_1.TabiotScheduleDto, updated.schedules, { excludeExtraneousValues: true }) }), { excludeExtraneousValues: true });
-                msg.payload = { result: { data: responseDto } };
+                // // Retrieve updated entity
+                // const updated = await this.planRepo.findOne({
+                //     where: { name: name },
+                //     relations: ['schedules'],
+                // });
+                // logger.info(this.node, `Retrieved updated plan: ${JSON.stringify(updated)}`);
+                // if (!updated) {
+                //     logger.error(this.node, `Failed to retrieve updated schedule plan ${name} after successful update`);
+                //     throw new Error(`Failed to retrieve updated schedule plan ${name}`);
+                // }
+                // // Transform to DTO for response
+                // const responseDto = plainToInstance(TabiotSchedulePlanDto, {
+                //     ...updated,
+                //     enable: updated.enable === 1,
+                //     schedules: plainToInstance(TabiotScheduleDto, updated.schedules, { excludeExtraneousValues: true }),
+                // }, { excludeExtraneousValues: true });
+                // msg.payload = { result: { data: responseDto } };
+                msg.payload = { result: "ok" };
                 if ('statusCode' in msg)
                     msg.statusCode = 200;
                 return msg;
             }
             catch (error) {
-                throw error;
+                logger_1.logger.error(this.node, `PUT error: ${error.message}`);
+                throw new Error(`PUT request failed: ${error.message}`);
             }
         });
     }

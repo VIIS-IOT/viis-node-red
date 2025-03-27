@@ -10,7 +10,6 @@ import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSch
 import { generateHashKey, parseFilterParams } from '../../../ultils/helper';
 import { plainToInstance } from 'class-transformer';
 import { validateDto } from '../utils/validation';
-import { TabiotScheduleDto } from '../dto/schedule.dto';
 import { TabiotSchedulePlanDto } from '../dto/schedulePlan.dto';
 
 export class SchedulePlanHandler {
@@ -88,6 +87,7 @@ export class SchedulePlanHandler {
               tabiot_schedule_plan.is_synced,
               tabiot_schedule_plan.is_from_local,
               tabiot_schedule_plan.device_id,
+              tabiot_schedule_plan.deleted,
               DATE_FORMAT(tabiot_schedule_plan.start_date, '%Y-%m-%d') AS start_date,
               DATE_FORMAT(tabiot_schedule_plan.end_date, '%Y-%m-%d') AS end_date,
               IFNULL(
@@ -207,6 +207,9 @@ export class SchedulePlanHandler {
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,
+                deleted: null,
+                creation: new Date(Date.now() + 7 * 60 * 60 * 1000), // +7 giờ
+                modified: new Date(Date.now() + 7 * 60 * 60 * 1000), // +7 giờ
             };
 
             const plan = this.planRepo.create(planData);
@@ -228,21 +231,45 @@ export class SchedulePlanHandler {
     }
 
     private async handlePut(path: string, msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
-        let payload = msg.payload
-        if (!path.startsWith(`${API_PATHS.SCHEDULE_PLAN}/`)) {
+        if (path !== API_PATHS.SCHEDULE_PLAN) {
             throw new Error('Invalid PUT endpoint');
         }
 
-        const name = path.split('/').pop();
-
+        const payload: any = msg.payload;
         if (!payload || typeof payload !== 'object') {
             throw new Error('Invalid payload: Payload must be an object');
+        }
+
+        const name = payload.name;
+        if (!name || typeof name !== 'string') {
+            throw new Error('No valid schedule plan name provided in payload');
         }
 
         try {
             // Validate payload against DTO
             const dto = await validateDto(TabiotSchedulePlanDto, payload);
+            logger.info(this.node, `Validated DTO: ${JSON.stringify(dto)}`);
 
+            // Check if entity exists first
+            const existingPlan = await this.planRepo.findOne({
+                where: { name: name },
+                // relations: { schedules: true },
+            });
+
+            if (!existingPlan) {
+                throw new Error(`Schedule plan with name ${name} not found`);
+            }
+
+            // const existingPlan = await this.planRepo.query(
+            //     `SELECT * FROM tabiot_schedule_plan tsp 
+            //      LEFT JOIN tabiot_schedule ts ON tsp.name = ts.schedule_plan_id 
+            //      WHERE tsp.name = ? LIMIT 1`,
+            //     [name]
+            // );
+
+            // if (!existingPlan || existingPlan.length === 0) {
+            //     throw new Error(`Schedule plan with name ${name} not found`);
+            // }
             // Map DTO to entity
             const updateData: Partial<TabiotSchedulePlan> = {
                 label: dto.label,
@@ -252,33 +279,45 @@ export class SchedulePlanHandler {
                 device_id: dto.device_id,
                 start_date: dto.start_date || '1998-01-22',
                 end_date: dto.end_date || '2030-01-08',
+                deleted: null,
+                modified: new Date(Date.now() + 7 * 60 * 60 * 1000), // Cập nhật thời gian modified
             };
 
-            const result = await this.planRepo.update({ name }, updateData);
+            logger.info(this.node, `Updating schedule plan ${name} with data: ${JSON.stringify(updateData)}`);
+            const result = await this.planRepo.update(name, updateData);
+            logger.info(this.node, `Update result: ${JSON.stringify(result)}`);
+
+            // Since we already checked existence, affected === 0 would be unexpected
             if (result.affected === 0) {
-                throw new Error(`Schedule plan with name ${name} not found`);
+                logger.info(this.node, `Update affected 0 rows for existing plan ${name}`);
             }
 
-            const updated = await this.planRepo.findOne({
-                where: { name },
-                relations: ['schedules'],
-            });
-            if (!updated) {
-                throw new Error(`Failed to retrieve updated schedule plan`);
-            }
+            // // Retrieve updated entity
+            // const updated = await this.planRepo.findOne({
+            //     where: { name: name },
+            //     relations: ['schedules'],
+            // });
+            // logger.info(this.node, `Retrieved updated plan: ${JSON.stringify(updated)}`);
 
-            // Transform to DTO for response
-            const responseDto = plainToInstance(TabiotSchedulePlanDto, {
-                ...updated,
-                enable: updated.enable === 1,
-                schedules: plainToInstance(TabiotScheduleDto, updated.schedules, { excludeExtraneousValues: true }),
-            }, { excludeExtraneousValues: true });
+            // if (!updated) {
+            //     logger.error(this.node, `Failed to retrieve updated schedule plan ${name} after successful update`);
+            //     throw new Error(`Failed to retrieve updated schedule plan ${name}`);
+            // }
 
-            msg.payload = { result: { data: responseDto } };
+            // // Transform to DTO for response
+            // const responseDto = plainToInstance(TabiotSchedulePlanDto, {
+            //     ...updated,
+            //     enable: updated.enable === 1,
+            //     schedules: plainToInstance(TabiotScheduleDto, updated.schedules, { excludeExtraneousValues: true }),
+            // }, { excludeExtraneousValues: true });
+
+            // msg.payload = { result: { data: responseDto } };
+            msg.payload = { result: "ok" }
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {
-            throw error;
+            logger.error(this.node, `PUT error: ${(error as Error).message}`);
+            throw new Error(`PUT request failed: ${(error as Error).message}`);
         }
     }
 

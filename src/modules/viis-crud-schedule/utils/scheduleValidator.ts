@@ -1,7 +1,7 @@
 
 export function convertObjectArray(inputArray: any) {
     return inputArray.map((item: any) => {
-        let { name, action, enable, label, interval, set_time, start_date, end_date, type, start_time, end_time, schedule_plan_id, status, template_id, creation, modified } = item;
+        let { is_deleted, is_synced, is_from_local, name, action, enable, label, interval, set_time, start_date, end_date, type, start_time, end_time, schedule_plan_id, status, template_id, creation, modified } = item;
         try {
             action = action.split('\\').join('');
             action = JSON.parse(action);
@@ -41,7 +41,10 @@ export function convertObjectArray(inputArray: any) {
             status,
             template_id,
             creation,
-            modified
+            modified,
+            is_deleted,
+            is_synced,
+            is_from_local
         };
     });
 }

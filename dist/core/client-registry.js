@@ -1,11 +1,55 @@
 "use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const modbus_client_1 = require("./modbus-client");
 const mqtt_client_1 = require("./mqtt-client");
 const mysql_client_1 = require("./mysql-client");
-// Registry để lưu trữ các instance chung
 class ClientRegistry {
-    // Lấy hoặc tạo instance ModbusClientCore
+    static getThingsboardMqttClient(config, node) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.thingsboardMqttInstance) {
+                this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
+                node.warn("Created new Thingsboard MqttClientCore instance");
+                try {
+                    yield this.thingsboardMqttInstance.waitForConnection();
+                    node.warn("Thingsboard MQTT client connected successfully");
+                }
+                catch (error) {
+                    node.error(`Failed to connect Thingsboard MQTT client: ${error.message}`);
+                    throw error;
+                }
+            }
+            this.referenceCount.thingsboard++;
+            return this.thingsboardMqttInstance;
+        });
+    }
+    // Các hàm khác giữ nguyên, chỉ cần đảm bảo async nếu cần
+    static getLocalMqttClient(config, node) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.localMqttInstance) {
+                this.localMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
+                node.warn("Created new Local MqttClientCore instance");
+                try {
+                    yield this.localMqttInstance.waitForConnection();
+                    node.warn("Local MQTT client connected successfully");
+                }
+                catch (error) {
+                    node.error(`Failed to connect Local MQTT client: ${error.message}`);
+                    throw error;
+                }
+            }
+            this.referenceCount.local++;
+            return this.localMqttInstance;
+        });
+    }
     static getModbusClient(config, node) {
         if (!this.modbusInstance) {
             this.modbusInstance = new modbus_client_1.ModbusClientCore(config, node);
@@ -14,27 +58,6 @@ class ClientRegistry {
         this.referenceCount.modbus++;
         return this.modbusInstance;
     }
-    // Lấy hoặc tạo instance MqttClientCore cho ThingsBoard
-    static getThingsboardMqttClient(config, node) {
-        if (!this.thingsboardMqttInstance) {
-            this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
-            node.log("Created new Thingsboard MqttClientCore instance");
-        }
-        else {
-            node.log("Using registerd Thingsboard MqttClientCore instance");
-        }
-        this.referenceCount.thingsboard++;
-        return this.thingsboardMqttInstance;
-    }
-    // Lấy hoặc tạo instance MqttClientCore cho EMQX local
-    static getLocalMqttClient(config, node) {
-        if (!this.localMqttInstance) {
-            this.localMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
-            node.log("Created new Local MqttClientCore instance");
-        }
-        this.referenceCount.local++;
-        return this.localMqttInstance;
-    }
     static getMySqlClient(config, node) {
         if (!this.mysqlInstance) {
             this.mysqlInstance = new mysql_client_1.MySqlClientCore(config, node);
@@ -42,7 +65,6 @@ class ClientRegistry {
         }
         return this.mysqlInstance;
     }
-    // Giảm reference count và ngắt kết nối nếu không còn node nào sử dụng
     static releaseClient(type, node) {
         if (type === "modbus" && this.modbusInstance) {
             this.referenceCount.modbus--;
