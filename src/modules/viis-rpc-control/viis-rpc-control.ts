@@ -11,13 +11,13 @@ interface ViisRpcControlNodeDef extends NodeDef {
 
 interface ScaleConfig {
     key: string;
-    operation: 'multiply' | 'divide';
+    operation: "multiply" | "divide";
     factor: number;
-    direction: 'read' | 'write';
+    direction: "read" | "write";
 }
 
 interface ConfigKey {
-    [key: string]: 'number' | 'boolean' | 'string'; // Danh sách key và kiểu mong muốn
+    [key: string]: "number" | "boolean" | "string"; // Danh sách key và kiểu mong muốn
 }
 
 interface ConfigKeyValues {
@@ -37,7 +37,7 @@ interface ModbusMappingResult {
 }
 
 module.exports = function (RED: NodeAPI) {
-    function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
+    async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
 
@@ -51,36 +51,31 @@ module.exports = function (RED: NodeAPI) {
         let configKeys: ConfigKey = {};
         let scaleConfigs: ScaleConfig[] = [];
         try {
-            configKeys = JSON.parse(config.configKeys || '{}');
-            //node.warn(`configKeys is ${JSON.stringify(configKeys)}`);
-            scaleConfigs = JSON.parse(config.scaleConfigs || '[]');
-            //node.warn(`scale config is ${JSON.stringify(scaleConfigs)}`);
+            configKeys = JSON.parse(config.configKeys || "{}");
+            scaleConfigs = JSON.parse(config.scaleConfigs || "[]");
 
             // Validate configKeys
             Object.entries(configKeys).forEach(([key, type]) => {
-                if (!['number', 'boolean', 'string'].includes(type)) {
+                if (!["number", "boolean", "string"].includes(type)) {
                     throw new Error(`Invalid type "${type}" for key "${key}"`);
                 }
             });
 
             // Validate scaleConfigs
-            scaleConfigs.forEach(conf => {
-                if (!conf.key || !conf.operation || typeof conf.factor !== 'number' || !['read', 'write'].includes(conf.direction)) {
+            scaleConfigs.forEach((conf) => {
+                if (!conf.key || !conf.operation || typeof conf.factor !== "number" || !["read", "write"].includes(conf.direction)) {
                     throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
                 }
             });
 
-            // Store configKeys globally (danh sách key cần detect)
+            // Store configurations globally
             node.context().global.set("configKeys", configKeys);
-            // Khởi tạo configKeyValues nếu chưa tồn tại
             if (!node.context().global.get("configKeyValues")) {
                 node.context().global.set("configKeyValues", {});
             }
-            // Store scaleConfigs globally
             node.context().global.set("scaleConfigs", scaleConfigs);
         } catch (error) {
-            const err = error as Error;
-            node.error(`Configuration parsing error: ${err.message}`);
+            node.error(`Configuration parsing error: ${(error as Error).message}`);
             node.status({ fill: "red", shape: "ring", text: "Invalid configuration" });
             return;
         }
@@ -121,8 +116,11 @@ module.exports = function (RED: NodeAPI) {
             ? "v1/devices/me/telemetry"
             : `v1/devices/me/telemetry/${deviceId}`;
 
+        // Lấy clients với await
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
-        const mqttClient = new MqttClientCore(mqttConfig, node);
+        const mqttClient = config.mqttBroker === "thingsboard"
+            ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+            : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
 
         if (!modbusClient || !mqttClient) {
             node.error("Failed to initialize clients");
@@ -130,39 +128,37 @@ module.exports = function (RED: NodeAPI) {
             return;
         }
 
-        // Utility functions
-        function scaleValue(key: string, value: number, direction: 'read' | 'write'): number {
-            //node.warn(`all scaleConfigs ${JSON.stringify(scaleConfigs)}`);
-            const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
-            //node.warn(`Scaling key: ${key}, value: ${value}, direction: ${direction}`);
-            //node.warn(`Config: ${JSON.stringify(config)}`);
-            if (!config) return value;
+        node.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
 
-            const shouldMultiply = config.operation === 'multiply';
-            //node.warn(`shouldMultiply: ${shouldMultiply}`);
-            return shouldMultiply ? value * config.factor : value / config.factor;
+        // Utility functions
+        function scaleValue(key: string, value: number, direction: "read" | "write"): number {
+            const config = scaleConfigs.find((c) => c.key === key && c.direction === direction);
+            if (!config) return value;
+            const shouldMultiply = config.operation === "multiply";
+            const scaledValue = shouldMultiply ? value * config.factor : value / config.factor;
+            node.log(`Scaled ${key} (${direction}): ${value} -> ${scaledValue}`);
+            return scaledValue;
         }
 
         function validateAndConvertValue(key: string, value: any): any {
             const expectedType = configKeys[key];
-            if (!expectedType) return value; // Nếu không phải config key, trả về nguyên giá trị
+            if (!expectedType) return value;
             try {
                 switch (expectedType) {
-                    case 'number':
+                    case "number":
                         const num = Number(value);
                         if (isNaN(num)) throw new Error(`Invalid number value for ${key}`);
                         return num;
-                    case 'boolean':
-                        if (typeof value === 'string') return value.toLowerCase() === 'true';
+                    case "boolean":
+                        if (typeof value === "string") return value.toLowerCase() === "true";
                         return Boolean(value);
-                    case 'string':
+                    case "string":
                         return String(value);
                     default:
                         return value;
                 }
             } catch (error) {
-                const err = error as Error;
-                throw new Error(`Value conversion failed for ${key}: ${err.message}`);
+                throw new Error(`Value conversion failed for ${key}: ${(error as Error).message}`);
             }
         }
 
@@ -182,18 +178,17 @@ module.exports = function (RED: NodeAPI) {
         async function writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
             try {
                 let writeValue = value;
-                if (typeof value === 'number') {
-                    writeValue = scaleValue(key, value, 'write'); // Sử dụng key thay vì address
+                if (typeof value === "number") {
+                    writeValue = scaleValue(key, value, "write");
                 }
                 if (mapping.fc === 6) {
                     await modbusClient.writeRegister(mapping.address, writeValue as number);
                 } else if (mapping.fc === 5) {
                     await modbusClient.writeCoil(mapping.address, value as boolean);
                 }
-                //node.log(`Wrote to Modbus: address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+                node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
             } catch (error) {
-                const err = error as Error;
-                throw new Error(`Modbus write failed: ${err.message}`);
+                throw new Error(`Modbus write failed for ${key}: ${(error as Error).message}`);
             }
         }
 
@@ -211,32 +206,30 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 let readValue = result.data[0];
-                if (typeof readValue === 'number') {
-                    readValue = scaleValue(key, readValue, 'read'); // Sử dụng key thay vì address
+                if (typeof readValue === "number") {
+                    readValue = scaleValue(key, readValue, "read");
                 }
+                node.log(`Read from Modbus: key=${key}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
                 return readValue;
             } catch (error) {
-                const err = error as Error;
-                throw new Error(`Modbus read failed: ${err.message}`);
+                throw new Error(`Modbus read failed for ${key}: ${(error as Error).message}`);
             }
         }
 
-        function publishResult(key: string, value: number | boolean): void {
+        async function publishResult(key: string, value: number | boolean): Promise<void> {
             const mqttPayload = {
                 ts: Date.now(),
                 [key]: value,
             };
-
-            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+            await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
             node.send({ payload: mqttPayload });
-            node.status({ fill: "green", shape: "dot", text: "Success" });
+            node.status({ fill: "green", shape: "dot", text: `Published: ${key}` });
         }
 
         function handleConfigRequest(params: Record<string, any>): void {
-            const currentConfigKeyValues: ConfigKeyValues = node.context().global.get("configKeyValues") as ConfigKeyValues || {};
+            const currentConfigKeyValues: ConfigKeyValues = (node.context().global.get("configKeyValues") as ConfigKeyValues) || {};
             const updatedConfigKeyValues = { ...currentConfigKeyValues };
 
-            // Lưu tất cả các config key vào configKeyValues
             Object.entries(params).forEach(([key, rawValue]) => {
                 if (key in configKeys) {
                     const value = validateAndConvertValue(key, rawValue);
@@ -244,89 +237,89 @@ module.exports = function (RED: NodeAPI) {
                 }
             });
 
-            // Cập nhật global variable configKeyValues
             node.context().global.set("configKeyValues", updatedConfigKeyValues);
 
             const mqttPayload = {
                 ts: Date.now(),
                 ...params,
             };
-            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload)); // Không await ở đây vì không cần chặn
             node.send({ payload: mqttPayload });
             node.status({ fill: "green", shape: "dot", text: "Config processed" });
         }
 
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
             try {
-                if (rpcBody.method === 'set_state' && rpcBody.params) {
-                    // Duyệt từng key trong params
+                if (rpcBody.method === "set_state" && rpcBody.params) {
                     for (const [key, rawValue] of Object.entries(rpcBody.params)) {
-                        // Kiểm tra xem key có mapping trong Modbus không
                         const mapping = findModbusMapping(key);
                         if (mapping) {
-                            // Nếu có mapping, thực hiện ghi/đọc Modbus
                             const value = validateAndConvertValue(key, rawValue);
                             await writeToModbus(key, mapping, value);
                             const readValue = await readFromModbus(key, mapping);
-                            publishResult(key, readValue);
+                            await publishResult(key, readValue);
                         } else {
-                            // Nếu không có mapping, coi đây là config key
-                            // Có thể thực hiện validate chuyển đổi nếu muốn
                             const value = validateAndConvertValue(key, rawValue);
-                            const currentConfig = node.context().global.get("configKeyValues") || {};
+                            const currentConfig = (node.context().global.get("configKeyValues") as ConfigKeyValues) || {};
                             currentConfig[key] = value;
                             node.context().global.set("configKeyValues", currentConfig);
 
-                            // Gửi thông báo qua MQTT và output của node
                             const mqttPayload = {
                                 ts: Date.now(),
                                 [key]: value,
-                                note: "Config key updated (no Modbus mapping)"
+                                note: "Config key updated (no Modbus mapping)",
                             };
-                            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+                            await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
                             node.send({ payload: mqttPayload });
-                            node.status({ fill: "green", shape: "dot", text: "Config updated" });
+                            node.status({ fill: "green", shape: "dot", text: `Config updated: ${key}` });
                         }
                     }
                 }
             } catch (error) {
-                const err = error as Error;
-                node.error(`RPC handling error: ${err.message}`);
+                node.error(`RPC handling error: ${(error as Error).message}`);
                 node.status({ fill: "red", shape: "ring", text: "RPC error" });
             }
         }
 
-
         // Set up MQTT subscription
-        mqttClient.subscribe(subscribeTopic);
+        try {
+            await mqttClient.subscribe(subscribeTopic);
+            node.log(`Subscribed to topic: ${subscribeTopic}`);
+        } catch (error) {
+            node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Subscription failed" });
+            return;
+        }
+
         mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
             if (!message.topic.startsWith(subscribeTopic.replace("+", ""))) return;
 
             try {
                 const payload = JSON.parse(message.message.toString());
-                //node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
+                node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
                 handleRpcRequest(payload);
             } catch (error) {
-                const err = error as Error;
-                node.error(`MQTT message processing error: ${err.message}`);
+                node.error(`MQTT message processing error: ${(error as Error).message}`);
                 node.status({ fill: "red", shape: "ring", text: "Parse error" });
             }
         });
 
         // Cleanup
-        node.on('close', (done: any) => {
-            Promise.all([
-                mqttClient.disconnect(),
-                ClientRegistry.releaseClient("modbus", node)
-            ])
-                .then(() => {
-                    //node.log("Node closed and clients released");
-                    done();
-                })
-                .catch((error: Error) => {
-                    node.error(`Cleanup error: ${error.message}`);
-                    done();
-                });
+        node.on("close", async (done: () => void) => {
+            try {
+                await mqttClient.disconnect();
+                ClientRegistry.releaseClient("modbus", node);
+                if (config.mqttBroker === "thingsboard") {
+                    ClientRegistry.releaseClient("thingsboard", node);
+                } else {
+                    ClientRegistry.releaseClient("local", node);
+                }
+                node.log("Node closed and clients released");
+                done();
+            } catch (error) {
+                node.error(`Cleanup error: ${(error as Error).message}`);
+                done();
+            }
         });
     }
 
