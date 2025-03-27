@@ -349,7 +349,7 @@ let ScheduleService = class ScheduleService {
                 yield repository.save(schedule);
                 console.log(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
                 if (this.syncScheduleService) {
-                    yield this.syncScheduleService.syncLocalToServer([schedule]);
+                    yield this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
                     console.log(`Synced ${schedule.name} to server`);
                 }
                 else {

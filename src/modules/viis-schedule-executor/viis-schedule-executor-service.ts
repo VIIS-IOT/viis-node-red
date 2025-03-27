@@ -317,7 +317,7 @@ export class ScheduleService {
             console.log(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
 
             if (this.syncScheduleService) {
-                await this.syncScheduleService.syncLocalToServer([schedule]);
+                await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
                 console.log(`Synced ${schedule.name} to server`);
             } else {
                 console.warn("SyncScheduleService is not available, skipping sync");

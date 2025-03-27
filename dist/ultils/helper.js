@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateHashKey = void 0;
+exports.adjustToUTC7 = adjustToUTC7;
 exports.getInvalidFields = getInvalidFields;
 exports.areAllArraysEqual = areAllArraysEqual;
 exports.generateInsertSQLTaskArray = generateInsertSQLTaskArray;
@@ -43,6 +44,11 @@ exports.generateDeleteSQLTaskArray = generateDeleteSQLTaskArray;
 exports.parseFilterParams = parseFilterParams;
 const crypto = __importStar(require("crypto"));
 const { v4: uuidv4 } = require('uuid');
+function adjustToUTC7(date) {
+    const utcDate = new Date(date);
+    utcDate.setHours(utcDate.getHours() + 7);
+    return utcDate;
+}
 // Hàm kiểm tra xem có giá trị không hợp lệ trong object hay không
 function getInvalidFields(data) {
     const invalidFields = [];

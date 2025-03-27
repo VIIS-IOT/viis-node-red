@@ -2,6 +2,13 @@ import * as crypto from 'crypto';
 
 const { v4: uuidv4 } = require('uuid');
 
+export function adjustToUTC7(date: Date | string): Date {
+    const utcDate = new Date(date);
+    utcDate.setHours(utcDate.getHours() + 7);
+    return utcDate;
+}
+
+
 // Hàm kiểm tra xem có giá trị không hợp lệ trong object hay không
 export function getInvalidFields(data: any): { invalidFields: string[]; invalidValues: string[] } {
     const invalidFields: string[] = [];

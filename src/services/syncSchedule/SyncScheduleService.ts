@@ -2,6 +2,7 @@ import { AxiosService } from '../AxiosService';
 import configs from '../../configs';
 import { TabiotSchedule } from '../../orm/entities/schedule/TabiotSchedule';
 import { Service } from 'typedi';
+import { TabiotSchedulePlan } from '../../orm/entities/schedulePlan/TabiotSchedulePlan';
 
 
 @Service()
@@ -32,11 +33,27 @@ export class SyncScheduleService extends AxiosService {
         }
     }
 
-    async syncLocalToServer(body: Partial<TabiotSchedule>[]) {
+    async syncScheduleFromLocalToServer(body: Partial<TabiotSchedule>[]) {
         try {
             const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
             console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
-            const response: any = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
+            const response: any = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
+                withCredentials: true,
+            });
+            return { status: response.status, data: response.data };
+        } catch (error) {
+            console.error(`Error in syncLocalToServer: ${(error as Error).message}`);
+            console.log(error)
+            throw error;
+        }
+    }
+
+
+    async syncSchedulePlanFromLocalToServer(body: Partial<TabiotSchedulePlan>[]) {
+        try {
+            const fullPath = `${this.instance.defaults.baseURL}/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
+            console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
+            const response: any = await this.instance.post(`/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
                 withCredentials: true,
             });
             return { status: response.status, data: response.data };

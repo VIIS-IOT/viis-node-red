@@ -11,12 +11,16 @@ import { generateHashKey, parseFilterParams } from '../../../ultils/helper';
 import { plainToInstance } from 'class-transformer';
 import { validateDto } from '../utils/validation';
 import { TabiotSchedulePlanDto } from '../dto/schedulePlan.dto';
-
+import { SyncScheduleService } from '../../../services/syncSchedule/SyncScheduleService';
+import Container from 'typedi';
+import { adjustToUTC7 } from '../../../ultils/helper'
 export class SchedulePlanHandler {
     private planRepo: Repository<TabiotSchedulePlan>;
     private node: Node;
+    private syncScheduleService: SyncScheduleService;
 
     constructor(dbService: DatabaseService, node: Node) {
+        this.syncScheduleService = Container.get(SyncScheduleService);
         this.planRepo = dbService.getSchedulePlanRepository();
         this.node = node;
     }
@@ -130,6 +134,7 @@ export class SchedulePlanHandler {
             WHERE TRUE
               ${sqlConditionStr}
               AND tabiot_schedule_plan.is_deleted = 0
+              AND tabiot_schedule_plan.deleted IS NULL
             ORDER BY 
               ${orderBy}
             LIMIT ? OFFSET ?
@@ -214,7 +219,23 @@ export class SchedulePlanHandler {
 
             const plan = this.planRepo.create(planData);
             const savedPlan = await this.planRepo.save(plan);
-
+            // Sync to server
+            try {
+                const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([savedPlan]);
+                // If sync is successful, update is_synced to 1
+                await this.planRepo.update(
+                    { name: savedPlan.name },
+                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                );
+                // Refresh updated with the latest is_synced value
+                const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
+                if (refreshedUpdated) {
+                    Object.assign(savedPlan, refreshedUpdated);
+                }
+            } catch (syncError) {
+                logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
+                // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
+            }
             // Transform to DTO for response
             const responseDto = plainToInstance(TabiotSchedulePlanDto, {
                 ...savedPlan,
@@ -253,23 +274,12 @@ export class SchedulePlanHandler {
             // Check if entity exists first
             const existingPlan = await this.planRepo.findOne({
                 where: { name: name },
-                // relations: { schedules: true },
             });
 
             if (!existingPlan) {
                 throw new Error(`Schedule plan with name ${name} not found`);
             }
 
-            // const existingPlan = await this.planRepo.query(
-            //     `SELECT * FROM tabiot_schedule_plan tsp 
-            //      LEFT JOIN tabiot_schedule ts ON tsp.name = ts.schedule_plan_id 
-            //      WHERE tsp.name = ? LIMIT 1`,
-            //     [name]
-            // );
-
-            // if (!existingPlan || existingPlan.length === 0) {
-            //     throw new Error(`Schedule plan with name ${name} not found`);
-            // }
             // Map DTO to entity
             const updateData: Partial<TabiotSchedulePlan> = {
                 label: dto.label,
@@ -279,40 +289,55 @@ export class SchedulePlanHandler {
                 device_id: dto.device_id,
                 start_date: dto.start_date || '1998-01-22',
                 end_date: dto.end_date || '2030-01-08',
+                is_deleted: 0, // Ensure it remains not deleted
+                is_synced: 0, // Reset to 0 before sync
+                is_from_local: 1, // Mark as local change
                 deleted: null,
-                modified: new Date(Date.now() + 7 * 60 * 60 * 1000), // Cập nhật thời gian modified
+                modified: adjustToUTC7(new Date()), // Use helper function for UTC+7
             };
 
             logger.info(this.node, `Updating schedule plan ${name} with data: ${JSON.stringify(updateData)}`);
             const result = await this.planRepo.update(name, updateData);
             logger.info(this.node, `Update result: ${JSON.stringify(result)}`);
 
-            // Since we already checked existence, affected === 0 would be unexpected
             if (result.affected === 0) {
                 logger.info(this.node, `Update affected 0 rows for existing plan ${name}`);
+                throw new Error(`Failed to update schedule plan ${name}`);
             }
 
-            // // Retrieve updated entity
-            // const updated = await this.planRepo.findOne({
-            //     where: { name: name },
-            //     relations: ['schedules'],
-            // });
-            // logger.info(this.node, `Retrieved updated plan: ${JSON.stringify(updated)}`);
+            // Retrieve updated entity for syncing
+            const updated = await this.planRepo.findOneBy({ name });
+            if (!updated) {
+                logger.error(this.node, `Failed to retrieve updated schedule plan ${name} after successful update`);
+                throw new Error(`Failed to retrieve updated schedule plan ${name}`);
+            }
 
-            // if (!updated) {
-            //     logger.error(this.node, `Failed to retrieve updated schedule plan ${name} after successful update`);
-            //     throw new Error(`Failed to retrieve updated schedule plan ${name}`);
-            // }
+            // Sync to server
+            try {
+                const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updated]);
+                // If sync is successful, update is_synced to 1
+                await this.planRepo.update(
+                    { name: updated.name },
+                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                );
+                // Refresh updated with the latest is_synced value
+                const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
+                if (refreshedUpdated) {
+                    Object.assign(updated, refreshedUpdated);
+                }
+            } catch (syncError) {
+                logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
+                // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
+            }
 
-            // // Transform to DTO for response
-            // const responseDto = plainToInstance(TabiotSchedulePlanDto, {
-            //     ...updated,
-            //     enable: updated.enable === 1,
-            //     schedules: plainToInstance(TabiotScheduleDto, updated.schedules, { excludeExtraneousValues: true }),
-            // }, { excludeExtraneousValues: true });
+            // Transform to DTO for response
+            const responseDto = plainToInstance(TabiotSchedulePlanDto, {
+                ...updated,
+                enable: updated.enable === 1,
+                schedules: [], // Assuming no schedules are included in PUT response unless fetched separately
+            }, { excludeExtraneousValues: true });
 
-            // msg.payload = { result: { data: responseDto } };
-            msg.payload = { result: "ok" }
+            msg.payload = { result: { data: responseDto } };
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {

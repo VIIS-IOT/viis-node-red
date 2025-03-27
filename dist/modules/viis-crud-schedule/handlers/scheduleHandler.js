@@ -8,6 +8,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleHandler = void 0;
 const urlParser_1 = require("../utils/urlParser");
@@ -18,16 +21,14 @@ const helper_1 = require("../../../ultils/helper");
 const class_transformer_1 = require("class-transformer");
 const schedule_dto_1 = require("../dto/schedule.dto");
 const validation_1 = require("../utils/validation");
+const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
+const typedi_1 = __importDefault(require("typedi"));
 class ScheduleHandler {
     constructor(dbService, node) {
+        this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
         this.dbService = dbService;
         this.scheduleRepo = dbService.getScheduleRepository();
         this.node = node;
-    }
-    adjustToUTC7(date) {
-        const utcDate = new Date(date);
-        utcDate.setHours(utcDate.getHours() + 7);
-        return utcDate;
     }
     handleRequest(msg) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -135,11 +136,27 @@ class ScheduleHandler {
                     is_synced: 0,
                     is_from_local: 1,
                     deleted: null,
-                    creation: this.adjustToUTC7(new Date()),
-                    modified: this.adjustToUTC7(new Date()),
+                    creation: (0, helper_1.adjustToUTC7)(new Date()),
+                    modified: (0, helper_1.adjustToUTC7)(new Date()),
                 };
                 const schedule = this.scheduleRepo.create(scheduleData);
                 const savedSchedule = yield this.scheduleRepo.save(schedule);
+                // Sync to server
+                try {
+                    const syncRes = yield this.syncScheduleService.syncScheduleFromLocalToServer([savedSchedule]);
+                    // Assuming syncRes indicates success if no error is thrown or specific success condition
+                    // If sync is successful, update is_synced to 1
+                    yield this.scheduleRepo.update({ name: savedSchedule.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                    // Refresh savedSchedule with updated is_synced value
+                    const updatedSchedule = yield this.scheduleRepo.findOneBy({ name: savedSchedule.name });
+                    if (updatedSchedule) {
+                        Object.assign(savedSchedule, updatedSchedule);
+                    }
+                }
+                catch (syncError) {
+                    logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                    // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
+                }
                 const responseDto = (0, class_transformer_1.plainToInstance)(schedule_dto_1.TabiotScheduleDto, Object.assign(Object.assign({}, savedSchedule), { name: savedSchedule.label, action: JSON.parse(savedSchedule.action || '{}'), enable: savedSchedule.enable === 1 }), { excludeExtraneousValues: true });
                 msg.payload = { result: { data: responseDto } };
                 if ('statusCode' in msg)
@@ -185,7 +202,7 @@ class ScheduleHandler {
                     is_synced: 0,
                     is_deleted: 0,
                     deleted: null,
-                    modified: this.adjustToUTC7(new Date()),
+                    modified: (0, helper_1.adjustToUTC7)(new Date()),
                 };
                 const result = yield this.scheduleRepo.update({ name }, updateData);
                 if (result.affected === 0) {
@@ -194,6 +211,21 @@ class ScheduleHandler {
                 const updated = yield this.scheduleRepo.findOneBy({ name });
                 if (!updated) {
                     throw new Error(`Failed to retrieve updated schedule`);
+                }
+                // Sync to server
+                try {
+                    const syncRes = yield this.syncScheduleService.syncScheduleFromLocalToServer([updated]);
+                    // If sync is successful, update is_synced to 1
+                    yield this.scheduleRepo.update({ name: updated.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                    // Refresh updated with the latest is_synced value
+                    const refreshedUpdated = yield this.scheduleRepo.findOneBy({ name: updated.name });
+                    if (refreshedUpdated) {
+                        Object.assign(updated, refreshedUpdated);
+                    }
+                }
+                catch (syncError) {
+                    logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                    // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
                 }
                 const responseDto = (0, class_transformer_1.plainToInstance)(schedule_dto_1.TabiotScheduleDto, Object.assign(Object.assign({}, updated), { name: updated.label, action: JSON.parse(updated.action || '{}'), enable: updated.enable === 1 }), { excludeExtraneousValues: true });
                 msg.payload = { result: { data: responseDto } };
@@ -233,10 +265,25 @@ class ScheduleHandler {
                     is_deleted: 1,
                     is_from_local: 1,
                     is_synced: 0,
-                    modified: this.adjustToUTC7(new Date()),
+                    modified: (0, helper_1.adjustToUTC7)(new Date()),
                 });
                 if (result.affected === 0) {
                     throw new Error(`Schedule with name ${name} not found`);
+                }
+                // Retrieve the updated schedule for syncing
+                const updatedSchedule = yield this.scheduleRepo.findOneBy({ name });
+                if (!updatedSchedule) {
+                    throw new Error(`Failed to retrieve updated schedule for syncing`);
+                }
+                // Sync to server
+                try {
+                    const syncRes = yield this.syncScheduleService.syncScheduleFromLocalToServer([updatedSchedule]);
+                    // If sync is successful, update is_synced to 1
+                    yield this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                }
+                catch (syncError) {
+                    logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                    // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
                 }
                 msg.payload = { result: { message: 'Schedule marked as deleted' } };
                 if ('statusCode' in msg)

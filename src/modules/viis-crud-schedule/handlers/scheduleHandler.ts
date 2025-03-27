@@ -8,27 +8,28 @@ import { logger } from '../utils/logger';
 import { API_PATHS } from '../constants';
 import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { convertObjectArray } from '../utils/scheduleValidator';
-import { generateHashKey } from '../../../ultils/helper';
+import { adjustToUTC7, generateHashKey } from '../../../ultils/helper';
 import { plainToInstance } from 'class-transformer';
 import { TabiotScheduleDto } from '../dto/schedule.dto';
 import { validateDto } from '../utils/validation';
+import { SyncScheduleService } from '../../../services/syncSchedule/SyncScheduleService';
+import { log } from 'console';
+import Container from 'typedi';
 
 export class ScheduleHandler {
     private scheduleRepo: Repository<TabiotSchedule>;
     private node: Node;
     private dbService: DatabaseService;
+    private syncScheduleService: SyncScheduleService;
 
     constructor(dbService: DatabaseService, node: Node) {
+        this.syncScheduleService = Container.get(SyncScheduleService);
         this.dbService = dbService;
         this.scheduleRepo = dbService.getScheduleRepository();
         this.node = node;
     }
 
-    private adjustToUTC7(date: Date | string): Date {
-        const utcDate = new Date(date);
-        utcDate.setHours(utcDate.getHours() + 7);
-        return utcDate;
-    }
+
 
     async handleRequest(msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
         try {
@@ -155,12 +156,31 @@ export class ScheduleHandler {
                 is_synced: 0,
                 is_from_local: 1,
                 deleted: null,
-                creation: this.adjustToUTC7(new Date()),
-                modified: this.adjustToUTC7(new Date()),
+                creation: adjustToUTC7(new Date()),
+                modified: adjustToUTC7(new Date()),
             };
 
             const schedule = this.scheduleRepo.create(scheduleData);
             const savedSchedule = await this.scheduleRepo.save(schedule);
+
+            // Sync to server
+            try {
+                const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([savedSchedule]);
+                // Assuming syncRes indicates success if no error is thrown or specific success condition
+                // If sync is successful, update is_synced to 1
+                await this.scheduleRepo.update(
+                    { name: savedSchedule.name },
+                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                );
+                // Refresh savedSchedule with updated is_synced value
+                const updatedSchedule = await this.scheduleRepo.findOneBy({ name: savedSchedule.name });
+                if (updatedSchedule) {
+                    Object.assign(savedSchedule, updatedSchedule);
+                }
+            } catch (syncError) {
+                logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
+                // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
+            }
 
             const responseDto = plainToInstance(TabiotScheduleDto, {
                 ...savedSchedule,
@@ -214,7 +234,7 @@ export class ScheduleHandler {
                 is_synced: 0,
                 is_deleted: 0,
                 deleted: null,
-                modified: this.adjustToUTC7(new Date()),
+                modified: adjustToUTC7(new Date()),
             };
 
             const result = await this.scheduleRepo.update({ name }, updateData);
@@ -225,6 +245,24 @@ export class ScheduleHandler {
             const updated = await this.scheduleRepo.findOneBy({ name });
             if (!updated) {
                 throw new Error(`Failed to retrieve updated schedule`);
+            }
+
+            // Sync to server
+            try {
+                const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updated]);
+                // If sync is successful, update is_synced to 1
+                await this.scheduleRepo.update(
+                    { name: updated.name },
+                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                );
+                // Refresh updated with the latest is_synced value
+                const refreshedUpdated = await this.scheduleRepo.findOneBy({ name: updated.name });
+                if (refreshedUpdated) {
+                    Object.assign(updated, refreshedUpdated);
+                }
+            } catch (syncError) {
+                logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
+                // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
 
             const responseDto = plainToInstance(TabiotScheduleDto, {
@@ -272,12 +310,31 @@ export class ScheduleHandler {
                     is_deleted: 1,
                     is_from_local: 1,
                     is_synced: 0,
-                    modified: this.adjustToUTC7(new Date()),
+                    modified: adjustToUTC7(new Date()),
                 }
             );
 
             if (result.affected === 0) {
                 throw new Error(`Schedule with name ${name} not found`);
+            }
+
+            // Retrieve the updated schedule for syncing
+            const updatedSchedule = await this.scheduleRepo.findOneBy({ name });
+            if (!updatedSchedule) {
+                throw new Error(`Failed to retrieve updated schedule for syncing`);
+            }
+
+            // Sync to server
+            try {
+                const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updatedSchedule]);
+                // If sync is successful, update is_synced to 1
+                await this.scheduleRepo.update(
+                    { name: updatedSchedule.name },
+                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                );
+            } catch (syncError) {
+                logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
+                // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
 
             msg.payload = { result: { message: 'Schedule marked as deleted' } };

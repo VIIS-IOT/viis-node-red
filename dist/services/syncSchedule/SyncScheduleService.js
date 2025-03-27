@@ -51,12 +51,29 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
             }
         });
     }
-    syncLocalToServer(body) {
+    syncScheduleFromLocalToServer(body) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
                 console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
-                const response = yield this.instance.post(`/api/v2/scheduleSync/syncLocalToServer`, body, {
+                const response = yield this.instance.post(`/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
+                    withCredentials: true,
+                });
+                return { status: response.status, data: response.data };
+            }
+            catch (error) {
+                console.error(`Error in syncLocalToServer: ${error.message}`);
+                console.log(error);
+                throw error;
+            }
+        });
+    }
+    syncSchedulePlanFromLocalToServer(body) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const fullPath = `${this.instance.defaults.baseURL}/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
+                console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
+                const response = yield this.instance.post(`/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
                     withCredentials: true,
                 });
                 return { status: response.status, data: response.data };
