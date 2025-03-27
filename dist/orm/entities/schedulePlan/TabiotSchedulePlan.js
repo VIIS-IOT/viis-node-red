@@ -32,7 +32,7 @@ __decorate([
     (0, typeorm_1.Column)({
         type: 'enum',
         enum: ['active', 'inactive'],
-        default: 'inactive'
+        default: 'active'
     }),
     __metadata("design:type", String)
 ], TabiotSchedulePlan.prototype, "status", void 0);

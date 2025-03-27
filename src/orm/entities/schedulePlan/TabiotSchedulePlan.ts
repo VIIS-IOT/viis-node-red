@@ -16,9 +16,9 @@ export class TabiotSchedulePlan extends CustomBaseEntity {
     @Column({
         type: 'enum',
         enum: ['active', 'inactive'],
-        default: 'inactive'
+        default: 'active'
     })
-    status!: 'active' | 'inactive';
+    status?: 'active' | 'inactive';
 
     @Column({ type: 'tinyint', nullable: true })
     enable?: number;

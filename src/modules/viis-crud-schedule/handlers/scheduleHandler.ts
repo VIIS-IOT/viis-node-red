@@ -1,3 +1,4 @@
+// src/handlers/scheduleHandler.ts
 import { Node } from 'node-red';
 import { Repository } from 'typeorm';
 import { DatabaseService } from '../services/databaseService';
@@ -8,7 +9,9 @@ import { API_PATHS } from '../constants';
 import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { convertObjectArray } from '../utils/scheduleValidator';
 import { generateHashKey } from '../../../ultils/helper';
-// ... (previous imports remain the same)
+import { plainToInstance } from 'class-transformer';
+import { TabiotScheduleDto } from '../dto/schedule.dto';
+import { validateDto } from '../utils/validation';
 
 export class ScheduleHandler {
     private scheduleRepo: Repository<TabiotSchedule>;
@@ -21,7 +24,6 @@ export class ScheduleHandler {
         this.node = node;
     }
 
-    // Utility function to adjust UTC time by +7 hours
     private adjustToUTC7(date: Date | string): Date {
         const utcDate = new Date(date);
         utcDate.setHours(utcDate.getHours() + 7);
@@ -42,17 +44,21 @@ export class ScheduleHandler {
             }
 
             switch (method) {
-                case 'GET': return await this.handleGet(path, query, msg);
-                case 'POST': return await this.handlePost(path, msg);
-                case 'PUT': return await this.handlePut(path, msg);
-                case 'DELETE': return await this.handleDelete(path, msg);
-                default: throw new Error(`Unsupported HTTP method: ${method}`);
+                case 'GET':
+                    return await this.handleGet(path, query, msg);
+                case 'POST':
+                    return await this.handlePost(path, msg);
+                case 'PUT':
+                    return await this.handlePut(path, msg);
+                case 'DELETE':
+                    return await this.handleDelete(path, msg);
+                default:
+                    throw new Error(`Unsupported HTTP method: ${method}`);
             }
         } catch (error) {
             logger.error(this.node, `Request handling failed: ${(error as Error).message}`);
             msg.payload = { error: (error as Error).message };
-            // Only set statusCode if it exists in the type
-            if ('statusCode' in msg) (msg as any).statusCode = 500;
+            if ('statusCode' in msg) (msg as any).statusCode = error instanceof Error && error.message.includes('Validation failed') ? 400 : 500;
             return msg;
         }
     }
@@ -76,6 +82,13 @@ export class ScheduleHandler {
                 relations: ['schedulePlan'],
             });
 
+            // const scheduleDtos = plainToInstance(TabiotScheduleDto, schedules.map(s => ({
+            //     ...s,
+            //     name: s.label, // Map label to name
+            //     action: JSON.parse(s.action || '{}'), // Parse action
+            //     enable: s.enable === 1, // Map to boolean
+            // })), { excludeExtraneousValues: true });
+
             const pagination: Pagination = {
                 totalElements: total,
                 totalPages: Math.ceil(total / size),
@@ -84,7 +97,8 @@ export class ScheduleHandler {
                 order_by: orderBy,
             };
 
-            msg.payload = { result: { data: convertObjectArray(schedules), pagination } };
+            // msg.payload = { result: { data: convertObjectArray(schedules), pagination } };
+            msg.payload = { result: convertObjectArray(schedules) };
             return msg;
         } catch (error) {
             throw new Error(`GET request failed: ${(error as Error).message}`);
@@ -102,65 +116,63 @@ export class ScheduleHandler {
         }
 
         try {
-            const enable = typeof payload.enable === 'string'
-                ? payload.enable === 'true' ? 1 : 0
-                : payload.enable ? 1 : 0;
+            // Validate payload against DTO
+            const dto = await validateDto(TabiotScheduleDto, payload);
 
-            const actionString = JSON.stringify(payload.action || {});
+            // Map DTO to entity
+            const actionString = JSON.stringify(dto.action || {});
+            const enable = dto.enable ? 1 : 0;
             const name = generateHashKey(
-                payload.device_id || '',
+                dto.device_id || '',
                 actionString,
                 enable,
-                payload.name || '',
-                payload.time || '',
-                payload.start_date || '',
-                payload.end_date || '',
-                payload.type || '',
-                payload.interval || '',
-                payload.start_time || '',
-                payload.end_time || '',
+                dto.name || '',
+                dto.start_date || '',
+                dto.end_date || '',
+                dto.type || '',
+                dto.interval || '',
+                dto.start_time || '',
+                dto.end_time || '',
                 0,
-                payload.schedule_plan_id || ''
+                dto.schedule_plan_id || ''
             );
 
             const scheduleData: Partial<TabiotSchedule> = {
                 name,
-                label: payload.name,
+                label: dto.name,
                 action: actionString,
                 enable,
-                device_id: payload.device_id,
-                set_time: payload.time,
-                start_date: payload.start_date,
-                end_date: payload.end_date,
-                type: payload.type || '',
-                interval: payload.interval,
-                start_time: payload.start_time,
-                end_time: payload.end_time,
-                status: payload.status || '',
-                schedule_plan_id: payload.schedule_plan_id,
+                device_id: dto.device_id,
+                start_date: dto.start_date,
+                end_date: dto.end_date,
+                type: dto.type || '',
+                interval: dto.interval,
+                start_time: dto.start_time,
+                end_time: dto.end_time,
+                status: dto.status || '',
+                schedule_plan_id: dto.schedule_plan_id,
                 is_deleted: 0,
                 is_synced: 0,
-                creation: this.adjustToUTC7(new Date()), // Override TypeORM default
-                modified: this.adjustToUTC7(new Date()), // Override TypeORM default
+                is_from_local: 1,
+                creation: this.adjustToUTC7(new Date()),
+                modified: this.adjustToUTC7(new Date()),
             };
 
             const schedule = this.scheduleRepo.create(scheduleData);
             const savedSchedule = await this.scheduleRepo.save(schedule);
 
-            const responseData = {
+            const responseDto = plainToInstance(TabiotScheduleDto, {
                 ...savedSchedule,
-                id: savedSchedule.name,
                 name: savedSchedule.label,
                 action: JSON.parse(savedSchedule.action || '{}'),
-            };
-            delete responseData.label;
+                enable: savedSchedule.enable === 1,
+            }, { excludeExtraneousValues: true });
 
-            msg.payload = { result: { data: responseData } };
-            if ('statusCode' in msg) (msg as any).statusCode = 201; // Conditional statusCode
+            msg.payload = { result: { data: responseDto } };
+            if ('statusCode' in msg) (msg as any).statusCode = 201;
             return msg;
         } catch (error) {
-            logger.error(this.node, `POST failed: ${(error as Error).message}`);
-            throw new Error(`Failed to create schedule: ${(error as Error).message}`);
+            throw error; // Let handleRequest catch and handle it
         }
     }
 
@@ -173,23 +185,25 @@ export class ScheduleHandler {
         const payload = msg.payload as any;
 
         try {
+            // Validate payload against DTO
+            const dto = await validateDto(TabiotScheduleDto, payload);
+
+            // Map DTO to entity
             const updateData: Partial<TabiotSchedule> = {
-                label: payload.name,
-                action: payload.action ? JSON.stringify(payload.action) : undefined,
-                enable: typeof payload.enable === 'string'
-                    ? payload.enable === 'true' ? 1 : 0
-                    : payload.enable ? 1 : 0,
-                device_id: payload.device_id,
-                set_time: payload.time,
-                start_date: payload.start_date,
-                end_date: payload.end_date,
-                type: payload.type,
-                interval: payload.interval,
-                start_time: payload.start_time,
-                end_time: payload.end_time,
-                status: payload.status,
-                schedule_plan_id: payload.schedule_plan_id,
-                modified: this.adjustToUTC7(new Date()), // Override TypeORM default
+                label: dto.name,
+                action: dto.action ? JSON.stringify(dto.action) : undefined,
+                enable: dto.enable ? 1 : 0,
+                device_id: dto.device_id,
+                start_date: dto.start_date,
+                end_date: dto.end_date,
+                type: dto.type,
+                interval: dto.interval,
+                start_time: dto.start_time,
+                end_time: dto.end_time,
+                status: dto.status,
+                schedule_plan_id: dto.schedule_plan_id,
+                is_from_local: 1,
+                modified: this.adjustToUTC7(new Date()),
             };
 
             const result = await this.scheduleRepo.update({ name }, updateData);
@@ -202,19 +216,18 @@ export class ScheduleHandler {
                 throw new Error(`Failed to retrieve updated schedule`);
             }
 
-            const responseData = {
+            const responseDto = plainToInstance(TabiotScheduleDto, {
                 ...updated,
-                id: updated.name,
                 name: updated.label,
                 action: JSON.parse(updated.action || '{}'),
-            };
-            delete responseData.label;
+                enable: updated.enable === 1,
+            }, { excludeExtraneousValues: true });
 
-            msg.payload = { result: { data: responseData } };
-            if ('statusCode' in msg) (msg as any).statusCode = 200; // Conditional statusCode
+            msg.payload = { result: { data: responseDto } };
+            if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {
-            throw new Error(`PUT request failed: ${(error as Error).message}`);
+            throw error; // Let handleRequest catch and handle it
         }
     }
 
@@ -223,13 +236,31 @@ export class ScheduleHandler {
             throw new Error('Invalid DELETE endpoint');
         }
 
-        const name = path.split('/').pop();
+        // Extract name from either path or query parameter
+        let name: string | undefined;
+        const pathParts = path.split('/').filter(Boolean); // Split and remove empty parts
+        const lastPathPart = pathParts[pathParts.length - 1];
+
+        // Check if the last part of the path is a valid name (not just "schedule")
+        if (lastPathPart && lastPathPart !== 'schedule') {
+            name = lastPathPart;
+        } else {
+            // Fallback to query parameter
+            const query = msg.req?.query || {};
+            name = query.name as string | undefined;
+        }
+
+        if (!name) {
+            throw new Error('No schedule name provided in path or query');
+        }
+
         try {
             const result = await this.scheduleRepo.update(
                 { name },
                 {
                     is_deleted: 1,
-                    modified: this.adjustToUTC7(new Date()), // Override TypeORM default
+                    is_from_local: 1,
+                    modified: this.adjustToUTC7(new Date()),
                 }
             );
 
@@ -238,7 +269,7 @@ export class ScheduleHandler {
             }
 
             msg.payload = { result: { message: 'Schedule marked as deleted' } };
-            if ('statusCode' in msg) (msg as any).statusCode = 200; // Conditional statusCode
+            if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {
             throw new Error(`DELETE request failed: ${(error as Error).message}`);
