@@ -63,6 +63,13 @@ module.exports = function (RED: NodeAPI) {
                 const mqttClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
                 node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
 
+                // Kiểm tra và xoá overrides nếu không có hẹn giờ nào đang chạy
+                const activeModbusCommands = node.context().global.get("activeModbusCommands") || {};
+                if (Object.keys(activeModbusCommands).length === 0) {
+                    node.context().global.set("manualModbusOverrides", {});
+                    node.warn("Không có hẹn giờ đang chạy. Đã xoá manualModbusOverrides.");
+                }
+
                 // Xử lý RPC command
                 if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && (msg.payload as RpcPayload).method === "schedule-disable-by-backend") {
                     const payload = msg.payload as RpcPayload;
@@ -151,8 +158,9 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     if (isDue && schedule.status !== "running") {
+                        node.warn("start running schedule")
                         const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                        if (await scheduleService.canExecuteCommands(holdingCommands, coilCommands)) {
+                        if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                             await scheduleService.updateScheduleStatus(schedule, "running");
                             let writeSuccess = false;
                             let attempt = 0;
@@ -180,6 +188,7 @@ module.exports = function (RED: NodeAPI) {
                             await scheduleService.syncScheduleLog(schedule, true);
                         }
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
+                        node.warn("strart finishing schedule")
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         if (activeCommands.length > 0) {

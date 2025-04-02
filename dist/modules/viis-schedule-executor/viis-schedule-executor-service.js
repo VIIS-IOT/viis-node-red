@@ -434,25 +434,20 @@ let ScheduleService = class ScheduleService {
     /**
          * Check if commands can be executed without overlapping with active commands
          */
-    canExecuteCommands(holdingCommands, coilCommands) {
+    canExecuteCommands(currentScheduleId, holdingCommands, coilCommands) {
         return __awaiter(this, void 0, void 0, function* () {
             const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
-            const manualOverrides = this.node.context().global.get("manualModbusOverrides") || {};
             const allCommands = [...holdingCommands, ...coilCommands];
             for (const cmd of allCommands) {
-                // Kiểm tra overlap với các schedule khác
+                // Kiểm tra overlap với các schedule khác, bỏ qua schedule hiện tại
                 for (const scheduleId in activeModbusCommands) {
+                    if (scheduleId === currentScheduleId)
+                        continue;
                     const activeCmds = activeModbusCommands[scheduleId];
                     if (activeCmds.some(ac => ac.address === cmd.address && ac.fc === cmd.fc)) {
-                        console.warn(`Command overlap detected with another schedule at address ${cmd.address} (fc: ${cmd.fc})`);
+                        console.warn(`Command overlap detected with schedule ${scheduleId} at address ${cmd.address} (fc: ${cmd.fc})`);
                         return false;
                     }
-                }
-                // Kiểm tra xem có bị ghi đè thủ công không
-                const overrideKey = `${cmd.address}-${cmd.fc}`;
-                if (manualOverrides[overrideKey]) {
-                    console.warn(`Command at address ${cmd.address} (fc: ${cmd.fc}) is overridden by manual control`);
-                    return false;
                 }
             }
             return true;
@@ -468,18 +463,22 @@ let ScheduleService = class ScheduleService {
                 yield this.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
                 return true;
             }
-            if (yield this.canExecuteCommands(activeCommands, [])) {
-                console.log(`Re-executing commands for schedule ${schedule.name} after power loss`);
-                yield this.executeModbusCommands(modbusClient, {
-                    holdingCommands: activeCommands.filter(cmd => cmd.fc === 6),
-                    coilCommands: activeCommands.filter(cmd => cmd.fc === 5)
-                });
-                return true;
-            }
-            else {
-                console.warn(`Cannot re-execute commands for schedule ${schedule.name} due to manual overrides or overlaps`);
+            // Lấy manualOverrides từ global context
+            const manualOverrides = this.node.context().global.get("manualModbusOverrides") || {};
+            // Lọc các lệnh không bị override riêng lẻ
+            const holdingCommandsToExecute = activeCommands.filter(cmd => cmd.fc === 6 && !manualOverrides[`${cmd.address}-${cmd.fc}`]);
+            const coilCommandsToExecute = activeCommands.filter(cmd => cmd.fc === 5 && !manualOverrides[`${cmd.address}-${cmd.fc}`]);
+            // Nếu tất cả các lệnh đều bị override, thì không thực thi re-execute
+            if (holdingCommandsToExecute.length === 0 && coilCommandsToExecute.length === 0) {
+                console.warn(`All active commands for schedule ${schedule.name} are overridden. Skipping re-execution.`);
                 return false;
             }
+            console.log(`Re-executing commands for schedule ${schedule.name} after power loss for non-overridden keys`);
+            yield this.executeModbusCommands(modbusClient, {
+                holdingCommands: holdingCommandsToExecute,
+                coilCommands: coilCommandsToExecute
+            });
+            return true;
         });
     }
     /**

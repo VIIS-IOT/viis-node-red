@@ -63,6 +63,12 @@ module.exports = function (RED) {
                 try {
                     const mqttClient = yield client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
                     node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
+                    // Kiểm tra và xoá overrides nếu không có hẹn giờ nào đang chạy
+                    const activeModbusCommands = node.context().global.get("activeModbusCommands") || {};
+                    if (Object.keys(activeModbusCommands).length === 0) {
+                        node.context().global.set("manualModbusOverrides", {});
+                        node.warn("Không có hẹn giờ đang chạy. Đã xoá manualModbusOverrides.");
+                    }
                     // Xử lý RPC command
                     if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "schedule-disable-by-backend") {
                         const payload = msg.payload;
@@ -142,8 +148,9 @@ module.exports = function (RED) {
                             }
                         }
                         if (isDue && schedule.status !== "running") {
+                            node.warn("start running schedule");
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                            if (yield scheduleService.canExecuteCommands(holdingCommands, coilCommands)) {
+                            if (yield scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                                 yield scheduleService.updateScheduleStatus(schedule, "running");
                                 let writeSuccess = false;
                                 let attempt = 0;
@@ -174,6 +181,7 @@ module.exports = function (RED) {
                             }
                         }
                         else if (schedule.status === "running" && now.isAfter(endDateTime)) {
+                            node.warn("strart finishing schedule");
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             const activeCommands = scheduleService.getActiveCommands(schedule.name);
                             if (activeCommands.length > 0) {
