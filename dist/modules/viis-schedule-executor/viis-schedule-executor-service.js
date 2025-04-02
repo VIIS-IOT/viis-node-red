@@ -60,6 +60,7 @@ const moment_1 = __importDefault(require("moment"));
 const dataSource_1 = require("../../orm/dataSource");
 const SyncScheduleService_1 = require("../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importStar(require("typedi"));
+// require('dotenv').config();
 let ScheduleService = class ScheduleService {
     constructor(node) {
         this.node = node; // Lưu node để truy cập global context
@@ -131,9 +132,10 @@ let ScheduleService = class ScheduleService {
                 console.log(`Schedule ${schedule.name} is not enabled`);
                 return false;
             }
-            const now = (0, moment_1.default)().utc().add(7, 'hours'); // Giờ hiện tại (UTC+7)
-            const today = now.clone().startOf('day'); // Bắt đầu ngày hiện tại (00:00)
-            // Kiểm tra phạm vi start_date và end_date (nếu có)
+            // Lấy giờ hiện tại theo múi giờ UTC+7
+            const now = (0, moment_1.default)().utc().add(7, 'hours');
+            const today = now.clone().startOf('day');
+            // Kiểm tra phạm vi start_date và end_date nếu có
             if (schedule.start_date && schedule.end_date) {
                 const startDate = (0, moment_1.default)(schedule.start_date, "YYYY-MM-DD");
                 const endDate = (0, moment_1.default)(schedule.end_date, "YYYY-MM-DD");
@@ -156,11 +158,18 @@ let ScheduleService = class ScheduleService {
                 minute: endTime.minute(),
                 second: endTime.second(),
             });
-            // Nếu end_time nhỏ hơn start_time, giả định end_time là ngày tiếp theo
-            if (endDateTime.isBefore(startDateTime)) {
-                endDateTime.add(1, 'day');
+            // Xử lý trường hợp qua ngày (cross-midnight)
+            if (startDateTime.isAfter(endDateTime)) {
+                if (now.isBefore(endDateTime)) {
+                    // Nếu giờ hiện tại nằm sau nửa đêm nhưng trước endTime, nghĩa là schedule đã bắt đầu từ ngày hôm trước.
+                    startDateTime.subtract(1, 'day');
+                }
+                else {
+                    // Nếu giờ hiện tại sau giờ startTime, thì endTime nằm vào ngày hôm sau.
+                    endDateTime.add(1, 'day');
+                }
             }
-            // Kiểm tra xem now có nằm trong khoảng startDateTime và endDateTime không
+            // Kiểm tra xem giờ hiện tại có nằm trong khoảng startDateTime và endDateTime không
             const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[]");
             console.log({
                 now: now.format(),
@@ -421,6 +430,82 @@ let ScheduleService = class ScheduleService {
                 }
             }
         });
+    }
+    /**
+         * Check if commands can be executed without overlapping with active commands
+         */
+    canExecuteCommands(holdingCommands, coilCommands) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
+            const manualOverrides = this.node.context().global.get("manualModbusOverrides") || {};
+            const allCommands = [...holdingCommands, ...coilCommands];
+            for (const cmd of allCommands) {
+                // Kiểm tra overlap với các schedule khác
+                for (const scheduleId in activeModbusCommands) {
+                    const activeCmds = activeModbusCommands[scheduleId];
+                    if (activeCmds.some(ac => ac.address === cmd.address && ac.fc === cmd.fc)) {
+                        console.warn(`Command overlap detected with another schedule at address ${cmd.address} (fc: ${cmd.fc})`);
+                        return false;
+                    }
+                }
+                // Kiểm tra xem có bị ghi đè thủ công không
+                const overrideKey = `${cmd.address}-${cmd.fc}`;
+                if (manualOverrides[overrideKey]) {
+                    console.warn(`Command at address ${cmd.address} (fc: ${cmd.fc}) is overridden by manual control`);
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+    reExecuteAfterPowerLoss(modbusClient, schedule) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const activeCommands = this.getActiveCommands(schedule.name);
+            if (activeCommands.length === 0) {
+                console.log(`No active commands stored for schedule ${schedule.name}, mapping anew`);
+                const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule);
+                this.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
+                yield this.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
+                return true;
+            }
+            if (yield this.canExecuteCommands(activeCommands, [])) {
+                console.log(`Re-executing commands for schedule ${schedule.name} after power loss`);
+                yield this.executeModbusCommands(modbusClient, {
+                    holdingCommands: activeCommands.filter(cmd => cmd.fc === 6),
+                    coilCommands: activeCommands.filter(cmd => cmd.fc === 5)
+                });
+                return true;
+            }
+            else {
+                console.warn(`Cannot re-execute commands for schedule ${schedule.name} due to manual overrides or overlaps`);
+                return false;
+            }
+        });
+    }
+    /**
+     * Store executed commands in global context
+     */
+    storeActiveCommands(scheduleId, commands) {
+        const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
+        activeModbusCommands[scheduleId] = commands;
+        this.node.context().global.set("activeModbusCommands", activeModbusCommands);
+        console.log(`Stored active commands for schedule ${scheduleId}: ${JSON.stringify(commands)}`);
+    }
+    /**
+     * Retrieve active commands for a schedule
+     */
+    getActiveCommands(scheduleId) {
+        const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
+        return activeModbusCommands[scheduleId] || [];
+    }
+    /**
+     * Clear active commands for a schedule
+     */
+    clearActiveCommands(scheduleId) {
+        const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
+        delete activeModbusCommands[scheduleId];
+        this.node.context().global.set("activeModbusCommands", activeModbusCommands);
+        console.log(`Cleared active commands for schedule ${scheduleId}`);
     }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));

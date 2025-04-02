@@ -6,24 +6,12 @@ import { AppDataSource } from "../../orm/dataSource";
 import { SyncScheduleService } from "../../services/syncSchedule/SyncScheduleService";
 import Container, { Service } from "typedi";
 import { Node } from "node-red";
+import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig } from "./type";
 
 // require('dotenv').config();
 
-export interface ModbusCmd {
-    key: string;
-    value: number | boolean;
-    fc: number;
-    unitid: number;
-    address: number;
-    quantity: number;
-}
 
-interface ScaleConfig {
-    key: string;
-    operation: 'multiply' | 'divide';
-    factor: number;
-    direction: 'read' | 'write';
-}
+
 
 @Service()
 export class ScheduleService {
@@ -101,10 +89,11 @@ export class ScheduleService {
                 return false;
             }
 
-            const now = moment().utc().add(7, 'hours'); // Giờ hiện tại (UTC+7)
-            const today = now.clone().startOf('day'); // Bắt đầu ngày hiện tại (00:00)
+            // Lấy giờ hiện tại theo múi giờ UTC+7
+            const now = moment().utc().add(7, 'hours');
+            const today = now.clone().startOf('day');
 
-            // Kiểm tra phạm vi start_date và end_date (nếu có)
+            // Kiểm tra phạm vi start_date và end_date nếu có
             if (schedule.start_date && schedule.end_date) {
                 const startDate = moment(schedule.start_date, "YYYY-MM-DD");
                 const endDate = moment(schedule.end_date, "YYYY-MM-DD");
@@ -130,12 +119,18 @@ export class ScheduleService {
                 second: endTime.second(),
             });
 
-            // Nếu end_time nhỏ hơn start_time, giả định end_time là ngày tiếp theo
-            if (endDateTime.isBefore(startDateTime)) {
-                endDateTime.add(1, 'day');
+            // Xử lý trường hợp qua ngày (cross-midnight)
+            if (startDateTime.isAfter(endDateTime)) {
+                if (now.isBefore(endDateTime)) {
+                    // Nếu giờ hiện tại nằm sau nửa đêm nhưng trước endTime, nghĩa là schedule đã bắt đầu từ ngày hôm trước.
+                    startDateTime.subtract(1, 'day');
+                } else {
+                    // Nếu giờ hiện tại sau giờ startTime, thì endTime nằm vào ngày hôm sau.
+                    endDateTime.add(1, 'day');
+                }
             }
 
-            // Kiểm tra xem now có nằm trong khoảng startDateTime và endDateTime không
+            // Kiểm tra xem giờ hiện tại có nằm trong khoảng startDateTime và endDateTime không
             const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[]");
             console.log({
                 now: now.format(),
@@ -150,6 +145,7 @@ export class ScheduleService {
             return false;
         }
     }
+
 
     /**
  * Map schedule thành danh sách các lệnh modbus
@@ -390,6 +386,86 @@ export class ScheduleService {
                 console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
             }
         }
+    }
+
+
+    /**
+         * Check if commands can be executed without overlapping with active commands
+         */
+    async canExecuteCommands(holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[]): Promise<boolean> {
+        const activeModbusCommands: ActiveModbusCommands = this.node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
+        const manualOverrides: ManualModbusOverrides = this.node.context().global.get("manualModbusOverrides") as ManualModbusOverrides || {};
+        const allCommands = [...holdingCommands, ...coilCommands];
+
+        for (const cmd of allCommands) {
+            // Kiểm tra overlap với các schedule khác
+            for (const scheduleId in activeModbusCommands) {
+                const activeCmds: ModbusCmd[] = activeModbusCommands[scheduleId];
+                if (activeCmds.some(ac => ac.address === cmd.address && ac.fc === cmd.fc)) {
+                    console.warn(`Command overlap detected with another schedule at address ${cmd.address} (fc: ${cmd.fc})`);
+                    return false;
+                }
+            }
+
+            // Kiểm tra xem có bị ghi đè thủ công không
+            const overrideKey = `${cmd.address}-${cmd.fc}`;
+            if (manualOverrides[overrideKey]) {
+                console.warn(`Command at address ${cmd.address} (fc: ${cmd.fc}) is overridden by manual control`);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    async reExecuteAfterPowerLoss(modbusClient: ModbusClientCore, schedule: TabiotSchedule): Promise<boolean> {
+        const activeCommands = this.getActiveCommands(schedule.name);
+        if (activeCommands.length === 0) {
+            console.log(`No active commands stored for schedule ${schedule.name}, mapping anew`);
+            const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule);
+            this.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
+            await this.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
+            return true
+        }
+
+        if (await this.canExecuteCommands(activeCommands, [])) {
+            console.log(`Re-executing commands for schedule ${schedule.name} after power loss`);
+            await this.executeModbusCommands(modbusClient, {
+                holdingCommands: activeCommands.filter(cmd => cmd.fc === 6),
+                coilCommands: activeCommands.filter(cmd => cmd.fc === 5)
+            });
+            return true;
+        } else {
+            console.warn(`Cannot re-execute commands for schedule ${schedule.name} due to manual overrides or overlaps`);
+            return false;
+        }
+    }
+
+    /**
+     * Store executed commands in global context
+     */
+    storeActiveCommands(scheduleId: string, commands: ModbusCmd[]): void {
+        const activeModbusCommands: ActiveModbusCommands = this.node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
+        activeModbusCommands[scheduleId] = commands;
+        this.node.context().global.set("activeModbusCommands", activeModbusCommands);
+        console.log(`Stored active commands for schedule ${scheduleId}: ${JSON.stringify(commands)}`);
+    }
+
+    /**
+     * Retrieve active commands for a schedule
+     */
+    getActiveCommands(scheduleId: string): ModbusCmd[] {
+        const activeModbusCommands: ActiveModbusCommands = this.node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
+        return activeModbusCommands[scheduleId] || [];
+    }
+
+    /**
+     * Clear active commands for a schedule
+     */
+    clearActiveCommands(scheduleId: string): void {
+        const activeModbusCommands: ActiveModbusCommands = this.node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
+        delete activeModbusCommands[scheduleId];
+        this.node.context().global.set("activeModbusCommands", activeModbusCommands);
+        console.log(`Cleared active commands for schedule ${scheduleId}`);
     }
 
     delay(ms: number): Promise<void> {

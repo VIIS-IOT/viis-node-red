@@ -6,35 +6,23 @@ import { ScheduleService } from "./viis-schedule-executor-service";
 import ClientRegistry from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
-
-interface ScheduleExecutorNodeDef extends NodeDef {
-    name: string;
-    mqttBroker: string;
-    scheduleInterval: number;
-    description: string;
-}
-
-
-interface ModbusCmd {
-    key: string,
-    value: number | boolean
-    fc: number,
-    unitid: number,
-    address: number,
-    quantity: number
-}
-
-interface RpcPayload {
-    method: string;
-    params?: {
-        scheduleId?: string;
-    };
-}
+import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, ScheduleExecutorNodeDef } from "./type";
 
 module.exports = function (RED: NodeAPI) {
     function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
+
+        // Initialize global activeModbusCommands with type
+        const globalContext = node.context().global;
+        if (!globalContext.get("activeModbusCommands")) {
+            globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
+        }
+
+        if (!globalContext.get("manualModbusOverrides")) {
+            globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
+        }
+
         node.name = config.name;
         const scheduleInterval = config.scheduleInterval;
         node.warn(`Schedule interval set to: ${scheduleInterval}`);
@@ -131,7 +119,9 @@ module.exports = function (RED: NodeAPI) {
                 node.warn(`Found ${schedules.length} schedule(s).`);
 
                 for (const schedule of schedules) {
+                    const isDue = scheduleService.isScheduleDue(schedule);
                     const now = moment().utc().add(7, 'hours');
+                    // const now = moment('2025-04-03T00:10:00Z').utc();
                     const today = now.clone().startOf('day');
                     const startTime = moment(schedule.start_time, "HH:mm:ss");
                     const endTime = moment(schedule.end_time, "HH:mm:ss");
@@ -139,62 +129,67 @@ module.exports = function (RED: NodeAPI) {
                     let startDateTime = today.clone().set({
                         hour: startTime.hour(),
                         minute: startTime.minute(),
-                        second: startTime.second(),
+                        second: startTime.second()
                     });
                     let endDateTime = today.clone().set({
                         hour: endTime.hour(),
                         minute: endTime.minute(),
-                        second: endTime.second(),
+                        second: endTime.second()
                     });
 
-                    if (endDateTime.isBefore(startDateTime)) {
-                        endDateTime.add(1, 'day');
+                    // Xử lý trường hợp qua ngày (cross-midnight)
+                    if (startDateTime.isAfter(endDateTime)) {
+                        if (now.isBefore(endDateTime)) {
+                            // Nếu giờ hiện tại nằm sau nửa đêm (ví dụ: 00:10) và trước endTime,
+                            // schedule đã bắt đầu từ ngày hôm trước.
+                            startDateTime.subtract(1, 'day');
+                        } else {
+                            // Nếu giờ hiện tại nằm sau startTime,
+                            // thì endTime nằm vào ngày hôm sau.
+                            endDateTime.add(1, 'day');
+                        }
                     }
 
-                    const isDue = scheduleService.isScheduleDue(schedule);
-
                     if (isDue && schedule.status !== "running") {
-                        await scheduleService.updateScheduleStatus(schedule, "running");
-                        node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to running.`);
-
                         const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                        if (holdingCommands.length > 0 || coilCommands.length > 0) {
+                        if (await scheduleService.canExecuteCommands(holdingCommands, coilCommands)) {
+                            await scheduleService.updateScheduleStatus(schedule, "running");
                             let writeSuccess = false;
                             let attempt = 0;
                             while (!writeSuccess && attempt < 3) {
                                 attempt++;
-                                node.warn(`Ghi modbus cho id: ${schedule.name}, label: ${schedule.label}, lần thử ${attempt}`);
                                 try {
                                     await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
                                     writeSuccess = await scheduleService.verifyModbusWrite(modbusClient, [...holdingCommands, ...coilCommands]);
                                     if (writeSuccess) {
-                                        node.warn(`Ghi và xác thực thành công cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
-                                    } else {
-                                        node.warn(`Xác thực thất bại cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
+                                        scheduleService.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
                                     }
                                 } catch (error) {
-                                    node.error(`Lỗi ghi modbus cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}: ${(error as Error).message}`);
+                                    node.error(`Error writing modbus: ${(error as Error).message}`);
                                 }
                             }
                             await scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
                             await scheduleService.syncScheduleLog(schedule, writeSuccess);
-                        } else {
-                            node.warn(`No modbus commands mapped for id: ${schedule.name}, label: ${schedule.label}.`);
+                        }
+                    } else if (schedule.status === "running" && isDue) {
+                        // Trường hợp đang running nhưng có thể đã mất điện
+                        const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
+                        if (writeSuccess) {
+                            node.warn(`Re-executed commands for schedule ${schedule.name} after power loss`);
+                            await scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                            await scheduleService.syncScheduleLog(schedule, true);
                         }
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                         await scheduleService.updateScheduleStatus(schedule, "finished");
-                        node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
-
-                        const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                        if (holdingCommands.length > 0 || coilCommands.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
-                            node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label}.`);
+                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                        if (activeCommands.length > 0) {
+                            await scheduleService.resetModbusCommands(modbusClient, activeCommands);
+                            scheduleService.clearActiveCommands(schedule.name);
                         }
-
                         await scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                        await scheduleService.syncScheduleLog(schedule, true); // Bỏ comment để đồng bộ log
+                        await scheduleService.syncScheduleLog(schedule, true);
                     } else {
-                        node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} skipped (status: ${schedule.status}, due: ${isDue}).`);
+                        node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
                 }
 

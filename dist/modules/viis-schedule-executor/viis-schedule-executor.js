@@ -19,6 +19,14 @@ module.exports = function (RED) {
     function ScheduleExecutorNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
+        // Initialize global activeModbusCommands with type
+        const globalContext = node.context().global;
+        if (!globalContext.get("activeModbusCommands")) {
+            globalContext.set("activeModbusCommands", {});
+        }
+        if (!globalContext.get("manualModbusOverrides")) {
+            globalContext.set("manualModbusOverrides", {});
+        }
         node.name = config.name;
         const scheduleInterval = config.scheduleInterval;
         node.warn(`Schedule interval set to: ${scheduleInterval}`);
@@ -104,68 +112,79 @@ module.exports = function (RED) {
                     const schedules = yield scheduleService.getDueSchedules();
                     node.warn(`Found ${schedules.length} schedule(s).`);
                     for (const schedule of schedules) {
+                        const isDue = scheduleService.isScheduleDue(schedule);
                         const now = (0, moment_1.default)().utc().add(7, 'hours');
+                        // const now = moment('2025-04-03T00:10:00Z').utc();
                         const today = now.clone().startOf('day');
                         const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
                         const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
                         let startDateTime = today.clone().set({
                             hour: startTime.hour(),
                             minute: startTime.minute(),
-                            second: startTime.second(),
+                            second: startTime.second()
                         });
                         let endDateTime = today.clone().set({
                             hour: endTime.hour(),
                             minute: endTime.minute(),
-                            second: endTime.second(),
+                            second: endTime.second()
                         });
-                        if (endDateTime.isBefore(startDateTime)) {
-                            endDateTime.add(1, 'day');
+                        // Xử lý trường hợp qua ngày (cross-midnight)
+                        if (startDateTime.isAfter(endDateTime)) {
+                            if (now.isBefore(endDateTime)) {
+                                // Nếu giờ hiện tại nằm sau nửa đêm (ví dụ: 00:10) và trước endTime,
+                                // schedule đã bắt đầu từ ngày hôm trước.
+                                startDateTime.subtract(1, 'day');
+                            }
+                            else {
+                                // Nếu giờ hiện tại nằm sau startTime,
+                                // thì endTime nằm vào ngày hôm sau.
+                                endDateTime.add(1, 'day');
+                            }
                         }
-                        const isDue = scheduleService.isScheduleDue(schedule);
                         if (isDue && schedule.status !== "running") {
-                            yield scheduleService.updateScheduleStatus(schedule, "running");
-                            node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to running.`);
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                            if (holdingCommands.length > 0 || coilCommands.length > 0) {
+                            if (yield scheduleService.canExecuteCommands(holdingCommands, coilCommands)) {
+                                yield scheduleService.updateScheduleStatus(schedule, "running");
                                 let writeSuccess = false;
                                 let attempt = 0;
                                 while (!writeSuccess && attempt < 3) {
                                     attempt++;
-                                    node.warn(`Ghi modbus cho id: ${schedule.name}, label: ${schedule.label}, lần thử ${attempt}`);
                                     try {
                                         yield scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
                                         writeSuccess = yield scheduleService.verifyModbusWrite(modbusClient, [...holdingCommands, ...coilCommands]);
                                         if (writeSuccess) {
-                                            node.warn(`Ghi và xác thực thành công cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
-                                        }
-                                        else {
-                                            node.warn(`Xác thực thất bại cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}.`);
+                                            scheduleService.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
                                         }
                                     }
                                     catch (error) {
-                                        node.error(`Lỗi ghi modbus cho id: ${schedule.name}, label: ${schedule.label} tại lần ${attempt}: ${error.message}`);
+                                        node.error(`Error writing modbus: ${error.message}`);
                                     }
                                 }
                                 yield scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
                                 yield scheduleService.syncScheduleLog(schedule, writeSuccess);
                             }
-                            else {
-                                node.warn(`No modbus commands mapped for id: ${schedule.name}, label: ${schedule.label}.`);
+                        }
+                        else if (schedule.status === "running" && isDue) {
+                            // Trường hợp đang running nhưng có thể đã mất điện
+                            const writeSuccess = yield scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
+                            if (writeSuccess) {
+                                node.warn(`Re-executed commands for schedule ${schedule.name} after power loss`);
+                                yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                                yield scheduleService.syncScheduleLog(schedule, true);
                             }
                         }
                         else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
-                            node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
-                            const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                            if (holdingCommands.length > 0 || coilCommands.length > 0) {
-                                yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
-                                node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label}.`);
+                            const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                            if (activeCommands.length > 0) {
+                                yield scheduleService.resetModbusCommands(modbusClient, activeCommands);
+                                scheduleService.clearActiveCommands(schedule.name);
                             }
                             yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            yield scheduleService.syncScheduleLog(schedule, true); // Bỏ comment để đồng bộ log
+                            yield scheduleService.syncScheduleLog(schedule, true);
                         }
                         else {
-                            node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} skipped (status: ${schedule.status}, due: ${isDue}).`);
+                            node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                         }
                     }
                     node.status({ fill: "green", shape: "dot", text: "Schedules processed" });

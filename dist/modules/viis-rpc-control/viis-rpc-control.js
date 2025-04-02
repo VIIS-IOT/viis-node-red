@@ -18,6 +18,10 @@ module.exports = function (RED) {
         return __awaiter(this, void 0, void 0, function* () {
             RED.nodes.createNode(this, config);
             const node = this;
+            const globalContext = node.context().global;
+            if (!globalContext.get("manualModbusOverrides")) {
+                globalContext.set("manualModbusOverrides", {});
+            }
             // Environment variables
             const deviceId = process.env.DEVICE_ID || "unknown";
             const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
@@ -158,6 +162,15 @@ module.exports = function (RED) {
                             yield modbusClient.writeCoil(mapping.address, value);
                         }
                         node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+                        // Lưu thông tin lệnh thủ công vào global context
+                        const manualOverrides = globalContext.get("manualModbusOverrides");
+                        manualOverrides[`${mapping.address}-${mapping.fc}`] = {
+                            fc: mapping.fc,
+                            value: writeValue,
+                            timestamp: Date.now()
+                        };
+                        globalContext.set("manualModbusOverrides", manualOverrides);
+                        node.log(`Stored manual override: address=${mapping.address}, fc=${mapping.fc}, value=${writeValue}`);
                     }
                     catch (error) {
                         throw new Error(`Modbus write failed for ${key}: ${error.message}`);

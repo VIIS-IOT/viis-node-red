@@ -40,7 +40,10 @@ module.exports = function (RED: NodeAPI) {
     async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
-
+        const globalContext = node.context().global;
+        if (!globalContext.get("manualModbusOverrides")) {
+            globalContext.set("manualModbusOverrides", {} as { [address: string]: { fc: number, value: any, timestamp: number } });
+        }
         // Environment variables
         const deviceId = process.env.DEVICE_ID || "unknown";
         const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
@@ -187,6 +190,15 @@ module.exports = function (RED: NodeAPI) {
                     await modbusClient.writeCoil(mapping.address, value as boolean);
                 }
                 node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+                // Lưu thông tin lệnh thủ công vào global context
+                const manualOverrides = globalContext.get("manualModbusOverrides") as { [address: string]: { fc: number, value: any, timestamp: number } };
+                manualOverrides[`${mapping.address}-${mapping.fc}`] = {
+                    fc: mapping.fc,
+                    value: writeValue,
+                    timestamp: Date.now()
+                };
+                globalContext.set("manualModbusOverrides", manualOverrides);
+                node.log(`Stored manual override: address=${mapping.address}, fc=${mapping.fc}, value=${writeValue}`);
             } catch (error) {
                 throw new Error(`Modbus write failed for ${key}: ${(error as Error).message}`);
             }
