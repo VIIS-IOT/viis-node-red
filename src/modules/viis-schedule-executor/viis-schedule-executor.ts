@@ -132,8 +132,25 @@ module.exports = function (RED: NodeAPI) {
 
                 for (const schedule of schedules) {
                     const now = moment().utc().add(7, 'hours');
-                    const scheduleStart = moment(schedule.start_time, "HH:mm:ss");
-                    const scheduleEnd = moment(schedule.end_time, "HH:mm:ss");
+                    const today = now.clone().startOf('day');
+                    const startTime = moment(schedule.start_time, "HH:mm:ss");
+                    const endTime = moment(schedule.end_time, "HH:mm:ss");
+
+                    let startDateTime = today.clone().set({
+                        hour: startTime.hour(),
+                        minute: startTime.minute(),
+                        second: startTime.second(),
+                    });
+                    let endDateTime = today.clone().set({
+                        hour: endTime.hour(),
+                        minute: endTime.minute(),
+                        second: endTime.second(),
+                    });
+
+                    if (endDateTime.isBefore(startDateTime)) {
+                        endDateTime.add(1, 'day');
+                    }
+
                     const isDue = scheduleService.isScheduleDue(schedule);
 
                     if (isDue && schedule.status !== "running") {
@@ -164,7 +181,7 @@ module.exports = function (RED: NodeAPI) {
                         } else {
                             node.warn(`No modbus commands mapped for id: ${schedule.name}, label: ${schedule.label}.`);
                         }
-                    } else if (schedule.status === "running" && now.isAfter(scheduleEnd)) {
+                    } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
 
@@ -175,7 +192,7 @@ module.exports = function (RED: NodeAPI) {
                         }
 
                         await scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                        // await scheduleService.syncScheduleLog(schedule, true); // Đoạn này bị comment trong code gốc
+                        await scheduleService.syncScheduleLog(schedule, true); // Bỏ comment để đồng bộ log
                     } else {
                         node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} skipped (status: ${schedule.status}, due: ${isDue}).`);
                     }

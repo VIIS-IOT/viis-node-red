@@ -105,8 +105,22 @@ module.exports = function (RED) {
                     node.warn(`Found ${schedules.length} schedule(s).`);
                     for (const schedule of schedules) {
                         const now = (0, moment_1.default)().utc().add(7, 'hours');
-                        const scheduleStart = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
-                        const scheduleEnd = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
+                        const today = now.clone().startOf('day');
+                        const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
+                        const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
+                        let startDateTime = today.clone().set({
+                            hour: startTime.hour(),
+                            minute: startTime.minute(),
+                            second: startTime.second(),
+                        });
+                        let endDateTime = today.clone().set({
+                            hour: endTime.hour(),
+                            minute: endTime.minute(),
+                            second: endTime.second(),
+                        });
+                        if (endDateTime.isBefore(startDateTime)) {
+                            endDateTime.add(1, 'day');
+                        }
                         const isDue = scheduleService.isScheduleDue(schedule);
                         if (isDue && schedule.status !== "running") {
                             yield scheduleService.updateScheduleStatus(schedule, "running");
@@ -139,7 +153,7 @@ module.exports = function (RED) {
                                 node.warn(`No modbus commands mapped for id: ${schedule.name}, label: ${schedule.label}.`);
                             }
                         }
-                        else if (schedule.status === "running" && now.isAfter(scheduleEnd)) {
+                        else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             node.warn(`Updated schedule id: ${schedule.name}, label: ${schedule.label} to finished.`);
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
@@ -148,7 +162,7 @@ module.exports = function (RED) {
                                 node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label}.`);
                             }
                             yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            // await scheduleService.syncScheduleLog(schedule, true); // Đoạn này bị comment trong code gốc
+                            yield scheduleService.syncScheduleLog(schedule, true); // Bỏ comment để đồng bộ log
                         }
                         else {
                             node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} skipped (status: ${schedule.status}, due: ${isDue}).`);

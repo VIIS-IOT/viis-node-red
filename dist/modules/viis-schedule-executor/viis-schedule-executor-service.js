@@ -105,6 +105,7 @@ let ScheduleService = class ScheduleService {
                     .addSelect("device.label", "device_label")
                     .where("schedule.enable = :enable", { enable: 1 })
                     .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
+                    .andWhere("schedule.is_deleted = :isDeleted", { isDeleted: 0 })
                     .printSql()
                     .getMany();
                 // console.log(`schedules sql: ${JSON.stringify(schedules)}`)
@@ -126,17 +127,53 @@ let ScheduleService = class ScheduleService {
                 console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
                 return false;
             }
-            const now = (0, moment_1.default)().utc().add(7, 'hours');
+            if (schedule.enable !== 1) {
+                console.log(`Schedule ${schedule.name} is not enabled`);
+                return false;
+            }
+            const now = (0, moment_1.default)().utc().add(7, 'hours'); // Giờ hiện tại (UTC+7)
+            const today = now.clone().startOf('day'); // Bắt đầu ngày hiện tại (00:00)
+            // Kiểm tra phạm vi start_date và end_date (nếu có)
+            if (schedule.start_date && schedule.end_date) {
+                const startDate = (0, moment_1.default)(schedule.start_date, "YYYY-MM-DD");
+                const endDate = (0, moment_1.default)(schedule.end_date, "YYYY-MM-DD");
+                if (!now.isBetween(startDate, endDate, 'day', '[]')) {
+                    console.log(`Schedule ${schedule.name} is outside enabled range (${startDate.format('YYYY-MM-DD')} - ${endDate.format('YYYY-MM-DD')})`);
+                    return false;
+                }
+            }
+            // Parse start_time và end_time từ chuỗi HH:mm:ss
             const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
             const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
-            const isDue = now.isBetween(startTime, endTime, undefined, "[]");
-            console.log({ now, startTime, endTime, isDue });
+            // Gán ngày cho startTime và endTime
+            let startDateTime = today.clone().set({
+                hour: startTime.hour(),
+                minute: startTime.minute(),
+                second: startTime.second(),
+            });
+            let endDateTime = today.clone().set({
+                hour: endTime.hour(),
+                minute: endTime.minute(),
+                second: endTime.second(),
+            });
+            // Nếu end_time nhỏ hơn start_time, giả định end_time là ngày tiếp theo
+            if (endDateTime.isBefore(startDateTime)) {
+                endDateTime.add(1, 'day');
+            }
+            // Kiểm tra xem now có nằm trong khoảng startDateTime và endDateTime không
+            const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[]");
+            console.log({
+                now: now.format(),
+                startDateTime: startDateTime.format(),
+                endDateTime: endDateTime.format(),
+                isDue,
+            });
             console.log(`Schedule ${schedule.name} isDue: ${isDue}`);
             return isDue;
         }
         catch (error) {
             console.error(`Error in isScheduleDue for ${schedule.name}: ${error.message}`);
-            return false; // Trả về false nếu có lỗi
+            return false;
         }
     }
     /**
