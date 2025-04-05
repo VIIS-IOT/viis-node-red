@@ -183,7 +183,7 @@ module.exports = function (RED: NodeAPI) {
                         // Trường hợp đang running nhưng có thể đã mất điện
                         const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
                         if (writeSuccess) {
-                            node.warn(`Re-executed commands for schedule ${schedule.name} after power loss`);
+                            node.warn(`Re-executed commands for schedule ${schedule.name} after power loss or frequently`);
                             await scheduleService.publishMqttNotification(mqttClient, schedule, true);
                             await scheduleService.syncScheduleLog(schedule, true);
                         }

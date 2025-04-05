@@ -175,7 +175,7 @@ module.exports = function (RED) {
                             // Trường hợp đang running nhưng có thể đã mất điện
                             const writeSuccess = yield scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
                             if (writeSuccess) {
-                                node.warn(`Re-executed commands for schedule ${schedule.name} after power loss`);
+                                node.warn(`Re-executed commands for schedule ${schedule.name} after power loss or frequently`);
                                 yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
                                 yield scheduleService.syncScheduleLog(schedule, true);
                             }

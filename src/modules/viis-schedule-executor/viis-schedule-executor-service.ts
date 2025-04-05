@@ -426,21 +426,77 @@ export class ScheduleService {
         const manualOverrides: ManualModbusOverrides = this.node.context().global.get("manualModbusOverrides") as ManualModbusOverrides || {};
 
         // Lọc các lệnh không bị override riêng lẻ
-        const holdingCommandsToExecute = activeCommands.filter(cmd => cmd.fc === 6 && !manualOverrides[`${cmd.address}-${cmd.fc}`]);
-        const coilCommandsToExecute = activeCommands.filter(cmd => cmd.fc === 5 && !manualOverrides[`${cmd.address}-${cmd.fc}`]);
+        const holdingCommandsToCheck = activeCommands.filter(cmd => cmd.fc === 6 && !manualOverrides[`${cmd.address}-${cmd.fc}`]);
+        const coilCommandsToCheck = activeCommands.filter(cmd => cmd.fc === 5 && !manualOverrides[`${cmd.address}-${cmd.fc}`]);
 
         // Nếu tất cả các lệnh đều bị override, thì không thực thi re-execute
-        if (holdingCommandsToExecute.length === 0 && coilCommandsToExecute.length === 0) {
+        if (holdingCommandsToCheck.length === 0 && coilCommandsToCheck.length === 0) {
             console.warn(`All active commands for schedule ${schedule.name} are overridden. Skipping re-execution.`);
             return false;
         }
 
-        console.log(`Re-executing commands for schedule ${schedule.name} after power loss for non-overridden keys`);
+        console.log(`Checking and re-executing commands for schedule ${schedule.name} after power loss for non-overridden keys`);
+
+        // Kiểm tra và thực thi holding commands
+        const holdingCommandsToExecute: ModbusCmd[] = [];
+        for (const cmd of holdingCommandsToCheck) {
+            try {
+                const readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                const rawValue = Number(readResult.data[0]);
+                const currentValue = this.scaleValue(cmd.key, rawValue, 'read');
+
+                if (currentValue !== cmd.value) {
+                    holdingCommandsToExecute.push(cmd);
+                    console.log(`Holding register at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
+                } else {
+                    console.log(`Holding register at ${cmd.address} already correct: ${currentValue}`);
+                }
+            } catch (error) {
+                console.error(`Error reading holding register ${cmd.address}: ${(error as Error).message}`);
+                holdingCommandsToExecute.push(cmd); // Nếu đọc lỗi, thêm vào để thử ghi lại
+            }
+        }
+
+        // Kiểm tra và thực thi coil commands
+        const coilCommandsToExecute: ModbusCmd[] = [];
+        for (const cmd of coilCommandsToCheck) {
+            try {
+                const readResult = await modbusClient.readCoils(cmd.address, 1);
+                const currentValue = Boolean(readResult.data[0]);
+
+                if (currentValue !== cmd.value) {
+                    coilCommandsToExecute.push(cmd);
+                    console.log(`Coil at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
+                } else {
+                    console.log(`Coil at ${cmd.address} already correct: ${currentValue}`);
+                }
+            } catch (error) {
+                console.error(`Error reading coil ${cmd.address}: ${(error as Error).message}`);
+                coilCommandsToExecute.push(cmd); // Nếu đọc lỗi, thêm vào để thử ghi lại
+            }
+        }
+
+        // Nếu không có lệnh nào cần thực thi, trả về false ngay lập tức
+        if (holdingCommandsToExecute.length === 0 && coilCommandsToExecute.length === 0) {
+            console.log(`All registers and coils for schedule ${schedule.name} are already in correct state. No re-execution needed.`);
+            return false;
+        }
+
+        // Thực thi các lệnh cần cập nhật
         await this.executeModbusCommands(modbusClient, {
             holdingCommands: holdingCommandsToExecute,
             coilCommands: coilCommandsToExecute
         });
-        return true;
+
+        // Xác minh lại sau khi ghi
+        const writeSuccess = await this.verifyModbusWrite(modbusClient, [...holdingCommandsToExecute, ...coilCommandsToExecute]);
+        if (writeSuccess) {
+            console.log(`Successfully re-executed necessary commands for schedule ${schedule.name}`);
+        } else {
+            console.warn(`Failed to verify some commands for schedule ${schedule.name} after re-execution`);
+        }
+
+        return writeSuccess;
     }
 
 
