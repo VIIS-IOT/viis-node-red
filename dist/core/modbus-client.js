@@ -25,6 +25,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.node = node;
         this.client = new modbus_serial_1.default();
         this.initializeClient();
+        this.startConnectionCheck(); // Bắt đầu kiểm tra kết nối
     }
     // Khởi tạo client
     initializeClient() {
@@ -100,30 +101,54 @@ class ModbusClientCore extends events_1.EventEmitter {
             }
         }
     }
-    // Lên lịch reconnect (chỉ cho TCP)
     scheduleReconnect() {
-        if (this.reconnectTimer || this.config.type !== "TCP")
+        if (this.reconnectTimer)
             return;
-        //this.node.log(`Modbus TCP: Reconnection scheduled in ${this.config.reconnectInterval}ms`); // Log reconnect schedule
+        this.node.log(`Scheduling reconnect in ${this.config.reconnectInterval}ms for ${this.config.type}`);
         this.reconnectTimer = setTimeout(() => __awaiter(this, void 0, void 0, function* () {
-            //this.node.log("Modbus TCP: Attempting reconnection..."); // Log reconnect attempt
             try {
                 yield this.initializeClient();
+                this.node.log(`Reconnected successfully for ${this.config.type}`);
                 clearTimeout(this.reconnectTimer);
                 this.reconnectTimer = undefined;
-                //this.node.log(`Modbus TCP: Reconnected successfully after reconnection attempt.`); // Log reconnect success
             }
             catch (error) {
-                //this.node.log(`Modbus TCP: Reconnection attempt failed: ${(error as Error).message}`); // Log reconnect error
                 this.handleError(error);
                 this.scheduleReconnect();
             }
         }), this.config.reconnectInterval);
     }
+    startConnectionCheck() {
+        setInterval(() => __awaiter(this, void 0, void 0, function* () {
+            if (!this.isConnected || !this.client.isOpen)
+                return;
+            try {
+                yield this.client.readCoils(0, 1); // Thử đọc 1 coil để kiểm tra
+                if (!this.isConnected) {
+                    this.isConnected = true;
+                    this.node.status({ fill: "green", shape: "dot", text: "Connected" });
+                    this.emit("modbus-status", { status: "connected" });
+                }
+            }
+            catch (error) {
+                this.handleError(error);
+                this.scheduleReconnect();
+            }
+        }), 30000); // Kiểm tra mỗi 30 giây
+    }
     ensureConnected() {
         return __awaiter(this, void 0, void 0, function* () {
             if (!this.isConnected || !this.client.isOpen) {
-                //this.node.log("Modbus: Connection lost, attempting to reinitialize...");
+                this.node.log("Connection lost or not initialized, attempting to reconnect...");
+                yield this.initializeClient();
+            }
+            // Kiểm tra thử một thao tác đơn giản
+            try {
+                yield this.client.readCoils(0, 1); // Thử đọc để xác nhận kết nối
+            }
+            catch (error) {
+                this.node.log("Connection check failed, forcing reinitialization...");
+                this.isConnected = false;
                 yield this.initializeClient();
             }
         });

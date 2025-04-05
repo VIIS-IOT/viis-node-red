@@ -44,6 +44,7 @@ export class ModbusClientCore extends EventEmitter {
         this.node = node;
         this.client = new ModbusRTU();
         this.initializeClient();
+        this.startConnectionCheck(); // Bắt đầu kiểm tra kết nối
     }
 
     // Khởi tạo client
@@ -115,31 +116,55 @@ export class ModbusClientCore extends EventEmitter {
         }
     }
 
-    // Lên lịch reconnect (chỉ cho TCP)
     private scheduleReconnect(): void {
-        if (this.reconnectTimer || this.config.type !== "TCP") return;
-        //this.node.log(`Modbus TCP: Reconnection scheduled in ${this.config.reconnectInterval}ms`); // Log reconnect schedule
+        if (this.reconnectTimer) return;
+        this.node.log(`Scheduling reconnect in ${this.config.reconnectInterval}ms for ${this.config.type}`);
         this.reconnectTimer = setTimeout(async () => {
-            //this.node.log("Modbus TCP: Attempting reconnection..."); // Log reconnect attempt
             try {
                 await this.initializeClient();
+                this.node.log(`Reconnected successfully for ${this.config.type}`);
                 clearTimeout(this.reconnectTimer!);
                 this.reconnectTimer = undefined;
-                //this.node.log(`Modbus TCP: Reconnected successfully after reconnection attempt.`); // Log reconnect success
             } catch (error) {
-                //this.node.log(`Modbus TCP: Reconnection attempt failed: ${(error as Error).message}`); // Log reconnect error
                 this.handleError(error as Error);
                 this.scheduleReconnect();
             }
         }, this.config.reconnectInterval);
     }
 
+
+    private startConnectionCheck(): void {
+        setInterval(async () => {
+            if (!this.isConnected || !this.client.isOpen) return;
+            try {
+                await this.client.readCoils(0, 1); // Thử đọc 1 coil để kiểm tra
+                if (!this.isConnected) {
+                    this.isConnected = true;
+                    this.node.status({ fill: "green", shape: "dot", text: "Connected" });
+                    this.emit("modbus-status", { status: "connected" });
+                }
+            } catch (error) {
+                this.handleError(error as Error);
+                this.scheduleReconnect();
+            }
+        }, 30000); // Kiểm tra mỗi 30 giây
+    }
+
     private async ensureConnected(): Promise<void> {
         if (!this.isConnected || !this.client.isOpen) {
-            //this.node.log("Modbus: Connection lost, attempting to reinitialize...");
+            this.node.log("Connection lost or not initialized, attempting to reconnect...");
+            await this.initializeClient();
+        }
+        // Kiểm tra thử một thao tác đơn giản
+        try {
+            await this.client.readCoils(0, 1); // Thử đọc để xác nhận kết nối
+        } catch (error) {
+            this.node.log("Connection check failed, forcing reinitialization...");
+            this.isConnected = false;
             await this.initializeClient();
         }
     }
+
     public async readCoils(address: number, length: number): Promise<ModbusData> {
         await this.ensureConnected();
         //this.node.log(`Modbus: Reading Coils at address ${address}, length ${length}...`);

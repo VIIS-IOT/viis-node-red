@@ -82,6 +82,11 @@ module.exports = function (RED) {
                         throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
                     }
                 });
+                // Kiểm tra xem có cấu hình cho current_ec không
+                if (!scaleConfigs.some(conf => conf.key === "current_ec" && conf.direction === "read")) {
+                    node.warn("No scaling config found for current_ec, adding default");
+                    scaleConfigs.push({ key: "current_ec", operation: "divide", factor: 1000, direction: "read" });
+                }
             }
             catch (error) {
                 node.error(`Failed to parse scaleConfigs: ${error.message}`);
@@ -96,7 +101,7 @@ module.exports = function (RED) {
                     { key: "temperature", operation: "divide", factor: 100, direction: "read" },
                     { key: "power_level", operation: "multiply", factor: 1000, direction: "read" },
                 ];
-                node.warn(`Using default scaleConfigs due to parsing failure: ${JSON.stringify(scaleConfigs)}`);
+                node.warn(`Using default scaleConfigs: ${JSON.stringify(scaleConfigs)}`);
             }
             // Lấy các client với await
             const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
@@ -132,17 +137,39 @@ module.exports = function (RED) {
                 for (const key in current) {
                     const currVal = current[key];
                     const prevVal = previous[key];
-                    if (prevVal === undefined ||
-                        (typeof currVal === "number" && typeof prevVal === "number" && Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) ||
-                        currVal !== prevVal) {
+                    console.log(`Comparing key: ${key}, current: ${currVal}, previous: ${prevVal}`);
+                    if (prevVal === undefined) {
+                        // Nếu giá trị trước đó không tồn tại, coi là thay đổi
                         changed[key] = currVal;
+                        console.log(`Key changed: ${key}, old: undefined, new: ${currVal} (No previous value)`);
+                    }
+                    else if (typeof currVal === "number" && typeof prevVal === "number") {
+                        // Đối với số, chỉ coi là thay đổi nếu vượt qua CHANGE_THRESHOLD
+                        if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
+                            changed[key] = currVal;
+                            console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Threshold: ${CHANGE_THRESHOLD})`);
+                        }
+                        else {
+                            console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (Difference ${Math.abs(currVal - prevVal)} < Threshold: ${CHANGE_THRESHOLD})`);
+                        }
+                    }
+                    else if (currVal !== prevVal) {
+                        // Đối với các kiểu dữ liệu khác (boolean, string, ...), kiểm tra !==
+                        changed[key] = currVal;
+                        console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Non-numeric change)`);
+                    }
+                    else {
+                        console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (No significant change)`);
                     }
                 }
                 return changed;
             }
             function processState(currentState, source) {
                 return __awaiter(this, void 0, void 0, function* () {
-                    let previousStateForSource = source === "Coils" ? previousStateCoils : source === "Input Registers" ? previousStateInput : previousStateHolding;
+                    let previousStateForSource = source === "Coils" ? previousStateCoils :
+                        source === "Input Registers" ? previousStateInput :
+                            source === "Holding Registers" ? previousStateHolding :
+                                previousStateInput; // Trường hợp hợp nhất polling
                     const changedKeys = getChangedKeys(currentState, previousStateForSource);
                     if (Object.keys(changedKeys).length > 0) {
                         const timestamp = Date.now();
@@ -163,6 +190,7 @@ module.exports = function (RED) {
                         // Publish lên ThingsBoard
                         yield thingsboardClient.publish("v1/devices/me/telemetry", JSON.stringify(mqttPayload));
                         console.log(`${source}: Published changed data to ThingsBoard MQTT`, mqttPayload);
+                        // Lưu vào database
                         for (const [key, changedValue] of Object.entries(changedKeys)) {
                             let valueType, columnName, sqlValue = changedValue;
                             if (typeof changedValue === "boolean") {
@@ -192,10 +220,10 @@ module.exports = function (RED) {
                                 sqlValue = `'${String(changedValue)}'`;
                             }
                             const query = `
-                    INSERT INTO tabiot_device_telemetry
-                    (device_id, timestamp, key_name, value_type, ${columnName})
-                    VALUES ('${deviceId}', ${Math.floor(timestamp / 1000)}, '${key}', '${valueType}', ${sqlValue})
-                    ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
+                        INSERT INTO tabiot_device_telemetry
+                        (device_id, timestamp, key_name, value_type, ${columnName})
+                        VALUES ('${deviceId}', ${Math.floor(timestamp / 1000)}, '${key}', '${valueType}', ${sqlValue})
+                        ON DUPLICATE KEY UPDATE ${columnName} = ${sqlValue};`;
                             try {
                                 yield mysqlClient.query(query);
                                 node.log(`Database updated for key ${key}`);
@@ -204,12 +232,23 @@ module.exports = function (RED) {
                                 node.error(`Failed to update DB for key ${key}: ${err.message}`);
                             }
                         }
-                        if (source === "Coils")
+                        // Chỉ cập nhật previousState khi có thay đổi
+                        if (source === "Coils") {
                             previousStateCoils = Object.assign({}, currentState);
-                        else if (source === "Input Registers")
+                            node.log(`Updated previousStateCoils with new values`);
+                        }
+                        else if (source === "Input Registers") {
                             previousStateInput = Object.assign({}, currentState);
-                        else if (source === "Holding Registers")
+                            node.log(`Updated previousStateInput with new values`);
+                        }
+                        else if (source === "Holding Registers") {
                             previousStateHolding = Object.assign({}, currentState);
+                            node.log(`Updated previousStateHolding with new values`);
+                        }
+                        else if (source === "All Registers") {
+                            previousStateInput = Object.assign({}, currentState); // Trường hợp hợp nhất polling
+                            node.log(`Updated previousStateInput with new values (All Registers)`);
+                        }
                         node.send({ payload: republishPayload });
                         node.status({ fill: "green", shape: "dot", text: `${source}: Data changed` });
                     }

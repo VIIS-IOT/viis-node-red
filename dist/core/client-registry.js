@@ -51,7 +51,11 @@ class ClientRegistry {
         });
     }
     static getModbusClient(config, node) {
-        if (!this.modbusInstance) {
+        if (!this.modbusInstance || !this.modbusInstance.isConnectedCheck()) {
+            if (this.modbusInstance) {
+                this.modbusInstance.disconnect();
+                node.log("Previous Modbus instance disconnected due to invalid state");
+            }
             this.modbusInstance = new modbus_client_1.ModbusClientCore(config, node);
             node.log("Created new ModbusClientCore instance");
         }
