@@ -171,6 +171,12 @@ module.exports = function (RED) {
                             source === "Holding Registers" ? previousStateHolding :
                                 previousStateInput; // Trường hợp hợp nhất polling
                     const changedKeys = getChangedKeys(currentState, previousStateForSource);
+                    //debug for input registers
+                    if (source === "Input Registers") {
+                        node.warn(`Current State Input Registers: ${JSON.stringify(currentState)}`);
+                        node.warn(`Previous State Input Registers: ${JSON.stringify(previousStateForSource)}`);
+                        node.warn(`Changed Keys Input Registers: ${JSON.stringify(changedKeys)}`);
+                    }
                     if (Object.keys(changedKeys).length > 0) {
                         const timestamp = Date.now();
                         const republishPayload = Object.entries(changedKeys)
@@ -310,6 +316,7 @@ module.exports = function (RED) {
                                     currentState[key] = applyScaling(key, value, "read");
                             });
                             node.context().global.set("inputRegisterData", currentState);
+                            console.log("Input Register Data:", currentState);
                             yield processState(currentState, "Input Registers");
                             break;
                         }
