@@ -171,12 +171,6 @@ module.exports = function (RED) {
                             source === "Holding Registers" ? previousStateHolding :
                                 previousStateInput; // Trường hợp hợp nhất polling
                     const changedKeys = getChangedKeys(currentState, previousStateForSource);
-                    //debug for input registers
-                    if (source === "Input Registers") {
-                        node.warn(`Current State Input Registers: ${JSON.stringify(currentState)}`);
-                        node.warn(`Previous State Input Registers: ${JSON.stringify(previousStateForSource)}`);
-                        node.warn(`Changed Keys Input Registers: ${JSON.stringify(changedKeys)}`);
-                    }
                     if (Object.keys(changedKeys).length > 0) {
                         const timestamp = Date.now();
                         const republishPayload = Object.entries(changedKeys)
@@ -238,23 +232,6 @@ module.exports = function (RED) {
                                 node.error(`Failed to update DB for key ${key}: ${err.message}`);
                             }
                         }
-                        // Chỉ cập nhật previousState khi có thay đổi
-                        if (source === "Coils") {
-                            previousStateCoils = Object.assign({}, currentState);
-                            node.log(`Updated previousStateCoils with new values`);
-                        }
-                        else if (source === "Input Registers") {
-                            previousStateInput = Object.assign({}, currentState);
-                            node.log(`Updated previousStateInput with new values`);
-                        }
-                        else if (source === "Holding Registers") {
-                            previousStateHolding = Object.assign({}, currentState);
-                            node.log(`Updated previousStateHolding with new values`);
-                        }
-                        else if (source === "All Registers") {
-                            previousStateInput = Object.assign({}, currentState); // Trường hợp hợp nhất polling
-                            node.log(`Updated previousStateInput with new values (All Registers)`);
-                        }
                         node.send({ payload: republishPayload });
                         node.status({ fill: "green", shape: "dot", text: `${source}: Data changed` });
                     }
@@ -268,6 +245,23 @@ module.exports = function (RED) {
                             },
                         });
                         node.status({ fill: "yellow", shape: "ring", text: `${source}: No change` });
+                    }
+                    // Chỉ cập nhật previousState khi có thay đổi
+                    if (source === "Coils") {
+                        previousStateCoils = Object.assign({}, currentState);
+                        // node.log(`Updated previousStateCoils with new values`);
+                    }
+                    else if (source === "Input Registers") {
+                        previousStateInput = Object.assign({}, currentState);
+                        // node.log(`Updated previousStateInput with new values`);
+                    }
+                    else if (source === "Holding Registers") {
+                        previousStateHolding = Object.assign({}, currentState);
+                        // node.log(`Updated previousStateHolding with new values`);
+                    }
+                    else if (source === "All Registers") {
+                        previousStateInput = Object.assign({}, currentState); // Trường hợp hợp nhất polling
+                        // node.log(`Updated previousStateInput with new values (All Registers)`);
                     }
                 });
             }
