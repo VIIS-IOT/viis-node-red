@@ -64,7 +64,7 @@ module.exports = function (RED: NodeAPI) {
                 node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
 
                 // Kiểm tra và xoá overrides nếu không có hẹn giờ nào đang chạy
-                const activeModbusCommands = node.context().global.get("activeModbusCommands") || {};
+                const activeModbusCommands: ActiveModbusCommands = node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
                 if (Object.keys(activeModbusCommands).length === 0) {
                     node.context().global.set("manualModbusOverrides", {});
                     node.warn("Không có hẹn giờ đang chạy. Đã xoá manualModbusOverrides.");
@@ -98,21 +98,21 @@ module.exports = function (RED: NodeAPI) {
                         schedule.status = "finished";
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, "finished");
-                        node.warn(`Disabled and finished schedule id: ${schedule.name}, label: ${schedule.label} via RPC`);
-
                         const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
                         if (holdingCommands.length > 0 || coilCommands.length > 0) {
                             await scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
-                            node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label} via RPC`);
+                            scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
+                            node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
-
                         await scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                        await scheduleService.syncScheduleLog(schedule, true);
+                        // await scheduleService.syncScheduleLog(schedule, true);
                     } else {
                         node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, schedule.status as "running" | "finished");
                     }
+
+
 
                     node.status({ fill: "green", shape: "dot", text: "RPC processed" });
                     send(msg);
@@ -196,12 +196,28 @@ module.exports = function (RED: NodeAPI) {
                             scheduleService.clearActiveCommands(schedule.name);
                         }
                         await scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                        await scheduleService.syncScheduleLog(schedule, true);
+                        // await scheduleService.syncScheduleLog(schedule, true);
                     } else {
                         node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
                 }
+                // Cleanup activeModbusCommands
+                const runningScheduleIds = schedules
+                    .filter(s => s.status === "running" && scheduleService.isScheduleDue(s))
+                    .map(s => s.name);
 
+                for (const scheduleId in activeModbusCommands) {
+                    if (!runningScheduleIds.includes(scheduleId)) {
+                        const commands = activeModbusCommands[scheduleId];
+                        const resetSuccess = await scheduleService.resetModbusCommands(modbusClient, commands);
+                        if (resetSuccess) {
+                            scheduleService.clearActiveCommands(scheduleId);
+                            node.warn(`Cleaned up stale commands for schedule ${scheduleId}`);
+                        } else {
+                            node.warn(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
+                        }
+                    }
+                }
                 node.status({ fill: "green", shape: "dot", text: "Schedules processed" });
                 send(msg);
                 done();

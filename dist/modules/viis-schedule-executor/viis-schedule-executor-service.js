@@ -412,7 +412,7 @@ let ScheduleService = class ScheduleService {
      */
     resetModbusCommands(modbusClient, commands) {
         return __awaiter(this, void 0, void 0, function* () {
-            // Reset chỉ các địa chỉ đã ghi lúc running
+            let allSuccessful = true; // Initialize a flag to track overall success
             for (const cmd of commands) {
                 try {
                     if (cmd.fc === 5) {
@@ -427,8 +427,10 @@ let ScheduleService = class ScheduleService {
                 }
                 catch (error) {
                     console.error(`Error resetting modbus command ${cmd.key}: ${error.message}`);
+                    allSuccessful = false; // Set the flag to false if any command fails
                 }
             }
+            return allSuccessful; // Return the overall success status
         });
     }
     /**

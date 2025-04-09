@@ -146,6 +146,9 @@ module.exports = function (RED: NodeAPI) {
         let coilInterval: NodeJS.Timeout | null = null;
         let inputInterval: NodeJS.Timeout | null = null;
         let holdingInterval: NodeJS.Timeout | null = null;
+        // Thêm biến để lưu trạng thái main_pump và thời gian cập nhật cuối cùng của current_ec
+        let mainPumpState: boolean = false;
+        let lastEcUpdate: number = 0; // Thời gian cập nhật cuối cùng của current_ec (timestamp)
 
         function applyScaling(key: string, value: number, direction: "read" | "write"): number {
             const scaleConfig = scaleConfigs.find((config) => config.key === key && config.direction === direction);
@@ -155,30 +158,40 @@ module.exports = function (RED: NodeAPI) {
             return scaledValue;
         }
 
+        // Sửa đổi hàm getChangedKeys để xử lý logic đặc thù cho current_ec
         function getChangedKeys(current: TelemetryData, previous: TelemetryData): TelemetryData {
             const changed: TelemetryData = {};
+            const now = Date.now();
+
             for (const key in current) {
                 const currVal = current[key];
                 const prevVal = previous[key];
-                console.log(`Comparing key: ${key}, current: ${currVal}, previous: ${prevVal}`);
-                if (prevVal === undefined) {
-                    // Nếu giá trị trước đó không tồn tại, coi là thay đổi
-                    changed[key] = currVal;
-                    console.log(`Key changed: ${key}, old: undefined, new: ${currVal} (No previous value)`);
-                } else if (typeof currVal === "number" && typeof prevVal === "number") {
-                    // Đối với số, chỉ coi là thay đổi nếu vượt qua CHANGE_THRESHOLD
-                    if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
+
+                if (key === "current_ec" && mainPumpState) {
+                    // Khi main_pump bật, kiểm tra thời gian 5 giây
+                    if (now - lastEcUpdate >= 5000) { // 5000ms = 5 giây
                         changed[key] = currVal;
-                        console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Threshold: ${CHANGE_THRESHOLD})`);
-                    } else {
-                        console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (Difference ${Math.abs(currVal - prevVal)} < Threshold: ${CHANGE_THRESHOLD})`);
+                        lastEcUpdate = now; // Cập nhật thời gian cuối cùng
+                        console.log(`Key forced update: ${key}, value: ${currVal} (main_pump ON, 5s interval)`);
                     }
-                } else if (currVal !== prevVal) {
-                    // Đối với các kiểu dữ liệu khác (boolean, string, ...), kiểm tra !==
-                    changed[key] = currVal;
-                    console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Non-numeric change)`);
                 } else {
-                    console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (No significant change)`);
+                    // Logic kiểm tra ngưỡng như cũ cho các key khác hoặc khi main_pump tắt
+                    if (prevVal === undefined) {
+                        changed[key] = currVal;
+                        console.log(`Key changed: ${key}, old: undefined, new: ${currVal} (No previous value)`);
+                    } else if (typeof currVal === "number" && typeof prevVal === "number") {
+                        if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
+                            changed[key] = currVal;
+                            console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Threshold: ${CHANGE_THRESHOLD})`);
+                        } else {
+                            console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (Difference ${Math.abs(currVal - prevVal)} < Threshold: ${CHANGE_THRESHOLD})`);
+                        }
+                    } else if (currVal !== prevVal) {
+                        changed[key] = currVal;
+                        console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Non-numeric change)`);
+                    } else {
+                        console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (No significant change)`);
+                    }
                 }
             }
             return changed;
@@ -284,15 +297,21 @@ module.exports = function (RED: NodeAPI) {
             }
         }
 
+        // Cập nhật trạng thái main_pump từ pollCoils
         async function pollCoils() {
             const maxRetries = 3;
             let retryCount = 0;
             while (retryCount < maxRetries) {
                 try {
-                    const result: ModbusData = await modbusClient.readCoils(coilStartAddress, coilQuantity); const currentState: TelemetryData = {};
+                    const result: ModbusData = await modbusClient.readCoils(coilStartAddress, coilQuantity);
+                    const currentState: TelemetryData = {};
                     (result.data as boolean[]).forEach((value, index) => {
                         const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
                         if (key) currentState[key] = value;
+                        // Cập nhật trạng thái main_pump
+                        if (key === "main_pump") {
+                            mainPumpState = value as boolean;
+                        }
                     });
                     node.context().global.set("coilRegisterData", currentState);
                     await processState(currentState, "Coils");
@@ -310,6 +329,7 @@ module.exports = function (RED: NodeAPI) {
             }
         }
 
+        // Sửa đổi pollInputRegisters để đảm bảo current_ec được xử lý đúng
         async function pollInputRegisters() {
             const maxRetries = 3;
             let retryCount = 0;

@@ -124,6 +124,9 @@ module.exports = function (RED) {
             let coilInterval = null;
             let inputInterval = null;
             let holdingInterval = null;
+            // Thêm biến để lưu trạng thái main_pump và thời gian cập nhật cuối cùng của current_ec
+            let mainPumpState = false;
+            let lastEcUpdate = 0; // Thời gian cập nhật cuối cùng của current_ec (timestamp)
             function applyScaling(key, value, direction) {
                 const scaleConfig = scaleConfigs.find((config) => config.key === key && config.direction === direction);
                 if (!scaleConfig)
@@ -132,34 +135,43 @@ module.exports = function (RED) {
                 node.warn(`Scaling applied - key: ${key}, original: ${value}, scaled: ${scaledValue}, direction: ${direction}`);
                 return scaledValue;
             }
+            // Sửa đổi hàm getChangedKeys để xử lý logic đặc thù cho current_ec
             function getChangedKeys(current, previous) {
                 const changed = {};
+                const now = Date.now();
                 for (const key in current) {
                     const currVal = current[key];
                     const prevVal = previous[key];
-                    console.log(`Comparing key: ${key}, current: ${currVal}, previous: ${prevVal}`);
-                    if (prevVal === undefined) {
-                        // Nếu giá trị trước đó không tồn tại, coi là thay đổi
-                        changed[key] = currVal;
-                        console.log(`Key changed: ${key}, old: undefined, new: ${currVal} (No previous value)`);
-                    }
-                    else if (typeof currVal === "number" && typeof prevVal === "number") {
-                        // Đối với số, chỉ coi là thay đổi nếu vượt qua CHANGE_THRESHOLD
-                        if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
+                    if (key === "current_ec" && mainPumpState) {
+                        // Khi main_pump bật, kiểm tra thời gian 5 giây
+                        if (now - lastEcUpdate >= 5000) { // 5000ms = 5 giây
                             changed[key] = currVal;
-                            console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Threshold: ${CHANGE_THRESHOLD})`);
+                            lastEcUpdate = now; // Cập nhật thời gian cuối cùng
+                            console.log(`Key forced update: ${key}, value: ${currVal} (main_pump ON, 5s interval)`);
                         }
-                        else {
-                            console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (Difference ${Math.abs(currVal - prevVal)} < Threshold: ${CHANGE_THRESHOLD})`);
-                        }
-                    }
-                    else if (currVal !== prevVal) {
-                        // Đối với các kiểu dữ liệu khác (boolean, string, ...), kiểm tra !==
-                        changed[key] = currVal;
-                        console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Non-numeric change)`);
                     }
                     else {
-                        console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (No significant change)`);
+                        // Logic kiểm tra ngưỡng như cũ cho các key khác hoặc khi main_pump tắt
+                        if (prevVal === undefined) {
+                            changed[key] = currVal;
+                            console.log(`Key changed: ${key}, old: undefined, new: ${currVal} (No previous value)`);
+                        }
+                        else if (typeof currVal === "number" && typeof prevVal === "number") {
+                            if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
+                                changed[key] = currVal;
+                                console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Threshold: ${CHANGE_THRESHOLD})`);
+                            }
+                            else {
+                                console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (Difference ${Math.abs(currVal - prevVal)} < Threshold: ${CHANGE_THRESHOLD})`);
+                            }
+                        }
+                        else if (currVal !== prevVal) {
+                            changed[key] = currVal;
+                            console.log(`Key changed: ${key}, old: ${prevVal}, new: ${currVal} (Non-numeric change)`);
+                        }
+                        else {
+                            console.log(`Key unchanged: ${key}, old: ${prevVal}, new: ${currVal} (No significant change)`);
+                        }
                     }
                 }
                 return changed;
@@ -265,6 +277,7 @@ module.exports = function (RED) {
                     }
                 });
             }
+            // Cập nhật trạng thái main_pump từ pollCoils
             function pollCoils() {
                 return __awaiter(this, void 0, void 0, function* () {
                     const maxRetries = 3;
@@ -277,6 +290,10 @@ module.exports = function (RED) {
                                 const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
                                 if (key)
                                     currentState[key] = value;
+                                // Cập nhật trạng thái main_pump
+                                if (key === "main_pump") {
+                                    mainPumpState = value;
+                                }
                             });
                             node.context().global.set("coilRegisterData", currentState);
                             yield processState(currentState, "Coils");
@@ -296,6 +313,7 @@ module.exports = function (RED) {
                     }
                 });
             }
+            // Sửa đổi pollInputRegisters để đảm bảo current_ec được xử lý đúng
             function pollInputRegisters() {
                 return __awaiter(this, void 0, void 0, function* () {
                     const maxRetries = 3;

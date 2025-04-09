@@ -93,14 +93,14 @@ module.exports = function (RED) {
                             schedule.status = "finished";
                             schedule.enable = 0;
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
-                            node.warn(`Disabled and finished schedule id: ${schedule.name}, label: ${schedule.label} via RPC`);
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
                             if (holdingCommands.length > 0 || coilCommands.length > 0) {
                                 yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
-                                node.warn(`Reset modbus commands for id: ${schedule.name}, label: ${schedule.label} via RPC`);
+                                scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
+                                node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
                             }
                             yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            yield scheduleService.syncScheduleLog(schedule, true);
+                            // await scheduleService.syncScheduleLog(schedule, true);
                         }
                         else {
                             node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
@@ -189,10 +189,27 @@ module.exports = function (RED) {
                                 scheduleService.clearActiveCommands(schedule.name);
                             }
                             yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
-                            yield scheduleService.syncScheduleLog(schedule, true);
+                            // await scheduleService.syncScheduleLog(schedule, true);
                         }
                         else {
                             node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
+                        }
+                    }
+                    // Cleanup activeModbusCommands
+                    const runningScheduleIds = schedules
+                        .filter(s => s.status === "running" && scheduleService.isScheduleDue(s))
+                        .map(s => s.name);
+                    for (const scheduleId in activeModbusCommands) {
+                        if (!runningScheduleIds.includes(scheduleId)) {
+                            const commands = activeModbusCommands[scheduleId];
+                            const resetSuccess = yield scheduleService.resetModbusCommands(modbusClient, commands);
+                            if (resetSuccess) {
+                                scheduleService.clearActiveCommands(scheduleId);
+                                node.warn(`Cleaned up stale commands for schedule ${scheduleId}`);
+                            }
+                            else {
+                                node.warn(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
+                            }
                         }
                     }
                     node.status({ fill: "green", shape: "dot", text: "Schedules processed" });

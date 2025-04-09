@@ -370,8 +370,9 @@ export class ScheduleService {
     /**
      * Reset lại các lệnh modbus
      */
-    async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<void> {
-        // Reset chỉ các địa chỉ đã ghi lúc running
+    async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<boolean> {
+        let allSuccessful = true; // Initialize a flag to track overall success
+
         for (const cmd of commands) {
             try {
                 if (cmd.fc === 5) {
@@ -384,9 +385,13 @@ export class ScheduleService {
                 await this.delay(100);
             } catch (error) {
                 console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                allSuccessful = false; // Set the flag to false if any command fails
             }
         }
+
+        return allSuccessful; // Return the overall success status
     }
+
 
 
     /**
