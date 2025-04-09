@@ -305,7 +305,7 @@ module.exports = function (RED: NodeAPI) {
 
         mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
             if (!message.topic.startsWith(subscribeTopic.replace("+", ""))) return;
-
+            ClientRegistry.logConnectionCounts(node);
             try {
                 const payload = JSON.parse(message.message.toString());
                 node.log(`Received RPC payload: ${JSON.stringify(payload)}`);

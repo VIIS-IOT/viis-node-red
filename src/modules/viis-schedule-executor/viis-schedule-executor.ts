@@ -63,6 +63,8 @@ module.exports = function (RED: NodeAPI) {
                 const mqttClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
                 node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
 
+                ClientRegistry.logConnectionCounts(node);
+
                 // Kiểm tra và xoá overrides nếu không có hẹn giờ nào đang chạy
                 const activeModbusCommands: ActiveModbusCommands = node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
                 if (Object.keys(activeModbusCommands).length === 0) {
