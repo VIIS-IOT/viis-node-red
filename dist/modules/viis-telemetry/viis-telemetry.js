@@ -132,7 +132,7 @@ module.exports = function (RED) {
                 if (!scaleConfig)
                     return value;
                 const scaledValue = scaleConfig.operation === "multiply" ? value * scaleConfig.factor : value / scaleConfig.factor;
-                node.warn(`Scaling applied - key: ${key}, original: ${value}, scaled: ${scaledValue}, direction: ${direction}`);
+                // node.warn(`Scaling applied - key: ${key}, original: ${value}, scaled: ${scaledValue}, direction: ${direction}`);
                 return scaledValue;
             }
             // Sửa đổi hàm getChangedKeys để xử lý logic đặc thù cho current_ec
@@ -248,14 +248,14 @@ module.exports = function (RED) {
                         node.status({ fill: "green", shape: "dot", text: `${source}: Data changed` });
                     }
                     else {
-                        node.send({
-                            payload: {
-                                message: `${source}: No significant change detected`,
-                                currentState,
-                                previousState: previousStateForSource,
-                                threshold: CHANGE_THRESHOLD,
-                            },
-                        });
+                        // node.send({
+                        //     payload: {
+                        //         message: `${source}: No significant change detected`,
+                        //         currentState,
+                        //         previousState: previousStateForSource,
+                        //         threshold: CHANGE_THRESHOLD,
+                        //     },
+                        // });
                         node.status({ fill: "yellow", shape: "ring", text: `${source}: No change` });
                     }
                     // Chỉ cập nhật previousState khi có thay đổi

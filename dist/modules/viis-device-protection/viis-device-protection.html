@@ -23,3 +23,72 @@
         }
     });
 </script>
+<script type="text/html" data-help-name="viis-device-protection">
+    <h3>🛡️ VIIS Device Protection</h3>
+    <p>This node monitors Modbus coil states and automatically turns off coils if they exceed the maximum allowed ON duration.</p>
+
+    <h4>🔧 Configuration</h4>
+    <ul>
+        <li><b>Name</b> – Optional label for this node.</li>
+    </ul>
+
+    <h4>⚙️ Environment Configuration</h4>
+    <p>The node gets Modbus connection and coil mapping from environment variables:</p>
+    <ul>
+        <li><code>MODBUS_TYPE</code> (TCP/RTU)</li>
+        <li><code>MODBUS_HOST</code>, <code>MODBUS_TCP_PORT</code></li>
+        <li><code>MODBUS_SERIAL_PORT</code>, <code>MODBUS_BAUD_RATE</code>, <code>MODBUS_PARITY</code></li>
+        <li><code>MODBUS_UNIT_ID</code>, <code>MODBUS_TIMEOUT</code>, <code>MODBUS_RECONNECT_INTERVAL</code></li>
+        <li><code>MODBUS_COILS</code> (JSON map of coil names to addresses)</li>
+    </ul>
+
+    <h4>🛡️ Protection Logic</h4>
+    <p>The node checks for any <code>_MAX_TIME</code> entries in the global <code>configKeyValues</code>. It uses these to monitor related coils and shut them off if they stay on too long.</p>
+
+    <pre>
+Example:
+{
+  "COIL_OUTPUT_PUMP_MAX_TIME": 60
+}
+    </pre>
+
+    <p>This means the <code>COIL_OUTPUT_PUMP</code> is allowed to stay ON for 60 seconds.</p>
+
+    <h4>📤 Outputs</h4>
+    <p>When a coil is turned off automatically, the node outputs a message:</p>
+    <pre>
+{
+  "payload": {
+    "COIL_OUTPUT_PUMP": false,
+    "reason": "Exceeded max time"
+  }
+}
+    </pre>
+
+    <h4>📥 Inputs</h4>
+    <p>None</p>
+
+    <h4>🧠 Global Context Used</h4>
+    <ul>
+        <li><code>configKeyValues</code> – dictionary of coil max durations</li>
+        <li><code>coilRegisterData</code> – real-time coil states</li>
+    </ul>
+
+    <h4>🔁 Behavior</h4>
+    <ul>
+        <li>Runs check every 1 second</li>
+        <li>Node status:
+            <ul>
+                <li>🟢 <code>Running</code></li>
+                <li>🟡 <code>No configKeyValues</code></li>
+                <li>🔴 <code>Modbus client failed</code></li>
+            </ul>
+        </li>
+    </ul>
+
+    <h4>🧹 Cleanup</h4>
+    <p>Automatically clears interval and releases Modbus client when the node is removed or redeployed.</p>
+
+    <h4>📦 Dependencies</h4>
+    <p>Uses <code>ClientRegistry.getModbusClient(...)</code> to manage Modbus connection.</p>
+</script>
