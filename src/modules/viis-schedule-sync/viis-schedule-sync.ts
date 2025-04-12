@@ -10,11 +10,6 @@ interface MyNodeDef extends NodeDef {
   configNode: string;
 }
 
-interface MsgNodeRed {
-  topic: string;
-  payload: any;
-}
-
 module.exports = function (RED: NodeAPI) {
   async function ViisScheduleSync(this: Node, config: MyNodeDef) {
     RED.nodes.createNode(this, config);
@@ -136,10 +131,10 @@ module.exports = function (RED: NodeAPI) {
               for (let index = 0; index < syncedSchedules.length; index++) {
                 const element = syncedSchedules[index];
                 const queryFromServer = `
-              UPDATE tabiot_schedule
-              SET is_synced = 1
-              WHERE name = ?
-              `;
+                  UPDATE tabiot_schedule
+                  SET is_synced = 1
+                  WHERE name = ?
+                  `;
                 await mysqlClient.query(queryFromServer, [element.name]);
               }
             });
@@ -260,24 +255,120 @@ module.exports = function (RED: NodeAPI) {
         });
       }
 
-      const selectQueries = generateSelectQueries(serverScheduleList);
-
-      async function queryExistingSchedules(
-        selectQueries: any[]
-      ): Promise<any[]> {
+      async function queryExistingSchedules(selectQuerie: any): Promise<any[]> {
         const rows = [];
-        for (const element of selectQueries) {
-          await mysqlClient
-            .query<RowDataPacket[]>(element.query, element.params)
-            .then((data) => rows.push(data.rows));
-        }
+        await mysqlClient
+          .query<RowDataPacket[]>(selectQuerie.query, selectQuerie.params)
+          .then((data) => rows.push(data.rows));
         return rows;
       }
 
-      const selectResult = await queryExistingSchedules(selectQueries);
-
       async function handleUpdateFromServer() {
-        // Node Function 28
+        for (
+          let queryIndex = 0;
+          queryIndex < serverScheduleList.length;
+          queryIndex++
+        ) {
+          const serverSchedule = serverScheduleList[queryIndex];
+          const selectResult = await queryExistingSchedules(
+            generateSelectQueries([serverSchedule])[0]
+          );
+
+          let sqlQuery = "";
+          let params = [];
+
+          // Ensure all values are properly formatted and not undefined or null
+          const safeValue = (value: any) =>
+            value !== undefined && value !== null ? value : null;
+
+          // Function to build query dynamically
+          const buildQuery = (schedule: any) => {
+            let fields: string[] = [];
+            let values: string[] = [];
+            let updates: string[] = [];
+            let queryParams: any[] = [];
+
+            const addField = (field: string, value: any) => {
+              if (value !== undefined && value !== null) {
+                if (field === "interval") {
+                  field = "`interval`"; // Handle reserved keyword
+                }
+                fields.push(field);
+                values.push("?");
+                updates.push(`${field} = VALUES(${field})`);
+                queryParams.push(value);
+              }
+            };
+
+            addField("name", safeValue(schedule.name));
+            addField("creation", safeValue(schedule.creation));
+            addField("modified", safeValue(schedule.modified));
+            addField("device_id", safeValue(schedule.device_id));
+            addField("action", safeValue(schedule.action));
+            addField("enable", safeValue(schedule.enable));
+            addField("interval", safeValue(schedule.interval)); // Use 'interval' as a field name
+            addField("set_time", safeValue(schedule.set_time));
+            addField("start_date", safeValue(schedule.start_date));
+            addField("end_date", safeValue(schedule.end_date));
+            addField("start_time", safeValue(schedule.start_time));
+            addField("end_time", safeValue(schedule.end_time));
+            addField("status", safeValue(schedule.status));
+            addField("type", safeValue(schedule.type));
+            addField("label", safeValue(schedule.label));
+            addField("is_from_local", 0); // Default value
+            addField("is_synced", 1); // Default value
+            addField("is_deleted", safeValue(schedule.is_deleted));
+            addField(
+              "deleted",
+              schedule.is_deleted === 1 ? safeValue(schedule.modified) : null
+            );
+            addField("schedule_plan_id", safeValue(schedule.schedule_plan_id));
+
+            let insertQuery = `
+              INSERT INTO tabiot_schedule (
+                ${fields.join(", ")}
+              ) VALUES (
+                ${values.join(", ")}
+              )
+              ON DUPLICATE KEY UPDATE
+              ${updates.join(", ")}
+              ;
+            `;
+
+            return { insertQuery, queryParams };
+          };
+
+          if (selectResult.length > 0) {
+            const existingRecord = selectResult[0].modified;
+            const incomingModified = serverSchedule.modified;
+
+            if (moment(existingRecord).isSameOrAfter(incomingModified)) {
+              node.warn(moment(existingRecord));
+              node.warn(moment(incomingModified));
+              node.warn(
+                "Skipping record as the existing one is newer or the same"
+              );
+
+              // Update is_synced flag to 0 for skipped record
+              sqlQuery = `
+                UPDATE tabiot_schedule
+                SET is_synced = 0
+                WHERE name = ? AND device_id = ?;
+              `;
+
+              params = [
+                safeValue(serverSchedule.name),
+                safeValue(serverSchedule.device_id),
+              ];
+
+              await mysqlClient.query(sqlQuery, params);
+              continue; // Skip to the next iteration
+            }
+          }
+
+          const { insertQuery, queryParams } = buildQuery(serverSchedule);
+          await mysqlClient.query(insertQuery, queryParams);
+        }
       }
 
       handleUpdateFromServer();
