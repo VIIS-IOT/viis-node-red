@@ -65,9 +65,24 @@ module.exports = function (RED) {
                 database: process.env.DATABASE_NAME || "your_database",
                 connectionLimit: process.env.DATABASE_CONNECTION_LIMIT ? parseInt(process.env.DATABASE_CONNECTION_LIMIT, 10) : 10,
             };
-            const pollIntervalCoil = parseInt(config.pollIntervalCoil || "1000", 10);
-            const pollIntervalInput = parseInt(config.pollIntervalInput || "1000", 10);
-            const pollIntervalHolding = parseInt(config.pollIntervalHolding || "5000", 10);
+            // Đảm bảo polling interval không nhỏ hơn giá trị tối thiểu (500ms)
+            const MIN_POLLING_INTERVAL = 500; // 500ms là giá trị tối thiểu an toàn
+            let pollIntervalCoil = parseInt(config.pollIntervalCoil || "1000", 10);
+            let pollIntervalInput = parseInt(config.pollIntervalInput || "1000", 10);
+            let pollIntervalHolding = parseInt(config.pollIntervalHolding || "5000", 10);
+            // Kiểm tra và điều chỉnh giá trị nếu cần
+            if (isNaN(pollIntervalCoil) || pollIntervalCoil < MIN_POLLING_INTERVAL) {
+                node.warn(`Invalid coil polling interval: ${config.pollIntervalCoil}. Using minimum value: ${MIN_POLLING_INTERVAL}ms`);
+                pollIntervalCoil = MIN_POLLING_INTERVAL;
+            }
+            if (isNaN(pollIntervalInput) || pollIntervalInput < MIN_POLLING_INTERVAL) {
+                node.warn(`Invalid input polling interval: ${config.pollIntervalInput}. Using minimum value: ${MIN_POLLING_INTERVAL}ms`);
+                pollIntervalInput = MIN_POLLING_INTERVAL;
+            }
+            if (isNaN(pollIntervalHolding) || pollIntervalHolding < MIN_POLLING_INTERVAL) {
+                node.warn(`Invalid holding polling interval: ${config.pollIntervalHolding}. Using minimum value: ${MIN_POLLING_INTERVAL}ms`);
+                pollIntervalHolding = MIN_POLLING_INTERVAL;
+            }
             const coilStartAddress = parseInt(config.coilStartAddress || "0", 10);
             const coilQuantity = parseInt(config.coilQuantity || "40", 10);
             const inputStartAddress = parseInt(config.inputStartAddress || "0", 10);
@@ -116,17 +131,41 @@ module.exports = function (RED) {
             else {
                 console.log("All clients initialized successfully: Modbus, Local MQTT, MySQL, ThingsBoard MQTT");
             }
-            let previousStateCoils = {};
-            let previousStateInput = {};
-            let previousStateHolding = {};
+            // Khởi tạo context để lưu trữ trạng thái
+            const nodeContext = this.context();
+            // Khởi tạo các trạng thái trong context nếu chưa tồn tại
+            if (!nodeContext.get('previousStateCoils')) {
+                nodeContext.set('previousStateCoils', {});
+            }
+            if (!nodeContext.get('previousStateInput')) {
+                nodeContext.set('previousStateInput', {});
+            }
+            if (!nodeContext.get('previousStateHolding')) {
+                nodeContext.set('previousStateHolding', {});
+            }
+            if (!nodeContext.get('lastEcUpdate')) {
+                nodeContext.set('lastEcUpdate', 0);
+            }
+            if (!nodeContext.get('mainPumpState')) {
+                nodeContext.set('mainPumpState', false);
+            }
             const CHANGE_THRESHOLD = 0.1;
             let isPollingPaused = false;
             let coilInterval = null;
             let inputInterval = null;
             let holdingInterval = null;
-            // Thêm biến để lưu trạng thái main_pump và thời gian cập nhật cuối cùng của current_ec
-            let mainPumpState = false;
-            let lastEcUpdate = 0; // Thời gian cập nhật cuối cùng của current_ec (timestamp)
+            // Flags để theo dõi trạng thái polling
+            let isPollingCoils = false;
+            let isPollingInputs = false;
+            let isPollingHoldings = false;
+            // Biến đếm số lần thất bại liên tiếp
+            let consecutiveCoilFailures = 0;
+            let consecutiveInputFailures = 0;
+            let consecutiveHoldingFailures = 0;
+            // Ngưỡng số lần thất bại liên tiếp trước khi tạm dừng polling
+            const MAX_CONSECUTIVE_FAILURES = 5;
+            // Thời gian tạm dừng polling sau khi đạt ngưỡng thất bại (ms)
+            const POLLING_BACKOFF_TIME = 30000; // 30 giây
             function applyScaling(key, value, direction) {
                 const scaleConfig = scaleConfigs.find((config) => config.key === key && config.direction === direction);
                 if (!scaleConfig)
@@ -135,10 +174,12 @@ module.exports = function (RED) {
                 // node.warn(`Scaling applied - key: ${key}, original: ${value}, scaled: ${scaledValue}, direction: ${direction}`);
                 return scaledValue;
             }
-            // Sửa đổi hàm getChangedKeys để xử lý logic đặc thù cho current_ec
+            // Sửa đổi hàm getChangedKeys để xử lý logic đặc thù cho current_ec và sử dụng context
             function getChangedKeys(current, previous) {
                 const changed = {};
                 const now = Date.now();
+                const mainPumpState = nodeContext.get('mainPumpState');
+                let lastEcUpdate = nodeContext.get('lastEcUpdate');
                 for (const key in current) {
                     const currVal = current[key];
                     const prevVal = previous[key];
@@ -147,6 +188,7 @@ module.exports = function (RED) {
                         if (now - lastEcUpdate >= 5000) { // 5000ms = 5 giây
                             changed[key] = currVal;
                             lastEcUpdate = now; // Cập nhật thời gian cuối cùng
+                            nodeContext.set('lastEcUpdate', lastEcUpdate); // Lưu vào context
                             console.log(`Key forced update: ${key}, value: ${currVal} (main_pump ON, 5s interval)`);
                         }
                     }
@@ -178,10 +220,21 @@ module.exports = function (RED) {
             }
             function processState(currentState, source) {
                 return __awaiter(this, void 0, void 0, function* () {
-                    let previousStateForSource = source === "Coils" ? previousStateCoils :
-                        source === "Input Registers" ? previousStateInput :
-                            source === "Holding Registers" ? previousStateHolding :
-                                previousStateInput; // Trường hợp hợp nhất polling
+                    // Lấy trạng thái trước đó từ context
+                    let previousStateForSource;
+                    if (source === "Coils") {
+                        previousStateForSource = nodeContext.get('previousStateCoils');
+                    }
+                    else if (source === "Input Registers") {
+                        previousStateForSource = nodeContext.get('previousStateInput');
+                    }
+                    else if (source === "Holding Registers") {
+                        previousStateForSource = nodeContext.get('previousStateHolding');
+                    }
+                    else {
+                        // Trường hợp hợp nhất polling
+                        previousStateForSource = nodeContext.get('previousStateInput');
+                    }
                     const changedKeys = getChangedKeys(currentState, previousStateForSource);
                     if (Object.keys(changedKeys).length > 0) {
                         const timestamp = Date.now();
@@ -258,122 +311,200 @@ module.exports = function (RED) {
                         // });
                         node.status({ fill: "yellow", shape: "ring", text: `${source}: No change` });
                     }
-                    // Chỉ cập nhật previousState khi có thay đổi
+                    // Cập nhật trạng thái trước đó vào context
                     if (source === "Coils") {
-                        previousStateCoils = Object.assign({}, currentState);
+                        nodeContext.set('previousStateCoils', Object.assign({}, currentState));
                         // node.log(`Updated previousStateCoils with new values`);
                     }
                     else if (source === "Input Registers") {
-                        previousStateInput = Object.assign({}, currentState);
+                        nodeContext.set('previousStateInput', Object.assign({}, currentState));
                         // node.log(`Updated previousStateInput with new values`);
                     }
                     else if (source === "Holding Registers") {
-                        previousStateHolding = Object.assign({}, currentState);
+                        nodeContext.set('previousStateHolding', Object.assign({}, currentState));
                         // node.log(`Updated previousStateHolding with new values`);
                     }
                     else if (source === "All Registers") {
-                        previousStateInput = Object.assign({}, currentState); // Trường hợp hợp nhất polling
+                        nodeContext.set('previousStateInput', Object.assign({}, currentState)); // Trường hợp hợp nhất polling
                         // node.log(`Updated previousStateInput with new values (All Registers)`);
                     }
                 });
             }
-            // Cập nhật trạng thái main_pump từ pollCoils
+            // Cập nhật trạng thái main_pump từ pollCoils và lưu vào context
             function pollCoils() {
                 return __awaiter(this, void 0, void 0, function* () {
+                    // Nếu đang polling hoặc polling bị tạm dừng, bỏ qua
+                    if (isPollingCoils || isPollingPaused) {
+                        return;
+                    }
+                    // Kiểm tra nếu đã đạt ngưỡng thất bại liên tiếp
+                    if (consecutiveCoilFailures >= MAX_CONSECUTIVE_FAILURES) {
+                        node.warn(`Coil polling temporarily suspended due to ${consecutiveCoilFailures} consecutive failures. Will retry in ${POLLING_BACKOFF_TIME / 1000} seconds.`);
+                        // Đặt lịch thử lại sau khoảng thời gian backoff
+                        setTimeout(() => {
+                            consecutiveCoilFailures = 0; // Reset counter
+                            node.log("Resuming coil polling after backoff period");
+                        }, POLLING_BACKOFF_TIME);
+                        return;
+                    }
+                    isPollingCoils = true;
                     const maxRetries = 3;
                     let retryCount = 0;
-                    while (retryCount < maxRetries) {
-                        try {
-                            const result = yield modbusClient.readCoils(coilStartAddress, coilQuantity);
-                            const currentState = {};
-                            result.data.forEach((value, index) => {
-                                const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
-                                if (key)
-                                    currentState[key] = value;
-                                // Cập nhật trạng thái main_pump
-                                if (key === "main_pump") {
-                                    mainPumpState = value;
-                                }
-                            });
-                            node.context().global.set("coilRegisterData", currentState);
-                            yield processState(currentState, "Coils");
-                            break;
-                        }
-                        catch (error) {
-                            retryCount++;
-                            const err = error;
-                            node.error(`Coil polling error (attempt ${retryCount}/${maxRetries}): ${err.message}`);
-                            if (retryCount === maxRetries) {
-                                node.send({ payload: `Coil polling failed after ${maxRetries} attempts: ${err.message}` });
+                    try {
+                        while (retryCount < maxRetries) {
+                            try {
+                                const result = yield modbusClient.readCoils(coilStartAddress, coilQuantity);
+                                const currentState = {};
+                                result.data.forEach((value, index) => {
+                                    const key = Object.keys(modbusCoils).find((k) => modbusCoils[k] === index + coilStartAddress);
+                                    if (key)
+                                        currentState[key] = value;
+                                    // Cập nhật trạng thái main_pump vào context
+                                    if (key === "main_pump") {
+                                        nodeContext.set('mainPumpState', value);
+                                    }
+                                });
+                                node.context().global.set("coilRegisterData", currentState);
+                                yield processState(currentState, "Coils");
+                                // Reset counter khi thành công
+                                consecutiveCoilFailures = 0;
+                                break;
                             }
-                            else {
-                                yield new Promise((resolve) => setTimeout(resolve, 1000));
+                            catch (error) {
+                                retryCount++;
+                                const err = error;
+                                node.error(`Coil polling error (attempt ${retryCount}/${maxRetries}): ${err.message}`);
+                                if (retryCount === maxRetries) {
+                                    node.send({ payload: `Coil polling failed after ${maxRetries} attempts: ${err.message}` });
+                                    // Tăng counter thất bại
+                                    consecutiveCoilFailures++;
+                                    node.warn(`Consecutive coil polling failures: ${consecutiveCoilFailures}/${MAX_CONSECUTIVE_FAILURES}`);
+                                }
+                                else {
+                                    yield new Promise((resolve) => setTimeout(resolve, 1000));
+                                }
                             }
                         }
                     }
+                    finally {
+                        // Đảm bảo flag luôn được reset, ngay cả khi có lỗi
+                        isPollingCoils = false;
+                    }
                 });
             }
-            // Sửa đổi pollInputRegisters để đảm bảo current_ec được xử lý đúng
+            // Sửa đổi pollInputRegisters để đảm bảo current_ec được xử lý đúng và xử lý polling đồng thời
             function pollInputRegisters() {
                 return __awaiter(this, void 0, void 0, function* () {
+                    // Nếu đang polling hoặc polling bị tạm dừng, bỏ qua
+                    if (isPollingInputs || isPollingPaused) {
+                        return;
+                    }
+                    // Kiểm tra nếu đã đạt ngưỡng thất bại liên tiếp
+                    if (consecutiveInputFailures >= MAX_CONSECUTIVE_FAILURES) {
+                        node.warn(`Input polling temporarily suspended due to ${consecutiveInputFailures} consecutive failures. Will retry in ${POLLING_BACKOFF_TIME / 1000} seconds.`);
+                        // Đặt lịch thử lại sau khoảng thời gian backoff
+                        setTimeout(() => {
+                            consecutiveInputFailures = 0; // Reset counter
+                            node.log("Resuming input polling after backoff period");
+                        }, POLLING_BACKOFF_TIME);
+                        return;
+                    }
+                    isPollingInputs = true;
                     const maxRetries = 3;
                     let retryCount = 0;
-                    while (retryCount < maxRetries) {
-                        try {
-                            const result = yield modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
-                            const currentState = {};
-                            result.data.forEach((value, index) => {
-                                const key = Object.keys(modbusInputRegisters).find((k) => modbusInputRegisters[k] === index + inputStartAddress);
-                                if (key)
-                                    currentState[key] = applyScaling(key, value, "read");
-                            });
-                            node.context().global.set("inputRegisterData", currentState);
-                            console.log("Input Register Data:", currentState);
-                            yield processState(currentState, "Input Registers");
-                            break;
-                        }
-                        catch (error) {
-                            retryCount++;
-                            const err = error;
-                            node.error(`Input polling error (attempt ${retryCount}/${maxRetries}): ${err.message}`);
-                            if (retryCount === maxRetries) {
-                                node.send({ payload: `Input polling failed after ${maxRetries} attempts: ${err.message}` });
+                    try {
+                        while (retryCount < maxRetries) {
+                            try {
+                                const result = yield modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
+                                const currentState = {};
+                                result.data.forEach((value, index) => {
+                                    const key = Object.keys(modbusInputRegisters).find((k) => modbusInputRegisters[k] === index + inputStartAddress);
+                                    if (key)
+                                        currentState[key] = applyScaling(key, value, "read");
+                                });
+                                node.context().global.set("inputRegisterData", currentState);
+                                console.log("Input Register Data:", currentState);
+                                yield processState(currentState, "Input Registers");
+                                // Reset counter khi thành công
+                                consecutiveInputFailures = 0;
+                                break;
                             }
-                            else {
-                                yield new Promise((resolve) => setTimeout(resolve, 1000));
+                            catch (error) {
+                                retryCount++;
+                                const err = error;
+                                node.error(`Input polling error (attempt ${retryCount}/${maxRetries}): ${err.message}`);
+                                if (retryCount === maxRetries) {
+                                    node.send({ payload: `Input polling failed after ${maxRetries} attempts: ${err.message}` });
+                                    // Tăng counter thất bại
+                                    consecutiveInputFailures++;
+                                    node.warn(`Consecutive input polling failures: ${consecutiveInputFailures}/${MAX_CONSECUTIVE_FAILURES}`);
+                                }
+                                else {
+                                    yield new Promise((resolve) => setTimeout(resolve, 1000));
+                                }
                             }
                         }
+                    }
+                    finally {
+                        // Đảm bảo flag luôn được reset, ngay cả khi có lỗi
+                        isPollingInputs = false;
                     }
                 });
             }
             function pollHoldingRegisters() {
                 return __awaiter(this, void 0, void 0, function* () {
+                    // Nếu đang polling hoặc polling bị tạm dừng, bỏ qua
+                    if (isPollingHoldings || isPollingPaused) {
+                        return;
+                    }
+                    // Kiểm tra nếu đã đạt ngưỡng thất bại liên tiếp
+                    if (consecutiveHoldingFailures >= MAX_CONSECUTIVE_FAILURES) {
+                        node.warn(`Holding polling temporarily suspended due to ${consecutiveHoldingFailures} consecutive failures. Will retry in ${POLLING_BACKOFF_TIME / 1000} seconds.`);
+                        // Đặt lịch thử lại sau khoảng thời gian backoff
+                        setTimeout(() => {
+                            consecutiveHoldingFailures = 0; // Reset counter
+                            node.log("Resuming holding polling after backoff period");
+                        }, POLLING_BACKOFF_TIME);
+                        return;
+                    }
+                    isPollingHoldings = true;
                     const maxRetries = 3;
                     let retryCount = 0;
-                    while (retryCount < maxRetries) {
-                        try {
-                            const result = yield modbusClient.readHoldingRegisters(holdingStartAddress, holdingQuantity);
-                            const currentState = {};
-                            result.data.forEach((value, index) => {
-                                const key = Object.keys(modbusHoldingRegisters).find((k) => modbusHoldingRegisters[k] === index + holdingStartAddress);
-                                if (key)
-                                    currentState[key] = applyScaling(key, value, "read");
-                            });
-                            node.context().global.set("holdingRegisterData", currentState);
-                            yield processState(currentState, "Holding Registers");
-                            break;
-                        }
-                        catch (error) {
-                            retryCount++;
-                            const err = error;
-                            node.error(`Holding polling error (attempt ${retryCount}/${maxRetries}): ${err.message}`);
-                            if (retryCount === maxRetries) {
-                                node.send({ payload: `Holding polling failed after ${maxRetries} attempts: ${err.message}` });
+                    try {
+                        while (retryCount < maxRetries) {
+                            try {
+                                const result = yield modbusClient.readHoldingRegisters(holdingStartAddress, holdingQuantity);
+                                const currentState = {};
+                                result.data.forEach((value, index) => {
+                                    const key = Object.keys(modbusHoldingRegisters).find((k) => modbusHoldingRegisters[k] === index + holdingStartAddress);
+                                    if (key)
+                                        currentState[key] = applyScaling(key, value, "read");
+                                });
+                                node.context().global.set("holdingRegisterData", currentState);
+                                yield processState(currentState, "Holding Registers");
+                                // Reset counter khi thành công
+                                consecutiveHoldingFailures = 0;
+                                break;
                             }
-                            else {
-                                yield new Promise((resolve) => setTimeout(resolve, 1000));
+                            catch (error) {
+                                retryCount++;
+                                const err = error;
+                                node.error(`Holding polling error (attempt ${retryCount}/${maxRetries}): ${err.message}`);
+                                if (retryCount === maxRetries) {
+                                    node.send({ payload: `Holding polling failed after ${maxRetries} attempts: ${err.message}` });
+                                    // Tăng counter thất bại
+                                    consecutiveHoldingFailures++;
+                                    node.warn(`Consecutive holding polling failures: ${consecutiveHoldingFailures}/${MAX_CONSECUTIVE_FAILURES}`);
+                                }
+                                else {
+                                    yield new Promise((resolve) => setTimeout(resolve, 1000));
+                                }
                             }
                         }
+                    }
+                    finally {
+                        // Đảm bảo flag luôn được reset, ngay cả khi có lỗi
+                        isPollingHoldings = false;
                     }
                 });
             }
@@ -436,18 +567,46 @@ module.exports = function (RED) {
             });
             function resumePollingIfAllConnected() {
                 if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
+                    // Reset các biến đếm thất bại khi kết nối lại
+                    consecutiveCoilFailures = 0;
+                    consecutiveInputFailures = 0;
+                    consecutiveHoldingFailures = 0;
+                    // Reset các flag polling
+                    isPollingCoils = false;
+                    isPollingInputs = false;
+                    isPollingHoldings = false;
+                    // Bỏ tạm dừng polling
                     isPollingPaused = false;
+                    // Xóa các interval cũ nếu có
+                    if (coilInterval)
+                        clearInterval(coilInterval);
+                    if (inputInterval)
+                        clearInterval(inputInterval);
+                    if (holdingInterval)
+                        clearInterval(holdingInterval);
+                    // Thiết lập interval mới
                     coilInterval = setInterval(pollCoils, pollIntervalCoil);
                     inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
                     holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
+                    node.status({ fill: "green", shape: "dot", text: "All clients connected, polling resumed" });
                     console.log("All clients connected, polling resumed");
                 }
             }
             // Khởi động polling nếu tất cả client đã kết nối
             if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
+                // Reset các biến đếm thất bại
+                consecutiveCoilFailures = 0;
+                consecutiveInputFailures = 0;
+                consecutiveHoldingFailures = 0;
+                // Reset các flag polling
+                isPollingCoils = false;
+                isPollingInputs = false;
+                isPollingHoldings = false;
+                // Thiết lập interval
                 coilInterval = setInterval(pollCoils, pollIntervalCoil);
                 inputInterval = setInterval(pollInputRegisters, pollIntervalInput);
                 holdingInterval = setInterval(pollHoldingRegisters, pollIntervalHolding);
+                node.status({ fill: "green", shape: "dot", text: "Polling started" });
             }
             else {
                 node.status({ fill: "red", shape: "ring", text: "Waiting for all clients to connect" });
