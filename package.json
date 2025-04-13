@@ -32,7 +32,7 @@
       "viis-schedule-executor": "dist/modules/viis-schedule-executor/viis-schedule-executor.js",
       "viis-device-protection": "dist/modules/viis-device-protection/viis-device-protection.js",
       "viis-crud-schedule": "dist/modules/viis-crud-schedule/viis-crud-schedule.js",
-      "viis-schedule-sync": "dist/viis-schedule-sync.js"
+      "viis-schedule-sync": "dist/modules/viis-schedule-sync/viis-schedule-sync.js"
     }
   },
   "dependencies": {

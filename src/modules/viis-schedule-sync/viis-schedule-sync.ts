@@ -54,7 +54,7 @@ module.exports = function (RED: NodeAPI) {
     );
 
     if (!mysqlClient || !thingsboardClient) {
-      node.error("Failed to retrieve clients from registry");
+      node.send({ payload: "Failed to retrieve clients from registry" });
       node.status({
         fill: "red",
         shape: "ring",
@@ -67,7 +67,8 @@ module.exports = function (RED: NodeAPI) {
       );
     }
 
-    const deviceId = global.get("device_id");
+    const globalContext = node.context().global;
+    const deviceId = globalContext.get("device_id");
 
     async function cronSyncCreateAndUpdateToServer() {
       try {
@@ -374,6 +375,7 @@ module.exports = function (RED: NodeAPI) {
       handleUpdateFromServer();
     }
 
+    // subscribe to topic before listening for messages
     thingsboardClient.on("message", (msg) => {
       syncFromServer(msg);
     });
