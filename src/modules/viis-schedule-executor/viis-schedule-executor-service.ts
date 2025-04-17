@@ -160,6 +160,22 @@ export class ScheduleService {
 
         try {
             const actionObj = JSON.parse(schedule.action);
+            // Normalize string numbers (with comma/dot) to real numbers
+            for (const key in actionObj) {
+                if (actionObj.hasOwnProperty(key)) {
+                    let val = actionObj[key];
+                    if (typeof val === 'string') {
+                        const trimmed = val.trim();
+                        // Match e.g. "1,800.00", "1800", "1800.25"
+                        if (/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(trimmed) || /^-?\d+(\.\d+)?$/.test(trimmed)) {
+                            const num = parseFloat(trimmed.replace(/,/g, ''));
+                            if (!isNaN(num)) {
+                                actionObj[key] = num;
+                            }
+                        }
+                    }
+                }
+            }
             const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
             const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
 
