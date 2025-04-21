@@ -161,7 +161,8 @@ module.exports = function (RED: NodeAPI) {
         }
 
         // Initialize context
-        nodeContext.set('previousState', nodeContext.get('previousState') || {});
+        nodeContext.set('previousState', {});
+        nodeContext.set('lastSent', 0);
         nodeContext.set('lastEcUpdate', nodeContext.get('lastEcUpdate') || 0);
         nodeContext.set('mainPumpState', nodeContext.get('mainPumpState') || false);
 

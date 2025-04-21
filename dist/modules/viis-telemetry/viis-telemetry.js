@@ -138,7 +138,8 @@ module.exports = function (RED) {
                 return;
             }
             // Initialize context
-            nodeContext.set('previousState', nodeContext.get('previousState') || {});
+            nodeContext.set('previousState', {});
+            nodeContext.set('lastSent', 0);
             nodeContext.set('lastEcUpdate', nodeContext.get('lastEcUpdate') || 0);
             nodeContext.set('mainPumpState', nodeContext.get('mainPumpState') || false);
             const CHANGE_THRESHOLD = 0.1;
