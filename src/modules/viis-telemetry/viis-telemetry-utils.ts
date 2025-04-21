@@ -28,6 +28,7 @@ export function applyScaling(
     direction: "read" | "write",
     scaleConfigs: ScaleConfig[]
 ): number {
+    if (!Array.isArray(scaleConfigs)) scaleConfigs = [];
     const config = scaleConfigs.find((conf) => conf.key === key && conf.direction === direction);
     if (!config) return value;
     if (config.operation === "multiply") return value * config.factor;

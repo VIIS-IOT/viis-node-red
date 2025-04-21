@@ -84,6 +84,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script>
 
 <script type="text/javascript">
+    var scaleConfigsEditor;
     RED.nodes.registerType("viis-telemetry", {
         category: "function",
         color: "#99BC85",
@@ -117,13 +118,12 @@
         oneditprepare: function () {
             // Khởi tạo CodeMirror cho scaleConfigs
             var initialScaleConfigs = this.scaleConfigs || "[]";
-            var scaleConfigsEditor = CodeMirror(document.getElementById('scaleConfigsEditor'), {
+            scaleConfigsEditor = CodeMirror(document.getElementById('scaleConfigsEditor'), {
                 value: "",
                 mode: { name: "javascript", json: true },
                 lineNumbers: true,
                 theme: "default"
             });
-
             // Set giá trị ban đầu cho editor
             try {
                 var parsedScale = JSON.parse(initialScaleConfigs);
@@ -132,7 +132,6 @@
             } catch (e) {
                 scaleConfigsEditor.setValue(initialScaleConfigs);
             }
-
             // Tự động định dạng lại JSON khi editor mất focus
             scaleConfigsEditor.on("blur", function () {
                 try {
@@ -144,41 +143,36 @@
                     RED.notify("Invalid scaleConfigs JSON: " + e.message, "error");
                 }
             });
-
             // Đồng bộ nội dung của CodeMirror với textarea ẩn để lưu trữ
             scaleConfigsEditor.on("change", function () {
                 $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
             });
             $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
-
             // Xử lý enableDebugLog checkbox
             $("#node-input-enableDebugLog").prop("checked", this.enableDebugLog === true);
-
             // Xử lý thresholdConfig
             if (this.thresholdConfig) {
                 $("#node-input-thresholdConfig").val(JSON.stringify(JSON.parse(this.thresholdConfig), null, 2));
             } else {
                 $("#node-input-thresholdConfig").val('{}');
             }
-
             // Xử lý periodicSnapshotInterval
             $("#node-input-periodicSnapshotIntervalCoil").val(this.periodicSnapshotIntervalCoil || "0");
             $("#node-input-periodicSnapshotIntervalInput").val(this.periodicSnapshotIntervalInput || "0");
             $("#node-input-periodicSnapshotIntervalHolding").val(this.periodicSnapshotIntervalHolding || "0");
         },
         oneditsave: function () {
-            // Compact JSON cho scaleConfigs trước khi lưu
-            var scaleConfigsField = $("#node-input-scaleConfigs");
+            // Always get latest value from CodeMirror and write to textarea
+            $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
             try {
-                var configs = JSON.parse(scaleConfigsField.val() || "[]");
-                scaleConfigsField.val(JSON.stringify(configs));
+                var configs = JSON.parse(scaleConfigsEditor.getValue() || "[]");
+                $("#node-input-scaleConfigs").val(JSON.stringify(configs));
             } catch (e) {
-                console.log("Error saving scaleConfigs:", e);
+                RED.notify("Invalid scaleConfigs JSON: " + e.message, "error");
+                $("#node-input-scaleConfigs").val("[]");
             }
-
             // Lưu trạng thái enableDebugLog
             this.enableDebugLog = $("#node-input-enableDebugLog").is(":checked");
-
             // Lưu thresholdConfig
             try {
                 var thresholdObj = JSON.parse($("#node-input-thresholdConfig").val() || '{}');
@@ -187,7 +181,6 @@
                 RED.notify("Invalid thresholdConfig JSON: " + e.message, "error");
                 this.thresholdConfig = '{}';
             }
-
             // Lưu periodicSnapshotInterval
             this.periodicSnapshotIntervalCoil = $("#node-input-periodicSnapshotIntervalCoil").val() || "0";
             this.periodicSnapshotIntervalInput = $("#node-input-periodicSnapshotIntervalInput").val() || "0";

@@ -17,6 +17,8 @@ exports.debugLog = debugLog;
  * @returns Scaled value
  */
 function applyScaling(key, value, direction, scaleConfigs) {
+    if (!Array.isArray(scaleConfigs))
+        scaleConfigs = [];
     const config = scaleConfigs.find((conf) => conf.key === key && conf.direction === direction);
     if (!config)
         return value;

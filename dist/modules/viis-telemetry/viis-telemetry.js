@@ -17,7 +17,7 @@ const viis_telemetry_utils_1 = require("./viis-telemetry-utils");
 module.exports = function (RED) {
     function ViisTelemetryNode(config) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e;
+            var _a, _b, _c, _d;
             RED.nodes.createNode(this, config);
             const node = this;
             const nodeContext = this.context();
@@ -91,42 +91,30 @@ module.exports = function (RED) {
             const inputQuantity = parseInt(config.inputQuantity, 10) || 26;
             const holdingStartAddress = parseInt(config.holdingStartAddress, 10) || 0;
             const holdingQuantity = parseInt(config.holdingQuantity, 10) || 29;
-            // Initialize scaleConfigs with deep copy
-            let scaleConfigs = [];
+            // FLOW CONTEXT SCALE CONFIG
+            const flowContext = this.context().flow;
+            const SCALE_CONFIG_KEY = `scaleConfigs_${this.id}`;
+            let initialScaleConfigs = [];
             try {
-                scaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
-                scaleConfigs.forEach((conf) => {
-                    if (!conf.key || !conf.operation || typeof conf.factor !== "number" || !["read", "write"].includes(conf.direction)) {
-                        throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
-                    }
-                });
+                initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
+                if (!Array.isArray(initialScaleConfigs))
+                    initialScaleConfigs = [];
             }
-            catch (error) {
-                node.error(`Failed to parse scaleConfigs: ${error.message}`);
-                node.status({ fill: "red", shape: "ring", text: "Invalid scaleConfigs" });
-                scaleConfigs = [
-                    { key: "current_ec", operation: "divide", factor: 1000, direction: "read" },
-                    { key: "current_ph", operation: "divide", factor: 1000, direction: "read" },
-                    { key: "INPUT_SENSOR1_EC", operation: "divide", factor: 1000, direction: "read" },
-                    { key: "INPUT_SENSOR1_PH", operation: "divide", factor: 100, direction: "read" },
-                    { key: "INPUT_SENSOR2_EC", operation: "divide", factor: 1000, direction: "read" },
-                    { key: "INPUT_SENSOR2_PH", operation: "divide", factor: 100, direction: "read" },
-                    { key: "INPUT_SENSOR1_TEMP", operation: "divide", factor: 100, direction: "read" },
-                    { key: "INPUT_SENSOR2_TEMP", operation: "divide", factor: 100, direction: "read" },
-                ];
-                node.warn(`Using default scaleConfigs: ${JSON.stringify(scaleConfigs)}`);
+            catch (_e) {
+                initialScaleConfigs = [];
             }
+            flowContext.set(SCALE_CONFIG_KEY, initialScaleConfigs);
             // --- Cấu hình enable debug log từ config node (bổ sung trường này vào UI nếu chưa có) ---
-            const enableDebugLog = (_a = config.enableDebugLog) !== null && _a !== void 0 ? _a : false;
+            let enableDebugLog = (_a = config.enableDebugLog) !== null && _a !== void 0 ? _a : false;
+            enableDebugLog = false;
+            node.warn(`Debug log is disabled ${config.enableDebugLog}`);
             // --- Cấu hình threshold cho từng key (bổ sung trường này vào UI nếu chưa có) ---
             // Ví dụ: { temp: 1, humidity: 2 }
             const thresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
-            // --- Cấu hình polling interval (bổ sung trường này vào UI nếu chưa có) ---
-            const pollingInterval = parseInt((_b = config.pollingInterval) !== null && _b !== void 0 ? _b : '600000', 10); // default 10 phút
             // --- Cấu hình periodic snapshot interval riêng cho từng loại ---
-            const periodicSnapshotIntervalCoil = parseInt((_c = config.periodicSnapshotIntervalCoil) !== null && _c !== void 0 ? _c : '0', 10);
-            const periodicSnapshotIntervalInput = parseInt((_d = config.periodicSnapshotIntervalInput) !== null && _d !== void 0 ? _d : '0', 10);
-            const periodicSnapshotIntervalHolding = parseInt((_e = config.periodicSnapshotIntervalHolding) !== null && _e !== void 0 ? _e : '0', 10);
+            const periodicSnapshotIntervalCoil = parseInt((_b = config.periodicSnapshotIntervalCoil) !== null && _b !== void 0 ? _b : '0', 10);
+            const periodicSnapshotIntervalInput = parseInt((_c = config.periodicSnapshotIntervalInput) !== null && _c !== void 0 ? _c : '0', 10);
+            const periodicSnapshotIntervalHolding = parseInt((_d = config.periodicSnapshotIntervalHolding) !== null && _d !== void 0 ? _d : '0', 10);
             // Get clients
             const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
             const localClient = yield client_registry_1.default.getLocalMqttClient(localMqttConfig, node);
@@ -186,7 +174,7 @@ module.exports = function (RED) {
                             thingsboardTopic: 'v1/devices/me/telemetry'
                         });
                         nodeContext.set('lastSent', now);
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (threshold): ${JSON.stringify(changedKeys)}` });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (threshold) ${JSON.stringify(thresholdConfig)}: ${JSON.stringify(changedKeys)}` });
                     }
                     else if (periodicSnapshotInterval > 0 && now - lastSent >= periodicSnapshotInterval) {
                         (0, viis_telemetry_utils_1.publishTelemetry)({
@@ -209,11 +197,13 @@ module.exports = function (RED) {
                 });
             }
             // --- Apply scaling cho từng key khi đọc modbus ---
-            function scaleTelemetry(keys, values, direction, scaleConfigs) {
+            function scaleTelemetry(keys, values, direction, flowContext, scaleConfigKey) {
                 const result = {};
+                const scaleConfigs = flowContext.get(scaleConfigKey) || [];
                 keys.forEach((key, idx) => {
                     result[key] = (0, viis_telemetry_utils_1.applyScaling)(key, values[idx], direction, scaleConfigs);
                 });
+                (0, viis_telemetry_utils_1.debugLog)({ enable: true, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
                 return result;
             }
             function pollCoils() {
@@ -294,7 +284,18 @@ module.exports = function (RED) {
                                 const result = yield modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
                                 const keys = Object.keys(modbusInputRegisters);
                                 const values = result.data;
-                                const currentState = scaleTelemetry(keys, values, 'read', scaleConfigs);
+                                const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) || [];
+                                (0, viis_telemetry_utils_1.debugLog)({
+                                    enable: enableDebugLog,
+                                    node,
+                                    message: `[InputRegisters][DEBUG] keys: ${JSON.stringify(keys)}, values: ${JSON.stringify(values)}, scaleConfigs: ${JSON.stringify(scaleCfg)}`
+                                });
+                                const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
+                                (0, viis_telemetry_utils_1.debugLog)({
+                                    enable: enableDebugLog,
+                                    node,
+                                    message: `[InputRegisters][DEBUG] scaled currentState: ${JSON.stringify(currentState)}`
+                                });
                                 node.context().global.set("inputRegisterData", currentState);
                                 yield processState(currentState, "Input Registers");
                                 consecutiveInputFailures = 0;
@@ -345,7 +346,7 @@ module.exports = function (RED) {
                                 const result = yield modbusClient.readHoldingRegisters(holdingStartAddress, holdingQuantity);
                                 const keys = Object.keys(modbusHoldingRegisters);
                                 const values = result.data;
-                                const currentState = scaleTelemetry(keys, values, 'read', scaleConfigs);
+                                const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
                                 node.context().global.set("holdingRegisterData", currentState);
                                 yield processState(currentState, "Holding Registers");
                                 consecutiveHoldingFailures = 0;
@@ -474,21 +475,12 @@ module.exports = function (RED) {
             // --- Ép buộc replace scaleConfigs, không bao giờ append ---
             node.on('input', (msg) => {
                 if (msg.scaleConfigs) {
-                    clearPollingAndState();
                     try {
-                        // Luôn ép kiểu và replace hoàn toàn, không merge, không append
                         let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
-                        // Chỉ giữ lại các object hợp lệ, bỏ qua các phần tử duplicate key (key+direction)
-                        const seen = new Set();
-                        newConfigs = newConfigs.filter((conf) => {
-                            const id = `${conf.key}:${conf.direction}`;
-                            if (seen.has(id))
-                                return false;
-                            seen.add(id);
-                            return conf.key && conf.operation && typeof conf.factor === 'number' && ['read', 'write'].includes(conf.direction);
-                        });
-                        scaleConfigs = newConfigs;
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(scaleConfigs) });
+                        if (!Array.isArray(newConfigs))
+                            newConfigs = [];
+                        flowContext.set(SCALE_CONFIG_KEY, newConfigs);
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: true, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(newConfigs) });
                     }
                     catch (error) {
                         node.error(`Failed to update scaleConfigs: ${error.message}`);
@@ -499,6 +491,7 @@ module.exports = function (RED) {
             // --- Cleanup triệt để khi node bị xoá ---
             node.on('close', () => __awaiter(this, void 0, void 0, function* () {
                 clearPollingAndState();
+                flowContext.set(SCALE_CONFIG_KEY, []);
                 client_registry_1.default.releaseClient('modbus', node);
                 client_registry_1.default.releaseClient('local', node);
                 client_registry_1.default.releaseClient('mysql', node);
