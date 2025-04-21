@@ -111,6 +111,7 @@ module.exports = function (RED: NodeAPI) {
         // FLOW CONTEXT SCALE CONFIG
         const flowContext = this.context().flow as NodeContext;
         const SCALE_CONFIG_KEY = `scaleConfigs_${this.id}`;
+        const DEBUG_LOG_KEY = `enableDebugLog_${this.id}`;
         let initialScaleConfigs: ScaleConfig[] = [];
         try {
             initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
@@ -120,10 +121,12 @@ module.exports = function (RED: NodeAPI) {
         }
         flowContext.set(SCALE_CONFIG_KEY, initialScaleConfigs);
 
-        // --- Cấu hình enable debug log từ config node (bổ sung trường này vào UI nếu chưa có) ---
-        let enableDebugLog: boolean = config.enableDebugLog ?? false;
-        enableDebugLog = false
-        node.warn(`Debug log is disabled ${config.enableDebugLog}`);
+        // --- Store enableDebugLog in flow context (like scale config) ---
+        const initialEnableDebugLog: boolean = config.enableDebugLog ?? false;
+        flowContext.set(DEBUG_LOG_KEY, initialEnableDebugLog);
+        let enableDebugLog: boolean = flowContext.get(DEBUG_LOG_KEY) as boolean ?? false;
+        node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (from flow context)`);
+
         // --- Cấu hình threshold cho từng key (bổ sung trường này vào UI nếu chưa có) ---
         // Ví dụ: { temp: 1, humidity: 2 }
         const thresholdConfig: { [key: string]: number } = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
@@ -196,7 +199,7 @@ module.exports = function (RED: NodeAPI) {
                     thingsboardTopic: 'v1/devices/me/telemetry'
                 });
                 nodeContext.set('lastSent', now);
-                debugLog({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (threshold) ${JSON.stringify(thresholdConfig)}: ${JSON.stringify(changedKeys)}` });
+                debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[${source}] Published telemetry (threshold) ${JSON.stringify(thresholdConfig)}: ${JSON.stringify(changedKeys)}` });
             } else if (periodicSnapshotInterval > 0 && now - lastSent >= periodicSnapshotInterval) {
                 publishTelemetry({
                     data: currentState,
@@ -206,9 +209,9 @@ module.exports = function (RED: NodeAPI) {
                     thingsboardTopic: 'v1/devices/me/telemetry'
                 });
                 nodeContext.set('lastSent', now);
-                debugLog({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (periodic): ${JSON.stringify(currentState)}` });
+                debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[${source}] Published telemetry (periodic): ${JSON.stringify(currentState)}` });
             } else {
-                debugLog({ enable: enableDebugLog, node, message: `[${source}] No telemetry sent (no change, not timer)` });
+                debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[${source}] No telemetry sent (no change, not timer)` });
             }
 
             Object.assign(previousState, currentState);
@@ -223,7 +226,7 @@ module.exports = function (RED: NodeAPI) {
             const scaleConfigs: ScaleConfig[] = flowContext.get(scaleConfigKey) as ScaleConfig[] || [];            keys.forEach((key, idx) => {
                 result[key] = applyScaling(key, values[idx], direction, scaleConfigs);
             });
-            debugLog({ enable: true, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
+            debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
             return result;
         }
 
@@ -303,13 +306,13 @@ module.exports = function (RED: NodeAPI) {
                         const values = result.data as number[];
                         const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) || [];
                         debugLog({
-                            enable: enableDebugLog,
+                            enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false,
                             node,
                             message: `[InputRegisters][DEBUG] keys: ${JSON.stringify(keys)}, values: ${JSON.stringify(values)}, scaleConfigs: ${JSON.stringify(scaleCfg)}`
                         });
                         const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
                         debugLog({
-                            enable: enableDebugLog,
+                            enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false,
                             node,
                             message: `[InputRegisters][DEBUG] scaled currentState: ${JSON.stringify(currentState)}`
                         });
@@ -479,11 +482,17 @@ module.exports = function (RED: NodeAPI) {
                     let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
                     if (!Array.isArray(newConfigs)) newConfigs = [];
                     flowContext.set(SCALE_CONFIG_KEY, newConfigs);
-                    debugLog({ enable: true, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(newConfigs) });
+                    debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(newConfigs) });
                 } catch (error) {
                     node.error(`Failed to update scaleConfigs: ${(error as Error).message}`);
                 }
                 resumePollingIfAllConnected();
+            }
+            // Allow dynamic update of enableDebugLog via msg.enableDebugLog
+            if (typeof msg.enableDebugLog === 'boolean') {
+                flowContext.set(DEBUG_LOG_KEY, msg.enableDebugLog);
+                enableDebugLog = msg.enableDebugLog;
+                node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (updated via msg)`);
             }
         });
 
@@ -491,11 +500,12 @@ module.exports = function (RED: NodeAPI) {
         node.on('close', async () => {
             clearPollingAndState();
             flowContext.set(SCALE_CONFIG_KEY, []);
+            flowContext.set(DEBUG_LOG_KEY, false);
             ClientRegistry.releaseClient('modbus', node);
             ClientRegistry.releaseClient('local', node);
             ClientRegistry.releaseClient('mysql', node);
             await thingsboardClient.disconnect();
-            debugLog({ enable: enableDebugLog, node, message: '[Node] Closed and cleaned up.' });
+            debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: '[Node] Closed and cleaned up.' });
         });
 
         // Start polling if all clients are connected

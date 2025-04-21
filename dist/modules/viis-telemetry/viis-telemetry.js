@@ -17,7 +17,7 @@ const viis_telemetry_utils_1 = require("./viis-telemetry-utils");
 module.exports = function (RED) {
     function ViisTelemetryNode(config) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d;
+            var _a, _b, _c, _d, _e;
             RED.nodes.createNode(this, config);
             const node = this;
             const nodeContext = this.context();
@@ -94,27 +94,29 @@ module.exports = function (RED) {
             // FLOW CONTEXT SCALE CONFIG
             const flowContext = this.context().flow;
             const SCALE_CONFIG_KEY = `scaleConfigs_${this.id}`;
+            const DEBUG_LOG_KEY = `enableDebugLog_${this.id}`;
             let initialScaleConfigs = [];
             try {
                 initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
                 if (!Array.isArray(initialScaleConfigs))
                     initialScaleConfigs = [];
             }
-            catch (_e) {
+            catch (_f) {
                 initialScaleConfigs = [];
             }
             flowContext.set(SCALE_CONFIG_KEY, initialScaleConfigs);
-            // --- Cấu hình enable debug log từ config node (bổ sung trường này vào UI nếu chưa có) ---
-            let enableDebugLog = (_a = config.enableDebugLog) !== null && _a !== void 0 ? _a : false;
-            enableDebugLog = false;
-            node.warn(`Debug log is disabled ${config.enableDebugLog}`);
+            // --- Store enableDebugLog in flow context (like scale config) ---
+            const initialEnableDebugLog = (_a = config.enableDebugLog) !== null && _a !== void 0 ? _a : false;
+            flowContext.set(DEBUG_LOG_KEY, initialEnableDebugLog);
+            let enableDebugLog = (_b = flowContext.get(DEBUG_LOG_KEY)) !== null && _b !== void 0 ? _b : false;
+            node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (from flow context)`);
             // --- Cấu hình threshold cho từng key (bổ sung trường này vào UI nếu chưa có) ---
             // Ví dụ: { temp: 1, humidity: 2 }
             const thresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
             // --- Cấu hình periodic snapshot interval riêng cho từng loại ---
-            const periodicSnapshotIntervalCoil = parseInt((_b = config.periodicSnapshotIntervalCoil) !== null && _b !== void 0 ? _b : '0', 10);
-            const periodicSnapshotIntervalInput = parseInt((_c = config.periodicSnapshotIntervalInput) !== null && _c !== void 0 ? _c : '0', 10);
-            const periodicSnapshotIntervalHolding = parseInt((_d = config.periodicSnapshotIntervalHolding) !== null && _d !== void 0 ? _d : '0', 10);
+            const periodicSnapshotIntervalCoil = parseInt((_c = config.periodicSnapshotIntervalCoil) !== null && _c !== void 0 ? _c : '0', 10);
+            const periodicSnapshotIntervalInput = parseInt((_d = config.periodicSnapshotIntervalInput) !== null && _d !== void 0 ? _d : '0', 10);
+            const periodicSnapshotIntervalHolding = parseInt((_e = config.periodicSnapshotIntervalHolding) !== null && _e !== void 0 ? _e : '0', 10);
             // Get clients
             const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
             const localClient = yield client_registry_1.default.getLocalMqttClient(localMqttConfig, node);
@@ -152,7 +154,7 @@ module.exports = function (RED) {
             // --- Publish telemetry sử dụng hàm đã test ---
             function processState(currentState, source) {
                 return __awaiter(this, void 0, void 0, function* () {
-                    var _a;
+                    var _a, _b, _c, _d;
                     const previousState = nodeContext.get('previousState') || {};
                     const changedKeys = (0, viis_telemetry_utils_1.getChangedKeys)(currentState, previousState, thresholdConfig);
                     const now = Date.now();
@@ -174,7 +176,7 @@ module.exports = function (RED) {
                             thingsboardTopic: 'v1/devices/me/telemetry'
                         });
                         nodeContext.set('lastSent', now);
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (threshold) ${JSON.stringify(thresholdConfig)}: ${JSON.stringify(changedKeys)}` });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: (_b = flowContext.get(DEBUG_LOG_KEY)) !== null && _b !== void 0 ? _b : false, node, message: `[${source}] Published telemetry (threshold) ${JSON.stringify(thresholdConfig)}: ${JSON.stringify(changedKeys)}` });
                     }
                     else if (periodicSnapshotInterval > 0 && now - lastSent >= periodicSnapshotInterval) {
                         (0, viis_telemetry_utils_1.publishTelemetry)({
@@ -185,10 +187,10 @@ module.exports = function (RED) {
                             thingsboardTopic: 'v1/devices/me/telemetry'
                         });
                         nodeContext.set('lastSent', now);
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (periodic): ${JSON.stringify(currentState)}` });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: (_c = flowContext.get(DEBUG_LOG_KEY)) !== null && _c !== void 0 ? _c : false, node, message: `[${source}] Published telemetry (periodic): ${JSON.stringify(currentState)}` });
                     }
                     else {
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] No telemetry sent (no change, not timer)` });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: (_d = flowContext.get(DEBUG_LOG_KEY)) !== null && _d !== void 0 ? _d : false, node, message: `[${source}] No telemetry sent (no change, not timer)` });
                     }
                     Object.assign(previousState, currentState);
                     nodeContext.set('previousState', previousState);
@@ -198,12 +200,13 @@ module.exports = function (RED) {
             }
             // --- Apply scaling cho từng key khi đọc modbus ---
             function scaleTelemetry(keys, values, direction, flowContext, scaleConfigKey) {
+                var _a;
                 const result = {};
                 const scaleConfigs = flowContext.get(scaleConfigKey) || [];
                 keys.forEach((key, idx) => {
                     result[key] = (0, viis_telemetry_utils_1.applyScaling)(key, values[idx], direction, scaleConfigs);
                 });
-                (0, viis_telemetry_utils_1.debugLog)({ enable: true, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
+                (0, viis_telemetry_utils_1.debugLog)({ enable: (_a = flowContext.get(DEBUG_LOG_KEY)) !== null && _a !== void 0 ? _a : false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
                 return result;
             }
             function pollCoils() {
@@ -265,6 +268,7 @@ module.exports = function (RED) {
             }
             function pollInputRegisters() {
                 return __awaiter(this, void 0, void 0, function* () {
+                    var _a, _b;
                     if (isPollingInputs || isPollingPaused || isConfigUpdating)
                         return;
                     if (consecutiveInputFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -286,13 +290,13 @@ module.exports = function (RED) {
                                 const values = result.data;
                                 const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) || [];
                                 (0, viis_telemetry_utils_1.debugLog)({
-                                    enable: enableDebugLog,
+                                    enable: (_a = flowContext.get(DEBUG_LOG_KEY)) !== null && _a !== void 0 ? _a : false,
                                     node,
                                     message: `[InputRegisters][DEBUG] keys: ${JSON.stringify(keys)}, values: ${JSON.stringify(values)}, scaleConfigs: ${JSON.stringify(scaleCfg)}`
                                 });
                                 const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
                                 (0, viis_telemetry_utils_1.debugLog)({
-                                    enable: enableDebugLog,
+                                    enable: (_b = flowContext.get(DEBUG_LOG_KEY)) !== null && _b !== void 0 ? _b : false,
                                     node,
                                     message: `[InputRegisters][DEBUG] scaled currentState: ${JSON.stringify(currentState)}`
                                 });
@@ -313,7 +317,7 @@ module.exports = function (RED) {
                             }
                         }
                     }
-                    catch (_a) {
+                    catch (_c) {
                         // Error handled in retry loop
                     }
                     finally {
@@ -474,29 +478,38 @@ module.exports = function (RED) {
             }
             // --- Ép buộc replace scaleConfigs, không bao giờ append ---
             node.on('input', (msg) => {
+                var _a;
                 if (msg.scaleConfigs) {
                     try {
                         let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
                         if (!Array.isArray(newConfigs))
                             newConfigs = [];
                         flowContext.set(SCALE_CONFIG_KEY, newConfigs);
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: true, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(newConfigs) });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: (_a = flowContext.get(DEBUG_LOG_KEY)) !== null && _a !== void 0 ? _a : false, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(newConfigs) });
                     }
                     catch (error) {
                         node.error(`Failed to update scaleConfigs: ${error.message}`);
                     }
                     resumePollingIfAllConnected();
                 }
+                // Allow dynamic update of enableDebugLog via msg.enableDebugLog
+                if (typeof msg.enableDebugLog === 'boolean') {
+                    flowContext.set(DEBUG_LOG_KEY, msg.enableDebugLog);
+                    enableDebugLog = msg.enableDebugLog;
+                    node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (updated via msg)`);
+                }
             });
             // --- Cleanup triệt để khi node bị xoá ---
             node.on('close', () => __awaiter(this, void 0, void 0, function* () {
+                var _a;
                 clearPollingAndState();
                 flowContext.set(SCALE_CONFIG_KEY, []);
+                flowContext.set(DEBUG_LOG_KEY, false);
                 client_registry_1.default.releaseClient('modbus', node);
                 client_registry_1.default.releaseClient('local', node);
                 client_registry_1.default.releaseClient('mysql', node);
                 yield thingsboardClient.disconnect();
-                (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: '[Node] Closed and cleaned up.' });
+                (0, viis_telemetry_utils_1.debugLog)({ enable: (_a = flowContext.get(DEBUG_LOG_KEY)) !== null && _a !== void 0 ? _a : false, node, message: '[Node] Closed and cleaned up.' });
             }));
             // Start polling if all clients are connected
             if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
