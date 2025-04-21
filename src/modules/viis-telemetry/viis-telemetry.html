@@ -54,8 +54,16 @@
         <textarea id="node-input-thresholdConfig" style="height:60px;" placeholder='{"temp": 0.5, "ph": 0.1}'></textarea>
     </div>
     <div class="form-row">
-        <label for="node-input-periodicSnapshotInterval"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval (ms, 0 = disable)</label>
-        <input type="text" id="node-input-periodicSnapshotInterval" placeholder="0">
+        <label for="node-input-periodicSnapshotIntervalCoil"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval Coil (ms, 0 = disable)</label>
+        <input type="text" id="node-input-periodicSnapshotIntervalCoil" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-periodicSnapshotIntervalInput"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval Input (ms, 0 = disable)</label>
+        <input type="text" id="node-input-periodicSnapshotIntervalInput" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-periodicSnapshotIntervalHolding"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval Holding (ms, 0 = disable)</label>
+        <input type="text" id="node-input-periodicSnapshotIntervalHolding" placeholder="0">
     </div>
 </script>
 
@@ -96,7 +104,9 @@
             },
             enableDebugLog: { value: false },
             thresholdConfig: { value: "{}" },
-            periodicSnapshotInterval: { value: "0" },
+            periodicSnapshotIntervalCoil: { value: "0" },
+            periodicSnapshotIntervalInput: { value: "0" },
+            periodicSnapshotIntervalHolding: { value: "0" },
         },
         inputs: 0,
         outputs: 1,
@@ -152,7 +162,9 @@
             }
 
             // Xử lý periodicSnapshotInterval
-            $("#node-input-periodicSnapshotInterval").val(this.periodicSnapshotInterval || "0");
+            $("#node-input-periodicSnapshotIntervalCoil").val(this.periodicSnapshotIntervalCoil || "0");
+            $("#node-input-periodicSnapshotIntervalInput").val(this.periodicSnapshotIntervalInput || "0");
+            $("#node-input-periodicSnapshotIntervalHolding").val(this.periodicSnapshotIntervalHolding || "0");
         },
         oneditsave: function () {
             // Compact JSON cho scaleConfigs trước khi lưu
@@ -177,7 +189,9 @@
             }
 
             // Lưu periodicSnapshotInterval
-            this.periodicSnapshotInterval = $("#node-input-periodicSnapshotInterval").val() || "0";
+            this.periodicSnapshotIntervalCoil = $("#node-input-periodicSnapshotIntervalCoil").val() || "0";
+            this.periodicSnapshotIntervalInput = $("#node-input-periodicSnapshotIntervalInput").val() || "0";
+            this.periodicSnapshotIntervalHolding = $("#node-input-periodicSnapshotIntervalHolding").val() || "0";
         }
     });
 </script>

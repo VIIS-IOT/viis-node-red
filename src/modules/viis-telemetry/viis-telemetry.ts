@@ -19,7 +19,9 @@ interface ViisTelemetryNodeDef extends NodeDef {
     enableDebugLog: boolean;
     thresholdConfig: string;
     pollingInterval: string;
-    periodicSnapshotInterval: string;
+    periodicSnapshotIntervalCoil: string;
+    periodicSnapshotIntervalInput: string;
+    periodicSnapshotIntervalHolding: string;
 }
 
 module.exports = function (RED: NodeAPI) {
@@ -141,8 +143,10 @@ module.exports = function (RED: NodeAPI) {
         // --- Cấu hình polling interval (bổ sung trường này vào UI nếu chưa có) ---
         const pollingInterval: number = parseInt(config.pollingInterval ?? '600000', 10); // default 10 phút
 
-        // --- Cấu hình periodic snapshot interval từ config node ---
-        const periodicSnapshotInterval: number = parseInt(config.periodicSnapshotInterval ?? '0', 10);
+        // --- Cấu hình periodic snapshot interval riêng cho từng loại ---
+        const periodicSnapshotIntervalCoil: number = parseInt(config.periodicSnapshotIntervalCoil ?? '0', 10);
+        const periodicSnapshotIntervalInput: number = parseInt(config.periodicSnapshotIntervalInput ?? '0', 10);
+        const periodicSnapshotIntervalHolding: number = parseInt(config.periodicSnapshotIntervalHolding ?? '0', 10);
 
         // Get clients
         const modbusClient: ModbusClientCore = ClientRegistry.getModbusClient(modbusConfig, node);
@@ -157,7 +161,8 @@ module.exports = function (RED: NodeAPI) {
         }
 
         // Initialize context
-        nodeContext.set('previousState', nodeContext.get('previousState') || {});
+        nodeContext.set('previousState', {});
+        nodeContext.set('lastSent', 0);
         nodeContext.set('lastEcUpdate', nodeContext.get('lastEcUpdate') || 0);
         nodeContext.set('mainPumpState', nodeContext.get('mainPumpState') || false);
 
@@ -190,6 +195,12 @@ module.exports = function (RED: NodeAPI) {
             const changedKeys = getChangedKeys(currentState, previousState, thresholdConfig);
             const now = Date.now();
             let lastSent = nodeContext.get('lastSent') as number ?? 0;
+
+            // Chọn interval phù hợp theo loại source
+            let periodicSnapshotInterval = 0;
+            if (source === 'Coils') periodicSnapshotInterval = periodicSnapshotIntervalCoil;
+            else if (source === 'Input Registers') periodicSnapshotInterval = periodicSnapshotIntervalInput;
+            else if (source === 'Holding Registers') periodicSnapshotInterval = periodicSnapshotIntervalHolding;
 
             if (Object.keys(changedKeys).length > 0) {
                 publishTelemetry({

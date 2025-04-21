@@ -17,7 +17,7 @@ const viis_telemetry_utils_1 = require("./viis-telemetry-utils");
 module.exports = function (RED) {
     function ViisTelemetryNode(config) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c;
+            var _a, _b, _c, _d, _e;
             RED.nodes.createNode(this, config);
             const node = this;
             const nodeContext = this.context();
@@ -123,8 +123,10 @@ module.exports = function (RED) {
             const thresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
             // --- Cấu hình polling interval (bổ sung trường này vào UI nếu chưa có) ---
             const pollingInterval = parseInt((_b = config.pollingInterval) !== null && _b !== void 0 ? _b : '600000', 10); // default 10 phút
-            // --- Cấu hình periodic snapshot interval từ config node ---
-            const periodicSnapshotInterval = parseInt((_c = config.periodicSnapshotInterval) !== null && _c !== void 0 ? _c : '0', 10);
+            // --- Cấu hình periodic snapshot interval riêng cho từng loại ---
+            const periodicSnapshotIntervalCoil = parseInt((_c = config.periodicSnapshotIntervalCoil) !== null && _c !== void 0 ? _c : '0', 10);
+            const periodicSnapshotIntervalInput = parseInt((_d = config.periodicSnapshotIntervalInput) !== null && _d !== void 0 ? _d : '0', 10);
+            const periodicSnapshotIntervalHolding = parseInt((_e = config.periodicSnapshotIntervalHolding) !== null && _e !== void 0 ? _e : '0', 10);
             // Get clients
             const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
             const localClient = yield client_registry_1.default.getLocalMqttClient(localMqttConfig, node);
@@ -136,7 +138,8 @@ module.exports = function (RED) {
                 return;
             }
             // Initialize context
-            nodeContext.set('previousState', nodeContext.get('previousState') || {});
+            nodeContext.set('previousState', {});
+            nodeContext.set('lastSent', 0);
             nodeContext.set('lastEcUpdate', nodeContext.get('lastEcUpdate') || 0);
             nodeContext.set('mainPumpState', nodeContext.get('mainPumpState') || false);
             const CHANGE_THRESHOLD = 0.1;
@@ -166,6 +169,14 @@ module.exports = function (RED) {
                     const changedKeys = (0, viis_telemetry_utils_1.getChangedKeys)(currentState, previousState, thresholdConfig);
                     const now = Date.now();
                     let lastSent = (_a = nodeContext.get('lastSent')) !== null && _a !== void 0 ? _a : 0;
+                    // Chọn interval phù hợp theo loại source
+                    let periodicSnapshotInterval = 0;
+                    if (source === 'Coils')
+                        periodicSnapshotInterval = periodicSnapshotIntervalCoil;
+                    else if (source === 'Input Registers')
+                        periodicSnapshotInterval = periodicSnapshotIntervalInput;
+                    else if (source === 'Holding Registers')
+                        periodicSnapshotInterval = periodicSnapshotIntervalHolding;
                     if (Object.keys(changedKeys).length > 0) {
                         (0, viis_telemetry_utils_1.publishTelemetry)({
                             data: changedKeys,

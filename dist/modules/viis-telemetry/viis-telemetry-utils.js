@@ -40,7 +40,7 @@ function getChangedKeys(current, previous, thresholdConfig) {
     for (const key in current) {
         if (typeof current[key] === "number" && typeof previous[key] === "number") {
             const threshold = typeof thresholdConfig[key] === "number" ? thresholdConfig[key] : defaultThreshold;
-            if (Math.abs(current[key] - previous[key]) > threshold) {
+            if (Math.abs(current[key] - previous[key]) >= threshold) {
                 changed[key] = current[key];
             }
         }
