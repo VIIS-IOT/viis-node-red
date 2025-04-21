@@ -40,48 +40,90 @@ module.exports = function (RED: NodeAPI) {
     async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
-        const globalContext = node.context().global;
-        if (!globalContext.get("manualModbusOverrides")) {
-            globalContext.set("manualModbusOverrides", {} as { [address: string]: { fc: number, value: any, timestamp: number } });
+        // Sử dụng flow context thay cho global context cho config đặc thù node
+        const flowContext = node.context().flow;
+        // Các key context riêng biệt, tránh xung đột
+        const SCALE_CONFIG_KEY = `scaleConfigs_${node.id}`;
+        const CONFIG_KEYS_KEY = `configKeys_${node.id}`;
+        const CONFIG_VALUES_KEY = `configKeyValues_${node.id}`;
+        const MANUAL_OVERRIDES_KEY = `manualModbusOverrides_${node.id}`;
+
+        // Parse configurations (chuẩn hóa như viis-telemetry)
+        let configKeys: ConfigKey = {};
+        let scaleConfigs: ScaleConfig[] = [];
+        try {
+            configKeys = config.configKeys ? JSON.parse(config.configKeys) : {};
+            if (typeof configKeys !== 'object' || Array.isArray(configKeys) || configKeys === null) configKeys = {};
+        } catch {
+            configKeys = {};
         }
+        try {
+            scaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
+            if (!Array.isArray(scaleConfigs)) scaleConfigs = [];
+        } catch {
+            scaleConfigs = [];
+        }
+        // Validate configKeys
+        Object.entries(configKeys).forEach(([key, type]) => {
+            if (!['number', 'boolean', 'string'].includes(type)) {
+                throw new Error(`Invalid type "${type}" for key "${key}"`);
+            }
+        });
+        // Validate scaleConfigs
+        scaleConfigs.forEach((conf) => {
+            if (!conf.key || !conf.operation || typeof conf.factor !== "number" || !["read", "write"].includes(conf.direction)) {
+                throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
+            }
+        });
+        // Store vào flow context
+        flowContext.set(CONFIG_KEYS_KEY, configKeys);
+        flowContext.set(SCALE_CONFIG_KEY, scaleConfigs);
+        if (!flowContext.get(CONFIG_VALUES_KEY)) flowContext.set(CONFIG_VALUES_KEY, {});
+        if (!flowContext.get(MANUAL_OVERRIDES_KEY)) flowContext.set(MANUAL_OVERRIDES_KEY, {});
+
+        // Các hàm util lấy config từ flow context
+        function getConfigKeys(): ConfigKey {
+            return flowContext.get(CONFIG_KEYS_KEY) as ConfigKey || {};
+        }
+        function getScaleConfigs(): ScaleConfig[] {
+            return flowContext.get(SCALE_CONFIG_KEY) as ScaleConfig[] || [];
+        }
+        function getConfigKeyValues(): ConfigKeyValues {
+            return flowContext.get(CONFIG_VALUES_KEY) as ConfigKeyValues || {};
+        }
+        function setConfigKeyValues(values: ConfigKeyValues): void {
+            flowContext.set(CONFIG_VALUES_KEY, values);
+        }
+
+        // Cho phép cập nhật động scaleConfigs và configKeys qua msg
+        node.on('input', (msg: any) => {
+            if (msg.scaleConfigs) {
+                try {
+                    let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
+                    if (!Array.isArray(newConfigs)) newConfigs = [];
+                    flowContext.set(SCALE_CONFIG_KEY, newConfigs);
+                    node.warn('[Config] scaleConfigs replaced (no append): ' + JSON.stringify(newConfigs));
+                } catch (error) {
+                    node.error(`Failed to update scaleConfigs: ${(error as Error).message}`);
+                }
+            }
+            if (msg.configKeys) {
+                try {
+                    let newKeys = typeof msg.configKeys === 'object' ? msg.configKeys : JSON.parse(msg.configKeys);
+                    if (typeof newKeys !== 'object' || Array.isArray(newKeys) || newKeys === null) newKeys = {};
+                    flowContext.set(CONFIG_KEYS_KEY, newKeys);
+                    node.warn('[Config] configKeys replaced (no append): ' + JSON.stringify(newKeys));
+                } catch (error) {
+                    node.error(`Failed to update configKeys: ${(error as Error).message}`);
+                }
+            }
+        });
+
         // Environment variables
         const deviceId = process.env.DEVICE_ID || "unknown";
         const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
         const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
         const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-
-        // Parse configurations
-        let configKeys: ConfigKey = {};
-        let scaleConfigs: ScaleConfig[] = [];
-        try {
-            configKeys = JSON.parse(config.configKeys || "{}");
-            scaleConfigs = JSON.parse(config.scaleConfigs || "[]");
-
-            // Validate configKeys
-            Object.entries(configKeys).forEach(([key, type]) => {
-                if (!["number", "boolean", "string"].includes(type)) {
-                    throw new Error(`Invalid type "${type}" for key "${key}"`);
-                }
-            });
-
-            // Validate scaleConfigs
-            scaleConfigs.forEach((conf) => {
-                if (!conf.key || !conf.operation || typeof conf.factor !== "number" || !["read", "write"].includes(conf.direction)) {
-                    throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
-                }
-            });
-
-            // Store configurations globally
-            node.context().global.set("configKeys", configKeys);
-            if (!node.context().global.get("configKeyValues")) {
-                node.context().global.set("configKeyValues", {});
-            }
-            node.context().global.set("scaleConfigs", scaleConfigs);
-        } catch (error) {
-            node.error(`Configuration parsing error: ${(error as Error).message}`);
-            node.status({ fill: "red", shape: "ring", text: "Invalid configuration" });
-            return;
-        }
 
         // Initialize clients
         const modbusConfig = {
@@ -135,7 +177,7 @@ module.exports = function (RED: NodeAPI) {
 
         // Utility functions
         function scaleValue(key: string, value: number, direction: "read" | "write"): number {
-            const config = scaleConfigs.find((c) => c.key === key && c.direction === direction);
+            const config = getScaleConfigs().find((c) => c.key === key && c.direction === direction);
             if (!config) return value;
             const shouldMultiply = config.operation === "multiply";
             const scaledValue = shouldMultiply ? value * config.factor : value / config.factor;
@@ -144,7 +186,7 @@ module.exports = function (RED: NodeAPI) {
         }
 
         function validateAndConvertValue(key: string, value: any): any {
-            const expectedType = configKeys[key];
+            const expectedType = getConfigKeys()[key];
             if (!expectedType) return value;
             try {
                 switch (expectedType) {
@@ -190,14 +232,14 @@ module.exports = function (RED: NodeAPI) {
                     await modbusClient.writeCoil(mapping.address, value as boolean);
                 }
                 node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
-                // Lưu thông tin lệnh thủ công vào global context
-                const manualOverrides = globalContext.get("manualModbusOverrides") as { [address: string]: { fc: number, value: any, timestamp: number } };
+                // Lưu thông tin lệnh thủ công vào flow context (manual overrides)
+                const manualOverrides = flowContext.get(MANUAL_OVERRIDES_KEY) as { [address: string]: { fc: number, value: any, timestamp: number } };
                 manualOverrides[`${mapping.address}-${mapping.fc}`] = {
                     fc: mapping.fc,
                     value: writeValue,
                     timestamp: Date.now()
                 };
-                globalContext.set("manualModbusOverrides", manualOverrides);
+                flowContext.set(MANUAL_OVERRIDES_KEY, manualOverrides);
                 node.log(`Stored manual override: address=${mapping.address}, fc=${mapping.fc}, value=${writeValue}`);
             } catch (error) {
                 throw new Error(`Modbus write failed for ${key}: ${(error as Error).message}`);
@@ -239,17 +281,17 @@ module.exports = function (RED: NodeAPI) {
         }
 
         function handleConfigRequest(params: Record<string, any>): void {
-            const currentConfigKeyValues: ConfigKeyValues = (node.context().global.get("configKeyValues") as ConfigKeyValues) || {};
+            const currentConfigKeyValues = getConfigKeyValues();
             const updatedConfigKeyValues = { ...currentConfigKeyValues };
 
             Object.entries(params).forEach(([key, rawValue]) => {
-                if (key in configKeys) {
+                if (key in getConfigKeys()) {
                     const value = validateAndConvertValue(key, rawValue);
                     updatedConfigKeyValues[key] = value;
                 }
             });
 
-            node.context().global.set("configKeyValues", updatedConfigKeyValues);
+            setConfigKeyValues(updatedConfigKeyValues);
 
             const mqttPayload = {
                 ts: Date.now(),
@@ -272,9 +314,9 @@ module.exports = function (RED: NodeAPI) {
                             await publishResult(key, readValue);
                         } else {
                             const value = validateAndConvertValue(key, rawValue);
-                            const currentConfig = (node.context().global.get("configKeyValues") as ConfigKeyValues) || {};
+                            const currentConfig = getConfigKeyValues();
                             currentConfig[key] = value;
-                            node.context().global.set("configKeyValues", currentConfig);
+                            setConfigKeyValues(currentConfig);
 
                             const mqttPayload = {
                                 ts: Date.now(),
@@ -316,9 +358,13 @@ module.exports = function (RED: NodeAPI) {
             }
         });
 
-        // Cleanup
-        node.on("close", async (done: () => void) => {
+        // Cleanup triệt để khi node bị xóa
+        node.on('close', async (done: () => void) => {
             try {
+                flowContext.set(SCALE_CONFIG_KEY, []);
+                flowContext.set(CONFIG_KEYS_KEY, {});
+                flowContext.set(CONFIG_VALUES_KEY, {});
+                flowContext.set(MANUAL_OVERRIDES_KEY, {});
                 await mqttClient.disconnect();
                 ClientRegistry.releaseClient("modbus", node);
                 if (config.mqttBroker === "thingsboard") {
@@ -326,7 +372,7 @@ module.exports = function (RED: NodeAPI) {
                 } else {
                     ClientRegistry.releaseClient("local", node);
                 }
-                node.log("Node closed and clients released");
+                node.log("Node closed and configs cleaned");
                 done();
             } catch (error) {
                 node.error(`Cleanup error: ${(error as Error).message}`);
