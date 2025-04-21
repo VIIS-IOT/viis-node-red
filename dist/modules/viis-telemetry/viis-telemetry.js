@@ -17,7 +17,7 @@ const viis_telemetry_utils_1 = require("./viis-telemetry-utils");
 module.exports = function (RED) {
     function ViisTelemetryNode(config) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c;
             RED.nodes.createNode(this, config);
             const node = this;
             const nodeContext = this.context();
@@ -123,6 +123,8 @@ module.exports = function (RED) {
             const thresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
             // --- Cấu hình polling interval (bổ sung trường này vào UI nếu chưa có) ---
             const pollingInterval = parseInt((_b = config.pollingInterval) !== null && _b !== void 0 ? _b : '600000', 10); // default 10 phút
+            // --- Cấu hình periodic snapshot interval từ config node ---
+            const periodicSnapshotInterval = parseInt((_c = config.periodicSnapshotInterval) !== null && _c !== void 0 ? _c : '0', 10);
             // Get clients
             const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
             const localClient = yield client_registry_1.default.getLocalMqttClient(localMqttConfig, node);
@@ -162,12 +164,20 @@ module.exports = function (RED) {
                     var _a;
                     const previousState = nodeContext.get('previousState') || {};
                     const changedKeys = (0, viis_telemetry_utils_1.getChangedKeys)(currentState, previousState, thresholdConfig);
-                    // Luôn gửi định kỳ theo pollingInterval, hoặc nếu vượt threshold thì gửi ngay
-                    const shouldSend = Object.keys(changedKeys).length > 0;
                     const now = Date.now();
                     let lastSent = (_a = nodeContext.get('lastSent')) !== null && _a !== void 0 ? _a : 0;
-                    if (shouldSend || now - lastSent >= pollingInterval) {
-                        // --- Publish telemetry ---
+                    if (Object.keys(changedKeys).length > 0) {
+                        (0, viis_telemetry_utils_1.publishTelemetry)({
+                            data: changedKeys,
+                            emqxClient: localClient,
+                            thingsboardClient: thingsboardClient,
+                            emqxTopic: localConfig.pubSubTopic,
+                            thingsboardTopic: 'v1/devices/me/telemetry'
+                        });
+                        nodeContext.set('lastSent', now);
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (threshold): ${JSON.stringify(changedKeys)}` });
+                    }
+                    else if (periodicSnapshotInterval > 0 && now - lastSent >= periodicSnapshotInterval) {
                         (0, viis_telemetry_utils_1.publishTelemetry)({
                             data: currentState,
                             emqxClient: localClient,
@@ -176,16 +186,15 @@ module.exports = function (RED) {
                             thingsboardTopic: 'v1/devices/me/telemetry'
                         });
                         nodeContext.set('lastSent', now);
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry: ${JSON.stringify(currentState)}` });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Published telemetry (periodic): ${JSON.stringify(currentState)}` });
                     }
                     else {
-                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] Data changed but not sent (below threshold and not polling time)` });
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: `[${source}] No telemetry sent (no change, not timer)` });
                     }
-                    // Update centralized state
                     Object.assign(previousState, currentState);
                     nodeContext.set('previousState', previousState);
                     node.send({ payload: currentState });
-                    node.status({ fill: 'green', shape: 'dot', text: `${source}: Data changed` });
+                    node.status({ fill: 'green', shape: 'dot', text: `${source}: Data checked` });
                 });
             }
             // --- Apply scaling cho từng key khi đọc modbus ---
@@ -355,6 +364,23 @@ module.exports = function (RED) {
                     }
                 });
             }
+            // --- Helper để clear toàn bộ polling interval và reset state ---
+            function clearPollingAndState() {
+                if (coilInterval)
+                    clearInterval(coilInterval);
+                if (inputInterval)
+                    clearInterval(inputInterval);
+                if (holdingInterval)
+                    clearInterval(holdingInterval);
+                coilInterval = null;
+                inputInterval = null;
+                holdingInterval = null;
+                nodeContext.set('previousState', {});
+                nodeContext.set('lastSent', 0);
+                // Nếu có publishCache hoặc các biến global khác, cũng phải clear
+                for (const key in publishCache)
+                    delete publishCache[key];
+            }
             // Listen for client status changes
             modbusClient.on("modbus-status", (status) => {
                 if (status.status === "disconnected" && !isPollingPaused) {
@@ -434,6 +460,40 @@ module.exports = function (RED) {
                     node.status({ fill: "green", shape: "dot", text: "All clients connected, polling resumed" });
                 }
             }
+            // --- Ép buộc replace scaleConfigs, không bao giờ append ---
+            node.on('input', (msg) => {
+                if (msg.scaleConfigs) {
+                    clearPollingAndState();
+                    try {
+                        // Luôn ép kiểu và replace hoàn toàn, không merge, không append
+                        let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
+                        // Chỉ giữ lại các object hợp lệ, bỏ qua các phần tử duplicate key (key+direction)
+                        const seen = new Set();
+                        newConfigs = newConfigs.filter((conf) => {
+                            const id = `${conf.key}:${conf.direction}`;
+                            if (seen.has(id))
+                                return false;
+                            seen.add(id);
+                            return conf.key && conf.operation && typeof conf.factor === 'number' && ['read', 'write'].includes(conf.direction);
+                        });
+                        scaleConfigs = newConfigs;
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(scaleConfigs) });
+                    }
+                    catch (error) {
+                        node.error(`Failed to update scaleConfigs: ${error.message}`);
+                    }
+                    resumePollingIfAllConnected();
+                }
+            });
+            // --- Cleanup triệt để khi node bị xoá ---
+            node.on('close', () => __awaiter(this, void 0, void 0, function* () {
+                clearPollingAndState();
+                client_registry_1.default.releaseClient('modbus', node);
+                client_registry_1.default.releaseClient('local', node);
+                client_registry_1.default.releaseClient('mysql', node);
+                yield thingsboardClient.disconnect();
+                (0, viis_telemetry_utils_1.debugLog)({ enable: enableDebugLog, node, message: '[Node] Closed and cleaned up.' });
+            }));
             // Start polling if all clients are connected
             if (modbusClient.isConnectedCheck() && localClient.isConnected() && thingsboardClient.isConnected()) {
                 coilInterval = setInterval(pollCoils, pollIntervalCoil);
@@ -445,37 +505,6 @@ module.exports = function (RED) {
                 node.status({ fill: "red", shape: "ring", text: "Waiting for all clients to connect" });
                 isPollingPaused = true;
             }
-            // Handle configuration updates
-            node.on("input", (msg) => {
-                if (msg.scaleConfigs) {
-                    try {
-                        isConfigUpdating = true;
-                        scaleConfigs = JSON.parse(JSON.stringify(msg.scaleConfigs));
-                        scaleConfigs.forEach((conf) => {
-                            if (!conf.key || !conf.operation || typeof conf.factor !== "number" || !["read", "write"].includes(conf.direction)) {
-                                throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
-                            }
-                        });
-                        node.warn("Scale configs updated, resetting state");
-                    }
-                    catch (error) {
-                        node.error(`Failed to update scaleConfigs: ${error.message}`);
-                        isConfigUpdating = false;
-                    }
-                }
-            });
-            node.on("close", () => __awaiter(this, void 0, void 0, function* () {
-                if (coilInterval)
-                    clearInterval(coilInterval);
-                if (inputInterval)
-                    clearInterval(inputInterval);
-                if (holdingInterval)
-                    clearInterval(holdingInterval);
-                client_registry_1.default.releaseClient("modbus", node);
-                client_registry_1.default.releaseClient("local", node);
-                client_registry_1.default.releaseClient("mysql", node);
-                yield thingsboardClient.disconnect();
-            }));
         });
     }
     RED.nodes.registerType("viis-telemetry", ViisTelemetryNode);

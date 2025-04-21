@@ -40,10 +40,22 @@
         <input type="text" id="node-input-holdingQuantity" placeholder="29">
     </div>
     <div class="form-row">
+        <label for="node-input-enableDebugLog"><i class="fa fa-bug"></i> Enable Debug Log</label>
+        <input type="checkbox" id="node-input-enableDebugLog" style="width:auto;">
+    </div>
+    <div class="form-row">
         <label for="node-input-scaleConfigs"><i class="fa fa-list"></i> Scale Configs</label>
         <!-- Ẩn textarea gốc để dùng CodeMirror thay thế -->
         <textarea id="node-input-scaleConfigs" style="display:none;" placeholder='[{"key": "current_ph", "operation": "divide", "factor": 10}]'></textarea>
         <div id="scaleConfigsEditor" style="border: 1px solid #ddd; min-height:150px;"></div>
+    </div>
+    <div class="form-row">
+        <label for="node-input-thresholdConfig"><i class="fa fa-sliders"></i> Threshold Config (per key, JSON)</label>
+        <textarea id="node-input-thresholdConfig" style="height:60px;" placeholder='{"temp": 0.5, "ph": 0.1}'></textarea>
+    </div>
+    <div class="form-row">
+        <label for="node-input-periodicSnapshotInterval"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval (ms, 0 = disable)</label>
+        <input type="text" id="node-input-periodicSnapshotInterval" placeholder="0">
     </div>
 </script>
 
@@ -81,15 +93,10 @@
             scaleConfigs: {
                 value: "[]",
                 required: false,
-                validate: function (v) {
-                    try {
-                        JSON.parse(v);
-                        return true;
-                    } catch (e) {
-                        return false;
-                    }
-                }
-            }
+            },
+            enableDebugLog: { value: false },
+            thresholdConfig: { value: "{}" },
+            periodicSnapshotInterval: { value: "0" },
         },
         inputs: 0,
         outputs: 1,
@@ -133,6 +140,19 @@
                 $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
             });
             $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
+
+            // Xử lý enableDebugLog checkbox
+            $("#node-input-enableDebugLog").prop("checked", this.enableDebugLog === true);
+
+            // Xử lý thresholdConfig
+            if (this.thresholdConfig) {
+                $("#node-input-thresholdConfig").val(JSON.stringify(JSON.parse(this.thresholdConfig), null, 2));
+            } else {
+                $("#node-input-thresholdConfig").val('{}');
+            }
+
+            // Xử lý periodicSnapshotInterval
+            $("#node-input-periodicSnapshotInterval").val(this.periodicSnapshotInterval || "0");
         },
         oneditsave: function () {
             // Compact JSON cho scaleConfigs trước khi lưu
@@ -143,6 +163,21 @@
             } catch (e) {
                 console.log("Error saving scaleConfigs:", e);
             }
+
+            // Lưu trạng thái enableDebugLog
+            this.enableDebugLog = $("#node-input-enableDebugLog").is(":checked");
+
+            // Lưu thresholdConfig
+            try {
+                var thresholdObj = JSON.parse($("#node-input-thresholdConfig").val() || '{}');
+                this.thresholdConfig = JSON.stringify(thresholdObj);
+            } catch (e) {
+                RED.notify("Invalid thresholdConfig JSON: " + e.message, "error");
+                this.thresholdConfig = '{}';
+            }
+
+            // Lưu periodicSnapshotInterval
+            this.periodicSnapshotInterval = $("#node-input-periodicSnapshotInterval").val() || "0";
         }
     });
 </script>

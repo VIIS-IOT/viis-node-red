@@ -28,17 +28,18 @@ function applyScaling(key, value, direction, scaleConfigs) {
 }
 /**
  * Detect changed keys in telemetry data, considering threshold for numeric values.
+ * Supports special key 'all' in thresholdConfig to apply default threshold for all keys.
  * @param current - Current telemetry data
  * @param previous - Previous telemetry data
- * @param thresholdConfig - Object mapping key to threshold
+ * @param thresholdConfig - Object mapping key to threshold, may include 'all'
  * @returns Object with changed keys
  */
 function getChangedKeys(current, previous, thresholdConfig) {
-    var _a;
     const changed = {};
+    const defaultThreshold = typeof thresholdConfig["all"] === "number" ? thresholdConfig["all"] : 0;
     for (const key in current) {
         if (typeof current[key] === "number" && typeof previous[key] === "number") {
-            const threshold = (_a = thresholdConfig[key]) !== null && _a !== void 0 ? _a : 0;
+            const threshold = typeof thresholdConfig[key] === "number" ? thresholdConfig[key] : defaultThreshold;
             if (Math.abs(current[key] - previous[key]) > threshold) {
                 changed[key] = current[key];
             }
