@@ -3,6 +3,7 @@ import { ModbusData, ModbusClientCore } from "../../core/modbus-client";
 import ClientRegistry from "../../core/client-registry";
 import { MySqlConfig, MySqlClientCore } from "../../core/mysql-client";
 import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";
+import { applyScaling, getChangedKeys, TelemetryData, ScaleConfig } from './viis-telemetry-utils';
 
 interface ViisTelemetryNodeDef extends NodeDef {
     pollIntervalCoil: string;
@@ -15,17 +16,6 @@ interface ViisTelemetryNodeDef extends NodeDef {
     holdingStartAddress: string;
     holdingQuantity: string;
     scaleConfigs: string;
-}
-
-interface TelemetryData {
-    [key: string]: number | boolean | string;
-}
-
-interface ScaleConfig {
-    key: string;
-    operation: "multiply" | "divide";
-    factor: number;
-    direction: "read" | "write";
 }
 
 module.exports = function (RED: NodeAPI) {
@@ -177,77 +167,11 @@ module.exports = function (RED: NodeAPI) {
         // Publish cache to prevent duplicates
         const publishCache: { [key: string]: { value: any; timestamp: number } } = {};
 
-        function applyScaling(key: string, value: number, direction: "read" | "write"): number {
-            const scaleConfig = scaleConfigs.find((config) => config.key === key && config.direction === direction);
-            if (!scaleConfig) return value;
-            const scaledValue = scaleConfig.operation === "multiply" ? value * scaleConfig.factor : value / scaleConfig.factor;
-            return Number(scaledValue.toFixed(2));
-        }
-
-        function getChangedKeys(current: TelemetryData, previous: TelemetryData): TelemetryData {
-            const changed: TelemetryData = {};
-            const now = Date.now();
-            const mainPumpState = nodeContext.get('mainPumpState') as boolean;
-            let lastEcUpdate = nodeContext.get('lastEcUpdate') as number;
-
-            for (const key in current) {
-                let currVal = current[key];
-                let prevVal = previous[key];
-
-                // Round numeric values for consistent comparison
-                if (typeof currVal === "number") {
-                    currVal = Number(currVal.toFixed(2));
-                }
-                if (typeof prevVal === "number") {
-                    prevVal = Number(prevVal.toFixed(2));
-                }
-
-                // Check publish cache
-                const lastPublish = publishCache[key];
-                if (lastPublish && lastPublish.value === currVal && now - lastPublish.timestamp < MIN_PUBLISH_INTERVAL) {
-                    node.log(`Skipped publish for ${key}: value ${currVal}, last published ${now - lastPublish.timestamp}ms ago`);
-                    continue;
-                }
-
-                // Special handling for current_ec
-                if (key === "current_ec" && mainPumpState) {
-                    if (now - lastEcUpdate >= 5000) {
-                        changed[key] = currVal;
-                        lastEcUpdate = now;
-                        nodeContext.set('lastEcUpdate', lastEcUpdate);
-                        publishCache[key] = { value: currVal, timestamp: now };
-                        node.log(`Published ${key}: ${currVal} (main_pump ON, 5s interval)`);
-                    }
-                    continue;
-                }
-
-                // Handle new keys
-                if (prevVal === undefined) {
-                    changed[key] = currVal;
-                    publishCache[key] = { value: currVal, timestamp: now };
-                    node.log(`Published ${key}: ${currVal} (new key)`);
-                    continue;
-                }
-
-                // Compare values
-                if (typeof currVal === "number" && typeof prevVal === "number") {
-                    if (Math.abs(currVal - prevVal) >= CHANGE_THRESHOLD) {
-                        changed[key] = currVal;
-                        publishCache[key] = { value: currVal, timestamp: now };
-                        node.log(`Published ${key}: ${currVal} (changed by ${Math.abs(currVal - prevVal)} >= ${CHANGE_THRESHOLD})`);
-                    }
-                } else if (currVal !== prevVal) {
-                    changed[key] = currVal;
-                    publishCache[key] = { value: currVal, timestamp: now };
-                    node.log(`Published ${key}: ${currVal} (non-numeric change)`);
-                }
-            }
-            return changed;
-        }
-
         async function processState(currentState: TelemetryData, source: string) {
             const previousState: TelemetryData = nodeContext.get('previousState') as TelemetryData || {};
-            const changedKeys = getChangedKeys(currentState, previousState);
+            // TODO: Nên truyền biến thresholdConfig từ config node hoặc constant, tạm thởi hardcode cho test
+            const thresholdConfig = { current_ec: 0.1 };
+            const changedKeys = getChangedKeys(currentState, previousState, thresholdConfig);
 
             if (Object.keys(changedKeys).length > 0) {
                 const timestamp = Date.now();
@@ -394,7 +318,7 @@ module.exports = function (RED: NodeAPI) {
                         const currentState: TelemetryData = {};
                         (result.data as number[]).forEach((value, index) => {
                             const key = Object.keys(modbusInputRegisters).find((k) => modbusInputRegisters[k] === index + inputStartAddress);
-                            if (key) currentState[key] = applyScaling(key, value, "read");
+                            if (key) currentState[key] = applyScaling(key, value, "read", scaleConfigs);
                         });
                         node.context().global.set("inputRegisterData", currentState);
                         await processState(currentState, "Input Registers");
@@ -444,7 +368,7 @@ module.exports = function (RED: NodeAPI) {
                         const currentState: TelemetryData = {};
                         (result.data as number[]).forEach((value, index) => {
                             const key = Object.keys(modbusHoldingRegisters).find((k) => modbusHoldingRegisters[k] === index + holdingStartAddress);
-                            if (key) currentState[key] = applyScaling(key, value, "read");
+                            if (key) currentState[key] = applyScaling(key, value, "read", scaleConfigs);
                         });
                         node.context().global.set("holdingRegisterData", currentState);
                         await processState(currentState, "Holding Registers");
