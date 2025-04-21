@@ -3,7 +3,7 @@ import { ModbusData, ModbusClientCore } from "../../core/modbus-client";
 import ClientRegistry from "../../core/client-registry";
 import { MySqlConfig, MySqlClientCore } from "../../core/mysql-client";
 import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";
-import { applyScaling, getChangedKeys, TelemetryData, ScaleConfig } from './viis-telemetry-utils';
+import { applyScaling, getChangedKeys, publishTelemetry, debugLog, TelemetryData, ScaleConfig } from './viis-telemetry-utils';
 
 interface ViisTelemetryNodeDef extends NodeDef {
     pollIntervalCoil: string;
@@ -16,6 +16,9 @@ interface ViisTelemetryNodeDef extends NodeDef {
     holdingStartAddress: string;
     holdingQuantity: string;
     scaleConfigs: string;
+    enableDebugLog: boolean;
+    thresholdConfig: string;
+    pollingInterval: string;
 }
 
 module.exports = function (RED: NodeAPI) {
@@ -127,6 +130,16 @@ module.exports = function (RED: NodeAPI) {
             node.warn(`Using default scaleConfigs: ${JSON.stringify(scaleConfigs)}`);
         }
 
+        // --- Cấu hình enable debug log từ config node (bổ sung trường này vào UI nếu chưa có) ---
+        const enableDebugLog: boolean = config.enableDebugLog ?? false;
+
+        // --- Cấu hình threshold cho từng key (bổ sung trường này vào UI nếu chưa có) ---
+        // Ví dụ: { temp: 1, humidity: 2 }
+        const thresholdConfig: { [key: string]: number } = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
+
+        // --- Cấu hình polling interval (bổ sung trường này vào UI nếu chưa có) ---
+        const pollingInterval: number = parseInt(config.pollingInterval ?? '600000', 10); // default 10 phút
+
         // Get clients
         const modbusClient: ModbusClientCore = ClientRegistry.getModbusClient(modbusConfig, node);
         const localClient: MqttClientCore = await ClientRegistry.getLocalMqttClient(localMqttConfig, node);
@@ -167,80 +180,44 @@ module.exports = function (RED: NodeAPI) {
         // Publish cache to prevent duplicates
         const publishCache: { [key: string]: { value: any; timestamp: number } } = {};
 
+        // --- Publish telemetry sử dụng hàm đã test ---
         async function processState(currentState: TelemetryData, source: string) {
             const previousState: TelemetryData = nodeContext.get('previousState') as TelemetryData || {};
-            // TODO: Nên truyền biến thresholdConfig từ config node hoặc constant, tạm thởi hardcode cho test
-            const thresholdConfig = { current_ec: 0.1 };
             const changedKeys = getChangedKeys(currentState, previousState, thresholdConfig);
 
-            if (Object.keys(changedKeys).length > 0) {
-                const timestamp = Date.now();
-                const republishPayload = [
-                    ...Object.entries(changedKeys).map(([key, value]) => ({
-                        ts: Math.floor(timestamp / 1000),
-                        key,
-                        value,
-                    })),
-                    { ts: Math.floor(timestamp / 1000), key: "deviceId", value: deviceId },
-                ];
-                const mqttPayload = {
-                    ts: timestamp,
-                    values: changedKeys,
-                };
-
-                // Sequential MQTT publishes
-                try {
-                    await localClient.publish(localConfig.pubSubTopic, JSON.stringify(republishPayload));
-                    await thingsboardClient.publish("v1/devices/me/telemetry", JSON.stringify(mqttPayload));
-                    node.log(`Published to MQTT(${source}): ${JSON.stringify(mqttPayload)}`);
-                } catch (err) {
-                    node.error(`MQTT publish error(${source}): ${(err as Error).message}`);
-                }
-
-                // Update database
-                for (const [key, changedValue] of Object.entries(changedKeys)) {
-                    let valueType: string, columnName: string, sqlValue: number | boolean | string = changedValue;
-                    if (typeof changedValue === "boolean") {
-                        valueType = "boolean";
-                        sqlValue = changedValue ? 1 : 0;
-                        columnName = "boolean_value";
-                    } else if (typeof changedValue === "number") {
-                        valueType = Number.isInteger(changedValue) ? "int" : "float";
-                        columnName = valueType === "int" ? "int_value" : "float_value";
-                    } else {
-                        valueType = "string";
-                        columnName = "string_value";
-                        sqlValue = `'${String(changedValue).replace(/'/g, "''")}'`; // Escape single quotes
-                    }
-
-                    const query = `
-                        INSERT INTO tabiot_device_telemetry
-                        (device_id, timestamp, key_name, value_type, ${columnName})
-                        VALUES (?, ?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE ${columnName} = ?`;
-                    try {
-                        await mysqlClient.query(query, [
-                            deviceId,
-                            Math.floor(timestamp / 1000),
-                            key,
-                            valueType,
-                            sqlValue,
-                            sqlValue,
-                        ]);
-                    } catch (err) {
-                        node.error(`Failed to update DB for key ${key}: ${(err as Error).message}`);
-                    }
-                }
-
-                // Update centralized state
-                Object.assign(previousState, currentState);
-                nodeContext.set('previousState', previousState);
-
-                node.send({ payload: republishPayload });
-                node.status({ fill: "green", shape: "dot", text: `${source}: Data changed` });
+            // Luôn gửi định kỳ theo pollingInterval, hoặc nếu vượt threshold thì gửi ngay
+            const shouldSend = Object.keys(changedKeys).length > 0;
+            const now = Date.now();
+            let lastSent = nodeContext.get('lastSent') as number ?? 0;
+            if (shouldSend || now - lastSent >= pollingInterval) {
+                // --- Publish telemetry ---
+                publishTelemetry({
+                    data: currentState,
+                    emqxClient: localClient,
+                    thingsboardClient: thingsboardClient,
+                    emqxTopic: localConfig.pubSubTopic,
+                    thingsboardTopic: 'v1/devices/me/telemetry'
+                });
+                nodeContext.set('lastSent', now);
+                debugLog({ enable: enableDebugLog, node, message: `[${source}] Published telemetry: ${JSON.stringify(currentState)}` });
             } else {
-                node.status({ fill: "yellow", shape: "ring", text: `${source}: No change` });
+                debugLog({ enable: enableDebugLog, node, message: `[${source}] Data changed but not sent (below threshold and not polling time)` });
             }
+
+            // Update centralized state
+            Object.assign(previousState, currentState);
+            nodeContext.set('previousState', previousState);
+            node.send({ payload: currentState });
+            node.status({ fill: 'green', shape: 'dot', text: `${source}: Data changed` });
+        }
+
+        // --- Apply scaling cho từng key khi đọc modbus ---
+        function scaleTelemetry(keys: string[], values: number[], direction: 'read' | 'write', scaleConfigs: ScaleConfig[]): TelemetryData {
+            const result: TelemetryData = {};
+            keys.forEach((key, idx) => {
+                result[key] = applyScaling(key, values[idx], direction, scaleConfigs);
+            });
+            return result;
         }
 
         async function pollCoils() {
@@ -315,11 +292,9 @@ module.exports = function (RED: NodeAPI) {
                 while (retryCount < maxRetries) {
                     try {
                         const result: ModbusData = await modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
-                        const currentState: TelemetryData = {};
-                        (result.data as number[]).forEach((value, index) => {
-                            const key = Object.keys(modbusInputRegisters).find((k) => modbusInputRegisters[k] === index + inputStartAddress);
-                            if (key) currentState[key] = applyScaling(key, value, "read", scaleConfigs);
-                        });
+                        const keys = Object.keys(modbusInputRegisters);
+                        const values = result.data as number[];
+                        const currentState = scaleTelemetry(keys, values, 'read', scaleConfigs);
                         node.context().global.set("inputRegisterData", currentState);
                         await processState(currentState, "Input Registers");
                         consecutiveInputFailures = 0;
@@ -365,11 +340,9 @@ module.exports = function (RED: NodeAPI) {
                 while (retryCount < maxRetries) {
                     try {
                         const result: ModbusData = await modbusClient.readHoldingRegisters(holdingStartAddress, holdingQuantity);
-                        const currentState: TelemetryData = {};
-                        (result.data as number[]).forEach((value, index) => {
-                            const key = Object.keys(modbusHoldingRegisters).find((k) => modbusHoldingRegisters[k] === index + holdingStartAddress);
-                            if (key) currentState[key] = applyScaling(key, value, "read", scaleConfigs);
-                        });
+                        const keys = Object.keys(modbusHoldingRegisters);
+                        const values = result.data as number[];
+                        const currentState = scaleTelemetry(keys, values, 'read', scaleConfigs);
                         node.context().global.set("holdingRegisterData", currentState);
                         await processState(currentState, "Holding Registers");
                         consecutiveHoldingFailures = 0;

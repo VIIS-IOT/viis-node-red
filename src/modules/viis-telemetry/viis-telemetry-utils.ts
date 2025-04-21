@@ -60,3 +60,35 @@ export function getChangedKeys(
     }
     return changed;
 }
+
+/**
+ * Publish telemetry data to both EMQX and Thingsboard clients.
+ * @param params Object gồm data, emqxClient, thingsboardClient, emqxTopic, thingsboardTopic
+ */
+export function publishTelemetry(params: {
+  data: TelemetryData;
+  emqxClient: { publish: (topic: string, payload: string) => void };
+  thingsboardClient: { publish: (topic: string, payload: string) => void };
+  emqxTopic: string;
+  thingsboardTopic: string;
+}): void {
+  const payload: string = JSON.stringify(params.data);
+  params.emqxClient.publish(params.emqxTopic, payload);
+  params.thingsboardClient.publish(params.thingsboardTopic, payload);
+}
+
+/**
+ * Log debug message if enabled.
+ * @param params.enable Bật/tắt debug log
+ * @param params.node Node instance có warn
+ * @param params.message Nội dung log
+ */
+export function debugLog(params: {
+  enable: boolean;
+  node: { warn: (msg: string) => void };
+  message: string;
+}): void {
+  if (params.enable) {
+    params.node.warn(params.message);
+  }
+}
