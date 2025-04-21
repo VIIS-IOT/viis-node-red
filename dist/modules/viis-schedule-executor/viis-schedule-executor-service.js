@@ -197,6 +197,23 @@ let ScheduleService = class ScheduleService {
         }
         try {
             const actionObj = JSON.parse(schedule.action);
+            // Thêm iri_time nếu chưa có
+            if (!('iri_time' in actionObj)) {
+                // Tính toán iri_time dựa trên start_time và end_time (đơn vị: giây)
+                if (schedule.start_time && schedule.end_time) {
+                    const startMoment = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
+                    const endMoment = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
+                    let diff = endMoment.diff(startMoment, 'seconds');
+                    // Nếu end nhỏ hơn start (qua ngày), cộng thêm 24h
+                    if (diff < 0) {
+                        diff += 24 * 3600;
+                    }
+                    actionObj.iri_time = diff;
+                }
+                else {
+                    actionObj.iri_time = null; // hoặc 0 tuỳ ý
+                }
+            }
             // Normalize string numbers (with comma/dot) to real numbers
             for (const key in actionObj) {
                 if (actionObj.hasOwnProperty(key)) {
