@@ -173,7 +173,7 @@ module.exports = function (RED: NodeAPI) {
             return;
         }
 
-        node.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
+        //node.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
 
         // Utility functions
         function scaleValue(key: string, value: number, direction: "read" | "write"): number {
@@ -181,7 +181,7 @@ module.exports = function (RED: NodeAPI) {
             if (!config) return value;
             const shouldMultiply = config.operation === "multiply";
             const scaledValue = shouldMultiply ? value * config.factor : value / config.factor;
-            node.log(`Scaled ${key} (${direction}): ${value} -> ${scaledValue}`);
+            //node.log(`Scaled ${key} (${direction}): ${value} -> ${scaledValue}`);
             return scaledValue;
         }
 
@@ -231,7 +231,7 @@ module.exports = function (RED: NodeAPI) {
                 } else if (mapping.fc === 5) {
                     await modbusClient.writeCoil(mapping.address, value as boolean);
                 }
-                node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+                //node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
                 // Lưu thông tin lệnh thủ công vào flow context (manual overrides)
                 const manualOverrides = flowContext.get(MANUAL_OVERRIDES_KEY) as { [address: string]: { fc: number, value: any, timestamp: number } };
                 manualOverrides[`${mapping.address}-${mapping.fc}`] = {
@@ -240,7 +240,7 @@ module.exports = function (RED: NodeAPI) {
                     timestamp: Date.now()
                 };
                 flowContext.set(MANUAL_OVERRIDES_KEY, manualOverrides);
-                node.log(`Stored manual override: address=${mapping.address}, fc=${mapping.fc}, value=${writeValue}`);
+                //node.log(`Stored manual override: address=${mapping.address}, fc=${mapping.fc}, value=${writeValue}`);
             } catch (error) {
                 throw new Error(`Modbus write failed for ${key}: ${(error as Error).message}`);
             }
@@ -263,7 +263,7 @@ module.exports = function (RED: NodeAPI) {
                 if (typeof readValue === "number") {
                     readValue = scaleValue(key, readValue, "read");
                 }
-                node.log(`Read from Modbus: key=${key}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
+                //node.log(`Read from Modbus: key=${key}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
                 return readValue;
             } catch (error) {
                 throw new Error(`Modbus read failed for ${key}: ${(error as Error).message}`);
@@ -338,7 +338,7 @@ module.exports = function (RED: NodeAPI) {
         // Set up MQTT subscription
         try {
             await mqttClient.subscribe(subscribeTopic);
-            node.log(`Subscribed to topic: ${subscribeTopic}`);
+            //node.log(`Subscribed to topic: ${subscribeTopic}`);
         } catch (error) {
             node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
             node.status({ fill: "red", shape: "ring", text: "Subscription failed" });
@@ -350,7 +350,7 @@ module.exports = function (RED: NodeAPI) {
             ClientRegistry.logConnectionCounts(node);
             try {
                 const payload = JSON.parse(message.message.toString());
-                node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
+                //node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
                 handleRpcRequest(payload);
             } catch (error) {
                 node.error(`MQTT message processing error: ${(error as Error).message}`);
@@ -372,7 +372,7 @@ module.exports = function (RED: NodeAPI) {
                 } else {
                     ClientRegistry.releaseClient("local", node);
                 }
-                node.log("Node closed and configs cleaned");
+                //node.log("Node closed and configs cleaned");
                 done();
             } catch (error) {
                 node.error(`Cleanup error: ${(error as Error).message}`);

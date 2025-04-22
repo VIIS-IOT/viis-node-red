@@ -95,8 +95,33 @@ module.exports = function (RED) {
                             schedule.enable = 0;
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                            if (holdingCommands.length > 0 || coilCommands.length > 0) {
-                                yield scheduleService.resetModbusCommands(modbusClient, [...holdingCommands, ...coilCommands]);
+                            const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                            // --- Bổ sung reset các key time_valve_ và set_flow ---
+                            let holdingRegisters = {};
+                            try {
+                                holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
+                            }
+                            catch (err) {
+                                node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
+                            }
+                            node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
+                            const extraResetKeys = Object.entries(holdingRegisters)
+                                .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
+                                .map(([key, address]) => ({
+                                key,
+                                value: 0,
+                                fc: 6, // holding register
+                                unitid: modbusConfig.unitId,
+                                address: Number(address),
+                                quantity: 1
+                            }));
+                            // Loại bỏ các lệnh đã có trong activeCommands (theo address và fc)
+                            const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
+                            const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
+                            const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                            const allResetCommands = [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands];
+                            if (allResetCommands.length > 0) {
+                                yield scheduleService.resetModbusCommands(modbusClient, allResetCommands);
                                 scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
                                 node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
                             }
@@ -185,8 +210,32 @@ module.exports = function (RED) {
                             node.warn("strart finishing schedule");
                             yield scheduleService.updateScheduleStatus(schedule, "finished");
                             const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                            if (activeCommands.length > 0) {
-                                yield scheduleService.resetModbusCommands(modbusClient, activeCommands);
+                            // --- Bổ sung reset các key time_valve_ và set_flow ---
+                            let holdingRegisters = {};
+                            try {
+                                holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
+                            }
+                            catch (err) {
+                                node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
+                            }
+                            node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
+                            const extraResetKeys = Object.entries(holdingRegisters)
+                                .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
+                                .map(([key, address]) => ({
+                                key,
+                                value: 0,
+                                fc: 6, // holding register
+                                unitid: modbusConfig.unitId,
+                                address: Number(address),
+                                quantity: 1
+                            }));
+                            // Loại bỏ các lệnh đã có trong activeCommands (theo address và fc)
+                            const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
+                            const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
+                            const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                            const allResetCommands = [...activeCommands, ...extraResetCommands];
+                            if (allResetCommands.length > 0) {
+                                yield scheduleService.resetModbusCommands(modbusClient, allResetCommands);
                                 scheduleService.clearActiveCommands(schedule.name);
                             }
                             yield scheduleService.publishMqttNotification(mqttClient, schedule, true);
