@@ -95,6 +95,7 @@ module.exports = function (RED) {
             const flowContext = this.context().flow;
             const SCALE_CONFIG_KEY = `scaleConfigs_${this.id}`;
             const DEBUG_LOG_KEY = `enableDebugLog_${this.id}`;
+            const THRESHOLD_CONFIG_KEY = `thresholdConfig_${this.id}`;
             let initialScaleConfigs = [];
             try {
                 initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
@@ -110,9 +111,17 @@ module.exports = function (RED) {
             flowContext.set(DEBUG_LOG_KEY, initialEnableDebugLog);
             let enableDebugLog = (_b = flowContext.get(DEBUG_LOG_KEY)) !== null && _b !== void 0 ? _b : false;
             node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (from flow context)`);
-            // --- Cấu hình threshold cho từng key (bổ sung trường này vào UI nếu chưa có) ---
-            // Ví dụ: { temp: 1, humidity: 2 }
-            const thresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
+            // --- Store thresholdConfig in flow context (like scale config) ---
+            let initialThresholdConfig = {};
+            try {
+                initialThresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
+                if (typeof initialThresholdConfig !== 'object' || Array.isArray(initialThresholdConfig))
+                    initialThresholdConfig = {};
+            }
+            catch (_g) {
+                initialThresholdConfig = {};
+            }
+            flowContext.set(THRESHOLD_CONFIG_KEY, initialThresholdConfig);
             // --- Cấu hình periodic snapshot interval riêng cho từng loại ---
             const periodicSnapshotIntervalCoil = parseInt((_c = config.periodicSnapshotIntervalCoil) !== null && _c !== void 0 ? _c : '0', 10);
             const periodicSnapshotIntervalInput = parseInt((_d = config.periodicSnapshotIntervalInput) !== null && _d !== void 0 ? _d : '0', 10);
@@ -156,6 +165,8 @@ module.exports = function (RED) {
                 return __awaiter(this, void 0, void 0, function* () {
                     var _a, _b, _c, _d;
                     const previousState = nodeContext.get('previousState') || {};
+                    // Get thresholdConfig from flow context
+                    const thresholdConfig = flowContext.get(THRESHOLD_CONFIG_KEY) || {};
                     const changedKeys = (0, viis_telemetry_utils_1.getChangedKeys)(currentState, previousState, thresholdConfig);
                     const now = Date.now();
                     let lastSent = (_a = nodeContext.get('lastSent')) !== null && _a !== void 0 ? _a : 0;
@@ -206,6 +217,7 @@ module.exports = function (RED) {
                 keys.forEach((key, idx) => {
                     result[key] = (0, viis_telemetry_utils_1.applyScaling)(key, values[idx], direction, scaleConfigs);
                 });
+                // node.warn(`debug result: ${JSON.stringify(result)}`);
                 (0, viis_telemetry_utils_1.debugLog)({ enable: (_a = flowContext.get(DEBUG_LOG_KEY)) !== null && _a !== void 0 ? _a : false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
                 return result;
             }
@@ -268,7 +280,7 @@ module.exports = function (RED) {
             }
             function pollInputRegisters() {
                 return __awaiter(this, void 0, void 0, function* () {
-                    var _a, _b;
+                    var _a;
                     if (isPollingInputs || isPollingPaused || isConfigUpdating)
                         return;
                     if (consecutiveInputFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -286,19 +298,16 @@ module.exports = function (RED) {
                         while (retryCount < maxRetries) {
                             try {
                                 const result = yield modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
-                                const keys = Object.keys(modbusInputRegisters);
                                 const values = result.data;
                                 const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) || [];
+                                const currentState = {};
+                                Object.entries(modbusInputRegisters).forEach(([key, index]) => {
+                                    currentState[key] = (0, viis_telemetry_utils_1.applyScaling)(key, values[index], 'read', scaleCfg);
+                                });
                                 (0, viis_telemetry_utils_1.debugLog)({
                                     enable: (_a = flowContext.get(DEBUG_LOG_KEY)) !== null && _a !== void 0 ? _a : false,
                                     node,
-                                    message: `[InputRegisters][DEBUG] keys: ${JSON.stringify(keys)}, values: ${JSON.stringify(values)}, scaleConfigs: ${JSON.stringify(scaleCfg)}`
-                                });
-                                const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
-                                (0, viis_telemetry_utils_1.debugLog)({
-                                    enable: (_b = flowContext.get(DEBUG_LOG_KEY)) !== null && _b !== void 0 ? _b : false,
-                                    node,
-                                    message: `[InputRegisters][DEBUG] scaled currentState: ${JSON.stringify(currentState)}`
+                                    message: `[InputRegisters][DEBUG] mapped currentState: ${JSON.stringify(currentState)}`
                                 });
                                 node.context().global.set("inputRegisterData", currentState);
                                 yield processState(currentState, "Input Registers");
@@ -317,7 +326,7 @@ module.exports = function (RED) {
                             }
                         }
                     }
-                    catch (_c) {
+                    catch (_b) {
                         // Error handled in retry loop
                     }
                     finally {
@@ -478,7 +487,7 @@ module.exports = function (RED) {
             }
             // --- Ép buộc replace scaleConfigs, không bao giờ append ---
             node.on('input', (msg) => {
-                var _a;
+                var _a, _b;
                 if (msg.scaleConfigs) {
                     try {
                         let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
@@ -498,6 +507,20 @@ module.exports = function (RED) {
                     enableDebugLog = msg.enableDebugLog;
                     node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (updated via msg)`);
                 }
+                // Allow dynamic update of thresholdConfig via msg.thresholdConfig
+                if (msg.thresholdConfig) {
+                    try {
+                        let newThresholdConfig = typeof msg.thresholdConfig === 'object' ? msg.thresholdConfig : JSON.parse(msg.thresholdConfig);
+                        if (typeof newThresholdConfig !== 'object' || Array.isArray(newThresholdConfig))
+                            newThresholdConfig = {};
+                        flowContext.set(THRESHOLD_CONFIG_KEY, newThresholdConfig);
+                        (0, viis_telemetry_utils_1.debugLog)({ enable: (_b = flowContext.get(DEBUG_LOG_KEY)) !== null && _b !== void 0 ? _b : false, node, message: '[Config] Threshold config replaced (no append): ' + JSON.stringify(newThresholdConfig) });
+                    }
+                    catch (error) {
+                        node.error(`Failed to update thresholdConfig: ${error.message}`);
+                    }
+                    resumePollingIfAllConnected();
+                }
             });
             // --- Cleanup triệt để khi node bị xoá ---
             node.on('close', () => __awaiter(this, void 0, void 0, function* () {
@@ -505,6 +528,7 @@ module.exports = function (RED) {
                 clearPollingAndState();
                 flowContext.set(SCALE_CONFIG_KEY, []);
                 flowContext.set(DEBUG_LOG_KEY, false);
+                flowContext.set(THRESHOLD_CONFIG_KEY, {});
                 client_registry_1.default.releaseClient('modbus', node);
                 client_registry_1.default.releaseClient('local', node);
                 client_registry_1.default.releaseClient('mysql', node);

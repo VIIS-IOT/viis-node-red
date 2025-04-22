@@ -112,6 +112,7 @@ module.exports = function (RED: NodeAPI) {
         const flowContext = this.context().flow as NodeContext;
         const SCALE_CONFIG_KEY = `scaleConfigs_${this.id}`;
         const DEBUG_LOG_KEY = `enableDebugLog_${this.id}`;
+        const THRESHOLD_CONFIG_KEY = `thresholdConfig_${this.id}`;
         let initialScaleConfigs: ScaleConfig[] = [];
         try {
             initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
@@ -127,9 +128,15 @@ module.exports = function (RED: NodeAPI) {
         let enableDebugLog: boolean = flowContext.get(DEBUG_LOG_KEY) as boolean ?? false;
         node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (from flow context)`);
 
-        // --- Cấu hình threshold cho từng key (bổ sung trường này vào UI nếu chưa có) ---
-        // Ví dụ: { temp: 1, humidity: 2 }
-        const thresholdConfig: { [key: string]: number } = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
+        // --- Store thresholdConfig in flow context (like scale config) ---
+        let initialThresholdConfig: { [key: string]: number } = {};
+        try {
+            initialThresholdConfig = config.thresholdConfig ? JSON.parse(config.thresholdConfig) : {};
+            if (typeof initialThresholdConfig !== 'object' || Array.isArray(initialThresholdConfig)) initialThresholdConfig = {};
+        } catch {
+            initialThresholdConfig = {};
+        }
+        flowContext.set(THRESHOLD_CONFIG_KEY, initialThresholdConfig);
 
         // --- Cấu hình periodic snapshot interval riêng cho từng loại ---
         const periodicSnapshotIntervalCoil: number = parseInt(config.periodicSnapshotIntervalCoil ?? '0', 10);
@@ -180,6 +187,8 @@ module.exports = function (RED: NodeAPI) {
         // --- Publish telemetry sử dụng hàm đã test ---
         async function processState(currentState: TelemetryData, source: string) {
             const previousState: TelemetryData = nodeContext.get('previousState') as TelemetryData || {};
+            // Get thresholdConfig from flow context
+            const thresholdConfig: { [key: string]: number } = flowContext.get(THRESHOLD_CONFIG_KEY) as { [key: string]: number } || {};
             const changedKeys = getChangedKeys(currentState, previousState, thresholdConfig);
             const now = Date.now();
             let lastSent = nodeContext.get('lastSent') as number ?? 0;
@@ -226,6 +235,7 @@ module.exports = function (RED: NodeAPI) {
             const scaleConfigs: ScaleConfig[] = flowContext.get(scaleConfigKey) as ScaleConfig[] || [];            keys.forEach((key, idx) => {
                 result[key] = applyScaling(key, values[idx], direction, scaleConfigs);
             });
+            // node.warn(`debug result: ${JSON.stringify(result)}`);
             debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
             return result;
         }
@@ -491,6 +501,18 @@ module.exports = function (RED: NodeAPI) {
                 enableDebugLog = msg.enableDebugLog;
                 node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (updated via msg)`);
             }
+            // Allow dynamic update of thresholdConfig via msg.thresholdConfig
+            if (msg.thresholdConfig) {
+                try {
+                    let newThresholdConfig = typeof msg.thresholdConfig === 'object' ? msg.thresholdConfig : JSON.parse(msg.thresholdConfig);
+                    if (typeof newThresholdConfig !== 'object' || Array.isArray(newThresholdConfig)) newThresholdConfig = {};
+                    flowContext.set(THRESHOLD_CONFIG_KEY, newThresholdConfig);
+                    debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: '[Config] Threshold config replaced (no append): ' + JSON.stringify(newThresholdConfig) });
+                } catch (error) {
+                    node.error(`Failed to update thresholdConfig: ${(error as Error).message}`);
+                }
+                resumePollingIfAllConnected();
+            }
         });
 
         // --- Cleanup triệt để khi node bị xoá ---
@@ -498,6 +520,7 @@ module.exports = function (RED: NodeAPI) {
             clearPollingAndState();
             flowContext.set(SCALE_CONFIG_KEY, []);
             flowContext.set(DEBUG_LOG_KEY, false);
+            flowContext.set(THRESHOLD_CONFIG_KEY, {});
             ClientRegistry.releaseClient('modbus', node);
             ClientRegistry.releaseClient('local', node);
             ClientRegistry.releaseClient('mysql', node);
