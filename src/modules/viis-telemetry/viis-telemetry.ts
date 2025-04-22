@@ -302,19 +302,16 @@ module.exports = function (RED: NodeAPI) {
                 while (retryCount < maxRetries) {
                     try {
                         const result: ModbusData = await modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
-                        const keys = Object.keys(modbusInputRegisters);
                         const values = result.data as number[];
-                        const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) || [];
-                        debugLog({
-                            enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false,
-                            node,
-                            message: `[InputRegisters][DEBUG] keys: ${JSON.stringify(keys)}, values: ${JSON.stringify(values)}, scaleConfigs: ${JSON.stringify(scaleCfg)}`
+                        const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) as ScaleConfig[] || [];
+                        const currentState: TelemetryData = {};
+                        Object.entries(modbusInputRegisters).forEach(([key, index]) => {
+                            currentState[key] = applyScaling(key, values[index as number], 'read', scaleCfg);
                         });
-                        const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
                         debugLog({
                             enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false,
                             node,
-                            message: `[InputRegisters][DEBUG] scaled currentState: ${JSON.stringify(currentState)}`
+                            message: `[InputRegisters][DEBUG] mapped currentState: ${JSON.stringify(currentState)}`
                         });
                         node.context().global.set("inputRegisterData", currentState);
                         await processState(currentState, "Input Registers");
