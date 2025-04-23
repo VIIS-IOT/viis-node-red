@@ -175,6 +175,44 @@ module.exports = function (RED) {
                         }
                         if (isDue && schedule.status !== "running") {
                             node.warn("start running schedule");
+                            // --- Reset time_valve_ and set_flow keys except those present in action ---
+                            let holdingRegisters = {};
+                            try {
+                                holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
+                            }
+                            catch (err) {
+                                node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
+                            }
+                            node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
+                            // Parse action (may be string or object)
+                            let actionObj = {};
+                            if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
+                                try {
+                                    actionObj = JSON.parse(schedule.action);
+                                }
+                                catch (err) {
+                                    node.warn('Cannot parse schedule.action, treat as empty object');
+                                }
+                            }
+                            else if (typeof schedule.action === 'object' && schedule.action !== null) {
+                                actionObj = schedule.action;
+                            }
+                            // Compose reset commands for all time_valve_ and set_flow keys not in actionObj or with falsy value
+                            const resetKeys = Object.entries(holdingRegisters)
+                                .filter(([key, _]) => (key.startsWith('time_valve_') || key.startsWith('set_flow')) && (!actionObj[key] || actionObj[key] === 0))
+                                .map(([key, address]) => ({
+                                key,
+                                value: 0,
+                                fc: 6, // holding register
+                                unitid: modbusConfig.unitId,
+                                address: Number(address),
+                                quantity: 1
+                            }));
+                            if (resetKeys.length > 0) {
+                                node.warn(`Resetting keys at schedule start: ${resetKeys.map(k => k.key).join(', ')}`);
+                                yield scheduleService.resetModbusCommands(modbusClient, resetKeys);
+                            }
+                            // --- End reset logic ---
                             const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
                             if (yield scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                                 yield scheduleService.updateScheduleStatus(schedule, "running");
