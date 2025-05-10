@@ -83,9 +83,24 @@ export class ScheduleHandler {
         const [field, direction] = orderBy.split(' ');
 
         try {
+            // Parse filters if provided
+            let whereClause = { is_deleted: 0 };
+            if (query?.filters) {
+                try {
+                    const filters = JSON.parse(query.filters);
+                    for (const filter of filters) {
+                        if (filter[0] === 'iot_schedule' && filter[1] === 'schedule_plan_id' && filter[2] === 'like') {
+                            whereClause['schedule_plan_id'] = filter[3];
+                        }
+                    }
+                } catch (error) {
+                    logger.warn(this.node, 'Failed to parse filters, using default query');
+                }
+            }
+
             logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
             const [schedules, total] = await this.scheduleRepo.findAndCount({
-                where: { is_deleted: 0 },
+                where: whereClause,
                 take: size,
                 skip: (page - 1) * size,
                 order: { [field]: direction.toUpperCase() },

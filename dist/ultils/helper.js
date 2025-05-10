@@ -1,0 +1,416 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.generateHashKey = void 0;
+exports.adjustToUTC7 = adjustToUTC7;
+exports.getInvalidFields = getInvalidFields;
+exports.areAllArraysEqual = areAllArraysEqual;
+exports.generateInsertSQLTaskArray = generateInsertSQLTaskArray;
+exports.generateUpdateSQLTaskArray = generateUpdateSQLTaskArray;
+exports.generateUpdateOrInsertQueries = generateUpdateOrInsertQueries;
+exports.generateDeleteSQLTaskArray = generateDeleteSQLTaskArray;
+exports.parseFilterParams = parseFilterParams;
+const crypto = __importStar(require("crypto"));
+const { v4: uuidv4 } = require('uuid');
+function adjustToUTC7(date) {
+    const utcDate = new Date(date);
+    utcDate.setHours(utcDate.getHours() + 7);
+    return utcDate;
+}
+// Hàm kiểm tra xem có giá trị không hợp lệ trong object hay không
+function getInvalidFields(data) {
+    const invalidFields = [];
+    const invalidValues = [];
+    // Đặc tả các kí tự không an toàn (unsafe characters) bạn muốn kiểm tra
+    const unsafeCharacterPattern = /[!#$&'()*+,/:;=?@\[\]]/;
+    for (const key in data) {
+        if (Object.prototype.hasOwnProperty.call(data, key)) {
+            const value = data[key];
+            // Kiểm tra giá trị của mỗi trường có chứa kí tự không an toàn không
+            if (typeof value === 'string' && unsafeCharacterPattern.test(value)) {
+                invalidFields.push(key);
+                invalidValues.push(value);
+            }
+        }
+    }
+    return { invalidFields, invalidValues };
+}
+function areAllArraysEqual(arrays) {
+    if (!arrays || arrays.length <= 1) {
+        return true; // If there's only one or zero arrays, they are equal by default
+    }
+    const arraySets = arrays.map(array => new Set(array));
+    for (let i = 1; i < arraySets.length; i++) {
+        if (!areSetsEqual(arraySets[0], arraySets[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+function areSetsEqual(set1, set2) {
+    if (set1.size !== set2.size) {
+        return false;
+    }
+    for (const element of set1) {
+        if (!set2.has(element)) {
+            return false;
+        }
+    }
+    return true;
+}
+//////////////////////////////////////////////FOR CREATE TASK ARRAY/////////////////////////
+function escapeSingleQuotes(str) {
+    return str.replace(/'/g, "''");
+}
+function formatDateForSQL(date) {
+    return date.toISOString().slice(0, 10);
+}
+function getObjectValues(obj) {
+    return Object.values(obj).map(value => {
+        if (value === null) {
+            return 'NULL';
+        }
+        else if (typeof value === 'string') {
+            return `'${escapeSingleQuotes(value)}'`;
+        }
+        else if (value instanceof Date) {
+            return `'${formatDateForSQL(value)}'`;
+        }
+        else {
+            return value;
+        }
+    });
+}
+function generateInsertSQLTaskArray(dataArray, originalArray, added_in_diary = 0) {
+    try {
+        let sqlQueryCreateTask = `INSERT INTO "tabiot_farming_plan_task" (`;
+        let sqlQueryCreateAssignUser = `INSERT INTO "tabiot_assign_user" (name, customer_user, task) VALUES`;
+        let sqlQueryCreateTodo = `INSERT INTO "tabiot_todo" (`;
+        let sqlQueryCreateiotItem = `INSERT INTO "tabiot_warehouse_item_task_used" (`;
+        let sqlQueryCreateiotWorksheet = `INSERT INTO "tabiot_farming_plan_task_worksheet" (`;
+        let sqlQueryCreateProdQuantity = `INSERT INTO "tabiot_production_quantity" (`;
+        if (dataArray.length === 0) {
+            throw new Error('Data array is empty');
+        }
+        // Assuming all objects have the same structure, use the first object's keys as field names
+        const fieldNames = Object.keys(dataArray[0]).join(', ');
+        sqlQueryCreateTask += `name, added_in_diary, ${fieldNames}) VALUES `;
+        const d = originalArray[0];
+        //todo
+        const todoFieldNames = d.todo_list.length ? Object.keys(d.todo_list[0]).join(', ') : '';
+        sqlQueryCreateTodo += `name, ${todoFieldNames}, farming_plan_task) VALUES `;
+        console.log('sqlQueryCreateTodo', sqlQueryCreateTodo);
+        //item
+        const itemFieldNames = d.item_list.length ? Object.keys(d.item_list[0]).join(', ') : '';
+        sqlQueryCreateiotItem += `name, ${itemFieldNames}, task_id) VALUES `;
+        //worksheet
+        const workSheetFieldNames = d.worksheet_list.length ? Object.keys(d.worksheet_list[0]).join(', ') : '';
+        sqlQueryCreateiotWorksheet += `name, ${workSheetFieldNames}, task_id) VALUES `;
+        //pro quantity
+        const prodQuantityFieldNames = d.prod_quantity_list.length ? Object.keys(d.prod_quantity_list[0]).join(', ') : '';
+        sqlQueryCreateProdQuantity += `name, ${prodQuantityFieldNames}, task_id) VALUES `;
+        let checkAssignUser = false;
+        dataArray.forEach((data, index) => {
+            const randomUUID = uuidv4();
+            originalArray.map((d, i) => {
+                if (index === i) {
+                    d.involve_in_users.forEach((involve) => {
+                        // const assignUserUUID = uuidv4()
+                        const assignUserUUID = `${involve.customer_user}-${randomUUID}`;
+                        console.log('assignUserUUID', assignUserUUID);
+                        sqlQueryCreateAssignUser += `('${assignUserUUID}', '${involve.customer_user}', '${randomUUID}'),`;
+                        checkAssignUser = true;
+                    });
+                    //todo
+                    d.todo_list.forEach((todo) => {
+                        const todoUUID = uuidv4();
+                        const dataValues = getObjectValues(todo).join(', ');
+                        sqlQueryCreateTodo += `('${todoUUID}', ${dataValues}, '${randomUUID}'),`;
+                    });
+                    //item
+                    d.item_list.forEach((item) => {
+                        const itemUUID = uuidv4();
+                        const dataValues = getObjectValues(item).join(', ');
+                        sqlQueryCreateiotItem += `('${itemUUID}', ${dataValues}, '${randomUUID}'),`;
+                    });
+                    //worksheet
+                    d.worksheet_list.forEach((worksheet) => {
+                        const worksheetUUID = uuidv4();
+                        const dataValues = getObjectValues(worksheet).join(', ');
+                        sqlQueryCreateiotWorksheet += `('${worksheetUUID}', ${dataValues}, '${randomUUID}'),`;
+                    });
+                    //prod quantity
+                    d.prod_quantity_list.forEach((prodQuantity) => {
+                        const prodQuantityUUID = uuidv4();
+                        const dataValues = getObjectValues(prodQuantity).join(', ');
+                        sqlQueryCreateProdQuantity += `('${prodQuantityUUID}', ${dataValues}, '${randomUUID}'),`;
+                    });
+                }
+            });
+            const dataValues = getObjectValues(data).join(', ');
+            sqlQueryCreateTask += `('${randomUUID}', ${added_in_diary}, ${dataValues}),`;
+        });
+        // Removing the trailing comma and space
+        sqlQueryCreateTask = sqlQueryCreateTask.slice(0, -1);
+        sqlQueryCreateTask += `RETURNING *`;
+        sqlQueryCreateAssignUser = sqlQueryCreateAssignUser.slice(0, -1);
+        sqlQueryCreateAssignUser += `RETURNING *`;
+        sqlQueryCreateTodo = sqlQueryCreateTodo.slice(0, -1);
+        sqlQueryCreateTodo += `RETURNING *`;
+        sqlQueryCreateiotItem = sqlQueryCreateiotItem.slice(0, -1);
+        sqlQueryCreateiotItem += `RETURNING *`;
+        sqlQueryCreateiotWorksheet = sqlQueryCreateiotWorksheet.slice(0, -1);
+        sqlQueryCreateiotWorksheet += `RETURNING *`;
+        sqlQueryCreateProdQuantity = sqlQueryCreateProdQuantity.slice(0, -1);
+        sqlQueryCreateProdQuantity += `RETURNING *`;
+        let returnArr = [];
+        returnArr.push(sqlQueryCreateTask);
+        if (checkAssignUser) {
+            returnArr.push(sqlQueryCreateAssignUser);
+        }
+        if (todoFieldNames) {
+            returnArr.push(sqlQueryCreateTodo);
+        }
+        if (itemFieldNames) {
+            returnArr.push(sqlQueryCreateiotItem);
+        }
+        if (workSheetFieldNames) {
+            returnArr.push(sqlQueryCreateiotWorksheet);
+        }
+        if (prodQuantityFieldNames) {
+            returnArr.push(sqlQueryCreateProdQuantity);
+        }
+        return returnArr;
+        // return [sqlQueryCreateTask, sqlQueryCreateAssignUser, sqlQueryCreateTodo, sqlQueryCreateiotItem, sqlQueryCreateiotWorksheet];
+    }
+    catch (error) {
+        throw error;
+    }
+}
+////////////////////////////FOR UPDATE task array///////////////////////////////
+function generateUpdateSQLTaskArray(dataArray, originalArray) {
+    try {
+        if (dataArray.length === 0) {
+            throw new Error('Data array is empty');
+        }
+        const involveInArray = [];
+        const iot_farming_plan_task_worksheetArray = [];
+        const iot_warehouse_item_task_usedArray = [];
+        const todo_listArray = [];
+        const prod_quantity_listArray = [];
+        originalArray.forEach((data) => {
+            data.involve_in_users.forEach((invole_in) => {
+                invole_in.task = data.name;
+                involveInArray.push(invole_in);
+            });
+            data.worksheet_list.forEach((worksheet) => {
+                worksheet.task_id = data.name;
+                iot_farming_plan_task_worksheetArray.push(worksheet);
+            });
+            data.item_list.forEach((item) => {
+                item.task_id = data.name;
+                iot_warehouse_item_task_usedArray.push(item);
+            });
+            data.todo_list.forEach((todo) => {
+                todo.farming_plan_task = data.name;
+                todo_listArray.push(todo);
+            });
+            data.prod_quantity_list.forEach((prod_quantity) => {
+                prod_quantity.task_id = data.name;
+                prod_quantity_listArray.push(prod_quantity);
+            });
+        });
+        const queries = [
+            generateUpdateOrInsertQueries('tabiot_farming_plan_task', dataArray),
+            generateUpdateOrInsertQueries('tabiot_assign_user', involveInArray),
+            generateUpdateOrInsertQueries('tabiot_farming_plan_task_worksheet', iot_farming_plan_task_worksheetArray),
+            generateUpdateOrInsertQueries('tabiot_warehouse_item_task_used', iot_warehouse_item_task_usedArray),
+            generateUpdateOrInsertQueries('tabiot_todo', todo_listArray),
+            generateUpdateOrInsertQueries('tabiot_production_quantity', prod_quantity_listArray),
+        ];
+        // console.log(queries);
+        return queries;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+function generateUpdateOrInsertQueries(tableName, dataArray) {
+    const queries = [];
+    dataArray.forEach(item => {
+        if ('name' in item) {
+            const updateFields = Object.keys(item).filter(field => field !== 'name');
+            let paramCounter = 1;
+            const setStatements = updateFields.map(field => `"${field}" = $${paramCounter++}`).join(', ');
+            const queryParamsForItem = updateFields.map(field => item[field]);
+            queries.push({
+                query: `UPDATE "${tableName}" SET ${setStatements} WHERE "name" = $${paramCounter}`,
+                params: [...queryParamsForItem, item.name],
+            });
+        }
+        else {
+            const insertFields = Object.keys(item);
+            const paramPlaceholders = insertFields.map((_, index) => `$${index + 1}`).join(', ');
+            const queryParamsForItem = insertFields.map(field => item[field]);
+            const randomNameUUID = uuidv4();
+            if (tableName === `tabiot_assign_user`) {
+                const name = `${item.customer_user}-${item.task}`;
+                queries.push({
+                    query: `INSERT INTO "${tableName}" (name, ${insertFields
+                        .map(field => `"${field}"`)
+                        .join(', ')}) VALUES('${name}', ${paramPlaceholders})`,
+                    params: queryParamsForItem,
+                });
+            }
+            else {
+                queries.push({
+                    query: `INSERT INTO "${tableName}" (name, ${insertFields
+                        .map(field => `"${field}"`)
+                        .join(', ')}) VALUES('${randomNameUUID}', ${paramPlaceholders})`,
+                    params: queryParamsForItem,
+                });
+            }
+        }
+    });
+    return queries;
+}
+function generateDeleteQueries(tableName, dataArray) {
+    const queries = [];
+    dataArray.forEach((data) => {
+        if (data.is_deleted) {
+            delete data.is_deleted; // Xóa trường is_deleted khỏi đối tượng
+            const params = [];
+            const conditions = [];
+            Object.keys(data).forEach((key) => {
+                if (key !== 'is_deleted') {
+                    conditions.push(`${key} = $${params.length + 1}`);
+                    params.push(data[key]);
+                }
+            });
+            const query = `DELETE FROM ${tableName} WHERE ${conditions.join(' AND ')}`;
+            queries.push({ query, params });
+        }
+    });
+    return queries;
+}
+function generateDeleteSQLTaskArray(dataArray) {
+    const deleteQueries = [
+        generateDeleteQueries('tabiot_assign_user', dataArray.flatMap(data => data.involve_in_users)),
+        generateDeleteQueries('tabiot_farming_plan_task_worksheet', dataArray.flatMap(data => data.worksheet_list)),
+        generateDeleteQueries('tabiot_warehouse_item_task_used', dataArray.flatMap(data => data.item_list)),
+        generateDeleteQueries('tabiot_todo', dataArray.flatMap(data => data.todo_list)),
+        generateDeleteQueries('tabiot_production_quantity', dataArray.flatMap(data => data.prod_quantity_list)),
+    ];
+    return deleteQueries;
+}
+function generateUpdateQueries(tableName, dataArray) {
+    const updateQueries = [];
+    dataArray.forEach((item) => {
+        const updateFields = Object.keys(item).filter(field => field !== 'name'); // Exclude 'name' field from update
+        let paramCounter = 1;
+        const setStatements = updateFields.map(field => `"${field}" = $${paramCounter++}`).join(', ');
+        const queryParamsForItem = updateFields.map(field => item[field]);
+        updateQueries.push({
+            query: `UPDATE "${tableName}" SET ${setStatements} WHERE "name" = $${paramCounter}`,
+            params: [...queryParamsForItem, item.name],
+        });
+    });
+    return updateQueries;
+}
+/**
+ * This function parses filter parameters and returns a SQL condition string.
+ * The input is an array of filter parameters, each of which is an array itself.
+ * Each filter parameter array can have either 3 or 4 elements.
+ * If it has 4 elements, they represent ["doctype_name","field_name","operator","value"].
+ * If it has 3 elements, they represent ["field_name","operator","value"] and doctype_name is assumed to be null.
+ * The function returns a string SQL condition starting with AND, concatenated with AND for each condition.
+ * If the operator is "like", the value will be wrapped in percentage signs.
+ *
+ * @param filterParams - An array of filter parameters.
+ * @returns A string representing a SQL condition.
+ * @throws Will throw an error if a filter parameter array does not have 3 or 4 elements.
+ */
+function parseFilterParams(filterParams) {
+    let sqlCondition = '';
+    filterParams.forEach((filter) => {
+        let doctypeName = null;
+        let fieldName;
+        let operator;
+        let value;
+        // Kiểm tra độ dài của mảng filter và gán giá trị tương ứng
+        if (filter.length === 4) {
+            [doctypeName, fieldName, operator, value] = filter;
+        }
+        else if (filter.length === 3) {
+            [fieldName, operator, value] = filter;
+        }
+        else {
+            throw new Error('Định dạng bộ lọc không hợp lệ');
+        }
+        // Nếu là toán tử IN, xử lý danh sách giá trị
+        if (operator.toUpperCase() === 'IN' && Array.isArray(value)) {
+            // Chuyển mảng giá trị thành một chuỗi SQL IN ('value1', 'value2', ...)
+            let formattedValues = value.map((v) => `'${v}'`).join(', ');
+            value = `(${formattedValues})`;
+        }
+        else if (operator === 'like') {
+            // Format giá trị nếu toán tử là "like"
+            value = `'%${value}%'`;
+        }
+        else {
+            // Các trường hợp còn lại, format giá trị bình thường
+            value = `'${value}'`;
+        }
+        // Thêm prefix của bảng nếu có doctypeName
+        let tablePrefix = doctypeName ? `"tab${doctypeName}".` : '';
+        // Thêm điều kiện vào chuỗi SQL
+        if (operator === 'like') {
+            sqlCondition += ` AND LOWER(${tablePrefix}"${fieldName}") LIKE LOWER(${value})`;
+        }
+        else {
+            sqlCondition += ` AND ${tablePrefix}"${fieldName}" ${operator} ${value}`;
+        }
+    });
+    return sqlCondition;
+}
+const generateHashKey = (...args) => {
+    // Generate a random string if no arguments are provided
+    const inputString = args.length > 0 ? args.join('') : crypto.randomBytes(16).toString('hex');
+    // Tạo hash sử dụng MD5 và chuyển đổi sang mã hex
+    const hash = crypto.createHash('md5').update(inputString).digest('hex');
+    // Cắt bớt hash nếu cần thiết, ví dụ: 12 ký tự đầu tiên
+    return hash.substring(0, 16);
+};
+exports.generateHashKey = generateHashKey;
