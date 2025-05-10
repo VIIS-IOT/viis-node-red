@@ -99,6 +99,7 @@ export class ScheduleHandler {
             }
 
             logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
+            logger.info(this.node,`whereClause: ${JSON.stringify(whereClause)}`);
             const [schedules, total] = await this.scheduleRepo.findAndCount({
                 where: whereClause,
                 take: size,
@@ -122,9 +123,10 @@ export class ScheduleHandler {
                 pageNumber: page,
                 order_by: orderBy,
             };
-
+            const result = convertObjectArray(schedules);
+            console.log(result);
             // msg.payload = { result: { data: convertObjectArray(schedules), pagination } };
-            msg.payload = { result: convertObjectArray(schedules) };
+            msg.payload = { result };
             return msg;
         } catch (error) {
             throw new Error(`GET request failed: ${(error as Error).message}`);
@@ -222,6 +224,7 @@ export class ScheduleHandler {
             if ('statusCode' in msg) (msg as any).statusCode = 201;
             return msg;
         } catch (error) {
+            logger.error(this.node, `POST request failed: ${(error as Error).message}`);
             throw error; // Let handleRequest catch and handle it
         }
     }
@@ -309,6 +312,7 @@ export class ScheduleHandler {
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {
+            logger.error(this.node, `PUT request failed: ${(error as Error).message}`);
             throw error; // Let handleRequest catch and handle it
         }
     }
