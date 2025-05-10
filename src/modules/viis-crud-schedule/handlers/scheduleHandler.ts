@@ -94,7 +94,7 @@ export class ScheduleHandler {
                         }
                     }
                 } catch (error) {
-                    logger.warn(this.node, 'Failed to parse filters, using default query');
+                    logger.info(this.node, 'Failed to parse filters, using default query');
                 }
             }
 
