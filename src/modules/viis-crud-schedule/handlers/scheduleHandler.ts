@@ -37,11 +37,19 @@ export class ScheduleHandler {
             const path = parseUrl(url || '');
 
             logger.info(this.node, `Handling schedule request: ${method} ${path}`);
+            logger.info(this.node, `Request details: ${JSON.stringify({
+                method,
+                path,
+                query,
+                payload: method !== 'DELETE' ? payload : '[REDACTED]' // Redact payload for DELETE for security
+            }, null, 2)}`);
 
             if (!this.dbService.isInitialized()) {
                 logger.info(this.node, 'Database not initialized, initializing now...');
                 await this.dbService.initialize();
                 logger.info(this.node, 'Database initialized successfully');
+            } else {
+                logger.info(this.node, 'Database already initialized');
             }
 
             switch (method) {
@@ -75,6 +83,7 @@ export class ScheduleHandler {
         const [field, direction] = orderBy.split(' ');
 
         try {
+            logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
             const [schedules, total] = await this.scheduleRepo.findAndCount({
                 where: { is_deleted: 0 },
                 take: size,
@@ -82,6 +91,7 @@ export class ScheduleHandler {
                 order: { [field]: direction.toUpperCase() },
                 relations: { schedulePlan: true },
             });
+            logger.info(this.node, `Found ${schedules.length} schedules (total: ${total})`);
 
             // const scheduleDtos = plainToInstance(TabiotScheduleDto, schedules.map(s => ({
             //     ...s,
@@ -160,12 +170,16 @@ export class ScheduleHandler {
                 modified: adjustToUTC7(new Date()),
             };
 
+            logger.info(this.node, `Creating new schedule: ${JSON.stringify(scheduleData)}`);
             const schedule = this.scheduleRepo.create(scheduleData);
             const savedSchedule = await this.scheduleRepo.save(schedule);
+            logger.info(this.node, `Schedule saved successfully`);
 
             // Sync to server
             try {
+                logger.info(this.node, 'Starting schedule sync to server');
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([savedSchedule]);
+                logger.info(this.node, 'Schedule sync completed successfully');
                 // Assuming syncRes indicates success if no error is thrown or specific success condition
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
@@ -237,7 +251,9 @@ export class ScheduleHandler {
                 modified: adjustToUTC7(new Date()),
             };
 
+            logger.info(this.node, `Updating schedule: { name, updateData }`);
             const result = await this.scheduleRepo.update({ name }, updateData);
+            logger.info(this.node, `Update result: affected=${result.affected}`);
             if (result.affected === 0) {
                 throw new Error(`Schedule with name ${name} not found`);
             }
@@ -249,7 +265,9 @@ export class ScheduleHandler {
 
             // Sync to server
             try {
+                logger.info(this.node, 'Starting schedule sync to server');
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updated]);
+                logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: updated.name },
@@ -304,6 +322,7 @@ export class ScheduleHandler {
         }
 
         try {
+            logger.info(this.node, `Marking schedule as deleted: ${name}`);
             const result = await this.scheduleRepo.update(
                 { name },
                 {
@@ -313,6 +332,7 @@ export class ScheduleHandler {
                     modified: adjustToUTC7(new Date()),
                 }
             );
+            logger.info(this.node, `Delete result: affected=${result.affected}`);
 
             if (result.affected === 0) {
                 throw new Error(`Schedule with name ${name} not found`);
@@ -326,7 +346,9 @@ export class ScheduleHandler {
 
             // Sync to server
             try {
+                logger.info(this.node, 'Starting schedule sync to server');
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updatedSchedule]);
+                logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: updatedSchedule.name },

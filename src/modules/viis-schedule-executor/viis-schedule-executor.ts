@@ -1,4 +1,5 @@
 import { NodeAPI, NodeDef, Node } from "node-red";
+
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore, MqttConfig } from "../../core/mqtt-client";
 import { ScheduleService } from "./viis-schedule-executor-service";
@@ -6,10 +7,9 @@ import ClientRegistry from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
 import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, ScheduleExecutorNodeDef } from "./type";
-import { publishTelemetry, debugLog } from '../viis-telemetry/viis-telemetry-utils';
 
 module.exports = function (RED: NodeAPI) {
-    async function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
+    function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
 
@@ -35,7 +35,7 @@ module.exports = function (RED: NodeAPI) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
             return;
         }
-
+        // Modbus configuration 
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
@@ -48,39 +48,33 @@ module.exports = function (RED: NodeAPI) {
             reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
         };
 
-        // Configuration for ThingsBoard MQTT broker
-        const thingsboardMqttConfig: MqttConfig = {
+        // ThingsBoard MQTT configuration
+        const thingsboardConfig: MqttConfig = {
             broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-            clientId: `node-red-thingsboard-schedule-${Math.random().toString(16).substring(2, 10)}`,
+            clientId: `node-red-tb-${Math.random().toString(16).substr(2, 8)}`,
             username: process.env.DEVICE_ACCESS_TOKEN || "",
             password: process.env.THINGSBOARD_PASSWORD || "",
-            qos: 1,
+            qos: 1 as 0 | 1 | 2,
         };
 
-        // Configuration for local MQTT broker
-        const localMqttConfig: MqttConfig = {
+        // EMQX (local) MQTT configuration
+        const emqxConfig: MqttConfig = {
             broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
-            clientId: `node-red-local-schedule-${Math.random().toString(16).substring(2, 10)}`,
+            clientId: `node-red-emqx-${Math.random().toString(16).substr(2, 8)}`,
             username: process.env.EMQX_USERNAME || "",
             password: process.env.EMQX_PASSWORD || "",
-            qos: 1,
+            qos: 1 as 0 | 1 | 2,
         };
 
-        // Get clients
-        const modbusClient: ModbusClientCore = ClientRegistry.getModbusClient(modbusConfig, node);
-        const localClient: MqttClientCore = await ClientRegistry.getLocalMqttClient(localMqttConfig, node);
-        const thingsboardClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
 
-        if (!modbusClient || !localClient || !thingsboardClient) {
-            node.error("Failed to retrieve clients from registry");
-            node.status({ fill: "red", shape: "ring", text: "Client initialization failed" });
-            return;
-        }
+        const modbusClient: ModbusClientCore = ClientRegistry.getModbusClient(modbusConfig, node);
 
         node.on("input", async function (msg, send, done) {
             try {
-                const mqttClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
-                node.warn(`MQTT client connected: ${mqttClient.isConnected()}`);
+                // Initialize MQTT clients
+                const thingsboardClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
+                const emqxClient: MqttClientCore = await ClientRegistry.getLocalMqttClient(emqxConfig, node);
+                node.warn(`MQTT TB connected: ${thingsboardClient.isConnected()}, EMQX connected: ${emqxClient.isConnected()}`);
 
                 ClientRegistry.logConnectionCounts(node);
 
@@ -128,7 +122,7 @@ module.exports = function (RED: NodeAPI) {
                         } catch (err) {
                             node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
                         }
-                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
+                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
                             .map(([key, address]) => ({
@@ -149,13 +143,15 @@ module.exports = function (RED: NodeAPI) {
                             scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
                             node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
-                        await scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                        await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);
                         // await scheduleService.syncScheduleLog(schedule, true);
                     } else {
                         node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, schedule.status as "running" | "finished");
                     }
+
+
 
                     node.status({ fill: "green", shape: "dot", text: "RPC processed" });
                     send(msg);
@@ -171,6 +167,7 @@ module.exports = function (RED: NodeAPI) {
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
                     const now = moment().utc().add(7, 'hours');
+                    // const now = moment('2025-04-03T00:10:00Z').utc();
                     const today = now.clone().startOf('day');
                     const startTime = moment(schedule.start_time, "HH:mm:ss");
                     const endTime = moment(schedule.end_time, "HH:mm:ss");
@@ -189,22 +186,25 @@ module.exports = function (RED: NodeAPI) {
                     // Xử lý trường hợp qua ngày (cross-midnight)
                     if (startDateTime.isAfter(endDateTime)) {
                         if (now.isBefore(endDateTime)) {
+                            // Nếu giờ hiện tại nằm sau nửa đêm (ví dụ: 00:10) và trước endTime,
+                            // schedule đã bắt đầu từ ngày hôm trước.
                             startDateTime.subtract(1, 'day');
                         } else {
+                            // Nếu giờ hiện tại nằm sau startTime,
+                            // thì endTime nằm vào ngày hôm sau.
                             endDateTime.add(1, 'day');
                         }
                     }
 
-                    let holdingRegisters: Record<string, number> = {};
-                    try {
-                        holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
-                    } catch (err) {
-                        node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
-                    }
-
                     if (isDue && schedule.status !== "running") {
-                        node.warn("start running schedule");
+                        node.warn("start running schedule")
                         // --- Reset time_valve_ and set_flow keys except those present in action ---
+                        let holdingRegisters: Record<string, number> = {};
+                        try {
+                            holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
+                        } catch (err) {
+                            node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
+                        }
                         node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         // Parse action (may be string or object)
                         let actionObj: Record<string, any> = {};
@@ -245,38 +245,12 @@ module.exports = function (RED: NodeAPI) {
                                     writeSuccess = await scheduleService.verifyModbusWrite(modbusClient, [...holdingCommands, ...coilCommands]);
                                     if (writeSuccess) {
                                         scheduleService.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
-                                        // Get updated values from Modbus
-                                        const updatedValues: { [key: string]: any } = {};
-                                        for (const cmd of [...holdingCommands, ...coilCommands]) {
-                                            const key = Object.keys(holdingRegisters).find(k => holdingRegisters[k] === cmd.address);
-                                            if (key) {
-                                                const value = cmd.fc === 6 ? cmd.value : cmd.value ? 1 : 0;
-                                                updatedValues[key] = value;
-                                            }
-                                        }
-                                        // Publish updated values to MQTT
-                                        if (Object.keys(updatedValues).length > 0) {
-                                            const deviceId = process.env.DEVICE_ID || "unknown";
-                                            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
-                                            publishTelemetry({
-                                                data: updatedValues,
-                                                emqxClient: localClient,
-                                                thingsboardClient: thingsboardClient,
-                                                emqxTopic: emqxTopic,
-                                                thingsboardTopic: 'v1/devices/me/telemetry'
-                                            });
-                                            debugLog({
-                                                enable: true,
-                                                node,
-                                                message: `Published MQTT telemetry after schedule start: ${JSON.stringify(updatedValues)}`
-                                            });
-                                        }
                                     }
                                 } catch (error) {
                                     node.error(`Error writing modbus: ${(error as Error).message}`);
                                 }
                             }
-                            await scheduleService.publishMqttNotification(mqttClient, schedule, writeSuccess);
+                            await scheduleService.publishMqttNotification(thingsboardClient, schedule, writeSuccess);
                             await scheduleService.syncScheduleLog(schedule, writeSuccess);
                         }
                     } else if (schedule.status === "running" && isDue) {
@@ -284,42 +258,21 @@ module.exports = function (RED: NodeAPI) {
                         const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
                         if (writeSuccess) {
                             node.warn(`Re-executed commands for schedule ${schedule.name} after power loss or frequently`);
-                            // Get updated values from Modbus
-                            const updatedValues: { [key: string]: any } = {};
-                            const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
-                            for (const cmd of [...holdingCommands, ...coilCommands]) {
-                                const key = Object.keys(holdingRegisters).find(k => holdingRegisters[k] === cmd.address);
-                                if (key) {
-                                    const value = cmd.fc === 6 ? cmd.value : cmd.value ? 1 : 0;
-                                    updatedValues[key] = value;
-                                }
-                            }
-                            // Publish updated values to MQTT
-                            if (Object.keys(updatedValues).length > 0) {
-                                const deviceId = process.env.DEVICE_ID || "unknown";
-                                const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
-                                publishTelemetry({
-                                    data: updatedValues,
-                                    emqxClient: localClient,
-                                    thingsboardClient: thingsboardClient,
-                                    emqxTopic: emqxTopic,
-                                    thingsboardTopic: 'v1/devices/me/telemetry'
-                                });
-                                debugLog({
-                                    enable: true,
-                                    node,
-                                    message: `Published MQTT telemetry after power loss recovery: ${JSON.stringify(updatedValues)}`
-                                });
-                            }
-                            await scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                            await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);
                             await scheduleService.syncScheduleLog(schedule, true);
                         }
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
-                        node.warn("start finishing schedule");
+                        node.warn("strart finishing schedule")
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         // --- Bổ sung reset các key time_valve_ và set_flow ---
-                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
+                        let holdingRegisters: Record<string, number> = {};
+                        try {
+                            holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
+                        } catch (err) {
+                            node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
+                        }
+                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
                             .map(([key, address]) => ({
@@ -334,21 +287,12 @@ module.exports = function (RED: NodeAPI) {
                         const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        // Get current values before reset
-                        const preResetValues: { [key: string]: any } = {};
-                        for (const cmd of [...activeCommands, ...extraResetCommands]) {
-                            const key = Object.keys(holdingRegisters).find(k => holdingRegisters[k] === cmd.address);
-                            if (key) {
-                                const value = cmd.fc === 6 ? cmd.value : cmd.value ? 1 : 0;
-                                preResetValues[key] = value;
-                            }
-                        }
                         const allResetCommands = [...activeCommands, ...extraResetCommands];
                         if (allResetCommands.length > 0) {
                             await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
                             scheduleService.clearActiveCommands(schedule.name);
                         }
-                        await scheduleService.publishMqttNotification(mqttClient, schedule, true);
+                        await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);
                         // await scheduleService.syncScheduleLog(schedule, true);
                     } else {
                         node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);

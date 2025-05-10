@@ -420,7 +420,7 @@ export function parseFilterParams(filterParams: any[]): string {
 
         // Thêm điều kiện vào chuỗi SQL
         if (operator === 'like') {
-            sqlCondition += ` AND unaccent(${tablePrefix}"${fieldName}") ILIKE unaccent(${value})`;
+            sqlCondition += ` AND LOWER(${tablePrefix}"${fieldName}") LIKE LOWER(${value})`;
         } else {
             sqlCondition += ` AND ${tablePrefix}"${fieldName}" ${operator} ${value}`;
         }
