@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class Migrate1744173057896 implements MigrationInterface {
-    name = 'Migrate1744173057896'
+export class Migrate1746859243171 implements MigrationInterface {
+    name = 'Migrate1746859243171'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await queryRunner.query(`CREATE TABLE \`tabiot_schedule\` (\`creation\` datetime(6) NULL DEFAULT CURRENT_TIMESTAMP(6), \`modified\` datetime(6) NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \`_user_tags\` text NULL, \`_comments\` text NULL, \`_assign\` text NULL, \`_liked_by\` text NULL, \`modified_by\` varchar(140) NULL, \`owner\` varchar(140) NULL, \`docstatus\` smallint NOT NULL DEFAULT '0', \`idx\` bigint NOT NULL DEFAULT '0', \`deleted\` datetime(6) NULL, \`name\` varchar(255) NOT NULL, \`device_id\` varchar(255) NULL, \`action\` mediumtext NULL, \`enable\` tinyint NOT NULL DEFAULT '1', \`label\` varchar(255) NULL, \`set_time\` time NULL, \`start_date\` date NULL, \`end_date\` date NULL, \`type\` enum ('', 'circulate', 'period', 'fixed', 'interval') NOT NULL DEFAULT '', \`interval\` varchar(255) NULL, \`start_time\` time NULL, \`end_time\` time NULL, \`is_from_local\` tinyint NULL, \`is_synced\` smallint NULL, \`is_deleted\` tinyint NOT NULL DEFAULT '0', \`status\` enum ('running', 'stopped', 'finished', '') NOT NULL DEFAULT '', \`schedule_plan_id\` varchar(255) NULL, PRIMARY KEY (\`name\`)) ENGINE=InnoDB`);

@@ -9,10 +9,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Migrate1744173057896 = void 0;
-class Migrate1744173057896 {
+exports.Migrate1746859243171 = void 0;
+class Migrate1746859243171 {
     constructor() {
-        this.name = 'Migrate1744173057896';
+        this.name = 'Migrate1746859243171';
     }
     up(queryRunner) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -57,4 +57,4 @@ class Migrate1744173057896 {
         });
     }
 }
-exports.Migrate1744173057896 = Migrate1744173057896;
+exports.Migrate1746859243171 = Migrate1746859243171;
