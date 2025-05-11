@@ -205,7 +205,7 @@ class SchedulePlanHandler {
             var _a;
             console.log('Starting handlePost', { path, payload: msg.payload });
             let payload = msg.payload;
-            if (path !== `${constants_1.API_PATHS.SCHEDULE_PLAN}/ver2`) {
+            if (path !== `${constants_1.API_PATHS.SCHEDULE_PLAN}`) {
                 console.error('Invalid POST endpoint', { path });
                 throw new Error('Invalid POST endpoint');
             }
