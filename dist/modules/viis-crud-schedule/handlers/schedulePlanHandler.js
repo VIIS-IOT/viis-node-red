@@ -205,7 +205,7 @@ class SchedulePlanHandler {
             var _a;
             console.log('Starting handlePost', { path, payload: msg.payload });
             let payload = msg.payload;
-            if (path !== constants_1.API_PATHS.SCHEDULE_PLAN) {
+            if (path !== `${constants_1.API_PATHS.SCHEDULE_PLAN}/ver2`) {
                 console.error('Invalid POST endpoint', { path });
                 throw new Error('Invalid POST endpoint');
             }
@@ -274,8 +274,9 @@ class SchedulePlanHandler {
     handlePut(path, msg) {
         return __awaiter(this, void 0, void 0, function* () {
             console.log('Starting handlePut', { path, payload: msg.payload });
-            if (path !== constants_1.API_PATHS.SCHEDULE_PLAN) {
+            if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE_PLAN}/ver2`)) {
                 console.error('Invalid PUT endpoint', { path });
+                console.error(`correct path: ${constants_1.API_PATHS.SCHEDULE_PLAN}/ver2`);
                 throw new Error('Invalid PUT endpoint');
             }
             const payload = msg.payload;
@@ -301,6 +302,16 @@ class SchedulePlanHandler {
                 if (!existingPlan) {
                     console.error('Schedule plan not found', { name });
                     throw new Error(`Schedule plan with name ${name} not found`);
+                }
+                // Check if there are any running schedules in this plan
+                const runningSchedules = yield this.planRepo.createQueryBuilder('plan')
+                    .leftJoinAndSelect('plan.schedules', 'schedule')
+                    .where('plan.name = :planName', { planName: name })
+                    .andWhere('schedule.status = :status', { status: 'running' })
+                    .getCount();
+                // Prevent disabling if there are running schedules
+                if (dto.enable === 0 && runningSchedules > 0) {
+                    throw new Error('Cannot disable schedule plan while it has running schedules');
                 }
                 const updateData = {
                     label: dto.label,

@@ -98,8 +98,8 @@ export class ScheduleHandler {
                 }
             }
 
-            logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
-            logger.info(this.node,`whereClause: ${JSON.stringify(whereClause)}`);
+            // logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
+            // logger.info(this.node,`whereClause: ${JSON.stringify(whereClause)}`);
             const [schedules, total] = await this.scheduleRepo.findAndCount({
                 where: whereClause,
                 take: size,
@@ -107,7 +107,7 @@ export class ScheduleHandler {
                 order: { [field]: direction.toUpperCase() },
                 relations: { schedulePlan: true },
             });
-            logger.info(this.node, `Found ${schedules.length} schedules (total: ${total})`);
+            // logger.info(this.node, `Found ${schedules.length} schedules (total: ${total})`);
 
             // const scheduleDtos = plainToInstance(TabiotScheduleDto, schedules.map(s => ({
             //     ...s,
@@ -124,7 +124,7 @@ export class ScheduleHandler {
                 order_by: orderBy,
             };
             const result = convertObjectArray(schedules);
-            console.log(result);
+            // console.log(result);
             // msg.payload = { result: { data: convertObjectArray(schedules), pagination } };
             msg.payload = { result };
             return msg;
@@ -134,7 +134,7 @@ export class ScheduleHandler {
     }
 
     private async handlePost(path: string, msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
-        if (path !== API_PATHS.SCHEDULE) {
+        if (path !== `${API_PATHS.SCHEDULE}/ver2`) {
             throw new Error('Invalid POST endpoint');
         }
 
@@ -145,8 +145,9 @@ export class ScheduleHandler {
 
         try {
             // Validate payload against DTO
-            const dto = await validateDto(TabiotScheduleDto, payload);
-
+            console.log("request post body", payload);
+            // const dto = await validateDto(TabiotScheduleDto, payload);
+            const dto = payload
             // Map DTO to entity
             const actionString = JSON.stringify(dto.action || {});
             const enable = dto.enable ? 1 : 0;
@@ -169,7 +170,7 @@ export class ScheduleHandler {
                 name,
                 label: dto.name,
                 action: actionString,
-                enable,
+                enable: Number(dto.enable) || 1,
                 device_id: dto.device_id,
                 start_date: dto.start_date,
                 end_date: dto.end_date,
@@ -177,7 +178,7 @@ export class ScheduleHandler {
                 interval: dto.interval,
                 start_time: dto.start_time,
                 end_time: dto.end_time,
-                status: dto.status || '',
+                status: dto.status || 'finished',
                 schedule_plan_id: dto.schedule_plan_id,
                 is_deleted: 0,
                 is_synced: 0,
@@ -191,7 +192,6 @@ export class ScheduleHandler {
             const schedule = this.scheduleRepo.create(scheduleData);
             const savedSchedule = await this.scheduleRepo.save(schedule);
             logger.info(this.node, `Schedule saved successfully`);
-
             // Sync to server
             try {
                 logger.info(this.node, 'Starting schedule sync to server');
@@ -230,7 +230,7 @@ export class ScheduleHandler {
     }
 
     private async handlePut(path: string, msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
-        if (!path.startsWith(`${API_PATHS.SCHEDULE}`)) {
+        if (!path.startsWith(`${API_PATHS.SCHEDULE}/ver2`)) {
             throw new Error('Invalid PUT endpoint');
         }
 
@@ -244,10 +244,33 @@ export class ScheduleHandler {
             throw new Error('No valid schedule name provided in payload');
         }
 
+        // Get existing schedule to check current status
+        const existingSchedule = await this.scheduleRepo.findOne({
+            where: { name },
+            select: ['status']
+        });
+
+        if (!existingSchedule) {
+            throw new Error(`Schedule with name ${name} not found`);
+        }
+
+        // Validate payload against DTO
+        const dto = payload as any;
+
+        // Prevent changing status from running to finished
+        if (existingSchedule.status === 'running' && dto.status === 'finished') {
+            throw new Error('Cannot change schedule status from running to finished directly');
+        }
+
+        // Prevent changing status from running to finished
+        if (existingSchedule.status === 'running' && dto.status === 'finished') {
+            throw new Error('Cannot change schedule status from running to finished directly');
+        }
+
         try {
             // Validate payload against DTO
-            const dto = await validateDto(TabiotScheduleDto, payload);
-
+            // const dto = await validateDto(TabiotScheduleDto, payload);
+            const dto = payload
             // Map DTO to entity
             const updateData: Partial<TabiotSchedule> = {
                 label: dto.name,
@@ -256,7 +279,7 @@ export class ScheduleHandler {
                 device_id: dto.device_id,
                 start_date: dto.start_date,
                 end_date: dto.end_date,
-                type: dto.type,
+                type: dto.type || '',
                 interval: dto.interval,
                 start_time: dto.start_time,
                 end_time: dto.end_time,

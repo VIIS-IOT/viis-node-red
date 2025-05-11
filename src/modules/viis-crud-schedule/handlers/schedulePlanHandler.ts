@@ -215,7 +215,7 @@ export class SchedulePlanHandler {
 
         let payload = msg.payload;
 
-        if (path !== API_PATHS.SCHEDULE_PLAN) {
+        if (path !== `${API_PATHS.SCHEDULE_PLAN}/ver2`) {
             console.error('Invalid POST endpoint', { path });
             throw new Error('Invalid POST endpoint');
         }
@@ -310,8 +310,9 @@ export class SchedulePlanHandler {
     private async handlePut(path: string, msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
         console.log('Starting handlePut', { path, payload: msg.payload });
 
-        if (path !== API_PATHS.SCHEDULE_PLAN) {
+        if (!path.startsWith(`${API_PATHS.SCHEDULE_PLAN}/ver2`)) {
             console.error('Invalid PUT endpoint', { path });
+            console.error(`correct path: ${API_PATHS.SCHEDULE_PLAN}/ver2`)
             throw new Error('Invalid PUT endpoint');
         }
 
@@ -344,6 +345,18 @@ export class SchedulePlanHandler {
                 throw new Error(`Schedule plan with name ${name} not found`);
             }
 
+            // Check if there are any running schedules in this plan
+            const runningSchedules = await this.planRepo.createQueryBuilder('plan')
+                .leftJoinAndSelect('plan.schedules', 'schedule')
+                .where('plan.name = :planName', { planName: name })
+                .andWhere('schedule.status = :status', { status: 'running' })
+                .getCount();
+
+            // Prevent disabling if there are running schedules
+            if (dto.enable === 0 && runningSchedules > 0) {
+                throw new Error('Cannot disable schedule plan while it has running schedules');
+            }
+
             const updateData: Partial<TabiotSchedulePlan> = {
                 label: dto.label,
                 schedule_count: dto.schedule_count,
@@ -374,7 +387,7 @@ export class SchedulePlanHandler {
             console.log('Retrieving updated plan', { name });
             const updated = await this.planRepo.findOneBy({ name });
             console.log('Retrieved updated plan', { updated });
-
+            
             if (!updated) {
                 console.error('Failed to retrieve updated plan', { name });
                 logger.error(this.node, `Failed to retrieve updated schedule plan ${name} after successful update`);

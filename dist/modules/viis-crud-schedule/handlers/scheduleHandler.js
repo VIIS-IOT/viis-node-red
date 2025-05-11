@@ -20,7 +20,6 @@ const scheduleValidator_1 = require("../utils/scheduleValidator");
 const helper_1 = require("../../../ultils/helper");
 const class_transformer_1 = require("class-transformer");
 const schedule_dto_1 = require("../dto/schedule.dto");
-const validation_1 = require("../utils/validation");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importDefault(require("typedi"));
 class ScheduleHandler {
@@ -97,8 +96,8 @@ class ScheduleHandler {
                         logger_1.logger.info(this.node, 'Failed to parse filters, using default query');
                     }
                 }
-                logger_1.logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
-                logger_1.logger.info(this.node, `whereClause: ${JSON.stringify(whereClause)}`);
+                // logger.info(this.node, `Querying schedules with pagination: page=${page}, size=${size}, order_by=${orderBy}`);
+                // logger.info(this.node,`whereClause: ${JSON.stringify(whereClause)}`);
                 const [schedules, total] = yield this.scheduleRepo.findAndCount({
                     where: whereClause,
                     take: size,
@@ -106,7 +105,7 @@ class ScheduleHandler {
                     order: { [field]: direction.toUpperCase() },
                     relations: { schedulePlan: true },
                 });
-                logger_1.logger.info(this.node, `Found ${schedules.length} schedules (total: ${total})`);
+                // logger.info(this.node, `Found ${schedules.length} schedules (total: ${total})`);
                 // const scheduleDtos = plainToInstance(TabiotScheduleDto, schedules.map(s => ({
                 //     ...s,
                 //     name: s.label, // Map label to name
@@ -121,7 +120,7 @@ class ScheduleHandler {
                     order_by: orderBy,
                 };
                 const result = (0, scheduleValidator_1.convertObjectArray)(schedules);
-                console.log(result);
+                // console.log(result);
                 // msg.payload = { result: { data: convertObjectArray(schedules), pagination } };
                 msg.payload = { result };
                 return msg;
@@ -133,7 +132,7 @@ class ScheduleHandler {
     }
     handlePost(path, msg) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (path !== constants_1.API_PATHS.SCHEDULE) {
+            if (path !== `${constants_1.API_PATHS.SCHEDULE}/ver2`) {
                 throw new Error('Invalid POST endpoint');
             }
             const payload = msg.payload;
@@ -142,7 +141,9 @@ class ScheduleHandler {
             }
             try {
                 // Validate payload against DTO
-                const dto = yield (0, validation_1.validateDto)(schedule_dto_1.TabiotScheduleDto, payload);
+                console.log("request post body", payload);
+                // const dto = await validateDto(TabiotScheduleDto, payload);
+                const dto = payload;
                 // Map DTO to entity
                 const actionString = JSON.stringify(dto.action || {});
                 const enable = dto.enable ? 1 : 0;
@@ -151,7 +152,7 @@ class ScheduleHandler {
                     name,
                     label: dto.name,
                     action: actionString,
-                    enable,
+                    enable: Number(dto.enable) || 1,
                     device_id: dto.device_id,
                     start_date: dto.start_date,
                     end_date: dto.end_date,
@@ -159,7 +160,7 @@ class ScheduleHandler {
                     interval: dto.interval,
                     start_time: dto.start_time,
                     end_time: dto.end_time,
-                    status: dto.status || '',
+                    status: dto.status || 'finished',
                     schedule_plan_id: dto.schedule_plan_id,
                     is_deleted: 0,
                     is_synced: 0,
@@ -204,7 +205,7 @@ class ScheduleHandler {
     }
     handlePut(path, msg) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE}`)) {
+            if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE}/ver2`)) {
                 throw new Error('Invalid PUT endpoint');
             }
             const payload = msg.payload;
@@ -215,9 +216,28 @@ class ScheduleHandler {
             if (!name || typeof name !== 'string') {
                 throw new Error('No valid schedule name provided in payload');
             }
+            // Get existing schedule to check current status
+            const existingSchedule = yield this.scheduleRepo.findOne({
+                where: { name },
+                select: ['status']
+            });
+            if (!existingSchedule) {
+                throw new Error(`Schedule with name ${name} not found`);
+            }
+            // Validate payload against DTO
+            const dto = payload;
+            // Prevent changing status from running to finished
+            if (existingSchedule.status === 'running' && dto.status === 'finished') {
+                throw new Error('Cannot change schedule status from running to finished directly');
+            }
+            // Prevent changing status from running to finished
+            if (existingSchedule.status === 'running' && dto.status === 'finished') {
+                throw new Error('Cannot change schedule status from running to finished directly');
+            }
             try {
                 // Validate payload against DTO
-                const dto = yield (0, validation_1.validateDto)(schedule_dto_1.TabiotScheduleDto, payload);
+                // const dto = await validateDto(TabiotScheduleDto, payload);
+                const dto = payload;
                 // Map DTO to entity
                 const updateData = {
                     label: dto.name,
@@ -226,7 +246,7 @@ class ScheduleHandler {
                     device_id: dto.device_id,
                     start_date: dto.start_date,
                     end_date: dto.end_date,
-                    type: dto.type,
+                    type: dto.type || '',
                     interval: dto.interval,
                     start_time: dto.start_time,
                     end_time: dto.end_time,
