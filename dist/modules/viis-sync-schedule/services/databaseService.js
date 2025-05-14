@@ -2,6 +2,9 @@
 /**
  * @fileoverview Database service for VIIS Sync Schedule module
  * Handles database connections and repository access
+ *
+ * Note: This service doesn't initialize a new database connection,
+ * but uses the existing AppDataSource which is initialized when Node-RED loads.
  */
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -31,25 +34,30 @@ class DatabaseService {
         this.dataSource = dataSource_1.AppDataSource;
     }
     /**
-     * Initializes the database connection
-     * @returns Promise that resolves when database is initialized
+     * Verifies the database connection is active
+     * @returns Promise that resolves when database connection is verified
      */
     initialize() {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!this.initialized) {
-                try {
-                    logger_1.logger.info(null, 'Initializing database connection...');
-                    yield this.dataSource.initialize();
-                    this.initialized = true;
-                    logger_1.logger.info(null, 'Database initialized successfully');
+            try {
+                // Simply check if the DataSource is initialized
+                if (!this.dataSource.isInitialized) {
+                    logger_1.logger.warn(null, 'DataSource is not initialized, waiting for initialization...');
+                    // Wait for a short period to see if it gets initialized by another process
+                    yield new Promise(resolve => setTimeout(resolve, 2000));
+                    // Check again after waiting
+                    if (!this.dataSource.isInitialized) {
+                        logger_1.logger.error(null, 'DataSource still not initialized after waiting');
+                        throw new Error('Database connection not available');
+                    }
                 }
-                catch (error) {
-                    logger_1.logger.error(null, `Failed to initialize database: ${error.message}`);
-                    throw error;
-                }
+                // If we get here, the connection is active
+                this.initialized = true;
+                logger_1.logger.info(null, 'Database connection verified successfully');
             }
-            else {
-                logger_1.logger.info(null, 'Database already initialized, skipping.');
+            catch (error) {
+                logger_1.logger.error(null, `Failed to verify database connection: ${error.message}`);
+                throw error;
             }
         });
     }
@@ -63,26 +71,22 @@ class DatabaseService {
         return status;
     }
     /**
-     * Closes the database connection
-     * @returns Promise that resolves when database connection is closed
+     * Marks the service as no longer using the database connection
+     * Note: Does not actually close the connection as it may be used by other services
+     * @returns Promise that resolves immediately
      */
     destroy() {
         return __awaiter(this, void 0, void 0, function* () {
             if (this.initialized) {
-                try {
-                    logger_1.logger.info(null, 'Destroying database connection...');
-                    yield this.dataSource.destroy();
-                    this.initialized = false;
-                    logger_1.logger.info(null, 'Database connection destroyed');
-                }
-                catch (error) {
-                    logger_1.logger.error(null, `Error while destroying database connection: ${error.message}`);
-                    throw error;
-                }
+                // Simply mark as no longer initialized in this service
+                // but don't actually destroy the connection as it might be used elsewhere
+                this.initialized = false;
+                logger_1.logger.info(null, 'Database service marked as destroyed');
             }
             else {
-                logger_1.logger.info(null, 'Destroy called, but database is not initialized.');
+                logger_1.logger.info(null, 'Destroy called, but database service is not initialized.');
             }
+            return Promise.resolve();
         });
     }
     /**

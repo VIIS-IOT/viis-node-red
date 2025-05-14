@@ -67,7 +67,7 @@ class ScheduleSyncHandler {
                 logger_1.logger.info(this.node, 'Starting synchronization of all schedule plans and schedules');
                 // Fetch all schedule plans and schedules from server
                 const serverResponse = yield this.apiService.getAllSchedulePlans();
-                const serverPlans = serverResponse.data;
+                const serverPlans = serverResponse.result.data;
                 this.syncStats.totalPlans = serverPlans.length;
                 logger_1.logger.info(this.node, `Received ${serverPlans.length} schedule plans from server`);
                 // Process each schedule plan

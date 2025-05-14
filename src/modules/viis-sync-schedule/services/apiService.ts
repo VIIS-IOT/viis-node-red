@@ -44,14 +44,13 @@ export class ApiService {
      */
     async getAllSchedulePlans(): Promise<ServerResponse<ServerSchedulePlan[]>> {
         logger.info(null, 'Fetching all schedule plans from server');
-        const url = `/schedulePlan/device/all/${this.accessToken}`;
+        const url = `api/v2/schedulePlan/device/all/${this.accessToken}`;
         
         return withRetry(async () => {
             try {
                 logger.debug(null, `Making GET request to: ${url}`);
                 const response = await this.instance.get<ServerResponse<ServerSchedulePlan[]>>(url);
-                
-                const plansCount = response.data.data?.length || 0;
+                const plansCount = response.data.result.data.length || 0;
                 logger.info(null, `Received ${plansCount} schedule plans from server`);
                 
                 return response.data;

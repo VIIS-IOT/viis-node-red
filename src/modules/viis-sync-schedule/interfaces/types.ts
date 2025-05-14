@@ -107,10 +107,12 @@ export interface ServerSchedule {
  * Server API response format
  */
 export interface ServerResponse<T> {
-    /** HTTP status code */
-    status: number;
-    /** Response message */
-    message: string;
-    /** Response data */
-    data: T;
+    result: {
+        /** HTTP status code */
+        status: number;
+        /** Response message */
+        message: string;
+        /** Response result */
+        data: T;
+    }
 }

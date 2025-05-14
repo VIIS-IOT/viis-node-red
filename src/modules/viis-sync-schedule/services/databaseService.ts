@@ -1,6 +1,9 @@
 /**
  * @fileoverview Database service for VIIS Sync Schedule module
  * Handles database connections and repository access
+ * 
+ * Note: This service doesn't initialize a new database connection,
+ * but uses the existing AppDataSource which is initialized when Node-RED loads.
  */
 
 import { Node } from 'node-red';
@@ -27,22 +30,31 @@ export class DatabaseService {
     }
 
     /**
-     * Initializes the database connection
-     * @returns Promise that resolves when database is initialized
+     * Verifies the database connection is active
+     * @returns Promise that resolves when database connection is verified
      */
     async initialize(): Promise<void> {
-        if (!this.initialized) {
-            try {
-                logger.info(null, 'Initializing database connection...');
-                await this.dataSource.initialize();
-                this.initialized = true;
-                logger.info(null, 'Database initialized successfully');
-            } catch (error) {
-                logger.error(null, `Failed to initialize database: ${(error as Error).message}`);
-                throw error;
+        try {
+            // Simply check if the DataSource is initialized
+            if (!this.dataSource.isInitialized) {
+                logger.warn(null, 'DataSource is not initialized, waiting for initialization...');
+                
+                // Wait for a short period to see if it gets initialized by another process
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Check again after waiting
+                if (!this.dataSource.isInitialized) {
+                    logger.error(null, 'DataSource still not initialized after waiting');
+                    throw new Error('Database connection not available');
+                }
             }
-        } else {
-            logger.info(null, 'Database already initialized, skipping.');
+            
+            // If we get here, the connection is active
+            this.initialized = true;
+            logger.info(null, 'Database connection verified successfully');
+        } catch (error) {
+            logger.error(null, `Failed to verify database connection: ${(error as Error).message}`);
+            throw error;
         }
     }
 
@@ -57,23 +69,20 @@ export class DatabaseService {
     }
 
     /**
-     * Closes the database connection
-     * @returns Promise that resolves when database connection is closed
+     * Marks the service as no longer using the database connection
+     * Note: Does not actually close the connection as it may be used by other services
+     * @returns Promise that resolves immediately
      */
     async destroy(): Promise<void> {
         if (this.initialized) {
-            try {
-                logger.info(null, 'Destroying database connection...');
-                await this.dataSource.destroy();
-                this.initialized = false;
-                logger.info(null, 'Database connection destroyed');
-            } catch (error) {
-                logger.error(null, `Error while destroying database connection: ${(error as Error).message}`);
-                throw error;
-            }
+            // Simply mark as no longer initialized in this service
+            // but don't actually destroy the connection as it might be used elsewhere
+            this.initialized = false;
+            logger.info(null, 'Database service marked as destroyed');
         } else {
-            logger.info(null, 'Destroy called, but database is not initialized.');
+            logger.info(null, 'Destroy called, but database service is not initialized.');
         }
+        return Promise.resolve();
     }
 
     /**

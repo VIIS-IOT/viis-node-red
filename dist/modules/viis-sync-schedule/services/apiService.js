@@ -49,13 +49,12 @@ class ApiService {
     getAllSchedulePlans() {
         return __awaiter(this, void 0, void 0, function* () {
             logger_1.logger.info(null, 'Fetching all schedule plans from server');
-            const url = `/schedulePlan/device/all/${this.accessToken}`;
+            const url = `api/v2/schedulePlan/device/all/${this.accessToken}`;
             return (0, retry_1.withRetry)(() => __awaiter(this, void 0, void 0, function* () {
-                var _a;
                 try {
                     logger_1.logger.debug(null, `Making GET request to: ${url}`);
                     const response = yield this.instance.get(url);
-                    const plansCount = ((_a = response.data.data) === null || _a === void 0 ? void 0 : _a.length) || 0;
+                    const plansCount = response.data.result.data.length || 0;
                     logger_1.logger.info(null, `Received ${plansCount} schedule plans from server`);
                     return response.data;
                 }

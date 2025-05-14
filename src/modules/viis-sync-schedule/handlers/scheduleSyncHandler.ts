@@ -88,7 +88,7 @@ export class ScheduleSyncHandler {
             
             // Fetch all schedule plans and schedules from server
             const serverResponse = await this.apiService.getAllSchedulePlans();
-            const serverPlans = serverResponse.data;
+            const serverPlans = serverResponse.result.data;
             
             this.syncStats.totalPlans = serverPlans.length;
             logger.info(this.node, `Received ${serverPlans.length} schedule plans from server`);
