@@ -6,7 +6,7 @@
 <script type="text/javascript">
     RED.nodes.registerType('viis-sync-schedule', {
         category: 'VIIS',
-        color: '#129990',
+        color: '#90D1CA',
         defaults: {
             name: { value: "" },
             accessToken: { value: "", required: true },
@@ -17,7 +17,7 @@
         },
         inputs: 1,
         outputs: 1,
-        icon: "/icons/sync.png",
+        icon: "/sync.png",
         label: function() {
             return this.name || "VIIS Sync Schedule";
         },
