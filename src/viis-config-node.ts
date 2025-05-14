@@ -1,22 +1,53 @@
+/**
+ * @fileoverview Configuration node for VIIS IoT device management
+ * This file provides the core configuration node that manages MQTT connections
+ * for IoT devices in the VIIS system. It handles device authentication,
+ * connection management, and message processing.
+ */
+
 import { NodeAPI, NodeDef, Node } from "node-red";
 import mqtt, { MqttClient } from "mqtt";
 import { v4 } from "uuid";
 import { mqttServerUrl } from "./const";
 
+/**
+ * Represents an IoT device with its connection credentials and MQTT client
+ * @interface Device
+ */
 export interface Device {
+  /** Unique identifier for the device */
   id: string;
+  /** Authentication token used for MQTT connection */
   accessToken: string;
+  /** MQTT client instance for device communication */
   clientMQtt?: MqttClient;
 }
 
+/**
+ * Configuration definition for the VIIS config node
+ * @interface ViisConfigNodeDef
+ * @extends NodeDef
+ */
 interface ViisConfigNodeDef extends NodeDef {
+  /** Device configuration information */
   device: Device;
 }
 
+/**
+ * Runtime instance of the VIIS config node
+ * @interface ViisConfigNode
+ * @extends Node
+ */
 export interface ViisConfigNode extends Node {
+  /** Device instance with connection state */
   device: Device;
 }
 
+/**
+ * Safely parses a JSON message string, returning null on parse errors
+ * @param {string} msg - The message string to parse
+ * @returns {object|null} Parsed JSON object or null if parsing fails
+ */
 const parseMesssageIgnoreError = (msg: string) => {
   try {
     return JSON.parse(msg);
@@ -25,12 +56,24 @@ const parseMesssageIgnoreError = (msg: string) => {
   }
 };
 
+/**
+ * Node-RED node registration function
+ * @param {NodeAPI} RED - The Node-RED API object
+ */
 module.exports = function (RED: NodeAPI) {
+  /**
+   * Constructor for the VIIS configuration node
+   * @param {ViisConfigNodeDef} config - Configuration settings for this node
+   */
   function ViisConfigNode(this: ViisConfigNode, config: ViisConfigNodeDef) {
     RED.nodes.createNode(this, config);
     this.device = config.device || { id: "", accessToken: "" };
     const node = this;
 
+    /**
+     * Establishes MQTT connection for the device
+     * Sets up event handlers for connection, message reception, errors, and disconnection
+     */
     const connectMQTT = () => {
       if (!this.device.clientMQtt || !this.device.clientMQtt.connected) {
         const mqttOptions = {
@@ -81,6 +124,10 @@ module.exports = function (RED: NodeAPI) {
       }
     };
 
+    /**
+     * Closes the MQTT connection for the device
+     * Emits disconnection status event to notify other nodes
+     */
     const disconnectMQTT = () => {
       if (this.device.clientMQtt && this.device.clientMQtt.connected) {
         this.device.clientMQtt.end();
