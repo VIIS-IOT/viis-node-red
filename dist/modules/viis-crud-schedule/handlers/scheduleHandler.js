@@ -22,6 +22,8 @@ const class_transformer_1 = require("class-transformer");
 const schedule_dto_1 = require("../dto/schedule.dto");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importDefault(require("typedi"));
+const moment_timezone_1 = __importDefault(require("moment-timezone"));
+const typeorm_1 = require("typeorm");
 class ScheduleHandler {
     constructor(dbService, node) {
         this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
@@ -73,7 +75,10 @@ class ScheduleHandler {
     }
     handleGet(path, query, msg) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (path !== constants_1.API_PATHS.SCHEDULE) {
+            if (path === constants_1.API_PATHS.SCHEDULE_RUNNING) {
+                return yield this.handleGetRunningSchedules(query, msg);
+            }
+            else if (path !== constants_1.API_PATHS.SCHEDULE) {
                 throw new Error('Invalid GET endpoint');
             }
             const page = parseInt(query === null || query === void 0 ? void 0 : query.page) || 1;
@@ -294,6 +299,129 @@ class ScheduleHandler {
             catch (error) {
                 logger_1.logger.error(this.node, `PUT request failed: ${error.message}`);
                 throw error; // Let handleRequest catch and handle it
+            }
+        });
+    }
+    handleGetRunningSchedules(query, msg) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                // Parse pagination parameters
+                const page = parseInt(query === null || query === void 0 ? void 0 : query.page) || 1;
+                const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 10000;
+                const skip = (page - 1) * size;
+                // Parse filters if provided
+                let whereOptions = {
+                    is_deleted: 0,
+                    enable: 1,
+                    status: 'running'
+                };
+                if (query === null || query === void 0 ? void 0 : query.filters) {
+                    try {
+                        const filters = JSON.parse(query.filters);
+                        for (const filter of filters) {
+                            if (filter[0] === 'iot_schedule') {
+                                const field = filter[1];
+                                const operator = filter[2];
+                                const value = filter[3];
+                                if (operator === 'like') {
+                                    whereOptions[field] = (0, typeorm_1.ILike)(`%${value}%`);
+                                }
+                                else if (operator === '=') {
+                                    whereOptions[field] = value;
+                                }
+                                // Add more operators as needed
+                            }
+                        }
+                    }
+                    catch (filterError) {
+                        logger_1.logger.error(this.node, `Error parsing filters: ${filterError.message}`);
+                    }
+                }
+                // Get device list for current user
+                // In a real implementation, this would need to be adapted to use your actual device management system
+                // For this implementation, I'll retrieve all devices from schedules instead
+                // First, get distinct device_ids from the schedule table
+                const deviceQuery = yield this.scheduleRepo.createQueryBuilder('schedule')
+                    .select('DISTINCT schedule.device_id', 'device_id')
+                    .where('schedule.is_deleted = 0')
+                    .getRawMany();
+                const deviceIds = deviceQuery.map(item => item.device_id).filter(Boolean);
+                // Apply device filter
+                if (deviceIds.length > 0) {
+                    whereOptions.device_id = deviceIds;
+                }
+                // Query for schedules
+                const [schedules, totalCount] = yield this.scheduleRepo.findAndCount({
+                    where: whereOptions,
+                    relations: ['schedulePlan'],
+                    order: { creation: 'DESC' },
+                    skip,
+                    take: size
+                });
+                // Process schedules to include required data
+                const enrichedData = schedules.map(schedule => {
+                    var _a, _b, _c, _d;
+                    // Format date to string using moment to avoid Date.split() error
+                    const modifiedDate = schedule.modified ?
+                        (0, moment_timezone_1.default)(schedule.modified).format('YYYY-MM-DD') :
+                        (0, moment_timezone_1.default)().format('YYYY-MM-DD');
+                    const startTime = schedule.start_time ?
+                        moment_timezone_1.default.tz(`${modifiedDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Ho_Chi_Minh')
+                            .utc().valueOf() : null;
+                    const endTime = schedule.end_time ?
+                        moment_timezone_1.default.tz(`${modifiedDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Ho_Chi_Minh')
+                            .utc().valueOf() : null;
+                    return {
+                        id: schedule.name,
+                        device_id: schedule.device_id,
+                        device_name: schedule.device_label || schedule.device_id,
+                        action: JSON.parse(schedule.action || '{}'),
+                        enable: schedule.enable === 1,
+                        name: schedule.label,
+                        interval: schedule.interval,
+                        set_time: schedule.set_time,
+                        start_time: schedule.start_time,
+                        end_time: schedule.end_time,
+                        start_date: schedule.start_date ?
+                            (0, moment_timezone_1.default)(schedule.start_date).format('YYYY-MM-DD') : undefined,
+                        end_date: schedule.end_date ?
+                            (0, moment_timezone_1.default)(schedule.end_date).format('YYYY-MM-DD') : undefined,
+                        type: schedule.type,
+                        schedule_plan_id: (_a = schedule.schedulePlan) === null || _a === void 0 ? void 0 : _a.name,
+                        sp_start_date: ((_b = schedule.schedulePlan) === null || _b === void 0 ? void 0 : _b.start_date) ?
+                            (0, moment_timezone_1.default)(schedule.schedulePlan.start_date).format('YYYY-MM-DD') : undefined,
+                        sp_end_date: ((_c = schedule.schedulePlan) === null || _c === void 0 ? void 0 : _c.end_date) ?
+                            (0, moment_timezone_1.default)(schedule.schedulePlan.end_date).format('YYYY-MM-DD') : undefined,
+                        sp_label: (_d = schedule.schedulePlan) === null || _d === void 0 ? void 0 : _d.label,
+                        creation: schedule.creation,
+                        modified: schedule.modified,
+                        errors: [], // Not implementing notifications as requested
+                        warnings: [] // Not implementing notifications as requested
+                    };
+                });
+                // Prepare pagination info
+                const pagination = {
+                    totalElements: totalCount,
+                    totalPages: Math.ceil(totalCount / size),
+                    pageSize: size,
+                    pageNumber: page,
+                    order_by: (query === null || query === void 0 ? void 0 : query.order_by) || null
+                };
+                // Prepare response
+                msg.payload = {
+                    data: enrichedData,
+                    pagination: pagination
+                };
+                if ('statusCode' in msg)
+                    msg.statusCode = 200;
+                return msg;
+            }
+            catch (error) {
+                logger_1.logger.error(this.node, `Error fetching running schedules: ${error.message}`);
+                msg.payload = { error: error.message };
+                if ('statusCode' in msg)
+                    msg.statusCode = 500;
+                return msg;
             }
         });
     }
