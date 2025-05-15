@@ -462,9 +462,11 @@ export class ScheduleHandler {
             
             // Prepare response
             msg.payload = {
-                data: enrichedData,
-                pagination: pagination
-            };
+                result:{
+                    data: enrichedData,
+                    pagination: pagination
+                }
+            }
             
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
