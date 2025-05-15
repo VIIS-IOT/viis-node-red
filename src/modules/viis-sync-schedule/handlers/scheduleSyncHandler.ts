@@ -241,7 +241,7 @@ export class ScheduleSyncHandler {
                 label: serverPlan.label,
                 modified: serverModified,
                 schedule_count: serverPlan.schedule_count,
-                status: serverPlan.status || '',
+                status: serverPlan.status || 'active',
                 is_deleted: serverPlan.is_deleted,
                 enable: serverPlan.enable,
                 is_synced: 1, // Mark as synced
@@ -403,7 +403,7 @@ export class ScheduleSyncHandler {
                 end_time: serverSchedule.end_time,
                 start_date: serverSchedule.start_date ? new Date(serverSchedule.start_date) : null,
                 end_date: serverSchedule.end_date ? new Date(serverSchedule.end_date) : null,
-                type: serverSchedule.type,
+                type: serverSchedule.type || 'default',
                 interval: serverSchedule.interval,
                 is_synced: 1, // Mark as synced
                 is_deleted: serverSchedule.is_deleted,
