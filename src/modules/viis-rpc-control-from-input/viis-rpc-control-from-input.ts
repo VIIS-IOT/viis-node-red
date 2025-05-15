@@ -1,10 +1,12 @@
 import { NodeAPI, NodeDef, Node } from "node-red";
 import ClientRegistry from "../../core/client-registry";
 import { ModbusData } from "../../core/modbus-client";
+import { MqttConfig, MqttClientCore, MqttMessage } from "../../core/mqtt-client";
 
 interface ViisRpcControlFromInputNodeDef extends NodeDef {
     configKeys: string;
     scaleConfigs: string;
+    mqttBroker: string;
 }
 
 interface ScaleConfig {
@@ -95,6 +97,10 @@ module.exports = function (RED: NodeAPI) {
         const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
         
         // Initialize modbus client
+        // Environment variables
+        const deviceId = process.env.DEVICE_ID || "unknown";
+        
+        // Modbus config
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
@@ -107,7 +113,58 @@ module.exports = function (RED: NodeAPI) {
             reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
         };
         
+        // MQTT config
+        const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
+            ? {
+                broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
+                clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substr(2, 8)}`,
+                username: process.env.DEVICE_ACCESS_TOKEN || "",
+                password: process.env.THINGSBOARD_PASSWORD || "",
+                qos: 1,
+            }
+            : {
+                broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
+                clientId: `node-red-local-rpc-${Math.random().toString(16).substr(2, 8)}`,
+                username: process.env.EMQX_USERNAME || "",
+                password: process.env.EMQX_PASSWORD || "",
+                qos: 1,
+            };
+            
+        const publishTopic = config.mqttBroker === "thingsboard"
+            ? "v1/devices/me/telemetry"
+            : `v1/devices/me/telemetry/${deviceId}`;
+            
+        // Lấy clients
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+        let mqttClient: MqttClientCore | null = null;
+        
+        // Khởi tạo MQTT client nếu cần (async/sync)
+        if (config.mqttBroker) {
+            try {
+                // Lấy MQTT client theo cách synchronous
+                if (config.mqttBroker === "thingsboard") {
+                    ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+                        .then(client => {
+                            mqttClient = client;
+                            node.log(`Thingsboard MQTT client initialized: ${mqttClient.isConnected()}`);
+                        })
+                        .catch(error => {
+                            node.error(`Failed to initialize Thingsboard MQTT client: ${error.message}`);
+                        });
+                } else {
+                    ClientRegistry.getLocalMqttClient(mqttConfig, node)
+                        .then(client => {
+                            mqttClient = client;
+                            node.log(`Local MQTT client initialized: ${mqttClient.isConnected()}`);
+                        })
+                        .catch(error => {
+                            node.error(`Failed to initialize Local MQTT client: ${error.message}`);
+                        });
+                }
+            } catch (error) {
+                node.error(`Failed to initialize MQTT client: ${(error as Error).message}`);
+            }
+        }
         
         if (!modbusClient) {
             node.error("Failed to initialize modbus client");
@@ -209,6 +266,25 @@ module.exports = function (RED: NodeAPI) {
             }
         }
         
+        // Utility để publish kết quả lên MQTT
+        async function publishResult(key: string, value: number | boolean): Promise<void> {
+            if (!mqttClient) 
+                {
+                    console.log("there is no mqttClient connected")
+                    return};
+            
+            try {
+                const mqttPayload = {
+                    ts: Date.now(),
+                    [key]: value,
+                };
+                await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+                node.log(`Published to MQTT: ${key}=${value}`);
+            } catch (error) {
+                node.error(`MQTT publish error for ${key}: ${(error as Error).message}`);
+            }
+        }
+        
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
@@ -220,12 +296,18 @@ module.exports = function (RED: NodeAPI) {
                             await writeToModbus(key, mapping, value);
                             const readValue = await readFromModbus(key, mapping);
                             
-                            // Tạo payload để send đi
+                            // Tạo payload để send đi qua node output
                             const resultPayload = {
                                 ts: Date.now(),
                                 [key]: readValue,
                             };
                             node.send({ payload: resultPayload });
+                            
+                            // Publish lên MQTT nếu có kết nối
+                            if (mqttClient) {
+                                await publishResult(key, readValue);
+                            }
+                            
                             node.status({ fill: "green", shape: "dot", text: `Set: ${key}=${readValue}` });
                         } else {
                             const value = validateAndConvertValue(key, rawValue);
@@ -239,6 +321,12 @@ module.exports = function (RED: NodeAPI) {
                                 note: "Config key updated (no Modbus mapping)",
                             };
                             node.send({ payload: resultPayload });
+                            
+                            // Publish lên MQTT nếu có kết nối
+                            if (mqttClient) {
+                                await publishResult(key, value);
+                            }
+                            
                             node.status({ fill: "yellow", shape: "dot", text: `Config key: ${key}=${value}` });
                         }
                     }
@@ -257,7 +345,18 @@ module.exports = function (RED: NodeAPI) {
             // Log receipt of message
             node.warn("VIIS-RPC-CONTROL-INPUT: INPUT RECEIVED");
             console.log("VIIS-RPC-CONTROL-INPUT: INPUT RECEIVED");
-            node.warn(`Input msg: ${JSON.stringify(msg)}`);
+            
+            // Chỉ log payload để tránh circular reference
+            try {
+                if (msg.payload) {
+                    node.warn(`Input payload: ${JSON.stringify(msg.payload)}`);
+                }
+                if (msg.method && msg.params) {
+                    node.warn(`Input method: ${msg.method}, params: ${JSON.stringify(msg.params)}`);
+                }
+            } catch (error) {
+                node.warn(`Unable to log message details: ${(error as Error).message}`);
+            }
             
             // Set node status
             node.status({ fill: "blue", shape: "dot", text: "Processing input" });
@@ -292,17 +391,17 @@ module.exports = function (RED: NodeAPI) {
                 // Format: { payload: { method: "set_state", params: { key: value } } }
                 rpcBody.method = msg.payload.method;
                 rpcBody.params = msg.payload.params;
-                node.warn(`Processing RPC from payload: ${JSON.stringify(rpcBody)}`);
+                node.warn(`Processing RPC from payload, method: ${rpcBody.method}`);
             } else if (typeof msg.method === 'string' && msg.method === 'set_state' && msg.params) {
                 // Format: { method: "set_state", params: { key: value } }
                 rpcBody.method = msg.method;
                 rpcBody.params = msg.params;
-                node.warn(`Processing RPC from direct properties: ${JSON.stringify(rpcBody)}`);
+                node.warn(`Processing RPC from direct properties, method: ${rpcBody.method}`);
             } else if (typeof msg.payload === 'object') {
                 // Format: { payload: { key: value } } -> convert to set_state format
                 rpcBody.method = 'set_state';
                 rpcBody.params = msg.payload;
-                node.warn(`Converting payload to RPC format: ${JSON.stringify(rpcBody)}`);
+                node.warn(`Converting payload to RPC format, method: ${rpcBody.method}`);
             } else {
                 node.warn('Invalid input format. Expected RPC command format or direct values.');
                 node.status({ fill: "red", shape: "ring", text: "Invalid format" });
@@ -322,7 +421,15 @@ module.exports = function (RED: NodeAPI) {
                 flowContext.set(CONFIG_KEYS_KEY, {});
                 flowContext.set(CONFIG_VALUES_KEY, {});
                 flowContext.set(MANUAL_OVERRIDES_KEY, {});
+                
+                // Giải phóng các clients
                 ClientRegistry.releaseClient("modbus", node);
+                if (config.mqttBroker === "thingsboard") {
+                    ClientRegistry.releaseClient("thingsboard", node);
+                } else if (config.mqttBroker) {
+                    ClientRegistry.releaseClient("local", node);
+                }
+                
                 node.warn("VIIS RPC Control Input Node closed and context cleaned");
             } catch (error) {
                 node.error(`Close error: ${(error as Error).message}`);

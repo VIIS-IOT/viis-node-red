@@ -5,7 +5,8 @@
         defaults: {
             name: { value: "" },
             configKeys: { value: "{}" },
-            scaleConfigs: { value: "[]" }
+            scaleConfigs: { value: "[]" },
+            mqttBroker: { value: "" }
         },
         inputs: 1,
         outputs: 1,
@@ -182,6 +183,15 @@
     </div>
     
     <div class="form-row">
+        <label for="node-input-mqttBroker"><i class="fa fa-server"></i> MQTT Broker</label>
+        <select id="node-input-mqttBroker">
+            <option value="">None (Only output)</option>
+            <option value="thingsboard">Thingsboard MQTT</option>
+            <option value="local">Local MQTT</option>
+        </select>
+    </div>
+    
+    <div class="form-row">
         <input type="hidden" id="node-input-configKeys">
         <input type="hidden" id="node-input-scaleConfigs">
     </div>
@@ -301,5 +311,13 @@
     <h3>Chi tiết</h3>
     <p>Node này nhận lệnh từ input, chuyển đổi thành lệnh RPC nếu cần, và gửi lệnh tới Modbus. Sau đó đọc lại giá trị
     để xác nhận và gửi kết quả ra output.</p>
-    <p>Dùng node này khi cần gửi lệnh control trực tiếp mà không qua MQTT.</p>
+    <p>Dùng node này khi cần gửi lệnh control trực tiếp.</p>
+    
+    <h3>MQTT Publishing</h3>
+    <p>Nếu bạn chọn một MQTT broker, node sẽ tự động publish kết quả sau khi thực hiện lệnh modbus:</p>
+    <ul>
+        <li><strong>None (Only output)</strong>: Chỉ gửi kết quả ra output, không publish MQTT</li>
+        <li><strong>Thingsboard MQTT</strong>: Publish lên Thingsboard MQTT broker</li>
+        <li><strong>Local MQTT</strong>: Publish lên MQTT broker local</li>
+    </ul>
 </script>
