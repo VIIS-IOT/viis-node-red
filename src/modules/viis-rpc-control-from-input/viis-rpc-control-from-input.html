@@ -1,0 +1,305 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-rpc-control-from-input', {
+        category: 'VIIS',
+        color: '#ffab00',
+        defaults: {
+            name: { value: "" },
+            configKeys: { value: "{}" },
+            scaleConfigs: { value: "[]" }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "font-awesome/fa-wrench",
+        label: function () {
+            return this.name || "RPC Control Input";
+        },
+        paletteLabel: "RPC Control Input",
+        oneditprepare: function () {
+            // Config keys field (object of key: type)
+            const configKeysField = $("#node-input-configKeys");
+            let configKeys = {};
+            
+            try {
+                const configKeysValue = configKeysField.val();
+                if (configKeysValue) {
+                    configKeys = JSON.parse(configKeysValue);
+                }
+            } catch (e) {
+                console.error("Failed to parse configKeys", e);
+            }
+            
+            // Scale configs field (array of objects)
+            const scaleConfigsField = $("#node-input-scaleConfigs");
+            let scaleConfigs = [];
+            
+            try {
+                const scaleConfigsValue = scaleConfigsField.val();
+                if (scaleConfigsValue) {
+                    scaleConfigs = JSON.parse(scaleConfigsValue);
+                }
+            } catch (e) {
+                console.error("Failed to parse scaleConfigs", e);
+            }
+            
+            // Setup Config Keys UI
+            const configKeysContainer = $("#config-keys-container");
+            configKeysContainer.empty();
+            
+            function addConfigKeyRow(key = "", type = "number") {
+                const row = $("<div>").addClass("form-row config-key-row");
+                const keyInput = $("<input>").attr("type", "text").attr("placeholder", "Key").val(key);
+                
+                const typeSelect = $("<select>");
+                typeSelect.append($("<option>").val("number").text("Number"));
+                typeSelect.append($("<option>").val("boolean").text("Boolean"));
+                typeSelect.append($("<option>").val("string").text("String"));
+                typeSelect.val(type);
+                
+                const removeBtn = $("<button>").addClass("red-ui-button").text("Remove");
+                removeBtn.on("click", function() {
+                    row.remove();
+                });
+                
+                row.append($("<div>").addClass("form-row-key").append(keyInput));
+                row.append($("<div>").addClass("form-row-value").append(typeSelect));
+                row.append($("<div>").addClass("form-row-button").append(removeBtn));
+                
+                configKeysContainer.append(row);
+            }
+            
+            // Add existing config keys
+            Object.entries(configKeys).forEach(([key, type]) => {
+                addConfigKeyRow(key, type);
+            });
+            
+            // Add empty row if none exist
+            if (Object.keys(configKeys).length === 0) {
+                addConfigKeyRow();
+            }
+            
+            // Add new config key button
+            $("#add-config-key").on("click", function() {
+                addConfigKeyRow();
+            });
+            
+            // Setup Scale Configs UI
+            const scaleConfigsContainer = $("#scale-configs-container");
+            scaleConfigsContainer.empty();
+            
+            function addScaleConfigRow(key = "", operation = "multiply", factor = 1, direction = "read") {
+                const row = $("<div>").addClass("form-row scale-config-row");
+                
+                const keyInput = $("<input>").attr("type", "text").attr("placeholder", "Key").val(key);
+                
+                const operationSelect = $("<select>");
+                operationSelect.append($("<option>").val("multiply").text("Multiply"));
+                operationSelect.append($("<option>").val("divide").text("Divide"));
+                operationSelect.val(operation);
+                
+                const factorInput = $("<input>").attr("type", "number").attr("step", "0.01").val(factor);
+                
+                const directionSelect = $("<select>");
+                directionSelect.append($("<option>").val("read").text("Read"));
+                directionSelect.append($("<option>").val("write").text("Write"));
+                directionSelect.val(direction);
+                
+                const removeBtn = $("<button>").addClass("red-ui-button").text("Remove");
+                removeBtn.on("click", function() {
+                    row.remove();
+                });
+                
+                row.append($("<div>").addClass("form-col").append(keyInput));
+                row.append($("<div>").addClass("form-col").append(operationSelect));
+                row.append($("<div>").addClass("form-col").append(factorInput));
+                row.append($("<div>").addClass("form-col").append(directionSelect));
+                row.append($("<div>").addClass("form-col").append(removeBtn));
+                
+                scaleConfigsContainer.append(row);
+            }
+            
+            // Add existing scale configs
+            scaleConfigs.forEach(config => {
+                addScaleConfigRow(
+                    config.key,
+                    config.operation,
+                    config.factor,
+                    config.direction
+                );
+            });
+            
+            // Add empty row if none exist
+            if (scaleConfigs.length === 0) {
+                addScaleConfigRow();
+            }
+            
+            // Add new scale config button
+            $("#add-scale-config").on("click", function() {
+                addScaleConfigRow();
+            });
+        },
+        oneditsave: function () {
+            // Save Config Keys
+            const configKeys = {};
+            $(".config-key-row").each(function() {
+                const key = $(this).find("input").val();
+                const type = $(this).find("select").val();
+                
+                if (key) {
+                    configKeys[key] = type;
+                }
+            });
+            $("#node-input-configKeys").val(JSON.stringify(configKeys));
+            
+            // Save Scale Configs
+            const scaleConfigs = [];
+            $(".scale-config-row").each(function() {
+                const inputs = $(this).find("input");
+                const selects = $(this).find("select");
+                
+                const key = inputs.eq(0).val();
+                const operation = selects.eq(0).val();
+                const factor = parseFloat(inputs.eq(1).val());
+                const direction = selects.eq(1).val();
+                
+                if (key) {
+                    scaleConfigs.push({
+                        key,
+                        operation,
+                        factor,
+                        direction
+                    });
+                }
+            });
+            $("#node-input-scaleConfigs").val(JSON.stringify(scaleConfigs));
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-rpc-control-from-input">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    
+    <div class="form-row">
+        <input type="hidden" id="node-input-configKeys">
+        <input type="hidden" id="node-input-scaleConfigs">
+    </div>
+    
+    <div class="form-row">
+        <label><i class="fa fa-list"></i> Config Keys</label>
+        <button id="add-config-key" class="red-ui-button">Add Key</button>
+    </div>
+    
+    <div id="config-keys-container" style="margin-bottom: 20px;">
+        <!-- Config Keys will be populated here -->
+    </div>
+    
+    <div class="form-row">
+        <label><i class="fa fa-calculator"></i> Scale Configs</label>
+        <button id="add-scale-config" class="red-ui-button">Add Scale</button>
+    </div>
+    
+    <div id="scale-configs-container">
+        <!-- Scale Configs will be populated here -->
+    </div>
+</script>
+
+<style>
+    .config-key-row, .scale-config-row {
+        display: flex;
+        margin-bottom: 5px;
+        align-items: center;
+    }
+    
+    .form-row-key {
+        flex: 2;
+        padding-right: 5px;
+    }
+    
+    .form-row-value {
+        flex: 2;
+        padding-right: 5px;
+    }
+    
+    .form-row-button {
+        flex: 1;
+    }
+    
+    .form-col {
+        flex: 1;
+        padding-right: 5px;
+    }
+    
+    .form-col:last-child {
+        padding-right: 0;
+    }
+</style>
+
+<script type="text/html" data-help-name="viis-rpc-control-from-input">
+    <p>Node xử lý lệnh RPC từ input và gửi lệnh tới Modbus</p>
+    
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload
+            <span class="property-type">object</span>
+        </dt>
+        <dd>
+            <p>Có thể là một trong các định dạng sau:</p>
+            <ol>
+                <li><code>{ payload: { method: "set_state", params: { key: value } } }</code></li>
+                <li><code>{ method: "set_state", params: { key: value } }</code></li>
+                <li><code>{ payload: { key: value } }</code> (tự động chuyển đổi thành định dạng set_state)</li>
+            </ol>
+        </dd>
+        
+        <dt class="optional">scaleConfigs
+            <span class="property-type">array</span>
+        </dt>
+        <dd>Cấu hình tỷ lệ đọc/ghi giá trị</dd>
+        
+        <dt class="optional">configKeys
+            <span class="property-type">object</span>
+        </dt>
+        <dd>Cấu hình kiểu dữ liệu cho các key</dd>
+    </dl>
+    
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload
+            <span class="property-type">object</span>
+        </dt>
+        <dd>
+            <p>Kết quả sau khi ghi giá trị vào Modbus và đọc lại để xác nhận, ví dụ:</p>
+            <code>{ ts: 1621234567890, keyName: value }</code>
+        </dd>
+    </dl>
+    
+    <h3>Cấu hình</h3>
+    <dl class="message-properties">
+        <dt>Config Keys</dt>
+        <dd>
+            <p>Xác định kiểu dữ liệu cho mỗi key trong lệnh RPC</p>
+            <ul>
+                <li>Key: Tên của key</li>
+                <li>Type: Kiểu dữ liệu (number, boolean, string)</li>
+            </ul>
+        </dd>
+        
+        <dt>Scale Configs</dt>
+        <dd>
+            <p>Cấu hình tỷ lệ cho giá trị</p>
+            <ul>
+                <li>Key: Tên của key</li>
+                <li>Operation: Phép toán (multiply, divide)</li>
+                <li>Factor: Hệ số</li>
+                <li>Direction: Chiều (read, write)</li>
+            </ul>
+        </dd>
+    </dl>
+    
+    <h3>Chi tiết</h3>
+    <p>Node này nhận lệnh từ input, chuyển đổi thành lệnh RPC nếu cần, và gửi lệnh tới Modbus. Sau đó đọc lại giá trị
+    để xác nhận và gửi kết quả ra output.</p>
+    <p>Dùng node này khi cần gửi lệnh control trực tiếp mà không qua MQTT.</p>
+</script>
