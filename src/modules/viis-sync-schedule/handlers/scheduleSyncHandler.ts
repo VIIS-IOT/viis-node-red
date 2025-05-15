@@ -241,7 +241,7 @@ export class ScheduleSyncHandler {
                 label: serverPlan.label,
                 modified: serverModified,
                 schedule_count: serverPlan.schedule_count,
-                status: serverPlan.status,
+                status: serverPlan.status || '',
                 is_deleted: serverPlan.is_deleted,
                 enable: serverPlan.enable,
                 is_synced: 1, // Mark as synced
@@ -393,7 +393,7 @@ export class ScheduleSyncHandler {
             // Update local schedule with server data
             Object.assign(localSchedule, {
                 label: serverSchedule.label,
-                status: serverSchedule.status,
+                status: serverSchedule.status || 'finished',
                 action: typeof serverSchedule.action === 'object' 
                     ? JSON.stringify(serverSchedule.action) 
                     : serverSchedule.action,
