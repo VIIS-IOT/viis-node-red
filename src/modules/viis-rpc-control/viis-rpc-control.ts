@@ -40,7 +40,6 @@ module.exports = function (RED: NodeAPI) {
     async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
-        node.warn("fuck you")
         // Sử dụng flow context thay cho global context cho config đặc thù node
         const flowContext = node.context().flow;
         // Các key context riêng biệt, tránh xung đột

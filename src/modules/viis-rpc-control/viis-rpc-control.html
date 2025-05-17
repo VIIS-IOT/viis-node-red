@@ -36,7 +36,7 @@
             name: { value: "" },
             mqttBroker: { value: "thingsboard", required: true },
             configKeys: {
-                value: '{"max_temp": 87, "max_humid": 90}',
+                value: '{"max_temp": "number", "max_humid": "number"}',
                 required: true,
                 validate: function (v) {
                     try {
