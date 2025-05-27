@@ -43,27 +43,51 @@
         <label for="node-input-enableDebugLog"><i class="fa fa-bug"></i> Enable Debug Log</label>
         <input type="checkbox" id="node-input-enableDebugLog" style="width:auto;">
     </div>
+    <!-- Threshold Configuration Section -->
     <div class="form-row">
-        <label><i class="fa fa-sliders"></i> Threshold Config</label>
-        <div style="width: 100%;">
-            <div id="threshold-config-container" style="margin-bottom: 10px;"></div>
-            <button id="add-threshold-config" type="button" class="red-ui-button">
-                <i class="fa fa-plus"></i> Add Threshold
-            </button>
+        <label><i class="fa fa-sliders"></i> Threshold Configuration</label>
+        <div class="threshold-config-section">
+            <div class="threshold-header">
+                <span class="threshold-description">Configure change thresholds for telemetry publishing</span>
+            </div>
+            <div id="threshold-config-container" class="threshold-container"></div>
+            <div class="threshold-actions">
+                <button id="add-threshold-config" type="button" class="red-ui-button red-ui-button-small">
+                    <i class="fa fa-plus"></i> Add Threshold
+                </button>
+            </div>
             <input type="hidden" id="node-input-thresholdConfig">
         </div>
     </div>
+
+    <!-- Periodic Snapshot Configuration Section -->
     <div class="form-row">
-        <label for="node-input-periodicSnapshotIntervalCoil"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval Coil (ms, 0 = disable)</label>
-        <input type="text" id="node-input-periodicSnapshotIntervalCoil" placeholder="0">
-    </div>
-    <div class="form-row">
-        <label for="node-input-periodicSnapshotIntervalInput"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval Input (ms, 0 = disable)</label>
-        <input type="text" id="node-input-periodicSnapshotIntervalInput" placeholder="0">
-    </div>
-    <div class="form-row">
-        <label for="node-input-periodicSnapshotIntervalHolding"><i class="fa fa-clock-o"></i> Periodic Snapshot Interval Holding (ms, 0 = disable)</label>
-        <input type="text" id="node-input-periodicSnapshotIntervalHolding" placeholder="0">
+        <label><i class="fa fa-camera"></i> Periodic Snapshot Configuration</label>
+        <div class="snapshot-config-section">
+            <div class="snapshot-description">
+                Set intervals for periodic data snapshots (0 = disabled)
+            </div>
+            <div class="snapshot-grid">
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalCoil" class="snapshot-label">
+                        <i class="fa fa-circle-o"></i> Coil Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalCoil" placeholder="0" class="snapshot-input">
+                </div>
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalInput" class="snapshot-label">
+                        <i class="fa fa-sign-in"></i> Input Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalInput" placeholder="0" class="snapshot-input">
+                </div>
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalHolding" class="snapshot-label">
+                        <i class="fa fa-database"></i> Holding Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalHolding" placeholder="0" class="snapshot-input">
+                </div>
+            </div>
+        </div>
     </div>
 </script>
 
@@ -84,29 +108,161 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script> -->
 
 <style>
+    /* Threshold Configuration Styles */
+    .threshold-config-section {
+        background: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 12px;
+        margin-top: 5px;
+    }
+
+    .threshold-header {
+        margin-bottom: 10px;
+    }
+
+    .threshold-description {
+        font-size: 12px;
+        color: #666;
+        font-style: italic;
+    }
+
+    .threshold-container {
+        margin-bottom: 10px;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 3px;
+        padding: 5px;
+        background: white;
+    }
+
     .threshold-row {
         display: flex;
-        margin-bottom: 5px;
+        margin-bottom: 8px;
         align-items: center;
+        padding: 5px;
+        background: #fafafa;
+        border-radius: 3px;
+        border: 1px solid #eee;
+    }
+
+    .threshold-row:last-child {
+        margin-bottom: 0;
     }
 
     .threshold-key {
         flex: 2;
-        margin-right: 5px;
+        margin-right: 8px;
     }
 
     .threshold-value {
         flex: 1;
-        margin-right: 5px;
+        margin-right: 8px;
     }
 
     .threshold-button {
         flex: 0 0 auto;
+        min-width: 30px;
     }
 
     .threshold-row select,
     .threshold-row input {
         width: 100%;
+        padding: 4px 6px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 12px;
+    }
+
+    .threshold-actions {
+        text-align: center;
+        padding-top: 5px;
+        border-top: 1px solid #eee;
+    }
+
+    /* Periodic Snapshot Configuration Styles */
+    .snapshot-config-section {
+        background: #f0f8ff;
+        border: 1px solid #b0d4f1;
+        border-radius: 4px;
+        padding: 12px;
+        margin-top: 5px;
+    }
+
+    .snapshot-description {
+        font-size: 12px;
+        color: #2c5aa0;
+        font-style: italic;
+        margin-bottom: 12px;
+        text-align: center;
+    }
+
+    .snapshot-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+    }
+
+    .snapshot-item {
+        background: white;
+        border: 1px solid #d0e7ff;
+        border-radius: 4px;
+        padding: 10px;
+        text-align: center;
+    }
+
+    .snapshot-label {
+        display: block;
+        font-size: 11px;
+        font-weight: bold;
+        color: #2c5aa0;
+        margin-bottom: 6px;
+        text-align: center;
+    }
+
+    .snapshot-label i {
+        margin-right: 4px;
+    }
+
+    .snapshot-input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 12px;
+        text-align: center;
+    }
+
+    .snapshot-input:focus {
+        border-color: #2c5aa0;
+        outline: none;
+        box-shadow: 0 0 3px rgba(44, 90, 160, 0.3);
+    }
+
+    /* Responsive design for smaller screens */
+    @media (max-width: 600px) {
+        .snapshot-grid {
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .threshold-row {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .threshold-key,
+        .threshold-value,
+        .threshold-button {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        .threshold-button {
+            align-self: center;
+            margin-bottom: 0;
+        }
     }
 </style>
 
@@ -133,7 +289,7 @@
         },
         inputs: 0,
         outputs: 1,
-        icon: "logo2.png",
+        icon: "traffic-jam.png",
         label: function () {
             return this.name || "viis-telemetry";
         },
@@ -155,32 +311,57 @@
                 thresholdConfig = {};
             }
 
-            // Lấy danh sách keys từ global context hoặc dùng danh sách mặc định
+            // Lấy danh sách keys từ environment variables hoặc dùng danh sách mặc định
             const getModbusKeys = function () {
-                // Trong editor, không thể truy cập runtime global context
-                // Sử dụng danh sách mặc định dựa trên cấu hình thông thường
-                const defaultKeys = [
-                    // Holding Registers (thường dùng cho cảm biến analog)
-                    "temperature", "humidity", "pressure", "voltage", "current",
-                    "power", "energy", "flow_rate", "level", "speed",
-                    "setpoint_temp", "setpoint_pressure", "analog_input_1",
-                    "analog_input_2", "analog_input_3", "analog_input_4",
+                // Thử lấy từ API endpoint trước
+                let envKeys = [];
 
-                    // Input Registers (thường dùng cho trạng thái đọc)
-                    "sensor_status", "alarm_status", "system_status",
-                    "input_register_1", "input_register_2", "input_register_3",
+                try {
+                    // Gọi API để lấy environment variables (synchronous)
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', '/viis-telemetry/modbus-keys', false); // false = synchronous
+                    xhr.send();
 
-                    // Coils (thường dùng cho digital I/O)
-                    "pump_status", "valve_status", "motor_status", "alarm_active",
-                    "manual_mode", "auto_mode", "emergency_stop", "system_enable",
-                    "coil_1", "coil_2", "coil_3", "coil_4", "coil_5",
+                    if (xhr.status === 200) {
+                        const response = JSON.parse(xhr.responseText);
+                        if (response.success && response.keys) {
+                            envKeys = response.keys;
+                        }
+                    }
+                } catch (error) {
+                    console.warn("Could not fetch Modbus keys from environment:", error);
+                }
 
-                    // Key đặc biệt
-                    "all" // Threshold mặc định cho tất cả keys
-                ];
+                // Nếu không lấy được từ environment, dùng danh sách mặc định
+                if (envKeys.length === 0) {
+                    envKeys = [
+                        // // Holding Registers (thường dùng cho cảm biến analog)
+                        // "temperature", "humidity", "pressure", "voltage", "current",
+                        // "power", "energy", "flow_rate", "level", "speed",
+                        // "setpoint_temp", "setpoint_pressure", "analog_input_1",
+                        // "analog_input_2", "analog_input_3", "analog_input_4",
+
+                        // // Input Registers (thường dùng cho trạng thái đọc)
+                        // "sensor_status", "alarm_status", "system_status",
+                        // "input_register_1", "input_register_2", "input_register_3",
+
+                        // // Coils (thường dùng cho digital I/O)
+                        // "pump_status", "valve_status", "motor_status", "alarm_active",
+                        // "manual_mode", "auto_mode", "emergency_stop", "system_enable",
+                        // "coil_1", "coil_2", "coil_3", "coil_4", "coil_5",
+
+                        // Key đặc biệt
+                        "all" // Threshold mặc định cho tất cả keys
+                    ];
+                }
+
+                // Thêm key đặc biệt "all" nếu chưa có
+                if (!envKeys.includes("all")) {
+                    envKeys.push("all");
+                }
 
                 // Loại bỏ trùng lặp và sắp xếp
-                return [...new Set(defaultKeys)].sort();
+                return [...new Set(envKeys)].sort();
             };
 
             // Hàm thêm một dòng cấu hình threshold

@@ -25,6 +25,41 @@ interface ViisTelemetryNodeDef extends NodeDef {
 }
 
 module.exports = function (RED: NodeAPI) {
+    // API endpoint để lấy Modbus keys từ environment variables
+    RED.httpAdmin.get('/viis-telemetry/modbus-keys', (_req, res) => {
+        try {
+            const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
+            const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
+            const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+
+            const keys = [
+                ...Object.keys(modbusHoldingRegisters),
+                ...Object.keys(modbusInputRegisters),
+                ...Object.keys(modbusCoils)
+            ];
+
+            // Loại bỏ trùng lặp và sắp xếp
+            const uniqueKeys = [...new Set(keys)].sort();
+
+            res.json({
+                success: true,
+                keys: uniqueKeys,
+                count: uniqueKeys.length,
+                sources: {
+                    holdingRegisters: Object.keys(modbusHoldingRegisters).length,
+                    inputRegisters: Object.keys(modbusInputRegisters).length,
+                    coils: Object.keys(modbusCoils).length
+                }
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                error: (error as Error).message,
+                keys: []
+            });
+        }
+    });
+
     async function ViisTelemetryNode(this: Node, config: ViisTelemetryNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
@@ -234,11 +269,11 @@ module.exports = function (RED: NodeAPI) {
         //     const result: TelemetryData = {};
         //     // Lấy scaleConfigs từ global context thay vì flow context
         //     const scaleConfigs: ScaleConfig[] = node.context().global.get("scaleConfigs") as ScaleConfig[] || [];
-        // 
+        //
         //     keys.forEach((key, idx) => {
         //         result[key] = applyScaling(key, values[idx], direction, scaleConfigs);
         //     });
-        // 
+        //
         //     debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
         //     return result;
         // }
