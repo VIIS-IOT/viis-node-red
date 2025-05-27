@@ -13,7 +13,7 @@ import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSch
 import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { adjustToUTC7 } from '../../../ultils/helper';
 import { SyncStateService, SyncResult } from '../services/syncStateService';
-import { isNewer, isValidDate } from '../utils/dateHelper';
+
 
 /**
  * Handler for synchronizing schedules and schedule plans
@@ -194,7 +194,7 @@ export class ScheduleSyncHandler {
             newPlan.creation = new Date(serverPlan.creation);
             newPlan.modified = new Date(serverPlan.modified);
             newPlan.schedule_count = serverPlan.schedule_count;
-            newPlan.status = serverPlan.status as 'active' | 'inactive';
+            newPlan.status = (serverPlan.status as 'active' | 'inactive') || 'active'; // Ensure default value
             newPlan.is_deleted = serverPlan.is_deleted;
             newPlan.enable = serverPlan.enable;
             // Skip customer_id as it's not in the entity
@@ -241,7 +241,7 @@ export class ScheduleSyncHandler {
                 label: serverPlan.label,
                 modified: serverModified,
                 schedule_count: serverPlan.schedule_count,
-                status: serverPlan.status || 'active',
+                status: (serverPlan.status as 'active' | 'inactive') || 'active', // Ensure default value
                 is_deleted: serverPlan.is_deleted,
                 enable: serverPlan.enable,
                 is_synced: 1, // Mark as synced
@@ -424,7 +424,7 @@ export class ScheduleSyncHandler {
     /**
      * Detects schedules that exist locally but are not present in server data
      * Marks these schedules as deleted in the local database
-     * 
+     *
      * @param serverSchedules - Array of schedules from the server
      * @param planName - Schedule plan name
      * @returns Promise that resolves when deleted schedules are processed
