@@ -110,19 +110,19 @@ module.exports = function (RED: NodeAPI) {
 
         // FLOW CONTEXT SCALE CONFIG
         const flowContext = this.context().flow as NodeContext;
-        const SCALE_CONFIG_KEY = `scaleConfigs_${this.id}`;
         const DEBUG_LOG_KEY = `enableDebugLog_${this.id}`;
         const THRESHOLD_CONFIG_KEY = `thresholdConfig_${this.id}`;
-        let initialScaleConfigs: ScaleConfig[] = [];
-        try {
-            initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
-            if (!Array.isArray(initialScaleConfigs)) initialScaleConfigs = [];
-        } catch {
-            initialScaleConfigs = [];
-        }
-        flowContext.set(SCALE_CONFIG_KEY, initialScaleConfigs);
+        // Loại bỏ SCALE_CONFIG_KEY và các dòng liên quan
+        // let initialScaleConfigs: ScaleConfig[] = [];
+        // try {
+        //     initialScaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
+        //     if (!Array.isArray(initialScaleConfigs)) initialScaleConfigs = [];
+        // } catch {
+        //     initialScaleConfigs = [];
+        // }
+        // flowContext.set(SCALE_CONFIG_KEY, initialScaleConfigs);
 
-        // --- Store enableDebugLog in flow context (like scale config) ---
+        // --- Store enableDebugLog in flow context ---
         const initialEnableDebugLog: boolean = config.enableDebugLog ?? false;
         flowContext.set(DEBUG_LOG_KEY, initialEnableDebugLog);
         let enableDebugLog: boolean = flowContext.get(DEBUG_LOG_KEY) as boolean ?? false;
@@ -230,15 +230,18 @@ module.exports = function (RED: NodeAPI) {
         }
 
         // --- Apply scaling cho từng key khi đọc modbus ---
-        function scaleTelemetry(keys: string[], values: number[], direction: 'read' | 'write', flowContext: NodeContext, scaleConfigKey: string): TelemetryData {
-            const result: TelemetryData = {};
-            const scaleConfigs: ScaleConfig[] = flowContext.get(scaleConfigKey) as ScaleConfig[] || [];            keys.forEach((key, idx) => {
-                result[key] = applyScaling(key, values[idx], direction, scaleConfigs);
-            });
-            // node.warn(`debug result: ${JSON.stringify(result)}`);
-            debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
-            return result;
-        }
+        // function scaleTelemetry(keys: string[], values: number[], direction: 'read' | 'write'): TelemetryData {
+        //     const result: TelemetryData = {};
+        //     // Lấy scaleConfigs từ global context thay vì flow context
+        //     const scaleConfigs: ScaleConfig[] = node.context().global.get("scaleConfigs") as ScaleConfig[] || [];
+        // 
+        //     keys.forEach((key, idx) => {
+        //         result[key] = applyScaling(key, values[idx], direction, scaleConfigs);
+        //     });
+        // 
+        //     debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: `[Scale] Applied scaling: ${JSON.stringify(result)}, scale config: ${JSON.stringify(scaleConfigs)}` });
+        //     return result;
+        // }
 
         async function pollCoils() {
             if (isPollingCoils || isPollingPaused || isConfigUpdating) return;
@@ -313,11 +316,14 @@ module.exports = function (RED: NodeAPI) {
                     try {
                         const result: ModbusData = await modbusClient.readInputRegisters(inputStartAddress, inputQuantity);
                         const values = result.data as number[];
-                        const scaleCfg = flowContext.get(SCALE_CONFIG_KEY) as ScaleConfig[] || [];
+                        // Sửa: Lấy scaleConfigs từ global context thay vì flow context
                         const currentState: TelemetryData = {};
                         Object.entries(modbusInputRegisters).forEach(([key, index]) => {
-                            currentState[key] = applyScaling(key, values[index as number], 'read', scaleCfg);
+                            // Lấy scaleConfigs từ global context
+                            const scaleConfigs = node.context().global.get("scaleConfigs") as ScaleConfig[] || [];
+                            currentState[key] = applyScaling(key, values[index as number], 'read', scaleConfigs);
                         });
+
                         debugLog({
                             enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false,
                             node,
@@ -370,7 +376,14 @@ module.exports = function (RED: NodeAPI) {
                         const result: ModbusData = await modbusClient.readHoldingRegisters(holdingStartAddress, holdingQuantity);
                         const keys = Object.keys(modbusHoldingRegisters);
                         const values = result.data as number[];
-                        const currentState = scaleTelemetry(keys, values, 'read', flowContext, SCALE_CONFIG_KEY);
+
+                        // Sử dụng global scaleConfigs
+                        const currentState: TelemetryData = {};
+                        keys.forEach((key, idx) => {
+                            const scaleConfigs = node.context().global.get("scaleConfigs") as ScaleConfig[] || [];
+                            currentState[key] = applyScaling(key, values[idx], 'read', scaleConfigs);
+                        });
+
                         node.context().global.set("holdingRegisterData", currentState);
                         await processState(currentState, "Holding Registers");
                         consecutiveHoldingFailures = 0;
@@ -484,23 +497,14 @@ module.exports = function (RED: NodeAPI) {
 
         // --- Ép buộc replace scaleConfigs, không bao giờ append ---
         node.on('input', (msg: any) => {
-            if (msg.scaleConfigs) {
-                try {
-                    let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
-                    if (!Array.isArray(newConfigs)) newConfigs = [];
-                    flowContext.set(SCALE_CONFIG_KEY, newConfigs);
-                    debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: '[Config] Scale configs replaced (no append): ' + JSON.stringify(newConfigs) });
-                } catch (error) {
-                    node.error(`Failed to update scaleConfigs: ${(error as Error).message}`);
-                }
-                resumePollingIfAllConnected();
-            }
+            // Loại bỏ hoàn toàn xử lý scaleConfigs
             // Allow dynamic update of enableDebugLog via msg.enableDebugLog
             if (typeof msg.enableDebugLog === 'boolean') {
                 flowContext.set(DEBUG_LOG_KEY, msg.enableDebugLog);
                 enableDebugLog = msg.enableDebugLog;
                 node.warn(`Debug log is ${enableDebugLog ? 'enabled' : 'disabled'} (updated via msg)`);
             }
+
             // Allow dynamic update of thresholdConfig via msg.thresholdConfig
             if (msg.thresholdConfig) {
                 try {
@@ -511,21 +515,28 @@ module.exports = function (RED: NodeAPI) {
                 } catch (error) {
                     node.error(`Failed to update thresholdConfig: ${(error as Error).message}`);
                 }
-                resumePollingIfAllConnected();
             }
+
+            resumePollingIfAllConnected();
         });
 
         // --- Cleanup triệt để khi node bị xoá ---
-        node.on('close', async () => {
-            clearPollingAndState();
-            flowContext.set(SCALE_CONFIG_KEY, []);
-            flowContext.set(DEBUG_LOG_KEY, false);
-            flowContext.set(THRESHOLD_CONFIG_KEY, {});
-            ClientRegistry.releaseClient('modbus', node);
-            ClientRegistry.releaseClient('local', node);
-            ClientRegistry.releaseClient('mysql', node);
-            await thingsboardClient.disconnect();
-            debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: '[Node] Closed and cleaned up.' });
+        node.on('close', async (done: () => void) => {
+            try {
+                clearPollingAndState();
+                // Không cần xóa SCALE_CONFIG_KEY vì không còn sử dụng
+                flowContext.set(DEBUG_LOG_KEY, false);
+                flowContext.set(THRESHOLD_CONFIG_KEY, {});
+                ClientRegistry.releaseClient('modbus', node);
+                ClientRegistry.releaseClient('local', node);
+                ClientRegistry.releaseClient('mysql', node);
+                await thingsboardClient.disconnect();
+                debugLog({ enable: flowContext.get(DEBUG_LOG_KEY) as boolean ?? false, node, message: '[Node] Closed and cleaned up.' });
+                done();
+            } catch (error) {
+                node.error(`Cleanup error: ${(error as Error).message}`);
+                done();
+            }
         });
 
         // Start polling if all clients are connected
