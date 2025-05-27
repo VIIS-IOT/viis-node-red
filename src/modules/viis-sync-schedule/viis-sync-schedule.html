@@ -18,13 +18,13 @@
         inputs: 1,
         outputs: 1,
         icon: "sync.png",
-        label: function() {
+        label: function () {
             return this.name || "VIIS Sync Schedule";
         },
         paletteLabel: "VIIS Sync Schedule",
-        oneditprepare: function() {
+        oneditprepare: function () {
             // Show/hide advanced options
-            const showAdvancedOptions = function(show) {
+            const showAdvancedOptions = function (show) {
                 if (show) {
                     $("#node-advanced-options").show();
                     $("#node-show-advanced").html('<i class="fa fa-minus"></i> Hide Advanced Options');
@@ -33,21 +33,21 @@
                     $("#node-show-advanced").html('<i class="fa fa-plus"></i> Show Advanced Options');
                 }
             };
-            
+
             // Initial state - collapsed
             showAdvancedOptions(false);
-            
+
             // Toggle on click
-            $("#node-show-advanced").on("click", function() {
+            $("#node-show-advanced").on("click", function () {
                 const isVisible = $("#node-advanced-options").is(":visible");
                 showAdvancedOptions(!isVisible);
             });
-            
+
             // Show help text for sync interval
-            $("#node-input-syncInterval").on("change", function() {
+            $("#node-input-syncInterval").on("change", function () {
                 const value = parseInt($(this).val());
                 const helpText = $("#sync-interval-help");
-                
+
                 if (value === 0) {
                     helpText.text("Automatic sync is disabled. Use manual triggers only.");
                     helpText.show();
@@ -61,7 +61,7 @@
                     helpText.hide();
                 }
             });
-            
+
             // Trigger initial help text
             $("#node-input-syncInterval").trigger("change");
         }
