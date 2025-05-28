@@ -69,7 +69,7 @@ module.exports = function (RED: NodeAPI) {
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "1502", 10),
+            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
             serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
             baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
             parity: (process.env.MODBUS_PARITY as "none" | "even" | "odd") || "none",
