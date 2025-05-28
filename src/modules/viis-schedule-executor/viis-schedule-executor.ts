@@ -241,7 +241,7 @@ module.exports = function (RED: NodeAPI) {
                             while (!writeSuccess && attempt < 3) {
                                 attempt++;
                                 try {
-                                    await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
+                                    await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands }, schedule);
                                     writeSuccess = await scheduleService.verifyModbusWrite(modbusClient, [...holdingCommands, ...coilCommands]);
                                     if (writeSuccess) {
                                         scheduleService.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
@@ -289,7 +289,7 @@ module.exports = function (RED: NodeAPI) {
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = [...activeCommands, ...extraResetCommands];
                         if (allResetCommands.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
+                            await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
                             scheduleService.clearActiveCommands(schedule.name);
                         }
                         await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);

@@ -245,7 +245,7 @@ export class ScheduleService {
     /**
  * Gửi các lệnh modbus qua modbusClient
  */
-    async executeModbusCommands(modbusClient: ModbusClientCore, commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] }): Promise<void> {
+    async executeModbusCommands(modbusClient: ModbusClientCore, commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] }, schedule?: TabiotSchedule): Promise<void> {
         // Thực hiện holding commands trước
         for (const cmd of commands.holdingCommands) {
             try {
@@ -258,15 +258,115 @@ export class ScheduleService {
             }
         }
 
-        // Sau đó thực hiện coil commands
-        for (const cmd of commands.coilCommands) {
-            try {
-                let writeValue = cmd.value;
-                await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
-                console.log(`Wrote coil at ${cmd.address} with value ${writeValue}`);
-                await this.delay(100);
-            } catch (error) {
-                console.error(`Error executing modbus coil command ${cmd.key}: ${(error as Error).message}`);
+        // Phân loại coil commands
+        const valveCoils = commands.coilCommands.filter(cmd => cmd.key.includes('valve_'));
+        const controlCoils = commands.coilCommands.filter(cmd =>
+            cmd.key.includes('pump') || cmd.key.includes('power'));
+        const otherCoils = commands.coilCommands.filter(cmd =>
+            !cmd.key.includes('valve_') && !cmd.key.includes('pump') && !cmd.key.includes('power'));
+
+        // Xác định đang start hay finish dựa vào status của schedule
+        const isStarting = schedule && schedule.status === 'running';
+        const isFinishing = schedule && schedule.status === 'finished';
+
+        if (isStarting) {
+            // Khi start: ghi valve trước, delay 5s, sau đó ghi pump/power
+            console.log(`Starting schedule ${schedule?.name}: executing valve coils first`);
+
+            // Thực hiện valve coils trước
+            for (const cmd of valveCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    console.log(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error executing modbus valve coil command ${cmd.key}: ${(error as Error).message}`);
+                }
+            }
+
+            // Thực hiện other coils
+            for (const cmd of otherCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    console.log(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error executing modbus other coil command ${cmd.key}: ${(error as Error).message}`);
+                }
+            }
+
+            // Delay 5 giây trước khi ghi các pump/power coils
+            if (controlCoils.length > 0) {
+                console.log('Delaying 5 seconds before writing pump/power coils');
+                await this.delay(5000);
+
+                // Thực hiện control coils (pump, power)
+                for (const cmd of controlCoils) {
+                    try {
+                        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                        console.log(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
+                        await this.delay(100);
+                    } catch (error) {
+                        console.error(`Error executing modbus control coil command ${cmd.key}: ${(error as Error).message}`);
+                    }
+                }
+            }
+        } else if (isFinishing) {
+            // Khi finish: ghi tắt pump/power trước, delay 5s, sau đó tắt valve
+            console.log(`Finishing schedule ${schedule?.name}: executing pump/power coils first`);
+
+            // Thực hiện control coils (pump, power) trước
+            for (const cmd of controlCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    console.log(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error executing modbus control coil command ${cmd.key}: ${(error as Error).message}`);
+                }
+            }
+
+            // Thực hiện other coils
+            for (const cmd of otherCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    console.log(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error executing modbus other coil command ${cmd.key}: ${(error as Error).message}`);
+                }
+            }
+
+            // Delay 5 giây trước khi ghi các valve coils
+            if (valveCoils.length > 0) {
+                console.log('Delaying 5 seconds before writing valve coils');
+                await this.delay(5000);
+
+                // Thực hiện valve coils
+                for (const cmd of valveCoils) {
+                    try {
+                        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                        console.log(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                        await this.delay(100);
+                    } catch (error) {
+                        console.error(`Error executing modbus valve coil command ${cmd.key}: ${(error as Error).message}`);
+                    }
+                }
+            }
+        } else {
+            // Nếu không có schedule hoặc status không phải running/finished, thực hiện theo thứ tự thông thường
+            console.log('Executing coil commands in default order');
+
+            // Sau đó thực hiện coil commands
+            for (const cmd of commands.coilCommands) {
+                try {
+                    let writeValue = cmd.value;
+                    await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
+                    console.log(`Wrote coil at ${cmd.address} with value ${writeValue}`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error executing modbus coil command ${cmd.key}: ${(error as Error).message}`);
+                }
             }
         }
     }
@@ -402,33 +502,96 @@ export class ScheduleService {
     /**
      * Reset lại các lệnh modbus
      */
-    async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<boolean> {
+    async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[], schedule?: TabiotSchedule): Promise<boolean> {
         let allSuccessful = true; // Initialize a flag to track overall success
 
-        for (const cmd of commands) {
+        // Phân loại commands
+        const valveCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('valve_'));
+        const controlCoils = commands.filter(cmd => cmd.fc === 5 &&
+            (cmd.key.includes('pump') || cmd.key.includes('power')));
+        const otherCoils = commands.filter(cmd => cmd.fc === 5 &&
+            !cmd.key.includes('valve_') && !cmd.key.includes('pump') && !cmd.key.includes('power'));
+        const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
+
+        // Reset holding registers
+        for (const cmd of holdingRegisters) {
             try {
-                if (cmd.fc === 5) {
-                    await modbusClient.writeCoil(cmd.address, false);
-                    console.log(`Reset coil at ${cmd.address} to false`);
-                } else if (cmd.fc === 6) {
-                    await modbusClient.writeRegister(cmd.address, 0);
-                    console.log(`Reset register at ${cmd.address} to 0`);
-                }
+                await modbusClient.writeRegister(cmd.address, 0);
+                console.log(`Reset register at ${cmd.address} to 0`);
                 await this.delay(100);
             } catch (error) {
                 console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
-                allSuccessful = false; // Set the flag to false if any command fails
+                allSuccessful = false;
             }
         }
 
-        return allSuccessful; // Return the overall success status
+        // Khi finish schedule, luôn reset theo thứ tự: pump/power trước, sau đó đến valve
+        if (schedule && schedule.status === 'finished') {
+            console.log(`Ordered reset for finished schedule ${schedule.name}`);
+
+            // Reset control coils (pump, power) trước
+            for (const cmd of controlCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, false);
+                    console.log(`Reset control coil at ${cmd.address} to false`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    allSuccessful = false;
+                }
+            }
+
+            // Reset other coils
+            for (const cmd of otherCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, false);
+                    console.log(`Reset other coil at ${cmd.address} to false`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    allSuccessful = false;
+                }
+            }
+
+            // Delay 5 giây trước khi reset valve coils
+            if (valveCoils.length > 0) {
+                console.log('Delaying 5 seconds before resetting valve coils');
+                await this.delay(5000);
+
+                // Reset valve coils
+                for (const cmd of valveCoils) {
+                    try {
+                        await modbusClient.writeCoil(cmd.address, false);
+                        console.log(`Reset valve coil at ${cmd.address} to false`);
+                        await this.delay(100);
+                    } catch (error) {
+                        console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                        allSuccessful = false;
+                    }
+                }
+            }
+        } else {
+            // Nếu không phải finishing schedule, reset theo thứ tự thông thường
+            for (const cmd of commands.filter(cmd => cmd.fc === 5)) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, false);
+                    console.log(`Reset coil at ${cmd.address} to false`);
+                    await this.delay(100);
+                } catch (error) {
+                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    allSuccessful = false;
+                }
+            }
+        }
+
+        return allSuccessful;
     }
 
 
 
     /**
-         * Check if commands can be executed without overlapping with active commands
-         */
+     * Check if commands can be executed without overlapping with active commands
+     */
     async canExecuteCommands(currentScheduleId: string, holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[]): Promise<boolean> {
         const activeModbusCommands: ActiveModbusCommands = this.node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
         const allCommands = [...holdingCommands, ...coilCommands];
