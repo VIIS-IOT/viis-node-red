@@ -80,7 +80,7 @@ export class ScheduleHandler {
         } else if (path !== API_PATHS.SCHEDULE) {
             throw new Error('Invalid GET endpoint');
         }
-    
+
 
         const page = parseInt(query?.page) || 1;
         const size = parseInt(query?.size) || 10;
@@ -218,14 +218,29 @@ export class ScheduleHandler {
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
 
-            const responseDto = plainToInstance(TabiotScheduleDto, {
-                ...savedSchedule,
+            // Create a response object with all necessary fields
+            const responseData = {
+                id: savedSchedule.name,
                 name: savedSchedule.label,
+                device_id: savedSchedule.device_id,
                 action: JSON.parse(savedSchedule.action || '{}'),
                 enable: savedSchedule.enable === 1,
-            }, { excludeExtraneousValues: true });
+                type: savedSchedule.type,
+                interval: savedSchedule.interval,
+                start_date: savedSchedule.start_date,
+                end_date: savedSchedule.end_date,
+                start_time: savedSchedule.start_time,
+                end_time: savedSchedule.end_time,
+                status: savedSchedule.status,
+                schedule_plan_id: savedSchedule.schedule_plan_id,
+                is_deleted: savedSchedule.is_deleted,
+                is_synced: savedSchedule.is_synced,
+                is_from_local: savedSchedule.is_from_local,
+                creation: savedSchedule.creation,
+                modified: savedSchedule.modified
+            };
 
-            msg.payload = { result: { data: responseDto } };
+            msg.payload = { result: { data: responseData } };
             if ('statusCode' in msg) (msg as any).statusCode = 201;
             return msg;
         } catch (error) {
@@ -259,16 +274,8 @@ export class ScheduleHandler {
             throw new Error(`Schedule with name ${name} not found`);
         }
 
-        // Validate payload against DTO
-        const dto = payload as any;
-
         // Prevent changing status from running to finished
-        if (existingSchedule.status === 'running' && dto.status === 'finished') {
-            throw new Error('Cannot change schedule status from running to finished directly');
-        }
-
-        // Prevent changing status from running to finished
-        if (existingSchedule.status === 'running' && dto.status === 'finished') {
+        if (existingSchedule.status === 'running' && payload.status === 'finished') {
             throw new Error('Cannot change schedule status from running to finished directly');
         }
 
@@ -329,14 +336,29 @@ export class ScheduleHandler {
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
 
-            const responseDto = plainToInstance(TabiotScheduleDto, {
-                ...updated,
+            // Create a response object with all necessary fields
+            const responseData = {
+                id: updated.name,
                 name: updated.label,
+                device_id: updated.device_id,
                 action: JSON.parse(updated.action || '{}'),
                 enable: updated.enable === 1,
-            }, { excludeExtraneousValues: true });
+                type: updated.type,
+                interval: updated.interval,
+                start_date: updated.start_date,
+                end_date: updated.end_date,
+                start_time: updated.start_time,
+                end_time: updated.end_time,
+                status: updated.status,
+                schedule_plan_id: updated.schedule_plan_id,
+                is_deleted: updated.is_deleted,
+                is_synced: updated.is_synced,
+                is_from_local: updated.is_from_local,
+                creation: updated.creation,
+                modified: updated.modified
+            };
 
-            msg.payload = { result: { data: responseDto } };
+            msg.payload = { result: { data: responseData } };
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {
@@ -351,14 +373,14 @@ export class ScheduleHandler {
             const page = parseInt(query?.page) || 1;
             const size = parseInt(query?.size) || 10000;
             const skip = (page - 1) * size;
-            
+
             // Parse filters if provided
-            let whereOptions: any = { 
-                is_deleted: 0, 
+            let whereOptions: any = {
+                is_deleted: 0,
                 enable: 1,
                 status: 'running'
             };
-            
+
             if (query?.filters) {
                 try {
                     const filters = JSON.parse(query.filters);
@@ -367,7 +389,7 @@ export class ScheduleHandler {
                             const field = filter[1];
                             const operator = filter[2];
                             const value = filter[3];
-                            
+
                             if (operator === 'like') {
                                 whereOptions[field] = ILike(`%${value}%`);
                             } else if (operator === '=') {
@@ -380,24 +402,24 @@ export class ScheduleHandler {
                     logger.error(this.node, `Error parsing filters: ${(filterError as Error).message}`);
                 }
             }
-            
+
             // Get device list for current user
             // In a real implementation, this would need to be adapted to use your actual device management system
             // For this implementation, I'll retrieve all devices from schedules instead
-            
+
             // First, get distinct device_ids from the schedule table
             const deviceQuery = await this.scheduleRepo.createQueryBuilder('schedule')
                 .select('DISTINCT schedule.device_id', 'device_id')
                 .where('schedule.is_deleted = 0')
                 .getRawMany();
-                
+
             const deviceIds = deviceQuery.map(item => item.device_id).filter(Boolean);
-            
+
             // Apply device filter
             if (deviceIds.length > 0) {
                 whereOptions.device_id = deviceIds;
             }
-            
+
             // Query for schedules
             const [schedules, totalCount] = await this.scheduleRepo.findAndCount({
                 where: whereOptions,
@@ -406,22 +428,22 @@ export class ScheduleHandler {
                 skip,
                 take: size
             });
-            
+
             // Process schedules to include required data
             const enrichedData = schedules.map(schedule => {
                 // Format date to string using moment to avoid Date.split() error
-                const modifiedDate = schedule.modified ? 
-                    moment(schedule.modified).format('YYYY-MM-DD') : 
+                const modifiedDate = schedule.modified ?
+                    moment(schedule.modified).format('YYYY-MM-DD') :
                     moment().format('YYYY-MM-DD');
-                
-                const startTime = schedule.start_time ? 
+
+                const startTime = schedule.start_time ?
                     moment.tz(`${modifiedDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Ho_Chi_Minh')
                         .utc().valueOf() : null;
-                
-                const endTime = schedule.end_time ? 
+
+                const endTime = schedule.end_time ?
                     moment.tz(`${modifiedDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Ho_Chi_Minh')
                         .utc().valueOf() : null;
-                
+
                 return {
                     id: schedule.name,
                     device_id: schedule.device_id,
@@ -433,15 +455,15 @@ export class ScheduleHandler {
                     set_time: schedule.set_time,
                     start_time: schedule.start_time,
                     end_time: schedule.end_time,
-                    start_date: schedule.start_date ? 
+                    start_date: schedule.start_date ?
                         moment(schedule.start_date).format('YYYY-MM-DD') : undefined,
-                    end_date: schedule.end_date ? 
+                    end_date: schedule.end_date ?
                         moment(schedule.end_date).format('YYYY-MM-DD') : undefined,
                     type: schedule.type,
                     schedule_plan_id: schedule.schedulePlan?.name,
-                    sp_start_date: schedule.schedulePlan?.start_date ? 
+                    sp_start_date: schedule.schedulePlan?.start_date ?
                         moment(schedule.schedulePlan.start_date).format('YYYY-MM-DD') : undefined,
-                    sp_end_date: schedule.schedulePlan?.end_date ? 
+                    sp_end_date: schedule.schedulePlan?.end_date ?
                         moment(schedule.schedulePlan.end_date).format('YYYY-MM-DD') : undefined,
                     sp_label: schedule.schedulePlan?.label,
                     creation: schedule.creation,
@@ -450,7 +472,7 @@ export class ScheduleHandler {
                     warnings: [] // Not implementing notifications as requested
                 };
             });
-            
+
             // Prepare pagination info
             const pagination = {
                 totalElements: totalCount,
@@ -459,15 +481,15 @@ export class ScheduleHandler {
                 pageNumber: page,
                 order_by: query?.order_by || null
             };
-            
+
             // Prepare response
             msg.payload = {
-                result:{
+                result: {
                     data: enrichedData,
                     pagination: pagination
                 }
             }
-            
+
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             return msg;
         } catch (error) {

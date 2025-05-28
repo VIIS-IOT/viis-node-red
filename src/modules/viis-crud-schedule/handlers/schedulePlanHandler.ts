@@ -289,14 +289,27 @@ export class SchedulePlanHandler {
                 logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
             }
 
-            const responseDto = plainToInstance(TabiotSchedulePlanDto, {
-                ...savedPlan,
+            // Create a response object with all necessary fields
+            const responseData = {
+                name: savedPlan.name,
+                label: savedPlan.label,
+                schedule_count: savedPlan.schedule_count,
+                status: savedPlan.status,
                 enable: savedPlan.enable === 1,
-                schedules: [],
-            }, { excludeExtraneousValues: true });
-            console.log('Transformed response DTO', { responseDto });
+                device_id: savedPlan.device_id,
+                start_date: savedPlan.start_date,
+                end_date: savedPlan.end_date,
+                is_deleted: savedPlan.is_deleted,
+                is_synced: savedPlan.is_synced,
+                is_from_local: savedPlan.is_from_local,
+                creation: savedPlan.creation,
+                modified: savedPlan.modified,
+                schedules: []
+            };
 
-            msg.payload = { result: { data: responseDto } };
+            console.log('Prepared response data', { responseData });
+
+            msg.payload = { result: { data: responseData } };
             if ('statusCode' in msg) (msg as any).statusCode = 201;
             console.log('Final response payload', { payload: msg.payload, statusCode: (msg as any).statusCode });
 
@@ -345,26 +358,14 @@ export class SchedulePlanHandler {
                 throw new Error(`Schedule plan with name ${name} not found`);
             }
 
-            // Check if there are any running schedules in this plan
-            const runningSchedules = await this.planRepo.createQueryBuilder('plan')
-                .leftJoinAndSelect('plan.schedules', 'schedule')
-                .where('plan.name = :planName', { planName: name })
-                .andWhere('schedule.status = :status', { status: 'running' })
-                .getCount();
-
-            // Prevent disabling if there are running schedules
-            if (dto.enable === 0 && runningSchedules > 0) {
-                throw new Error('Cannot disable schedule plan while it has running schedules');
-            }
-
             const updateData: Partial<TabiotSchedulePlan> = {
                 label: dto.label,
-                schedule_count: dto.schedule_count,
+                schedule_count: dto.schedule_count || 0,
                 status: dto.status || 'active',
-                enable: dto.enable !== undefined ? (dto.enable ? 1 : 0) : undefined,
+                enable: dto.enable ? 1 : 0,
                 device_id: dto.device_id,
-                start_date: dto.start_date || '1998-01-22',
-                end_date: dto.end_date || '2030-01-08',
+                start_date: dto.start_date,
+                end_date: dto.end_date,
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,
@@ -384,15 +385,13 @@ export class SchedulePlanHandler {
                 throw new Error(`Failed to update schedule plan ${name}`);
             }
 
-            console.log('Retrieving updated plan', { name });
             const updated = await this.planRepo.findOneBy({ name });
-            console.log('Retrieved updated plan', { updated });
-            
             if (!updated) {
                 console.error('Failed to retrieve updated plan', { name });
-                logger.error(this.node, `Failed to retrieve updated schedule plan ${name} after successful update`);
+                logger.info(this.node, `Failed to retrieve updated plan ${name}`);
                 throw new Error(`Failed to retrieve updated schedule plan ${name}`);
             }
+            console.log('Retrieved updated plan', { updated });
 
             try {
                 console.log('Attempting to sync updated plan to server', { planName: updated.name });
@@ -413,18 +412,30 @@ export class SchedulePlanHandler {
                     console.log('Updated plan with refreshed data', { updated });
                 }
             } catch (syncError) {
-                console.error('Sync to server failed', { error: (syncError as Error).message, stack: (syncError as Error).stack });
+                console.error('Sync to server failed', { error: (syncError as Error).message });
                 logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);
             }
 
-            const responseDto = plainToInstance(TabiotSchedulePlanDto, {
-                ...updated,
+            // Create a response object with all necessary fields
+            const responseData = {
+                name: updated.name,
+                label: updated.label,
+                schedule_count: updated.schedule_count,
+                status: updated.status,
                 enable: updated.enable === 1,
-                schedules: [],
-            }, { excludeExtraneousValues: true });
-            console.log('Transformed response DTO', { responseDto });
+                device_id: updated.device_id,
+                start_date: updated.start_date,
+                end_date: updated.end_date,
+                is_deleted: updated.is_deleted,
+                is_synced: updated.is_synced,
+                is_from_local: updated.is_from_local,
+                creation: updated.creation,
+                modified: updated.modified,
+                schedules: []
+            };
+            console.log('Transformed response data', { responseData });
 
-            msg.payload = { result: { data: responseDto } };
+            msg.payload = { result: { data: responseData } };
             if ('statusCode' in msg) (msg as any).statusCode = 200;
             console.log('Final response payload', { payload: msg.payload, statusCode: (msg as any).statusCode });
 
