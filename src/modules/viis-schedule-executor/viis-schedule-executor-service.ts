@@ -423,6 +423,8 @@ export class ScheduleService {
                 label: schedule.label,
                 device_label: schedule.device_label,
                 status: schedule.status,
+                start_time: schedule.start_time,
+                end_time: schedule.end_time,
                 timestamp: Date.now(),
             };
             const payload = { "active_schedule": JSON.stringify(active_schedule) };
