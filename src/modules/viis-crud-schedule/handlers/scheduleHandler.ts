@@ -175,7 +175,7 @@ export class ScheduleHandler {
                 name,
                 label: dto.name,
                 action: actionString,
-                enable: Number(dto.enable) || 1,
+                enable: Number(dto.enable),
                 device_id: dto.device_id,
                 start_date: dto.start_date,
                 end_date: dto.end_date,
