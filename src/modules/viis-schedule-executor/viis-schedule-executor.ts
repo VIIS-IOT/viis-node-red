@@ -298,18 +298,21 @@ module.exports = function (RED: NodeAPI) {
                         node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
                 }
-                // Cleanup activeModbusCommands
+                // Cleanup activeModbusCommands - chỉ cleanup những schedule không còn trong DB hoặc bị disable
+                const enabledScheduleIds = schedules.map(s => s.name);
                 const runningScheduleIds = schedules
                     .filter(s => s.status === "running" && scheduleService.isScheduleDue(s))
                     .map(s => s.name);
 
                 for (const scheduleId in activeModbusCommands) {
-                    if (!runningScheduleIds.includes(scheduleId)) {
+                    // Chỉ cleanup nếu schedule không còn tồn tại trong DB hoặc không còn enabled
+                    // Không cleanup những schedule vừa finished trong lần chạy này
+                    if (!enabledScheduleIds.includes(scheduleId)) {
                         const commands = activeModbusCommands[scheduleId];
                         const resetSuccess = await scheduleService.resetModbusCommands(modbusClient, commands);
                         if (resetSuccess) {
                             scheduleService.clearActiveCommands(scheduleId);
-                            node.warn(`Cleaned up stale commands for schedule ${scheduleId}`);
+                            node.warn(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
                         } else {
                             node.warn(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
                         }
