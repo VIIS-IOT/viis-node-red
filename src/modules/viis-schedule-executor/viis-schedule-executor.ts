@@ -35,7 +35,7 @@ module.exports = function (RED: NodeAPI) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
             return;
         }
-        // Modbus configuration 
+        // Modbus configuration
         const modbusConfig = {
             type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
             host: process.env.MODBUS_HOST || "localhost",
@@ -143,7 +143,7 @@ module.exports = function (RED: NodeAPI) {
                             scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
                             node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
-                        await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);
+                        await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
                         // await scheduleService.syncScheduleLog(schedule, true);
                     } else {
                         node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
@@ -250,7 +250,7 @@ module.exports = function (RED: NodeAPI) {
                                     node.error(`Error writing modbus: ${(error as Error).message}`);
                                 }
                             }
-                            await scheduleService.publishMqttNotification(thingsboardClient, schedule, writeSuccess);
+                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, writeSuccess);
                             await scheduleService.syncScheduleLog(schedule, writeSuccess);
                         }
                     } else if (schedule.status === "running" && isDue) {
@@ -258,7 +258,7 @@ module.exports = function (RED: NodeAPI) {
                         const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
                         if (writeSuccess) {
                             node.warn(`Re-executed commands for schedule ${schedule.name} after power loss or frequently`);
-                            await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);
+                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
                             await scheduleService.syncScheduleLog(schedule, true);
                         }
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
@@ -292,7 +292,7 @@ module.exports = function (RED: NodeAPI) {
                             await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
                             scheduleService.clearActiveCommands(schedule.name);
                         }
-                        await scheduleService.publishMqttNotification(thingsboardClient, schedule, true);
+                        await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
                         // await scheduleService.syncScheduleLog(schedule, true);
                     } else {
                         node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
@@ -328,6 +328,7 @@ module.exports = function (RED: NodeAPI) {
         node.on("close", function (done) {
             ClientRegistry.releaseClient("modbus", node);
             ClientRegistry.releaseClient("thingsboard", node);
+            ClientRegistry.releaseClient("local", node);
             done();
         });
     }

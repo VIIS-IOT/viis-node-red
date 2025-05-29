@@ -409,9 +409,14 @@ export class ScheduleService {
     }
 
     /**
-     * Publish thông báo qua MQTT
+     * Publish thông báo qua MQTT (ThingsBoard và EMQX local)
      */
-    async publishMqttNotification(mqttClient: MqttClientCore, schedule: TabiotSchedule, success: boolean): Promise<void> {
+    async publishMqttNotification(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        schedule: TabiotSchedule,
+        success: boolean
+    ): Promise<void> {
         try {
             const active_schedule = {
                 scheduleId: schedule.name,
@@ -421,9 +426,19 @@ export class ScheduleService {
                 timestamp: Date.now(),
             };
             const payload = { "active_schedule": JSON.stringify(active_schedule) };
-            const topic = "v1/devices/me/telemetry";
-            await mqttClient.publish(topic, JSON.stringify(payload));
-            console.log(`Published MQTT notification for ${schedule.name}`);
+            const payloadString = JSON.stringify(payload);
+
+            // Publish to ThingsBoard
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await thingsboardClient.publish(thingsboardTopic, payloadString);
+            console.log(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
+
+            // Publish to EMQX local
+            const deviceId = process.env.DEVICE_ID || "unknown";
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await emqxClient.publish(emqxTopic, payloadString);
+            console.log(`Published MQTT notification to EMQX local for ${schedule.name}`);
+
         } catch (error) {
             console.error(`Error publishing MQTT for ${schedule.name}: ${(error as Error).message}`);
             throw error;

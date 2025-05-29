@@ -23,20 +23,12 @@ export interface ActiveModbusCommands {
 
 export interface ScheduleExecutorNodeDef extends NodeDef {
     name: string;
-    mqttBroker: string;
     scheduleInterval: number;
     description: string;
 }
 
 
-export interface ModbusCmd {
-    key: string,
-    value: number | boolean
-    fc: number,
-    unitid: number,
-    address: number,
-    quantity: number
-}
+
 
 export interface RpcPayload {
     method: string;

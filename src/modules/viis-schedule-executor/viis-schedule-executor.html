@@ -4,11 +4,10 @@
         <input type="text" id="node-input-name" placeholder="Schedule Executor">
     </div>
     <div class="form-row">
-        <label for="node-input-mqttBroker"><i class="fa fa-exchange"></i> MQTT Broker</label>
-        <select id="node-input-mqttBroker">
-            <option value="thingsboard">ThingsBoard</option>
-            <option value="local">EMQX Local</option>
-        </select>
+        <label><i class="fa fa-exchange"></i> MQTT Publishing</label>
+        <div style="margin-left: 20px; color: #666; font-size: 12px;">
+            Publishes to both ThingsBoard and EMQX Local brokers
+        </div>
     </div>
     <div class="form-row">
         <label for="node-input-scheduleInterval"><i class="fa fa-clock-o"></i> Schedule Check Interval (seconds)</label>
@@ -26,7 +25,6 @@
         color: "#a6bbcf",
         defaults: {
             name: { value: "" },
-            mqttBroker: { value: "thingsboard", required: true },
             scheduleInterval: { value: 10, required: true },
             description: { value: "" }
         },
@@ -54,7 +52,7 @@
         and synchronizes schedule status with MQTT notifications and backend logs.
     </p>
     <p>
-        <b>MQTT Broker:</b> Choose between ThingsBoard and EMQX Local.
+        <b>MQTT Publishing:</b> Automatically publishes schedule status to both ThingsBoard and EMQX Local brokers.
     </p>
     <p>
         <b>Schedule Check Interval:</b> The interval (in seconds) at which the node checks for due schedules.
