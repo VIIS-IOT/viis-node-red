@@ -42,13 +42,17 @@ module.exports = function (RED: NodeAPI) {
     async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
-        // Sử dụng flow context thay cho global context cho config đặc thù node
+        // Sử dụng flow context cho node-specific configs và global context cho shared configs
         const flowContext = node.context().flow;
-        // Các key context riêng biệt, tránh xung đột
+        const globalContext = node.context().global;
+
+        // Node-specific keys (flow context)
         const SCALE_CONFIG_KEY = `scaleConfigs_${node.id}`;
-        const CONFIG_KEYS_KEY = `configKeys_${node.id}`;
-        const CONFIG_VALUES_KEY = `configKeyValues_${node.id}`;
         const MANUAL_OVERRIDES_KEY = `manualModbusOverrides_${node.id}`;
+
+        // Global shared keys (global context)
+        const GLOBAL_CONFIG_KEYS_KEY = "configKeys";
+        const GLOBAL_CONFIG_VALUES_KEY = "configKeyValues";
 
 
         // Debounce settings
@@ -104,24 +108,36 @@ module.exports = function (RED: NodeAPI) {
                 throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
             }
         });
-        // Store vào flow context
-        flowContext.set(CONFIG_KEYS_KEY, configKeys);
+        // Store node-specific configs vào flow context và global configs vào global context
         flowContext.set(SCALE_CONFIG_KEY, scaleConfigs);
-        if (!flowContext.get(CONFIG_VALUES_KEY)) flowContext.set(CONFIG_VALUES_KEY, {});
         if (!flowContext.get(MANUAL_OVERRIDES_KEY)) flowContext.set(MANUAL_OVERRIDES_KEY, {});
 
-        // Các hàm util lấy config từ flow context
+        // Initialize global configs if not exist
+        if (!globalContext.get(GLOBAL_CONFIG_KEYS_KEY)) {
+            globalContext.set(GLOBAL_CONFIG_KEYS_KEY, configKeys);
+        } else {
+            // Merge with existing global configKeys
+            const existingConfigKeys = globalContext.get(GLOBAL_CONFIG_KEYS_KEY) as ConfigKey || {};
+            const mergedConfigKeys = { ...existingConfigKeys, ...configKeys };
+            globalContext.set(GLOBAL_CONFIG_KEYS_KEY, mergedConfigKeys);
+        }
+
+        if (!globalContext.get(GLOBAL_CONFIG_VALUES_KEY)) {
+            globalContext.set(GLOBAL_CONFIG_VALUES_KEY, {});
+        }
+
+        // Các hàm util lấy config từ global context
         function getConfigKeys(): ConfigKey {
-            return flowContext.get(CONFIG_KEYS_KEY) as ConfigKey || {};
+            return globalContext.get(GLOBAL_CONFIG_KEYS_KEY) as ConfigKey || {};
         }
         function getScaleConfigs(): ScaleConfig[] {
             return flowContext.get(SCALE_CONFIG_KEY) as ScaleConfig[] || [];
         }
         function getConfigKeyValues(): ConfigKeyValues {
-            return flowContext.get(CONFIG_VALUES_KEY) as ConfigKeyValues || {};
+            return globalContext.get(GLOBAL_CONFIG_VALUES_KEY) as ConfigKeyValues || {};
         }
         function setConfigKeyValues(values: ConfigKeyValues): void {
-            flowContext.set(CONFIG_VALUES_KEY, values);
+            globalContext.set(GLOBAL_CONFIG_VALUES_KEY, values);
         }
 
 
@@ -409,7 +425,7 @@ module.exports = function (RED: NodeAPI) {
                 try {
                     let newKeys = typeof msg.configKeys === 'object' ? msg.configKeys : JSON.parse(msg.configKeys);
                     if (typeof newKeys !== 'object' || Array.isArray(newKeys) || newKeys === null) newKeys = {};
-                    flowContext.set(CONFIG_KEYS_KEY, newKeys);
+                    globalContext.set(GLOBAL_CONFIG_KEYS_KEY, newKeys);
                     node.warn('[Config] configKeys replaced (no append): ' + JSON.stringify(newKeys));
                 } catch (error) {
                     node.error(`Failed to update configKeys: ${(error as Error).message}`);
@@ -461,11 +477,12 @@ module.exports = function (RED: NodeAPI) {
                 // Clear processed messages cache
                 processedMessages.clear();
 
-                // Clear flow context
+                // Clear flow context (node-specific only)
                 flowContext.set(SCALE_CONFIG_KEY, []);
-                flowContext.set(CONFIG_KEYS_KEY, {});
-                flowContext.set(CONFIG_VALUES_KEY, {});
                 flowContext.set(MANUAL_OVERRIDES_KEY, {});
+
+                // Note: We don't clear global configKeys and configKeyValues on node close
+                // as they should persist across node restarts and be shared between nodes
 
                 // Disconnect clients
                 mqttClient.disconnect();
