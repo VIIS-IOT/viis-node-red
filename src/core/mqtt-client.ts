@@ -162,7 +162,7 @@ export class MqttClientCore extends EventEmitter {
     // Resubscribe tất cả các topic khi reconnect
     private resubscribeTopics(): void {
         if (!this.client) return;
-        for (const topic of this.subscribedTopics) {
+        this.subscribedTopics.forEach((topic) => {
             this.client.subscribe(topic, { qos: this.config.qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to resubscribe to ${topic}: ${err.message}`);
@@ -170,7 +170,7 @@ export class MqttClientCore extends EventEmitter {
                     this.node.log(`Resubscribed to topic: ${topic}`);
                 }
             });
-        }
+        });
     }
 
     // Ngắt kết nối thủ công

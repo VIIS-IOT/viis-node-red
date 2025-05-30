@@ -1,41 +1,27 @@
-import { NodeAPI, NodeDef, Node } from "node-red";
+import { NodeAPI, Node } from "node-red";
 import ClientRegistry from "../../core/client-registry";
-import { ModbusData } from "../../core/modbus-client";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import { LuoiMappingHandler } from "./luoi-mapping-handler";
-
-interface ViisRpcControlNodeDef extends NodeDef {
-    mqttBroker: string;
-    configKeys: string;
-    scaleConfigs: string;
-}
-
-interface ScaleConfig {
-    key: string;
-    operation: "multiply" | "divide";
-    factor: number;
-    direction: "read" | "write";
-}
-
-interface ConfigKey {
-    [key: string]: "number" | "boolean" | "string"; // Danh sách key và kiểu mong muốn
-}
-
-interface ConfigKeyValues {
-    [key: string]: number | boolean | string; // Lưu giá trị thực tế từ RPC
-}
-
-interface RpcMessage {
-    method?: string;
-    params?: Record<string, any>;
-    [key: string]: any;
-}
-
-interface ModbusMappingResult {
-    address: number;
-    fc: number;
-    value: number | boolean;
-}
+import {
+    ViisRpcControlNodeDef,
+    RpcMessage
+} from "./interfaces/types";
+import { RpcHandler } from "./handlers/rpcHandler";
+import { MessageHandler } from "./handlers/messageHandler";
+import { ConfigService } from "./services/configService";
+import { MqttService } from "./services/mqttService";
+import { ModbusService } from "./services/modbusService";
+import { ValidationService } from "./services/validationService";
+import { Logger } from "./utils/logger";
+import { ScalingUtils } from "./utils/scaling";
+import {
+    MQTT_CONFIG,
+    MODBUS_CONFIG,
+    ENV_KEYS,
+    DEFAULTS,
+    ERROR_MESSAGES,
+    STATUS_MESSAGES
+} from "./constants";
 
 
 
@@ -43,513 +29,217 @@ module.exports = function (RED: NodeAPI) {
     async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
-        // Sử dụng flow context cho node-specific configs và global context cho shared configs
+
+        // Initialize logger
+        const logger = new Logger(node);
+
+        // Get contexts
         const flowContext = node.context().flow;
         const globalContext = node.context().global;
 
-        // Node-specific keys (flow context)
-        const SCALE_CONFIG_KEY = `scaleConfigs_${node.id}`;
-        const MANUAL_OVERRIDES_KEY = `manualModbusOverrides_${node.id}`;
-
-        // Global shared keys (global context)
-        const GLOBAL_CONFIG_KEYS_KEY = "configKeys";
-        const GLOBAL_CONFIG_VALUES_KEY = "configKeyValues";
-
-
-        // Debounce settings
-        const DEBOUNCE_TIME_MS = 200; // 200ms debounce
-        const publishTimeouts = new Map<string, NodeJS.Timeout>();
-
-        // Message deduplication
-        const processedMessages = new Set<string>();
-        const MESSAGE_CACHE_TTL = 10000; // 10 seconds
-
-        function generateMessageId(payload: any): string {
-            // Create a more stable hash based on payload content only
-            const payloadStr = JSON.stringify(payload, Object.keys(payload).sort());
-            return `${Buffer.from(payloadStr).toString('base64').slice(0, 16)}_${node.id}`;
-        }
-
-        function isMessageProcessed(messageId: string): boolean {
-            return processedMessages.has(messageId);
-        }
-
-        function markMessageProcessed(messageId: string): void {
-            processedMessages.add(messageId);
-            // Clean up old messages after TTL
-            setTimeout(() => {
-                processedMessages.delete(messageId);
-            }, MESSAGE_CACHE_TTL);
-        }
-
-        // Parse configurations (chuẩn hóa như viis-telemetry)
-        let configKeys: ConfigKey = {};
-        let scaleConfigs: ScaleConfig[] = [];
-        try {
-            configKeys = config.configKeys ? JSON.parse(config.configKeys) : {};
-            if (typeof configKeys !== 'object' || Array.isArray(configKeys) || configKeys === null) configKeys = {};
-        } catch {
-            configKeys = {};
-        }
-        try {
-            scaleConfigs = config.scaleConfigs ? JSON.parse(config.scaleConfigs) : [];
-            if (!Array.isArray(scaleConfigs)) scaleConfigs = [];
-        } catch {
-            scaleConfigs = [];
-        }
-        // Validate configKeys
-        Object.entries(configKeys).forEach(([key, type]) => {
-            if (!['number', 'boolean', 'string'].includes(type)) {
-                throw new Error(`Invalid type "${type}" for key "${key}"`);
-            }
-        });
-        // Validate scaleConfigs
-        scaleConfigs.forEach((conf) => {
-            if (!conf.key || !conf.operation || typeof conf.factor !== "number" || !["read", "write"].includes(conf.direction)) {
-                throw new Error(`Invalid scale config: ${JSON.stringify(conf)}`);
-            }
-        });
-        // Store node-specific configs vào flow context và global configs vào global context
-        flowContext.set(SCALE_CONFIG_KEY, scaleConfigs);
-        if (!flowContext.get(MANUAL_OVERRIDES_KEY)) flowContext.set(MANUAL_OVERRIDES_KEY, {});
-
-        // Initialize global configs if not exist
-        if (!globalContext.get(GLOBAL_CONFIG_KEYS_KEY)) {
-            globalContext.set(GLOBAL_CONFIG_KEYS_KEY, configKeys);
-        } else {
-            // Merge with existing global configKeys
-            const existingConfigKeys = globalContext.get(GLOBAL_CONFIG_KEYS_KEY) as ConfigKey || {};
-            const mergedConfigKeys = { ...existingConfigKeys, ...configKeys };
-            globalContext.set(GLOBAL_CONFIG_KEYS_KEY, mergedConfigKeys);
-        }
-
-        if (!globalContext.get(GLOBAL_CONFIG_VALUES_KEY)) {
-            globalContext.set(GLOBAL_CONFIG_VALUES_KEY, {});
-        }
-
-        // Các hàm util lấy config từ global context
-        function getConfigKeys(): ConfigKey {
-            return globalContext.get(GLOBAL_CONFIG_KEYS_KEY) as ConfigKey || {};
-        }
-        function getScaleConfigs(): ScaleConfig[] {
-            return flowContext.get(SCALE_CONFIG_KEY) as ScaleConfig[] || [];
-        }
-        function getConfigKeyValues(): ConfigKeyValues {
-            return globalContext.get(GLOBAL_CONFIG_VALUES_KEY) as ConfigKeyValues || {};
-        }
-        function setConfigKeyValues(values: ConfigKeyValues): void {
-            globalContext.set(GLOBAL_CONFIG_VALUES_KEY, values);
-        }
-
-
-
-        // Environment variables
-        const deviceId = process.env.DEVICE_ID || "unknown";
-        const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-        const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
-        const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-
-        // Initialize clients
-        const modbusConfig = {
-            type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
-            host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
-            serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
-            baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
-            parity: (process.env.MODBUS_PARITY as "none" | "even" | "odd") || "none",
-            unitId: parseInt(process.env.MODBUS_UNIT_ID || "1", 10),
-            timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
-            reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
+        // Create service options
+        const serviceOptions = {
+            node,
+            flowContext,
+            globalContext,
         };
 
-        const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
-            ? {
-                broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-                clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
-                username: process.env.DEVICE_ACCESS_TOKEN || "",
-                password: process.env.THINGSBOARD_PASSWORD || "",
-                qos: 1,
-            }
-            : {
-                broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
-                clientId: `node-red-local-rpc-${Math.random().toString(16).substring(2, 10)}`,
-                username: process.env.EMQX_USERNAME || "",
-                password: process.env.EMQX_PASSWORD || "",
-                qos: 1,
-            };
-
-        const subscribeTopic = config.mqttBroker === "thingsboard"
-            ? "v1/devices/me/rpc/request/+"
-            : `v1/devices/me/rpc/request/${deviceId}`;
-        const publishTopic = config.mqttBroker === "thingsboard"
-            ? "v1/devices/me/telemetry"
-            : `v1/devices/me/telemetry/${deviceId}`;
-
-        // Lấy clients với await
-        const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
-        const mqttClient = config.mqttBroker === "thingsboard"
-            ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
-            : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
-
-        if (!modbusClient || !mqttClient) {
-            node.error("Failed to initialize clients");
-            node.status({ fill: "red", shape: "ring", text: "Client initialization failed" });
-            return;
-        }
-
-        node.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
-
-        // Initialize LuoiMappingHandler
-        const luoiHandler = new LuoiMappingHandler(node);
-
-        // Utility functions
-        function scaleValue(key: string, value: number, direction: "read" | "write"): number {
-            const config = getScaleConfigs().find((c) => c.key === key && c.direction === direction);
-            if (!config) return value;
-            const shouldMultiply = config.operation === "multiply";
-            const scaledValue = shouldMultiply ? value * config.factor : value / config.factor;
-            //node.log(`Scaled ${key} (${direction}): ${value} -> ${scaledValue}`);
-            return scaledValue;
-        }
-
-        function validateAndConvertValue(key: string, value: any): any {
-            const configKeys = getConfigKeys();
-            const expectedType = configKeys[key];
-
-            // If key doesn't exist in configKeys, auto-detect type and add it
-            if (!expectedType) {
-                let detectedType: "number" | "boolean" | "string" = "string";
-
-                if (typeof value === "boolean") {
-                    detectedType = "boolean";
-                } else if (typeof value === "number" || (!isNaN(Number(value)) && value !== "" && value !== null)) {
-                    detectedType = "number";
-                } else if (typeof value === "string" && (value.toLowerCase() === "true" || value.toLowerCase() === "false")) {
-                    detectedType = "boolean";
-                } else {
-                    detectedType = "string";
-                }
-
-                // Add new key to configKeys
-                const updatedConfigKeys = { ...configKeys, [key]: detectedType };
-                globalContext.set(GLOBAL_CONFIG_KEYS_KEY, updatedConfigKeys);
-                node.log(`Auto-added new config key: ${key} with type: ${detectedType}`);
-
-                // Use detected type for conversion
-                return convertValueByType(key, value, detectedType);
-            }
-
-            return convertValueByType(key, value, expectedType);
-        }
-
-        function convertValueByType(key: string, value: any, expectedType: "number" | "boolean" | "string"): any {
-            try {
-                switch (expectedType) {
-                    case "number":
-                        const num = Number(value);
-                        if (isNaN(num)) throw new Error(`Invalid number value for ${key}`);
-                        return num;
-                    case "boolean":
-                        if (typeof value === "string") return value.toLowerCase() === "true";
-                        return Boolean(value);
-                    case "string":
-                        return String(value);
-                    default:
-                        return value;
-                }
-            } catch (error) {
-                throw new Error(`Value conversion failed for ${key}: ${(error as Error).message}`);
-            }
-        }
-
-        function findModbusMapping(key: string): ModbusMappingResult | null {
-            if (modbusHoldingRegisters[key] !== undefined) {
-                return { address: modbusHoldingRegisters[key], fc: 6, value: 0 };
-            }
-            if (modbusCoils[key] !== undefined) {
-                return { address: modbusCoils[key], fc: 5, value: false };
-            }
-            if (modbusInputRegisters[key] !== undefined) {
-                return { address: modbusInputRegisters[key], fc: 4, value: 0 };
-            }
-            return null;
-        }
-
-        async function writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
-            try {
-                let writeValue = value;
-                if (typeof value === "number") {
-                    writeValue = scaleValue(key, value, "write");
-                }
-                if (mapping.fc === 6) {
-                    await modbusClient.writeRegister(mapping.address, writeValue as number);
-                } else if (mapping.fc === 5) {
-                    await modbusClient.writeCoil(mapping.address, value as boolean);
-                }
-                //node.log(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
-                // Lưu thông tin lệnh thủ công vào flow context (manual overrides)
-                const manualOverrides = flowContext.get(MANUAL_OVERRIDES_KEY) as { [address: string]: { fc: number, value: any, timestamp: number } };
-                manualOverrides[`${mapping.address}-${mapping.fc}`] = {
-                    fc: mapping.fc,
-                    value: writeValue,
-                    timestamp: Date.now()
-                };
-                flowContext.set(MANUAL_OVERRIDES_KEY, manualOverrides);
-                //node.log(`Stored manual override: address=${mapping.address}, fc=${mapping.fc}, value=${writeValue}`);
-            } catch (error) {
-                throw new Error(`Modbus write failed for ${key}: ${(error as Error).message}`);
-            }
-        }
-
-        async function readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean> {
-            try {
-                const readFc = mapping.fc === 6 ? 3 : mapping.fc === 5 ? 1 : 4;
-                let result: ModbusData;
-
-                if (readFc === 1) {
-                    result = await modbusClient.readCoils(mapping.address, 1);
-                } else if (readFc === 3) {
-                    result = await modbusClient.readHoldingRegisters(mapping.address, 1);
-                } else {
-                    result = await modbusClient.readInputRegisters(mapping.address, 1);
-                }
-
-                let readValue = result.data[0];
-                if (typeof readValue === "number") {
-                    readValue = scaleValue(key, readValue, "read");
-                }
-                //node.log(`Read from Modbus: key=${key}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
-                return readValue;
-            } catch (error) {
-                throw new Error(`Modbus read failed for ${key}: ${(error as Error).message}`);
-            }
-        }
-
-        async function publishResultImmediate(key: string, value: number | boolean): Promise<void> {
-            const mqttPayload = {
-                ts: Date.now(),
-                [key]: value,
-            };
-
-            try {
-                await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
-                node.send({ payload: mqttPayload });
-                node.status({ fill: "green", shape: "dot", text: `Published: ${key}` });
-                node.log(`Published immediately: ${key}=${value}`);
-            } catch (error) {
-                node.error(`Failed to publish ${key}: ${(error as Error).message}`);
-                throw error;
-            }
-        }
-
-        function publishResult(key: string, value: number | boolean): void {
-            // Clear existing timeout for this key
-            const existingTimeout = publishTimeouts.get(key);
-            if (existingTimeout) {
-                clearTimeout(existingTimeout);
-                node.log(`Cleared existing timeout for ${key}`);
-            }
-
-            // Set new debounced timeout
-            const timeout = setTimeout(async () => {
-                try {
-                    await publishResultImmediate(key, value);
-                    publishTimeouts.delete(key);
-                } catch (error) {
-                    node.error(`Debounced publish failed for ${key}: ${(error as Error).message}`);
-                    publishTimeouts.delete(key);
-                }
-            }, DEBOUNCE_TIME_MS);
-
-            publishTimeouts.set(key, timeout);
-            node.log(`Scheduled debounced publish for ${key}=${value} in ${DEBOUNCE_TIME_MS}ms`);
-        }
-
-
-
-        async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
-            try {
-                if (rpcBody.method === "set_state" && rpcBody.params) {
-                    // Try luoi mapping handler first
-                    const luoiResult = luoiHandler.processRpcBody(rpcBody.params);
-
-                    if (luoiResult !== null) {
-                        // Handle luoi mapping result
-                        if ('messages' in luoiResult) {
-                            // Luoi case - send multiple messages
-                            node.send([luoiResult.messages]);
-                            node.status({ fill: "green", shape: "dot", text: "Luoi commands sent" });
-                            return;
-                        } else {
-                            // Standard case - send single message
-                            node.send({ payload: luoiResult.payload });
-                            node.status({ fill: "green", shape: "dot", text: "Modbus command sent" });
-                            return;
-                        }
-                    }
-
-                    // Fallback to original logic for non-luoi cases
-                    for (const [key, rawValue] of Object.entries(rpcBody.params)) {
-                        const mapping = findModbusMapping(key);
-                        if (mapping) {
-                            const value = validateAndConvertValue(key, rawValue);
-                            await writeToModbus(key, mapping, value);
-                            const readValue = await readFromModbus(key, mapping);
-                            publishResult(key, readValue);
-                        } else {
-                            const value = validateAndConvertValue(key, rawValue);
-                            const currentConfig = getConfigKeyValues();
-                            currentConfig[key] = value;
-                            setConfigKeyValues(currentConfig);
-
-                            const mqttPayload = {
-                                ts: Date.now(),
-                                [key]: value,
-                                note: "Config key updated (no Modbus mapping)",
-                            };
-                            await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
-                            node.send({ payload: mqttPayload });
-                            node.status({ fill: "green", shape: "dot", text: `Config updated: ${key}` });
-                        }
-                    }
-                }
-            } catch (error) {
-                node.error(`RPC handling error: ${(error as Error).message}`);
-                node.status({ fill: "red", shape: "ring", text: "RPC error" });
-            }
-        }
-
-        // Set up MQTT subscription
         try {
-            await mqttClient.subscribe(subscribeTopic);
-            //node.log(`Subscribed to topic: ${subscribeTopic}`);
-        } catch (error) {
-            node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
-            node.status({ fill: "red", shape: "ring", text: "Subscription failed" });
-            return;
-        }
+            // Initialize configuration service
+            const configService = new ConfigService(serviceOptions);
+            configService.initializeConfig(config.configKeys, config.scaleConfigs);
+            configService.initializeManualOverrides();
 
-        mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
-            if (!message.topic.startsWith(subscribeTopic.replace("+", ""))) return;
-            ClientRegistry.logConnectionCounts(node);
+            // Initialize validation service
+            const validationService = new ValidationService(serviceOptions, configService);
 
+            // Initialize scaling utils
+            const scalingUtils = new ScalingUtils(configService, new Logger(node, "SCALING"));
+
+            // Load environment configuration
+            const deviceId = process.env[ENV_KEYS.DEVICE_ID] || DEFAULTS.DEVICE_ID;
+
+            // Initialize Modbus client configuration
+            const modbusConfig = {
+                type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
+                host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
+                tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
+                serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
+                baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
+                parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
+                unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
+                timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
+                reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10),
+            };
+
+            // Initialize MQTT client configuration
+            const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
+                ? {
+                    broker: `mqtt://${process.env[ENV_KEYS.THINGSBOARD_HOST] || MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST}:${process.env[ENV_KEYS.THINGSBOARD_PORT] || MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT}`,
+                    clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
+                    username: process.env[ENV_KEYS.DEVICE_ACCESS_TOKEN] || "",
+                    password: process.env[ENV_KEYS.THINGSBOARD_PASSWORD] || "",
+                    qos: MQTT_CONFIG.THINGSBOARD.QOS,
+                }
+                : {
+                    broker: `mqtt://${process.env[ENV_KEYS.EMQX_HOST] || MQTT_CONFIG.LOCAL.DEFAULT_HOST}:${process.env[ENV_KEYS.EMQX_PORT] || MQTT_CONFIG.LOCAL.DEFAULT_PORT}`,
+                    clientId: `node-red-local-rpc-${Math.random().toString(16).substring(2, 10)}`,
+                    username: process.env[ENV_KEYS.EMQX_USERNAME] || "",
+                    password: process.env[ENV_KEYS.EMQX_PASSWORD] || "",
+                    qos: MQTT_CONFIG.LOCAL.QOS,
+                };
+
+            // Define MQTT topics
+            const subscribeTopic = config.mqttBroker === "thingsboard"
+                ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
+                : `v1/devices/me/rpc/request/${deviceId}`;
+            const publishTopic = config.mqttBroker === "thingsboard"
+                ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
+                : `v1/devices/me/telemetry/${deviceId}`;
+
+            // Initialize clients
+            const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+            const mqttClient = config.mqttBroker === "thingsboard"
+                ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+                : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
+
+            if (!modbusClient || !mqttClient) {
+                node.error(ERROR_MESSAGES.CLIENT_INIT_FAILED);
+                node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.CLIENT_INIT_FAILED });
+                return;
+            }
+
+            logger.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
+
+            // Initialize services
+            const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
+            const mqttService = new MqttService(serviceOptions, mqttClient, publishTopic);
+            const messageHandler = new MessageHandler(serviceOptions);
+            const luoiHandler = new LuoiMappingHandler(node);
+            const rpcHandler = new RpcHandler(
+                serviceOptions,
+                configService,
+                validationService,
+                modbusService,
+                mqttService,
+                luoiHandler
+            );
+
+
+
+            // Set up MQTT subscription
             try {
-                const payload = JSON.parse(message.message.toString());
-
-                // Generate unique message ID for deduplication
-                const messageId = generateMessageId(payload);
-
-                // Check if message already processed
-                if (isMessageProcessed(messageId)) {
-                    node.warn(`Duplicate message detected and ignored: ${messageId}`);
-                    return;
-                }
-
-                // Mark message as processed
-                markMessageProcessed(messageId);
-
-                node.log(`Processing RPC payload: ${JSON.stringify(payload)} [ID: ${messageId}]`);
-                handleRpcRequest(payload);
+                await mqttClient.subscribe(subscribeTopic);
+                logger.log(`Subscribed to topic: ${subscribeTopic}`);
             } catch (error) {
-                node.error(`MQTT message processing error: ${(error as Error).message}`);
-                node.status({ fill: "red", shape: "ring", text: "Parse error" });
+                node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
+                node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
+                return;
             }
-        });
 
-
-        // Cho phép cập nhật động scaleConfigs, configKeys và xử lý RPC commands qua msg
-        node.on('input', (msg: any) => {
-            console.log('VIIS-RPC-CONTROL: INPUT RECEIVED');
-            node.warn('VIIS-RPC-CONTROL: INPUT RECEIVED');
-            node.status({ fill: "blue", shape: "dot", text: "Message received" });
-            if (msg.scaleConfigs) {
-                try {
-                    let newConfigs = Array.isArray(msg.scaleConfigs) ? msg.scaleConfigs : JSON.parse(msg.scaleConfigs);
-                    if (!Array.isArray(newConfigs)) newConfigs = [];
-                    flowContext.set(SCALE_CONFIG_KEY, newConfigs);
-                    node.warn('[Config] scaleConfigs replaced (no append): ' + JSON.stringify(newConfigs));
-                } catch (error) {
-                    node.error(`Failed to update scaleConfigs: ${(error as Error).message}`);
-                }
-            }
-            if (msg.configKeys) {
-                try {
-                    let newKeys = typeof msg.configKeys === 'object' ? msg.configKeys : JSON.parse(msg.configKeys);
-                    if (typeof newKeys !== 'object' || Array.isArray(newKeys) || newKeys === null) newKeys = {};
-                    globalContext.set(GLOBAL_CONFIG_KEYS_KEY, newKeys);
-                    node.warn('[Config] configKeys replaced (no append): ' + JSON.stringify(newKeys));
-                } catch (error) {
-                    node.error(`Failed to update configKeys: ${(error as Error).message}`);
-                }
-            }
-            node.warn(`debug msg.payload: ${JSON.stringify(msg.payload)}`)
-            // Process RPC commands from input
-            if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
-                (typeof msg.method === 'string' && msg.method === 'set_state')) {
-                node.warn("Processing RPC input")
-                console.log("Processing RPC input")
-                try {
-                    console.log("Processing RPC input")
-                    let rpcBody: RpcMessage;
-                    if (typeof msg.payload === 'object' && msg.payload.method === 'set_state') {
-                        // Format: { payload: { method: "set_state", params: { key: value } } }
-                        rpcBody = msg.payload;
-                        node.warn(`Detected RPC in payload: ${JSON.stringify(rpcBody)}`);
-                    } else if (typeof msg.method === 'string' && msg.method === 'set_state' && msg.params) {
-                        // Format: { method: "set_state", params: { key: value } }
-                        rpcBody = {
-                            method: msg.method,
-                            params: msg.params,
-                            timeout: msg.timeout
-                        };
-                        node.warn(`Detected RPC in direct properties: ${JSON.stringify(rpcBody)}`);
-                    } else {
-                        throw new Error('Invalid RPC command format');
+            // Set up MQTT message handler
+            mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
+                messageHandler.processMqttMessage(
+                    message,
+                    subscribeTopic,
+                    async (payload: any) => {
+                        ClientRegistry.logConnectionCounts(node);
+                        await rpcHandler.handleRpcRequest(payload);
                     }
-                    node.status({ fill: "blue", shape: "dot", text: "Processing RPC input" });
-                    handleRpcRequest(rpcBody);
+                );
+            });
+
+            // Handle input messages for dynamic configuration updates and RPC commands
+            node.on('input', (msg: any) => {
+                logger.log('Input message received');
+                node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.MESSAGE_RECEIVED });
+
+                // Handle scale config updates
+                if (msg.scaleConfigs) {
+                    try {
+                        const newConfigs = Array.isArray(msg.scaleConfigs)
+                            ? msg.scaleConfigs
+                            : JSON.parse(msg.scaleConfigs);
+                        configService.updateScaleConfigs(newConfigs);
+                        logger.warn(`Scale configs updated: ${JSON.stringify(newConfigs)}`);
+                    } catch (error) {
+                        logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("scaleConfigs") + `: ${(error as Error).message}`);
+                    }
+                }
+
+                // Handle config keys updates
+                if (msg.configKeys) {
+                    try {
+                        const newKeys = typeof msg.configKeys === 'object'
+                            ? msg.configKeys
+                            : JSON.parse(msg.configKeys);
+                        configService.updateConfigKeys(newKeys);
+                        logger.warn(`Config keys updated: ${JSON.stringify(newKeys)}`);
+                    } catch (error) {
+                        logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("configKeys") + `: ${(error as Error).message}`);
+                    }
+                }
+
+                // Handle RPC commands from input
+                if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
+                    (typeof msg.method === 'string' && msg.method === 'set_state')) {
+
+                    logger.warn("Processing RPC input");
+
+                    try {
+                        let rpcBody: RpcMessage;
+                        if (typeof msg.payload === 'object' && msg.payload.method === 'set_state') {
+                            rpcBody = msg.payload;
+                        } else if (typeof msg.method === 'string' && msg.method === 'set_state' && msg.params) {
+                            rpcBody = {
+                                method: msg.method,
+                                params: msg.params,
+                                timeout: msg.timeout
+                            };
+                        } else {
+                            throw new Error(ERROR_MESSAGES.INVALID_RPC_FORMAT);
+                        }
+
+                        node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.PROCESSING_RPC_INPUT });
+                        rpcHandler.handleRpcRequest(rpcBody);
+                    } catch (error) {
+                        logger.error(ERROR_MESSAGES.RPC_INPUT_FAILED + `: ${(error as Error).message}`);
+                        node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.RPC_INPUT_ERROR });
+                    }
+                }
+            });
+
+
+
+            // Cleanup when node is removed
+            node.on('close', async (done: () => void) => {
+                try {
+                    // Clear all timeouts and caches
+                    mqttService.clearAllTimeouts();
+                    messageHandler.clearProcessedMessages();
+                    configService.clearNodeConfigs();
+
+                    // Disconnect clients
+                    mqttClient.disconnect();
+                    ClientRegistry.releaseClient("modbus", node);
+                    if (config.mqttBroker === "thingsboard") {
+                        ClientRegistry.releaseClient("thingsboard", node);
+                    } else {
+                        ClientRegistry.releaseClient("local", node);
+                    }
+
+                    logger.log("Node closed and all resources cleaned");
+                    done();
                 } catch (error) {
-                    node.error(`Failed to process RPC command from input: ${(error as Error).message}`);
-                    node.status({ fill: "red", shape: "ring", text: "RPC input error" });
+                    logger.error(`Cleanup error: ${(error as Error).message}`);
+                    done();
                 }
-            }
-        });
+            });
 
-        // Cleanup triệt để khi node bị xóa
-        node.on('close', async (done: () => void) => {
-            try {
-                // Clear all pending publish timeouts
-                for (const [key, timeout] of publishTimeouts.entries()) {
-                    clearTimeout(timeout);
-                    node.log(`Cleared pending timeout for ${key}`);
-                }
-                publishTimeouts.clear();
-
-                // Clear processed messages cache
-                processedMessages.clear();
-
-                // Clear flow context (node-specific only)
-                flowContext.set(SCALE_CONFIG_KEY, []);
-                flowContext.set(MANUAL_OVERRIDES_KEY, {});
-
-                // Note: We don't clear global configKeys and configKeyValues on node close
-                // as they should persist across node restarts and be shared between nodes
-
-                // Disconnect clients
-                mqttClient.disconnect();
-                ClientRegistry.releaseClient("modbus", node);
-                if (config.mqttBroker === "thingsboard") {
-                    ClientRegistry.releaseClient("thingsboard", node);
-                } else {
-                    ClientRegistry.releaseClient("local", node);
-                }
-                node.log("Node closed and all resources cleaned");
-                done();
-            } catch (error) {
-                node.error(`Cleanup error: ${(error as Error).message}`);
-                done();
-            }
-        });
+        } catch (error) {
+            logger.error(`Node initialization failed: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Initialization failed" });
+        }
     }
 
     RED.nodes.registerType("viis-rpc-control", ViisRpcControlNode);
