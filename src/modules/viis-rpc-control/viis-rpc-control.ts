@@ -26,7 +26,7 @@ import {
 
 
 module.exports = function (RED: NodeAPI) {
-    async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
+    function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
 
@@ -44,202 +44,208 @@ module.exports = function (RED: NodeAPI) {
             globalContext,
         };
 
-        try {
-            // Initialize configuration service
-            const configService = new ConfigService(serviceOptions);
-            configService.initializeConfig(config.configKeys, config.scaleConfigs);
-            configService.initializeManualOverrides();
+        // Wrap async initialization in IIFE
+        (async () => {
+            try {
+                // Initialize configuration service
+                const configService = new ConfigService(serviceOptions);
+                configService.initializeConfig(config.configKeys, config.scaleConfigs);
+                configService.initializeManualOverrides();
 
-            // Initialize validation service
-            const validationService = new ValidationService(serviceOptions, configService);
+                // Initialize validation service
+                const validationService = new ValidationService(serviceOptions, configService);
 
-            // Initialize scaling utils
-            const scalingUtils = new ScalingUtils(configService, new Logger(node, "SCALING"));
+                // Initialize scaling utils
+                const scalingUtils = new ScalingUtils(configService, new Logger(node, "SCALING"));
 
-            // Load environment configuration
-            const deviceId = process.env[ENV_KEYS.DEVICE_ID] || DEFAULTS.DEVICE_ID;
+                // Load environment configuration
+                const deviceId = process.env[ENV_KEYS.DEVICE_ID] || DEFAULTS.DEVICE_ID;
 
-            // Initialize Modbus client configuration
-            const modbusConfig = {
-                type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
-                host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
-                tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
-                serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
-                baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
-                parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
-                unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
-                timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
-                reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10),
-            };
-
-            // Initialize MQTT client configuration
-            const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
-                ? {
-                    broker: `mqtt://${process.env[ENV_KEYS.THINGSBOARD_HOST] || MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST}:${process.env[ENV_KEYS.THINGSBOARD_PORT] || MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT}`,
-                    clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
-                    username: process.env[ENV_KEYS.DEVICE_ACCESS_TOKEN] || "",
-                    password: process.env[ENV_KEYS.THINGSBOARD_PASSWORD] || "",
-                    qos: MQTT_CONFIG.THINGSBOARD.QOS,
-                }
-                : {
-                    broker: `mqtt://${process.env[ENV_KEYS.EMQX_HOST] || MQTT_CONFIG.LOCAL.DEFAULT_HOST}:${process.env[ENV_KEYS.EMQX_PORT] || MQTT_CONFIG.LOCAL.DEFAULT_PORT}`,
-                    clientId: `node-red-local-rpc-${Math.random().toString(16).substring(2, 10)}`,
-                    username: process.env[ENV_KEYS.EMQX_USERNAME] || "",
-                    password: process.env[ENV_KEYS.EMQX_PASSWORD] || "",
-                    qos: MQTT_CONFIG.LOCAL.QOS,
+                // Initialize Modbus client configuration
+                const modbusConfig = {
+                    type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
+                    host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
+                    tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
+                    serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
+                    baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
+                    parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
+                    unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
+                    timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
+                    reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10),
                 };
 
-            // Define MQTT topics
-            const subscribeTopic = config.mqttBroker === "thingsboard"
-                ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
-                : `v1/devices/me/rpc/request/${deviceId}`;
-            const publishTopic = config.mqttBroker === "thingsboard"
-                ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
-                : `v1/devices/me/telemetry/${deviceId}`;
-
-            // Initialize clients
-            const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
-            const mqttClient = config.mqttBroker === "thingsboard"
-                ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
-                : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
-
-            if (!modbusClient || !mqttClient) {
-                node.error(ERROR_MESSAGES.CLIENT_INIT_FAILED);
-                node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.CLIENT_INIT_FAILED });
-                return;
-            }
-
-            logger.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
-
-            // Initialize services
-            const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
-            const mqttService = new MqttService(serviceOptions, mqttClient, publishTopic);
-            const messageHandler = new MessageHandler(serviceOptions);
-            const luoiHandler = new LuoiMappingHandler(node);
-            const rpcHandler = new RpcHandler(
-                serviceOptions,
-                configService,
-                validationService,
-                modbusService,
-                mqttService,
-                luoiHandler
-            );
-
-
-
-            // Set up MQTT subscription
-            try {
-                await mqttClient.subscribe(subscribeTopic);
-                logger.log(`Subscribed to topic: ${subscribeTopic}`);
-            } catch (error) {
-                node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
-                node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
-                return;
-            }
-
-            // Set up MQTT message handler
-            mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
-                messageHandler.processMqttMessage(
-                    message,
-                    subscribeTopic,
-                    async (payload: any) => {
-                        ClientRegistry.logConnectionCounts(node);
-                        await rpcHandler.handleRpcRequest(payload);
+                // Initialize MQTT client configuration
+                const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
+                    ? {
+                        broker: `mqtt://${process.env[ENV_KEYS.THINGSBOARD_HOST] || MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST}:${process.env[ENV_KEYS.THINGSBOARD_PORT] || MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT}`,
+                        clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
+                        username: process.env[ENV_KEYS.DEVICE_ACCESS_TOKEN] || "",
+                        password: process.env[ENV_KEYS.THINGSBOARD_PASSWORD] || "",
+                        qos: MQTT_CONFIG.THINGSBOARD.QOS,
                     }
+                    : {
+                        broker: `mqtt://${process.env[ENV_KEYS.EMQX_HOST] || MQTT_CONFIG.LOCAL.DEFAULT_HOST}:${process.env[ENV_KEYS.EMQX_PORT] || MQTT_CONFIG.LOCAL.DEFAULT_PORT}`,
+                        clientId: `node-red-local-rpc-${Math.random().toString(16).substring(2, 10)}`,
+                        username: process.env[ENV_KEYS.EMQX_USERNAME] || "",
+                        password: process.env[ENV_KEYS.EMQX_PASSWORD] || "",
+                        qos: MQTT_CONFIG.LOCAL.QOS,
+                    };
+
+                // Define MQTT topics
+                const subscribeTopic = config.mqttBroker === "thingsboard"
+                    ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
+                    : `v1/devices/me/rpc/request/${deviceId}`;
+                const publishTopic = config.mqttBroker === "thingsboard"
+                    ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
+                    : `v1/devices/me/telemetry/${deviceId}`;
+
+                // Initialize clients
+                const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+                const mqttClient = config.mqttBroker === "thingsboard"
+                    ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+                    : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
+
+                if (!modbusClient || !mqttClient) {
+                    node.error(ERROR_MESSAGES.CLIENT_INIT_FAILED);
+                    node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.CLIENT_INIT_FAILED });
+                    return;
+                }
+
+                logger.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
+
+                // Initialize services
+                const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
+                const mqttService = new MqttService(serviceOptions, mqttClient, publishTopic);
+                const messageHandler = new MessageHandler(serviceOptions);
+                const luoiHandler = new LuoiMappingHandler(node);
+                const rpcHandler = new RpcHandler(
+                    serviceOptions,
+                    configService,
+                    validationService,
+                    modbusService,
+                    mqttService,
+                    luoiHandler
                 );
-            });
 
-            // Handle input messages for dynamic configuration updates and RPC commands
-            node.on('input', (msg: any) => {
-                logger.log('Input message received');
-                node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.MESSAGE_RECEIVED });
 
-                // Handle scale config updates
-                if (msg.scaleConfigs) {
-                    try {
-                        const newConfigs = Array.isArray(msg.scaleConfigs)
-                            ? msg.scaleConfigs
-                            : JSON.parse(msg.scaleConfigs);
-                        configService.updateScaleConfigs(newConfigs);
-                        logger.warn(`Scale configs updated: ${JSON.stringify(newConfigs)}`);
-                    } catch (error) {
-                        logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("scaleConfigs") + `: ${(error as Error).message}`);
-                    }
+
+                // Set up MQTT subscription
+                try {
+                    await mqttClient.subscribe(subscribeTopic);
+                    logger.log(`Subscribed to topic: ${subscribeTopic}`);
+                } catch (error) {
+                    node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
+                    node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
+                    return;
                 }
 
-                // Handle config keys updates
-                if (msg.configKeys) {
-                    try {
-                        const newKeys = typeof msg.configKeys === 'object'
-                            ? msg.configKeys
-                            : JSON.parse(msg.configKeys);
-                        configService.updateConfigKeys(newKeys);
-                        logger.warn(`Config keys updated: ${JSON.stringify(newKeys)}`);
-                    } catch (error) {
-                        logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("configKeys") + `: ${(error as Error).message}`);
+                // Set up MQTT message handler
+                mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
+                    messageHandler.processMqttMessage(
+                        message,
+                        subscribeTopic,
+                        async (payload: any) => {
+                            ClientRegistry.logConnectionCounts(node);
+                            await rpcHandler.handleRpcRequest(payload);
+                        }
+                    );
+                });
+
+                // Handle input messages for dynamic configuration updates and RPC commands
+                node.on('input', (msg: any) => {
+                    logger.log('Input message received');
+                    node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.MESSAGE_RECEIVED });
+
+                    // Handle scale config updates
+                    if (msg.scaleConfigs) {
+                        try {
+                            const newConfigs = Array.isArray(msg.scaleConfigs)
+                                ? msg.scaleConfigs
+                                : JSON.parse(msg.scaleConfigs);
+                            configService.updateScaleConfigs(newConfigs);
+                            logger.warn(`Scale configs updated: ${JSON.stringify(newConfigs)}`);
+                        } catch (error) {
+                            logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("scaleConfigs") + `: ${(error as Error).message}`);
+                        }
                     }
-                }
 
-                // Handle RPC commands from input
-                if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
-                    (typeof msg.method === 'string' && msg.method === 'set_state')) {
+                    // Handle config keys updates
+                    if (msg.configKeys) {
+                        try {
+                            const newKeys = typeof msg.configKeys === 'object'
+                                ? msg.configKeys
+                                : JSON.parse(msg.configKeys);
+                            configService.updateConfigKeys(newKeys);
+                            logger.warn(`Config keys updated: ${JSON.stringify(newKeys)}`);
+                        } catch (error) {
+                            logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("configKeys") + `: ${(error as Error).message}`);
+                        }
+                    }
 
-                    logger.warn("Processing RPC input");
+                    // Handle RPC commands from input
+                    if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
+                        (typeof msg.method === 'string' && msg.method === 'set_state')) {
 
+                        logger.warn("Processing RPC input");
+
+                        try {
+                            let rpcBody: RpcMessage;
+                            if (typeof msg.payload === 'object' && msg.payload.method === 'set_state') {
+                                rpcBody = msg.payload;
+                            } else if (typeof msg.method === 'string' && msg.method === 'set_state' && msg.params) {
+                                rpcBody = {
+                                    method: msg.method,
+                                    params: msg.params,
+                                    timeout: msg.timeout
+                                };
+                            } else {
+                                throw new Error(ERROR_MESSAGES.INVALID_RPC_FORMAT);
+                            }
+
+                            node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.PROCESSING_RPC_INPUT });
+                            rpcHandler.handleRpcRequest(rpcBody);
+                        } catch (error) {
+                            logger.error(ERROR_MESSAGES.RPC_INPUT_FAILED + `: ${(error as Error).message}`);
+                            node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.RPC_INPUT_ERROR });
+                        }
+                    }
+                });
+
+
+
+                // Cleanup when node is removed
+                node.on('close', async (done: () => void) => {
                     try {
-                        let rpcBody: RpcMessage;
-                        if (typeof msg.payload === 'object' && msg.payload.method === 'set_state') {
-                            rpcBody = msg.payload;
-                        } else if (typeof msg.method === 'string' && msg.method === 'set_state' && msg.params) {
-                            rpcBody = {
-                                method: msg.method,
-                                params: msg.params,
-                                timeout: msg.timeout
-                            };
+                        // Clear all timeouts and caches
+                        mqttService.clearAllTimeouts();
+                        messageHandler.clearProcessedMessages();
+                        configService.clearNodeConfigs();
+
+                        // Disconnect clients
+                        mqttClient.disconnect();
+                        ClientRegistry.releaseClient("modbus", node);
+                        if (config.mqttBroker === "thingsboard") {
+                            ClientRegistry.releaseClient("thingsboard", node);
                         } else {
-                            throw new Error(ERROR_MESSAGES.INVALID_RPC_FORMAT);
+                            ClientRegistry.releaseClient("local", node);
                         }
 
-                        node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.PROCESSING_RPC_INPUT });
-                        rpcHandler.handleRpcRequest(rpcBody);
+                        logger.log("Node closed and all resources cleaned");
+                        done();
                     } catch (error) {
-                        logger.error(ERROR_MESSAGES.RPC_INPUT_FAILED + `: ${(error as Error).message}`);
-                        node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.RPC_INPUT_ERROR });
+                        logger.error(`Cleanup error: ${(error as Error).message}`);
+                        done();
                     }
-                }
-            });
+                });
 
-
-
-            // Cleanup when node is removed
-            node.on('close', async (done: () => void) => {
-                try {
-                    // Clear all timeouts and caches
-                    mqttService.clearAllTimeouts();
-                    messageHandler.clearProcessedMessages();
-                    configService.clearNodeConfigs();
-
-                    // Disconnect clients
-                    mqttClient.disconnect();
-                    ClientRegistry.releaseClient("modbus", node);
-                    if (config.mqttBroker === "thingsboard") {
-                        ClientRegistry.releaseClient("thingsboard", node);
-                    } else {
-                        ClientRegistry.releaseClient("local", node);
-                    }
-
-                    logger.log("Node closed and all resources cleaned");
-                    done();
-                } catch (error) {
-                    logger.error(`Cleanup error: ${(error as Error).message}`);
-                    done();
-                }
-            });
-
-        } catch (error) {
-            logger.error(`Node initialization failed: ${(error as Error).message}`);
-            node.status({ fill: "red", shape: "ring", text: "Initialization failed" });
-        }
+            } catch (error) {
+                logger.error(`Node initialization failed: ${(error as Error).message}`);
+                node.status({ fill: "red", shape: "ring", text: "Initialization failed" });
+            }
+        })().catch((error) => {
+            logger.error(`Async initialization failed: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Async init failed" });
+        });
     }
 
     RED.nodes.registerType("viis-rpc-control", ViisRpcControlNode);
