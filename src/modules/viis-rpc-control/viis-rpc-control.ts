@@ -2,6 +2,7 @@ import { NodeAPI, NodeDef, Node } from "node-red";
 import ClientRegistry from "../../core/client-registry";
 import { ModbusData } from "../../core/modbus-client";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
+import { LuoiMappingHandler } from "./luoi-mapping-handler";
 
 interface ViisRpcControlNodeDef extends NodeDef {
     mqttBroker: string;
@@ -198,6 +199,9 @@ module.exports = function (RED: NodeAPI) {
 
         node.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
 
+        // Initialize LuoiMappingHandler
+        const luoiHandler = new LuoiMappingHandler(node);
+
         // Utility functions
         function scaleValue(key: string, value: number, direction: "read" | "write"): number {
             const config = getScaleConfigs().find((c) => c.key === key && c.direction === direction);
@@ -366,6 +370,25 @@ module.exports = function (RED: NodeAPI) {
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
+                    // Try luoi mapping handler first
+                    const luoiResult = luoiHandler.processRpcBody(rpcBody.params);
+
+                    if (luoiResult !== null) {
+                        // Handle luoi mapping result
+                        if ('messages' in luoiResult) {
+                            // Luoi case - send multiple messages
+                            node.send([luoiResult.messages]);
+                            node.status({ fill: "green", shape: "dot", text: "Luoi commands sent" });
+                            return;
+                        } else {
+                            // Standard case - send single message
+                            node.send({ payload: luoiResult.payload });
+                            node.status({ fill: "green", shape: "dot", text: "Modbus command sent" });
+                            return;
+                        }
+                    }
+
+                    // Fallback to original logic for non-luoi cases
                     for (const [key, rawValue] of Object.entries(rpcBody.params)) {
                         const mapping = findModbusMapping(key);
                         if (mapping) {
