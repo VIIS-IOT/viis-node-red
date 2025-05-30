@@ -3,9 +3,9 @@
  * Handles message deduplication and processing
  */
 
-import { 
-    IMessageHandler, 
-    ServiceOptions 
+import {
+    IMessageHandler,
+    ServiceOptions
 } from "../interfaces/types";
 import { DEBOUNCE_CONFIG } from "../constants";
 import { Logger } from "../utils/logger";
@@ -26,12 +26,17 @@ export class MessageHandler implements IMessageHandler {
      */
     generateMessageId(payload: any): string {
         try {
-            // Create a stable hash based on payload content only
-            const payloadStr = JSON.stringify(payload, Object.keys(payload).sort());
-            const base64Hash = Buffer.from(payloadStr).toString('base64').slice(0, 16);
+            // this.logger.warn(`generateMessageId with payload: ${JSON.stringify(payload)}`);
+            // Check if payload has params object
+            if (!payload || !payload.params) {
+                throw new Error('Missing params in payload');
+            }
+            // Create a stable hash based on params content only
+            const paramsStr = JSON.stringify(payload.params, Object.keys(payload.params).sort());
+            const base64Hash = Buffer.from(paramsStr).toString('base64').slice(0, 16);
             return `${base64Hash}_${this.nodeId}`;
         } catch (error) {
-            // Fallback to timestamp-based ID if JSON.stringify fails
+            // Fallback to timestamp-based ID if JSON.stringify or params access fails
             this.logger.warn(`Failed to generate stable message ID: ${(error as Error).message}`);
             return `${Date.now()}_${Math.random().toString(16).substring(2, 10)}_${this.nodeId}`;
         }
@@ -49,7 +54,7 @@ export class MessageHandler implements IMessageHandler {
      */
     markMessageProcessed(messageId: string): void {
         this.processedMessages.add(messageId);
-        
+
         // Schedule cleanup after TTL
         setTimeout(() => {
             this.processedMessages.delete(messageId);
@@ -100,7 +105,7 @@ export class MessageHandler implements IMessageHandler {
 
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
-            this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
+            this.logger.debug(`Duplicate message detected and ignored: ${messageId}`);
             return null;
         }
 
@@ -178,7 +183,7 @@ export class MessageHandler implements IMessageHandler {
 
             // Extract and validate payload
             const payload = this.extractPayload(message);
-            
+
             // Process with deduplication
             return this.processMessage(payload, processor);
         } catch (error) {
