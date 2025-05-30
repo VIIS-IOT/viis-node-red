@@ -82,6 +82,7 @@ export class AutoControlHandler implements IAutoControlHandler {
 
             // Get configuration
             const config = this.configService.getConfig();
+            this.logger.warn(`Configuration: ${JSON.stringify(config)}`);
             if (!this.configService.isConfigValid()) {
                 this.logger.warn("Invalid configuration, skipping control cycle");
                 this.node.status({ fill: "yellow", shape: "ring", text: "Invalid config" });
@@ -91,6 +92,8 @@ export class AutoControlHandler implements IAutoControlHandler {
             // Get sensor data and device status
             const sensorData = this.sensorService.getSensorData();
             const deviceStatus = this.sensorService.getDeviceStatus();
+            this.logger.warn(`Sensor data: ${JSON.stringify(sensorData)}`);
+            this.logger.warn(`Device status: ${JSON.stringify(deviceStatus)}`);
 
             if (!sensorData || !deviceStatus) {
                 this.logger.warn("Missing sensor data or device status, skipping control cycle");

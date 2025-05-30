@@ -39,7 +39,7 @@ export class SensorService implements ISensorService {
 
             // Read fresh data from global context
             const holdingRegisterData = this.globalContext.get(CONTEXT_KEYS.GLOBAL_HOLDING_REGISTER_DATA);
-            
+
             if (!holdingRegisterData || typeof holdingRegisterData !== 'object') {
                 this.logger.warn("No sensor data found in global context");
                 return null;
@@ -65,7 +65,7 @@ export class SensorService implements ISensorService {
             // Cache the data
             this.cachedSensorData = sensorData;
             this.lastSensorUpdate = Date.now();
-            
+
             this.logger.debug(`Sensor data loaded: temp_indoor=${sensorData.temp_indoor}, humi_indoor=${sensorData.humi_indoor}, light_indoor=${sensorData.light_indoor}`);
             return sensorData;
 
@@ -87,7 +87,7 @@ export class SensorService implements ISensorService {
 
             // Read fresh data from global context
             const coilRegisterData = this.globalContext.get(CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA);
-            
+
             if (!coilRegisterData || typeof coilRegisterData !== 'object') {
                 this.logger.warn("No device status data found in global context");
                 return null;
@@ -123,7 +123,7 @@ export class SensorService implements ISensorService {
             // Cache the data
             this.cachedDeviceStatus = deviceStatus;
             this.lastDeviceUpdate = Date.now();
-            
+
             this.logger.debug(`Device status loaded: fans active=${this.getActiveFanCount(deviceStatus)}, water pump=${deviceStatus.bom_nuoc_1}`);
             return deviceStatus;
 
@@ -139,20 +139,20 @@ export class SensorService implements ISensorService {
     isDataValid(): boolean {
         const sensorData = this.getSensorData();
         const deviceStatus = this.getDeviceStatus();
-        
+
         if (!sensorData || !deviceStatus) {
             return false;
         }
 
         // Check if data is not too old (within last 60 seconds)
         const now = Date.now();
-        const maxAge = 60000; // 60 seconds
-        
+        const maxAge = 900000; // 900 seconds
+
         const sensorAge = now - sensorData.ts;
         const deviceAge = now - deviceStatus.ts;
-        
+
         if (sensorAge > maxAge || deviceAge > maxAge) {
-            this.logger.warn(`Data is too old: sensor age=${Math.round(sensorAge/1000)}s, device age=${Math.round(deviceAge/1000)}s`);
+            this.logger.warn(`Data is too old: sensor age=${Math.round(sensorAge / 1000)}s, device age=${Math.round(deviceAge / 1000)}s`);
             return false;
         }
 
@@ -178,13 +178,13 @@ export class SensorService implements ISensorService {
         if (value === null || value === undefined) {
             return undefined;
         }
-        
+
         const numValue = Number(value);
         if (isNaN(numValue)) {
             this.logger.warn(`Invalid numeric value for ${fieldName}: ${value}`);
             return undefined;
         }
-        
+
         return numValue;
     }
 
@@ -195,20 +195,20 @@ export class SensorService implements ISensorService {
         if (value === null || value === undefined) {
             return undefined;
         }
-        
+
         if (typeof value === 'boolean') {
             return value;
         }
-        
+
         // Convert common representations to boolean
         if (value === 1 || value === "1" || value === "true") {
             return true;
         }
-        
+
         if (value === 0 || value === "0" || value === "false") {
             return false;
         }
-        
+
         this.logger.warn(`Invalid boolean value for ${fieldName}: ${value}`);
         return undefined;
     }
