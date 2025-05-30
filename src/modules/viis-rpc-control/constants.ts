@@ -6,9 +6,9 @@
 // Context keys for storing data
 export const CONTEXT_KEYS = {
     // Flow context keys (node-specific)
-    SCALE_CONFIG: (nodeId: string) => `scaleConfigs_${nodeId}`,
-    MANUAL_OVERRIDES: (nodeId: string) => `manualModbusOverrides_${nodeId}`,
-    
+    GLOBAL_SCALE_CONFIGS: "scaleConfigs",
+    GLOBAL_MANUAL_OVERRIDES: "manualModbusOverrides",
+
     // Global context keys (shared across nodes)
     GLOBAL_CONFIG_KEYS: "configKeys",
     GLOBAL_CONFIG_VALUES: "configKeyValues",

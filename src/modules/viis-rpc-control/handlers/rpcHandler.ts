@@ -3,9 +3,9 @@
  * Handles RPC request processing and coordination between services
  */
 
-import { 
-    IRpcHandler, 
-    RpcMessage, 
+import {
+    IRpcHandler,
+    RpcMessage,
     ServiceOptions,
     IConfigService,
     IValidationService,
@@ -107,7 +107,7 @@ export class RpcHandler implements IRpcHandler {
      */
     private async processParameter(key: string, rawValue: any): Promise<void> {
         const mapping = this.modbusService.findModbusMapping(key);
-        
+
         if (mapping) {
             await this.handleModbusMappedParameter(key, rawValue, mapping);
         } else {
@@ -122,16 +122,16 @@ export class RpcHandler implements IRpcHandler {
         try {
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
-            
+
             // Write to Modbus
             await this.modbusService.writeToModbus(key, mapping, value);
-            
+
             // Read back the value to confirm
             const readValue = await this.modbusService.readFromModbus(key, mapping);
-            
+
             // Publish the result
             this.mqttService.publishResult(key, readValue);
-            
+
             this.logger.log(`Successfully processed Modbus parameter: ${key}=${readValue}`);
         } catch (error) {
             this.logger.error(`Failed to process Modbus parameter ${key}: ${(error as Error).message}`);
@@ -146,19 +146,15 @@ export class RpcHandler implements IRpcHandler {
         try {
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
-            
+
             // Update configuration
             const currentConfig = this.configService.getConfigKeyValues();
             currentConfig[key] = value;
             this.configService.setConfigKeyValues(currentConfig);
 
-            // Publish the configuration update
-            await this.mqttService.publishConfigUpdate(
-                key, 
-                value, 
-                "Config key updated (no Modbus mapping)"
-            );
-            
+            // Publish the configuration update WITHOUT the note
+            await this.mqttService.publishConfigUpdate(key, value);
+
             this.node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.CONFIG_UPDATED(key) });
             this.logger.log(`Successfully updated config parameter: ${key}=${value}`);
         } catch (error) {

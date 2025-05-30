@@ -3,27 +3,23 @@
  * Manages configuration keys, scale configs, and their validation
  */
 
-import { 
-    IConfigService, 
-    ConfigKey, 
-    ScaleConfig, 
-    ConfigKeyValues, 
-    ServiceOptions 
+import {
+    IConfigService,
+    ConfigKey,
+    ScaleConfig,
+    ConfigKeyValues,
+    ServiceOptions
 } from "../interfaces/types";
 import { CONTEXT_KEYS, VALIDATION, ERROR_MESSAGES } from "../constants";
 import { Logger } from "../utils/logger";
 
 export class ConfigService implements IConfigService {
-    private flowContext: any;
     private globalContext: any;
     private logger: Logger;
-    private nodeId: string;
 
     constructor(options: ServiceOptions) {
-        this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
         this.logger = new Logger(options.node, "CONFIG-SERVICE");
-        this.nodeId = options.node.id;
     }
 
     /**
@@ -37,7 +33,7 @@ export class ConfigService implements IConfigService {
      * Get scale configurations from flow context
      */
     getScaleConfigs(): ScaleConfig[] {
-        return this.flowContext.get(CONTEXT_KEYS.SCALE_CONFIG(this.nodeId)) as ScaleConfig[] || [];
+        return this.globalContext.get(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS) as ScaleConfig[] || [];
     }
 
     /**
@@ -60,7 +56,7 @@ export class ConfigService implements IConfigService {
      */
     updateScaleConfigs(configs: ScaleConfig[]): void {
         this.validateScaleConfigs(configs);
-        this.flowContext.set(CONTEXT_KEYS.SCALE_CONFIG(this.nodeId), configs);
+        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, configs);
         this.logger.log(`Updated scale configs: ${JSON.stringify(configs)}`);
     }
 
@@ -69,11 +65,11 @@ export class ConfigService implements IConfigService {
      */
     updateConfigKeys(keys: ConfigKey): void {
         this.validateConfigKeys(keys);
-        
+
         // Merge with existing global configKeys
         const existingConfigKeys = this.getConfigKeys();
         const mergedConfigKeys = { ...existingConfigKeys, ...keys };
-        
+
         this.globalContext.set(CONTEXT_KEYS.GLOBAL_CONFIG_KEYS, mergedConfigKeys);
         this.logger.log(`Updated config keys: ${JSON.stringify(mergedConfigKeys)}`);
     }
@@ -111,8 +107,8 @@ export class ConfigService implements IConfigService {
         this.validateScaleConfigs(parsedScaleConfigs);
 
         // Store configurations
-        this.flowContext.set(CONTEXT_KEYS.SCALE_CONFIG(this.nodeId), parsedScaleConfigs);
-        
+        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, parsedScaleConfigs);
+
         // Initialize global configs if not exist
         if (!this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_KEYS)) {
             this.globalContext.set(CONTEXT_KEYS.GLOBAL_CONFIG_KEYS, parsedConfigKeys);
@@ -136,9 +132,9 @@ export class ConfigService implements IConfigService {
         }
 
         configs.forEach((conf, index) => {
-            if (!conf.key || 
-                !conf.operation || 
-                typeof conf.factor !== "number" || 
+            if (!conf.key ||
+                !conf.operation ||
+                typeof conf.factor !== "number" ||
                 !VALIDATION.SUPPORTED_SCALE_DIRECTIONS.includes(conf.direction as any) ||
                 !VALIDATION.SUPPORTED_SCALE_OPERATIONS.includes(conf.operation as any)) {
                 throw new Error(ERROR_MESSAGES.INVALID_SCALE_CONFIG(`${JSON.stringify(conf)} at index ${index}`));
@@ -166,10 +162,10 @@ export class ConfigService implements IConfigService {
      */
     addConfigKey(key: string, value: any): void {
         const configKeys = this.getConfigKeys();
-        
+
         // Auto-detect type
         let detectedType: "number" | "boolean" | "string" = "string";
-        
+
         if (typeof value === "boolean") {
             detectedType = "boolean";
         } else if (typeof value === "number" || (!isNaN(Number(value)) && value !== "" && value !== null)) {
@@ -183,7 +179,7 @@ export class ConfigService implements IConfigService {
         // Add new key to configKeys
         const updatedConfigKeys = { ...configKeys, [key]: detectedType };
         this.globalContext.set(CONTEXT_KEYS.GLOBAL_CONFIG_KEYS, updatedConfigKeys);
-        
+
         this.logger.log(`Auto-added new config key: ${key} with type: ${detectedType}`);
     }
 
@@ -191,7 +187,7 @@ export class ConfigService implements IConfigService {
      * Clear all configurations for this node
      */
     clearNodeConfigs(): void {
-        this.flowContext.set(CONTEXT_KEYS.SCALE_CONFIG(this.nodeId), []);
+        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, []);
         this.logger.log("Cleared node-specific configurations");
     }
 
@@ -199,22 +195,22 @@ export class ConfigService implements IConfigService {
      * Get manual overrides from flow context
      */
     getManualOverrides(): Record<string, any> {
-        return this.flowContext.get(CONTEXT_KEYS.MANUAL_OVERRIDES(this.nodeId)) || {};
+        return this.globalContext.get(CONTEXT_KEYS.GLOBAL_MANUAL_OVERRIDES) || {};
     }
 
     /**
      * Set manual overrides in flow context
      */
     setManualOverrides(overrides: Record<string, any>): void {
-        this.flowContext.set(CONTEXT_KEYS.MANUAL_OVERRIDES(this.nodeId), overrides);
+        this.globalContext.set(CONTEXT_KEYS.GLOBAL_MANUAL_OVERRIDES, overrides);
     }
 
     /**
      * Initialize manual overrides if not exists
      */
     initializeManualOverrides(): void {
-        if (!this.flowContext.get(CONTEXT_KEYS.MANUAL_OVERRIDES(this.nodeId))) {
-            this.flowContext.set(CONTEXT_KEYS.MANUAL_OVERRIDES(this.nodeId), {});
+        if (!this.globalContext.get(CONTEXT_KEYS.GLOBAL_MANUAL_OVERRIDES)) {
+            this.globalContext.set(CONTEXT_KEYS.GLOBAL_MANUAL_OVERRIDES, {});
         }
     }
 }
