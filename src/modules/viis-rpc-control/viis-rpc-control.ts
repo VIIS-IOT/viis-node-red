@@ -1,7 +1,7 @@
 import { NodeAPI, NodeDef, Node } from "node-red";
 import ClientRegistry from "../../core/client-registry";
 import { ModbusData } from "../../core/modbus-client";
-import { MqttConfig, MqttClientCore, MqttMessage } from "../../core/mqtt-client";
+import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 
 interface ViisRpcControlNodeDef extends NodeDef {
     mqttBroker: string;
@@ -36,6 +36,8 @@ interface ModbusMappingResult {
     value: number | boolean;
 }
 
+
+
 module.exports = function (RED: NodeAPI) {
     async function ViisRpcControlNode(this: Node, config: ViisRpcControlNodeDef) {
         RED.nodes.createNode(this, config);
@@ -47,6 +49,33 @@ module.exports = function (RED: NodeAPI) {
         const CONFIG_KEYS_KEY = `configKeys_${node.id}`;
         const CONFIG_VALUES_KEY = `configKeyValues_${node.id}`;
         const MANUAL_OVERRIDES_KEY = `manualModbusOverrides_${node.id}`;
+
+
+        // Debounce settings
+        const DEBOUNCE_TIME_MS = 200; // 200ms debounce
+        const publishTimeouts = new Map<string, NodeJS.Timeout>();
+
+        // Message deduplication
+        const processedMessages = new Set<string>();
+        const MESSAGE_CACHE_TTL = 10000; // 10 seconds
+
+        function generateMessageId(payload: any): string {
+            // Create a more stable hash based on payload content only
+            const payloadStr = JSON.stringify(payload, Object.keys(payload).sort());
+            return `${Buffer.from(payloadStr).toString('base64').slice(0, 16)}_${node.id}`;
+        }
+
+        function isMessageProcessed(messageId: string): boolean {
+            return processedMessages.has(messageId);
+        }
+
+        function markMessageProcessed(messageId: string): void {
+            processedMessages.add(messageId);
+            // Clean up old messages after TTL
+            setTimeout(() => {
+                processedMessages.delete(messageId);
+            }, MESSAGE_CACHE_TTL);
+        }
 
         // Parse configurations (chuẩn hóa như viis-telemetry)
         let configKeys: ConfigKey = {};
@@ -95,7 +124,7 @@ module.exports = function (RED: NodeAPI) {
             flowContext.set(CONFIG_VALUES_KEY, values);
         }
 
-        
+
 
         // Environment variables
         const deviceId = process.env.DEVICE_ID || "unknown";
@@ -119,14 +148,14 @@ module.exports = function (RED: NodeAPI) {
         const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
             ? {
                 broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-                clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substr(2, 8)}`,
+                clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
                 username: process.env.DEVICE_ACCESS_TOKEN || "",
                 password: process.env.THINGSBOARD_PASSWORD || "",
                 qos: 1,
             }
             : {
                 broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
-                clientId: `node-red-local-rpc-${Math.random().toString(16).substr(2, 8)}`,
+                clientId: `node-red-local-rpc-${Math.random().toString(16).substring(2, 10)}`,
                 username: process.env.EMQX_USERNAME || "",
                 password: process.env.EMQX_PASSWORD || "",
                 qos: 1,
@@ -248,37 +277,47 @@ module.exports = function (RED: NodeAPI) {
             }
         }
 
-        async function publishResult(key: string, value: number | boolean): Promise<void> {
+        async function publishResultImmediate(key: string, value: number | boolean): Promise<void> {
             const mqttPayload = {
                 ts: Date.now(),
                 [key]: value,
             };
-            await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
-            node.send({ payload: mqttPayload });
-            node.status({ fill: "green", shape: "dot", text: `Published: ${key}` });
+
+            try {
+                await mqttClient.publish(publishTopic, JSON.stringify(mqttPayload));
+                node.send({ payload: mqttPayload });
+                node.status({ fill: "green", shape: "dot", text: `Published: ${key}` });
+                node.log(`Published immediately: ${key}=${value}`);
+            } catch (error) {
+                node.error(`Failed to publish ${key}: ${(error as Error).message}`);
+                throw error;
+            }
         }
 
-        function handleConfigRequest(params: Record<string, any>): void {
-            const currentConfigKeyValues = getConfigKeyValues();
-            const updatedConfigKeyValues = { ...currentConfigKeyValues };
+        function publishResult(key: string, value: number | boolean): void {
+            // Clear existing timeout for this key
+            const existingTimeout = publishTimeouts.get(key);
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
+                node.log(`Cleared existing timeout for ${key}`);
+            }
 
-            Object.entries(params).forEach(([key, rawValue]) => {
-                if (key in getConfigKeys()) {
-                    const value = validateAndConvertValue(key, rawValue);
-                    updatedConfigKeyValues[key] = value;
+            // Set new debounced timeout
+            const timeout = setTimeout(async () => {
+                try {
+                    await publishResultImmediate(key, value);
+                    publishTimeouts.delete(key);
+                } catch (error) {
+                    node.error(`Debounced publish failed for ${key}: ${(error as Error).message}`);
+                    publishTimeouts.delete(key);
                 }
-            });
+            }, DEBOUNCE_TIME_MS);
 
-            setConfigKeyValues(updatedConfigKeyValues);
-
-            const mqttPayload = {
-                ts: Date.now(),
-                ...params,
-            };
-            mqttClient.publish(publishTopic, JSON.stringify(mqttPayload)); // Không await ở đây vì không cần chặn
-            node.send({ payload: mqttPayload });
-            node.status({ fill: "green", shape: "dot", text: "Config processed" });
+            publishTimeouts.set(key, timeout);
+            node.log(`Scheduled debounced publish for ${key}=${value} in ${DEBOUNCE_TIME_MS}ms`);
         }
+
+
 
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
             try {
@@ -289,7 +328,7 @@ module.exports = function (RED: NodeAPI) {
                             const value = validateAndConvertValue(key, rawValue);
                             await writeToModbus(key, mapping, value);
                             const readValue = await readFromModbus(key, mapping);
-                            await publishResult(key, readValue);
+                            publishResult(key, readValue);
                         } else {
                             const value = validateAndConvertValue(key, rawValue);
                             const currentConfig = getConfigKeyValues();
@@ -326,9 +365,23 @@ module.exports = function (RED: NodeAPI) {
         mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
             if (!message.topic.startsWith(subscribeTopic.replace("+", ""))) return;
             ClientRegistry.logConnectionCounts(node);
+
             try {
                 const payload = JSON.parse(message.message.toString());
-                //node.log(`Received RPC payload: ${JSON.stringify(payload)}`);
+
+                // Generate unique message ID for deduplication
+                const messageId = generateMessageId(payload);
+
+                // Check if message already processed
+                if (isMessageProcessed(messageId)) {
+                    node.warn(`Duplicate message detected and ignored: ${messageId}`);
+                    return;
+                }
+
+                // Mark message as processed
+                markMessageProcessed(messageId);
+
+                node.log(`Processing RPC payload: ${JSON.stringify(payload)} [ID: ${messageId}]`);
                 handleRpcRequest(payload);
             } catch (error) {
                 node.error(`MQTT message processing error: ${(error as Error).message}`);
@@ -398,18 +451,31 @@ module.exports = function (RED: NodeAPI) {
         // Cleanup triệt để khi node bị xóa
         node.on('close', async (done: () => void) => {
             try {
+                // Clear all pending publish timeouts
+                for (const [key, timeout] of publishTimeouts.entries()) {
+                    clearTimeout(timeout);
+                    node.log(`Cleared pending timeout for ${key}`);
+                }
+                publishTimeouts.clear();
+
+                // Clear processed messages cache
+                processedMessages.clear();
+
+                // Clear flow context
                 flowContext.set(SCALE_CONFIG_KEY, []);
                 flowContext.set(CONFIG_KEYS_KEY, {});
                 flowContext.set(CONFIG_VALUES_KEY, {});
                 flowContext.set(MANUAL_OVERRIDES_KEY, {});
-                await mqttClient.disconnect();
+
+                // Disconnect clients
+                mqttClient.disconnect();
                 ClientRegistry.releaseClient("modbus", node);
                 if (config.mqttBroker === "thingsboard") {
                     ClientRegistry.releaseClient("thingsboard", node);
                 } else {
                     ClientRegistry.releaseClient("local", node);
                 }
-                //node.log("Node closed and configs cleaned");
+                node.log("Node closed and all resources cleaned");
                 done();
             } catch (error) {
                 node.error(`Cleanup error: ${(error as Error).message}`);
