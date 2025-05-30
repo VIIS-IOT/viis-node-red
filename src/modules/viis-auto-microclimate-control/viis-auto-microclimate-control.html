@@ -1,7 +1,7 @@
 <script type="text/javascript">
     RED.nodes.registerType('viis-auto-microclimate-control', {
         category: 'VIIS',
-        color: '#4CAF50',
+        color: '#BBD8A3',
         defaults: {
             name: { value: "" },
             pollingInterval: { value: 10000, validate: RED.validators.number() },
@@ -12,21 +12,21 @@
         inputs: 1,
         outputs: 1,
         icon: "logo.png",
-        label: function() {
+        label: function () {
             return this.name || "Auto Microclimate Control";
         },
-        labelStyle: function() {
+        labelStyle: function () {
             return this.name ? "node_label_italic" : "";
         },
-        oneditprepare: function() {
+        oneditprepare: function () {
             // Initialize form values
             $("#node-input-pollingInterval").val(this.pollingInterval || 10000);
             $("#node-input-enableFanControl").prop('checked', this.enableFanControl !== false);
             $("#node-input-enableWaterPumpControl").prop('checked', this.enableWaterPumpControl !== false);
             $("#node-input-enableCurtainControl").prop('checked', this.enableCurtainControl !== false);
-            
+
             // Add validation for polling interval
-            $("#node-input-pollingInterval").on('input', function() {
+            $("#node-input-pollingInterval").on('input', function () {
                 var value = parseInt($(this).val());
                 if (value < 1000) {
                     $(this).addClass('input-error');
@@ -37,7 +37,7 @@
                 }
             });
         },
-        oneditsave: function() {
+        oneditsave: function () {
             // Ensure minimum polling interval
             var pollingInterval = parseInt($("#node-input-pollingInterval").val());
             if (pollingInterval < 1000) {
