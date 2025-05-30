@@ -209,8 +209,36 @@ module.exports = function (RED: NodeAPI) {
         }
 
         function validateAndConvertValue(key: string, value: any): any {
-            const expectedType = getConfigKeys()[key];
-            if (!expectedType) return value;
+            const configKeys = getConfigKeys();
+            const expectedType = configKeys[key];
+
+            // If key doesn't exist in configKeys, auto-detect type and add it
+            if (!expectedType) {
+                let detectedType: "number" | "boolean" | "string" = "string";
+
+                if (typeof value === "boolean") {
+                    detectedType = "boolean";
+                } else if (typeof value === "number" || (!isNaN(Number(value)) && value !== "" && value !== null)) {
+                    detectedType = "number";
+                } else if (typeof value === "string" && (value.toLowerCase() === "true" || value.toLowerCase() === "false")) {
+                    detectedType = "boolean";
+                } else {
+                    detectedType = "string";
+                }
+
+                // Add new key to configKeys
+                const updatedConfigKeys = { ...configKeys, [key]: detectedType };
+                globalContext.set(GLOBAL_CONFIG_KEYS_KEY, updatedConfigKeys);
+                node.log(`Auto-added new config key: ${key} with type: ${detectedType}`);
+
+                // Use detected type for conversion
+                return convertValueByType(key, value, detectedType);
+            }
+
+            return convertValueByType(key, value, expectedType);
+        }
+
+        function convertValueByType(key: string, value: any, expectedType: "number" | "boolean" | "string"): any {
             try {
                 switch (expectedType) {
                     case "number":
