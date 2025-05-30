@@ -1,31 +1,25 @@
-import { NodeAPI, NodeDef, Node, NodeContext } from "node-red";
+import { NodeAPI, Node, NodeContext } from "node-red";
 import { ModbusData, ModbusClientCore } from "../../core/modbus-client";
 import ClientRegistry from "../../core/client-registry";
 import { MySqlConfig, MySqlClientCore } from "../../core/mysql-client";
 import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";
-import { applyScaling, getChangedKeys, publishTelemetry, debugLog, TelemetryData, ScaleConfig } from './viis-telemetry-utils';
+import {
+    TelemetryData,
+    ScaleConfig,
+    applyScaling,
+    getChangedKeys,
+    publishTelemetry,
+    debugLog
+} from './viis-telemetry-utils';
+import { ViisTelemetryNodeDef } from './viis-telemetry-config';
 
-interface ViisTelemetryNodeDef extends NodeDef {
-    pollIntervalCoil: string;
-    pollIntervalInput: string;
-    pollIntervalHolding: string;
-    coilStartAddress: string;
-    coilQuantity: string;
-    inputStartAddress: string;
-    inputQuantity: string;
-    holdingStartAddress: string;
-    holdingQuantity: string;
-    scaleConfigs: string;
-    enableDebugLog: boolean;
-    thresholdConfig: string;
-    pollingInterval: string;
-    periodicSnapshotIntervalCoil: string;
-    periodicSnapshotIntervalInput: string;
-    periodicSnapshotIntervalHolding: string;
-}
-
+/**
+ * Register viis-telemetry node with Node-RED
+ */
 module.exports = function (RED: NodeAPI) {
-    // API endpoint để lấy Modbus keys từ environment variables
+    /**
+     * API endpoint to get Modbus keys from environment variables
+     */
     RED.httpAdmin.get('/viis-telemetry/modbus-keys', (_req, res) => {
         try {
             const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
@@ -38,7 +32,7 @@ module.exports = function (RED: NodeAPI) {
                 ...Object.keys(modbusCoils)
             ];
 
-            // Loại bỏ trùng lặp và sắp xếp
+            // Remove duplicates and sort
             const uniqueKeys = [...new Set(keys)].sort();
 
             res.json({
@@ -60,6 +54,9 @@ module.exports = function (RED: NodeAPI) {
         }
     });
 
+    /**
+     * Main viis-telemetry node implementation
+     */
     async function ViisTelemetryNode(this: Node, config: ViisTelemetryNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;

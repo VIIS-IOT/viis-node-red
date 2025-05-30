@@ -102,10 +102,7 @@
     <p>This node uses a shared instance of ModbusClientCore and two MqttClientCore instances (one for ThingsBoard, one for EMQX local) to poll data from Modbus mappings defined in environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>). It publishes changes to <code>v1/devices/me/telemetry</code> (ThingsBoard) and <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX local).</p>
 </script>
 
-<!-- Loại bỏ tham chiếu đến CodeMirror nếu không còn sử dụng -->
-<!-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script> -->
+<!-- CodeMirror dependencies removed as they are no longer used -->
 
 <style>
     /* Threshold Configuration Styles */
@@ -294,9 +291,9 @@
             return this.name || "viis-telemetry";
         },
         oneditprepare: function () {
-            // Xử lý enableDebugLog checkbox
+            // Handle enableDebugLog checkbox
             $("#node-input-enableDebugLog").prop("checked", this.enableDebugLog === true);
-            // Xử lý thresholdConfig với UI mới
+            // Handle thresholdConfig with new UI
             const thresholdConfigField = $("#node-input-thresholdConfig");
             const thresholdConfigContainer = $("#threshold-config-container");
             let thresholdConfig = {};
@@ -311,13 +308,13 @@
                 thresholdConfig = {};
             }
 
-            // Lấy danh sách keys từ environment variables hoặc dùng danh sách mặc định
+            // Get list of keys from environment variables or use default list
             const getModbusKeys = function () {
-                // Thử lấy từ API endpoint trước
+                // Try to get from API endpoint first
                 let envKeys = [];
 
                 try {
-                    // Gọi API để lấy environment variables (synchronous)
+                    // Call API to get environment variables (synchronous)
                     const xhr = new XMLHttpRequest();
                     xhr.open('GET', '/viis-telemetry/modbus-keys', false); // false = synchronous
                     xhr.send();
@@ -332,7 +329,7 @@
                     console.warn("Could not fetch Modbus keys from environment:", error);
                 }
 
-                // Nếu không lấy được từ environment, dùng danh sách mặc định
+                // If can't get from environment, use default list
                 if (envKeys.length === 0) {
                     envKeys = [
                         // // Holding Registers (thường dùng cho cảm biến analog)
@@ -350,21 +347,21 @@
                         // "manual_mode", "auto_mode", "emergency_stop", "system_enable",
                         // "coil_1", "coil_2", "coil_3", "coil_4", "coil_5",
 
-                        // Key đặc biệt
-                        "all" // Threshold mặc định cho tất cả keys
+                        // Special key
+                        "all" // Default threshold for all keys
                     ];
                 }
 
-                // Thêm key đặc biệt "all" nếu chưa có
+                // Add special key "all" if not present
                 if (!envKeys.includes("all")) {
                     envKeys.push("all");
                 }
 
-                // Loại bỏ trùng lặp và sắp xếp
+                // Remove duplicates and sort
                 return [...new Set(envKeys)].sort();
             };
 
-            // Hàm thêm một dòng cấu hình threshold
+            // Function to add a threshold configuration row
             const addThresholdRow = function (key = "", value = 0.1) {
                 const row = $("<div>").addClass("threshold-row");
 

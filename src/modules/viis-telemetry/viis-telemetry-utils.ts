@@ -3,15 +3,32 @@
  * All functions and types here are exported for testing and reuse.
  */
 
+/** Telemetry data structure with key-value pairs */
 export interface TelemetryData {
-    [key: string]: number | boolean | string;
+  [key: string]: number | boolean | string;
 }
 
+/** Configuration for scaling operations on telemetry values */
 export interface ScaleConfig {
-    key: string;
-    operation: "multiply" | "divide";
-    factor: number;
-    direction: "read" | "write";
+  key: string;
+  operation: "multiply" | "divide";
+  factor: number;
+  direction: "read" | "write";
+}
+
+/** Threshold configuration for change detection */
+export interface ThresholdConfig {
+  [key: string]: number;
+}
+
+/** MQTT client interface for publishing */
+export interface MqttPublisher {
+  publish: (topic: string, payload: string) => void;
+}
+
+/** Node interface for logging */
+export interface NodeLogger {
+  warn: (msg: string) => void;
 }
 
 /**
@@ -23,17 +40,17 @@ export interface ScaleConfig {
  * @returns Scaled value
  */
 export function applyScaling(
-    key: string,
-    value: number,
-    direction: "read" | "write",
-    scaleConfigs: ScaleConfig[]
+  key: string,
+  value: number,
+  direction: "read" | "write",
+  scaleConfigs: ScaleConfig[]
 ): number {
-    if (!Array.isArray(scaleConfigs)) scaleConfigs = [];
-    const config = scaleConfigs.find((conf) => conf.key === key && conf.direction === direction);
-    if (!config) return value;
-    if (config.operation === "multiply") return value * config.factor;
-    if (config.operation === "divide") return value / config.factor;
-    return value;
+  if (!Array.isArray(scaleConfigs)) scaleConfigs = [];
+  const config = scaleConfigs.find((conf) => conf.key === key && conf.direction === direction);
+  if (!config) return value;
+  if (config.operation === "multiply") return value * config.factor;
+  if (config.operation === "divide") return value / config.factor;
+  return value;
 }
 
 /**
@@ -45,52 +62,56 @@ export function applyScaling(
  * @returns Object with changed keys
  */
 export function getChangedKeys(
-    current: TelemetryData,
-    previous: TelemetryData,
-    thresholdConfig: { [key: string]: number }
+  current: TelemetryData,
+  previous: TelemetryData,
+  thresholdConfig: { [key: string]: number }
 ): TelemetryData {
-    const changed: TelemetryData = {};
-    const defaultThreshold = typeof thresholdConfig["all"] === "number" ? thresholdConfig["all"] : 0;
-    for (const key in current) {
-        if (typeof current[key] === "number" && typeof previous[key] === "number") {
-            const threshold = typeof thresholdConfig[key] === "number" ? thresholdConfig[key] : defaultThreshold;
-            if (Math.abs((current[key] as number) - (previous[key] as number)) >= threshold) {
-                changed[key] = current[key];
-            }
-        } else if (current[key] !== previous[key]) {
-            changed[key] = current[key];
-        }
+  const changed: TelemetryData = {};
+  const defaultThreshold = typeof thresholdConfig["all"] === "number" ? thresholdConfig["all"] : 0;
+  for (const key in current) {
+    if (typeof current[key] === "number" && typeof previous[key] === "number") {
+      const threshold = typeof thresholdConfig[key] === "number" ? thresholdConfig[key] : defaultThreshold;
+      if (Math.abs((current[key] as number) - (previous[key] as number)) >= threshold) {
+        changed[key] = current[key];
+      }
+    } else if (current[key] !== previous[key]) {
+      changed[key] = current[key];
     }
-    return changed;
+  }
+  return changed;
+}
+
+/** Parameters for publishing telemetry data */
+export interface PublishTelemetryParams {
+  data: TelemetryData;
+  emqxClient: MqttPublisher;
+  thingsboardClient: MqttPublisher;
+  emqxTopic: string;
+  thingsboardTopic: string;
+}
+
+/** Parameters for debug logging */
+export interface DebugLogParams {
+  enable: boolean;
+  node: NodeLogger;
+  message: string;
 }
 
 /**
  * Publish telemetry data to both EMQX and Thingsboard clients.
- * @param params Object gồm data, emqxClient, thingsboardClient, emqxTopic, thingsboardTopic
+ * @param params - Publishing parameters including clients and topics
  */
-export function publishTelemetry(params: {
-  data: TelemetryData;
-  emqxClient: { publish: (topic: string, payload: string) => void };
-  thingsboardClient: { publish: (topic: string, payload: string) => void };
-  emqxTopic: string;
-  thingsboardTopic: string;
-}): void {
-  const payload: string = JSON.stringify(params.data);
+export function publishTelemetry(params: PublishTelemetryParams): void {
+  const payload = JSON.stringify(params.data);
   params.emqxClient.publish(params.emqxTopic, payload);
   params.thingsboardClient.publish(params.thingsboardTopic, payload);
 }
 
 /**
  * Log debug message if enabled.
- * @param params.enable Bật/tắt debug log
- * @param params.node Node instance có warn
- * @param params.message Nội dung log
+ * @param params - Debug logging parameters
  */
-export function debugLog(params: {
-  enable: boolean;
-  node: { warn: (msg: string) => void };
-  message: string;
-}): void {
+export function debugLog(params: DebugLogParams): void {
   if (params.enable) {
     params.node.warn(params.message);
   }

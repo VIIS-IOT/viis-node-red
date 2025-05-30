@@ -30,7 +30,7 @@
       "viis-config-node": "dist/viis-config-node.js",
       "viis-device-events": "dist/viis-device-events.js",
       "viis-upload-events": "dist/viis-upload-telemetry.js",
-      "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry.js",
+      "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry-refactored.js",
       "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js",
       "viis-rpc-control-from-input": "dist/modules/viis-rpc-control-from-input/viis-rpc-control-from-input.js",
       "viis-schedule-executor": "dist/modules/viis-schedule-executor/viis-schedule-executor.js",
