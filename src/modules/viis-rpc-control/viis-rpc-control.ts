@@ -117,7 +117,7 @@ module.exports = function (RED: NodeAPI) {
                 const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
                 const mqttService = new MqttService(serviceOptions, mqttClient, publishTopic);
                 const messageHandler = new MessageHandler(serviceOptions);
-                const luoiHandler = new LuoiMappingHandler(node);
+                const luoiHandler = new LuoiMappingHandler(node, modbusService, validationService, mqttService);
                 const rpcHandler = new RpcHandler(
                     serviceOptions,
                     configService,

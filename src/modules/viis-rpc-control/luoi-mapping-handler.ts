@@ -1,44 +1,22 @@
 import { Node } from "node-red";
+import {
+    IModbusService,
+    IValidationService,
+    IMqttService,
+    ModbusMappingResult
+} from "./interfaces/types";
+import { Logger } from "./utils/logger";
 
-interface ModbusMessage {
-    payload: {
-        value: number;
-        fc: number;
-        unitid: number;
-        address: number;
-        quantity: number;
-    };
-}
 
-interface ModbusRequest {
-    address: number;
-    quantity: number;
-    unitid: number;
-    fc: number;
-    value: number;
-}
-
-interface LuoiMappingResult {
-    messages: ModbusMessage[];
-    modbusRequest?: ModbusRequest;
-    shouldContinue: boolean;
-}
-
-interface StandardMappingResult {
-    payload: {
-        value: number;
-        fc: number;
-        unitid: number;
-        address: number;
-        quantity: number;
-    };
-    modbusRequest: ModbusRequest;
-}
 
 export class LuoiMappingHandler {
     private node: Node;
     private flowContext: any;
     private globalContext: any;
+    private modbusService: IModbusService;
+    private validationService: IValidationService;
+    private mqttService: IMqttService;
+    private logger: Logger;
 
     // Mapping constants
     private readonly luoiMapping = {
@@ -56,16 +34,26 @@ export class LuoiMappingHandler {
     private readonly keysToMulByTen = ["set_ph"];
     private readonly keysToMulBy1000 = ["set_ec"];
 
-    constructor(node: Node) {
+    constructor(
+        node: Node,
+        modbusService: IModbusService,
+        validationService: IValidationService,
+        mqttService: IMqttService
+    ) {
         this.node = node;
         this.flowContext = node.context().flow;
         this.globalContext = node.context().global;
+        this.modbusService = modbusService;
+        this.validationService = validationService;
+        this.mqttService = mqttService;
+        this.logger = new Logger(node, "LUOI-HANDLER");
     }
 
     /**
-     * Process RPC body and handle luoi mapping logic
+     * Process RPC body and handle luoi mapping logic with actual Modbus write operations
      */
-    public processRpcBody(rpcBody: Record<string, any>): LuoiMappingResult | StandardMappingResult | null {
+    public async processRpcBody(rpcBody: Record<string, any>): Promise<boolean> {
+        this.logger.debug("Processing RPC body with Modbus write operations");
         this.flowContext.set("rpcBody", rpcBody);
 
         const modbusHoldingRegisters = this.globalContext.get("modbusHoldingRegisters") || {};
@@ -73,10 +61,7 @@ export class LuoiMappingHandler {
         const modbusCoils = this.globalContext.get("modbusCoils") || {};
         const coilRegisterData = this.globalContext.get("coilRegisterData") || {};
 
-        let messages: ModbusMessage[] = [];
-        let address: number | undefined;
-        let value: number | undefined;
-        let fc: number | undefined;
+        let hasLuoiMapping = false;
 
         for (let key in rpcBody) {
             if (!rpcBody.hasOwnProperty(key)) continue;
@@ -85,10 +70,8 @@ export class LuoiMappingHandler {
 
             // Xử lý đặc biệt cho luoi_1, luoi_2, luoi_3
             if (this.luoiMapping[key as keyof typeof this.luoiMapping]) {
-                const luoiResult = this.handleLuoiMapping(key, rawValue, modbusCoils);
-                if (luoiResult === null) return null;
-                
-                messages.push(...luoiResult);
+                await this.handleLuoiMappingWithModbusWrite(key, rawValue, modbusCoils);
+                hasLuoiMapping = true;
                 continue; // Bỏ qua xử lý tiếp theo cho key này
             }
 
@@ -98,52 +81,38 @@ export class LuoiMappingHandler {
             // Xử lý coils với validation
             if (modbusCoils.hasOwnProperty(key)) {
                 const coilResult = this.handleCoilMapping(key, rawValue, modbusCoils, coilRegisterData);
-                if (coilResult === null) return null;
-                
-                address = coilResult.address;
-                value = coilResult.value;
-                fc = coilResult.fc;
-                break;
+                if (coilResult === null) continue;
+
+                await this.writeToModbusAndPublish(key, coilResult.address, coilResult.value, coilResult.fc);
+                continue;
             }
             // Xử lý holding registers
             else if (modbusHoldingRegisters.hasOwnProperty(key)) {
-                address = modbusHoldingRegisters[key];
-                value = rawValue;
-                fc = 6;
-                break;
+                await this.writeToModbusAndPublish(key, modbusHoldingRegisters[key], rawValue, 6);
+                continue;
             }
-            // Xử lý input registers
+            // Xử lý input registers (read-only, skip write)
             else if (modbusInputRegisters.hasOwnProperty(key)) {
-                address = modbusInputRegisters[key];
-                value = rawValue;
-                fc = 4;
-                break;
+                this.logger.warn(`Skipping read-only input register: ${key}`);
+                continue;
             }
         }
 
-        // Xử lý output cho trường hợp luoi
-        if (messages.length > 0) {
-            return this.handleLuoiOutput(messages);
-        }
-
-        // Xử lý output cho trường hợp standard
-        if (address === undefined || value === undefined || fc === undefined) {
-            return null;
-        }
-
-        return this.handleStandardOutput(address, value, fc);
+        return hasLuoiMapping;
     }
 
+
+
     /**
-     * Handle luoi mapping logic
+     * Handle luoi mapping with actual Modbus write operations
      */
-    private handleLuoiMapping(key: string, rawValue: any, modbusCoils: Record<string, number>): ModbusMessage[] | null {
+    private async handleLuoiMappingWithModbusWrite(key: string, rawValue: any, modbusCoils: Record<string, number>): Promise<void> {
         const mapping = this.luoiMapping[key as keyof typeof this.luoiMapping];
         const thuKey = mapping.thu;
         const daiKey = mapping.dai;
         let thuValue: number, daiValue: number;
 
-        switch(rawValue) {
+        switch (rawValue) {
             case 0:
                 thuValue = 1;
                 daiValue = 0;
@@ -153,36 +122,57 @@ export class LuoiMappingHandler {
                 daiValue = 1;
                 break;
             default:
-                this.node.warn(`Giá trị không hợp lệ cho ${key}: ${rawValue}`);
-                return null;
+                this.logger.warn(`Giá trị không hợp lệ cho ${key}: ${rawValue}`);
+                return;
         }
 
-        const messages: ModbusMessage[] = [];
+        try {
+            // Write thu coil
+            await this.writeToModbusAndPublish(thuKey, modbusCoils[thuKey], thuValue, 5);
 
-        // Tạo message cho thu
-        messages.push({
-            payload: {
-                'value': thuValue,
-                'fc': 5,
-                'unitid': 1,
-                'address': modbusCoils[thuKey],
-                'quantity': 1
-            }
-        });
+            // Write dai coil
+            await this.writeToModbusAndPublish(daiKey, modbusCoils[daiKey], daiValue, 5);
 
-        // Tạo message cho dai
-        messages.push({
-            payload: {
-                'value': daiValue,
-                'fc': 5,
-                'unitid': 1,
-                'address': modbusCoils[daiKey],
-                'quantity': 1
-            }
-        });
-
-        return messages;
+            this.logger.log(`Successfully processed luoi mapping: ${key}=${rawValue} -> ${thuKey}=${thuValue}, ${daiKey}=${daiValue}`);
+        } catch (error) {
+            this.logger.error(`Failed to process luoi mapping ${key}: ${(error as Error).message}`);
+            throw error;
+        }
     }
+
+    /**
+     * Write to Modbus and publish result
+     */
+    private async writeToModbusAndPublish(key: string, address: number, value: number | boolean, fc: number): Promise<void> {
+        try {
+            // Create mapping object for modbusService
+            const mapping: ModbusMappingResult = {
+                address: address,
+                fc: fc,
+                value: value
+            };
+
+            // Validate and convert value
+            const validatedValue = this.validationService.validateAndConvertValue(key, value);
+
+            // Write to Modbus
+            this.logger.debug(`Writing to Modbus: key=${key}, address=${address}, value=${validatedValue}, fc=${fc}`);
+            await this.modbusService.writeToModbus(key, mapping, validatedValue);
+
+            // Read back the value to confirm
+            const readValue = await this.modbusService.readFromModbus(key, mapping);
+
+            // Publish the result
+            this.mqttService.publishResult(key, readValue);
+
+            this.logger.debug(`Successfully processed parameter: ${key}=${readValue}`);
+        } catch (error) {
+            this.logger.error(`Failed to write and publish ${key}: ${(error as Error).message}`);
+            throw error;
+        }
+    }
+
+
 
     /**
      * Apply scaling to values
@@ -201,9 +191,9 @@ export class LuoiMappingHandler {
      * Handle coil mapping with validation
      */
     private handleCoilMapping(
-        key: string, 
-        rawValue: any, 
-        modbusCoils: Record<string, number>, 
+        key: string,
+        rawValue: any,
+        modbusCoils: Record<string, number>,
         coilRegisterData: Record<string, boolean>
     ): { address: number; value: number; fc: number } | null {
         // Validate coil pairs
@@ -211,14 +201,14 @@ export class LuoiMappingHandler {
             if (key === pair.key1 || key === pair.key2) {
                 const otherKey = (key === pair.key1) ? pair.key2 : pair.key1;
                 const currentOtherValue = coilRegisterData[otherKey] || false;
-                
+
                 if (rawValue && currentOtherValue) {
                     this.node.warn(`Không thể bật ${key} khi ${otherKey} đang bật`);
                     return null;
                 }
             }
         }
-        
+
         return {
             address: modbusCoils[key],
             value: rawValue ? 1 : 0,
@@ -226,61 +216,5 @@ export class LuoiMappingHandler {
         };
     }
 
-    /**
-     * Handle luoi output
-     */
-    private handleLuoiOutput(messages: ModbusMessage[]): LuoiMappingResult {
-        messages.forEach(msg => {
-            let readFc = 1; // Read Coils
-            this.flowContext.set('modbusRequest', {
-                'address': msg.payload.address,
-                'quantity': 1,
-                'unitid': 1,
-                'fc': readFc,
-                'value': msg.payload.value,
-            });
-        });
 
-        return {
-            messages,
-            shouldContinue: false
-        };
-    }
-
-    /**
-     * Handle standard output
-     */
-    private handleStandardOutput(address: number, value: number, fc: number): StandardMappingResult {
-        let readFc: number;
-        if (fc === 6) {
-            readFc = 3;
-        } else if (fc === 5) {
-            readFc = 1;
-        } else if (fc === 4) {
-            readFc = 4;
-        } else {
-            readFc = fc;
-        }
-
-        const modbusRequest: ModbusRequest = {
-            'address': address,
-            'quantity': 1,
-            'unitid': 1,
-            'fc': readFc,
-            'value': value,
-        };
-
-        this.flowContext.set('modbusRequest', modbusRequest);
-
-        return {
-            payload: {
-                'value': value,
-                'fc': fc,
-                'unitid': 1,
-                'address': address,
-                'quantity': 1
-            },
-            modbusRequest
-        };
-    }
 }

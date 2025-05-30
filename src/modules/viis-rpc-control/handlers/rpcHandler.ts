@@ -65,34 +65,26 @@ export class RpcHandler implements IRpcHandler {
      * Handle set_state RPC request
      */
     private async handleSetStateRequest(params: Record<string, any>): Promise<void> {
-        //Try luoi mapping handler first
-        const luoiResult = this.luoiHandler.processRpcBody(params);
+        try {
+            // Try luoi mapping handler first - it now handles actual Modbus writes
+            const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
 
-        if (luoiResult !== null) {
-            await this.handleLuoiResult(luoiResult);
-            return;
-        }
+            if (hasLuoiMapping) {
+                // Luoi mapping was processed, set success status
+                this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
+                this.logger.log("Luoi commands processed successfully");
+                return;
+            }
 
-        // Fallback to standard processing for non-luoi cases
-        await this.handleStandardParams(params);
-    }
-
-    /**
-     * Handle luoi mapping result
-     */
-    private async handleLuoiResult(luoiResult: any): Promise<void> {
-        if ('messages' in luoiResult) {
-            // Luoi case - send multiple messages
-            this.node.send([luoiResult.messages]);
-            this.node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.LUOI_COMMANDS_SENT });
-            this.logger.log("Luoi commands sent successfully");
-        } else {
-            // Standard case - send single message
-            this.node.send({ payload: luoiResult.payload });
-            this.node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.MODBUS_COMMAND_SENT });
-            this.logger.log("Modbus command sent successfully");
+            // Fallback to standard processing for non-luoi cases
+            await this.handleStandardParams(params);
+        } catch (error) {
+            this.logger.error(`Error in handleSetStateRequest: ${(error as Error).message}`);
+            throw error;
         }
     }
+
+
 
     /**
      * Handle standard parameter processing
