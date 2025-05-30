@@ -48,6 +48,7 @@ export class RpcHandler implements IRpcHandler {
     async handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
         try {
             if (rpcBody.method === "set_state" && rpcBody.params) {
+                this.logger.warn(`Fuck you handleRpcRequest`);
                 await this.handleSetStateRequest(rpcBody.params);
             } else {
                 this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
@@ -64,7 +65,7 @@ export class RpcHandler implements IRpcHandler {
      * Handle set_state RPC request
      */
     private async handleSetStateRequest(params: Record<string, any>): Promise<void> {
-        // Try luoi mapping handler first
+        //Try luoi mapping handler first
         const luoiResult = this.luoiHandler.processRpcBody(params);
 
         if (luoiResult !== null) {
@@ -97,6 +98,7 @@ export class RpcHandler implements IRpcHandler {
      * Handle standard parameter processing
      */
     private async handleStandardParams(params: Record<string, any>): Promise<void> {
+        console.log("handleStandardParams", params)
         for (const [key, rawValue] of Object.entries(params)) {
             await this.processParameter(key, rawValue);
         }
@@ -107,7 +109,7 @@ export class RpcHandler implements IRpcHandler {
      */
     private async processParameter(key: string, rawValue: any): Promise<void> {
         const mapping = this.modbusService.findModbusMapping(key);
-
+        console.log("processParameter", key, rawValue, mapping);
         if (mapping) {
             await this.handleModbusMappedParameter(key, rawValue, mapping);
         } else {
@@ -120,19 +122,27 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleModbusMappedParameter(key: string, rawValue: any, mapping: any): Promise<void> {
         try {
+            // Add debug log at the start
+            this.logger.warn(`Processing Modbus parameter: key=${key}, rawValue=${rawValue}, mapping=${JSON.stringify(mapping)}`);
+
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
+            this.logger.warn(`Validated value: ${value}`);
 
             // Write to Modbus
+            this.logger.warn(`Attempting to write to Modbus: key=${key}, value=${value}`);
             await this.modbusService.writeToModbus(key, mapping, value);
+            this.logger.warn(`Modbus write completed for: ${key}`);
 
             // Read back the value to confirm
+            this.logger.warn(`Reading back value from Modbus: ${key}`);
             const readValue = await this.modbusService.readFromModbus(key, mapping);
+            this.logger.warn(`Read value from Modbus: ${key}=${readValue}`);
 
             // Publish the result
             this.mqttService.publishResult(key, readValue);
 
-            this.logger.log(`Successfully processed Modbus parameter: ${key}=${readValue}`);
+            this.logger.warn(`Successfully processed Modbus parameter: ${key}=${readValue}`);
         } catch (error) {
             this.logger.error(`Failed to process Modbus parameter ${key}: ${(error as Error).message}`);
             throw error;

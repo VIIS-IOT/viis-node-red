@@ -131,11 +131,51 @@ module.exports = function (RED: NodeAPI) {
 
                 // Set up MQTT subscription
                 try {
+                    // Wait for client to be connected before subscribing
+                    if (!mqttClient.isConnected()) {
+                        logger.log("MQTT client not connected, waiting for connection...");
+                        await new Promise<void>((resolve) => {
+                            mqttClient.once("mqtt-status", ({ status }) => {
+                                if (status === "connected") {
+                                    resolve();
+                                }
+                            });
+
+                            // Set a timeout in case connection never happens
+                            setTimeout(() => {
+                                logger.warn("MQTT connection timeout, proceeding anyway");
+                                resolve();
+                            }, 5000);
+                        });
+                    }
+
                     await mqttClient.subscribe(subscribeTopic);
                     logger.log(`Subscribed to topic: ${subscribeTopic}`);
                 } catch (error) {
                     node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
                     node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
+
+                    // Attempt to reconnect and resubscribe after a delay
+                    setTimeout(async () => {
+                        try {
+                            if (mqttClient.isConnected()) {
+                                await mqttClient.subscribe(subscribeTopic);
+                                logger.log(`Resubscribed to topic after connection recovery: ${subscribeTopic}`);
+                                node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                            } else {
+                                logger.warn("MQTT still disconnected, will retry on connection event");
+                                mqttClient.once("mqtt-status", async ({ status }) => {
+                                    if (status === "connected") {
+                                        await mqttClient.subscribe(subscribeTopic);
+                                        logger.log(`Resubscribed on reconnection: ${subscribeTopic}`);
+                                        node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                                    }
+                                });
+                            }
+                        } catch (retryError) {
+                            logger.error(`Resubscription attempt failed: ${(retryError as Error).message}`);
+                        }
+                    }, 3000);
                     return;
                 }
 
@@ -145,6 +185,7 @@ module.exports = function (RED: NodeAPI) {
                         message,
                         subscribeTopic,
                         async (payload: any) => {
+                            console.log("fuck you")
                             ClientRegistry.logConnectionCounts(node);
                             await rpcHandler.handleRpcRequest(payload);
                         }
@@ -155,32 +196,6 @@ module.exports = function (RED: NodeAPI) {
                 node.on('input', (msg: any) => {
                     logger.log('Input message received');
                     node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.MESSAGE_RECEIVED });
-
-                    // Handle scale config updates
-                    if (msg.scaleConfigs) {
-                        try {
-                            const newConfigs = Array.isArray(msg.scaleConfigs)
-                                ? msg.scaleConfigs
-                                : JSON.parse(msg.scaleConfigs);
-                            configService.updateScaleConfigs(newConfigs);
-                            logger.warn(`Scale configs updated: ${JSON.stringify(newConfigs)}`);
-                        } catch (error) {
-                            logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("scaleConfigs") + `: ${(error as Error).message}`);
-                        }
-                    }
-
-                    // Handle config keys updates
-                    if (msg.configKeys) {
-                        try {
-                            const newKeys = typeof msg.configKeys === 'object'
-                                ? msg.configKeys
-                                : JSON.parse(msg.configKeys);
-                            configService.updateConfigKeys(newKeys);
-                            logger.warn(`Config keys updated: ${JSON.stringify(newKeys)}`);
-                        } catch (error) {
-                            logger.error(ERROR_MESSAGES.CONFIG_UPDATE_FAILED("configKeys") + `: ${(error as Error).message}`);
-                        }
-                    }
 
                     // Handle RPC commands from input
                     if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||

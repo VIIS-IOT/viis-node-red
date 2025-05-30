@@ -3,9 +3,9 @@
  * Handles Modbus operations including read/write and mapping
  */
 
-import { 
-    IModbusService, 
-    ModbusMappingResult, 
+import {
+    IModbusService,
+    ModbusMappingResult,
     ServiceOptions,
     EnvironmentConfig,
     ManualOverrides,
@@ -31,6 +31,12 @@ export class ModbusService implements IModbusService {
         this.nodeId = options.node.id;
         this.logger = new Logger(options.node, "MODBUS-SERVICE");
         this.environmentConfig = this.loadEnvironmentConfig();
+
+        // Log Modbus client state during initialization
+        this.logger.warn(`ModbusService initialized with client: ${modbusClient ? 'provided' : 'missing'}`);
+        if (modbusClient) {
+            this.logger.warn(`Modbus client connection state: ${modbusClient.isConnected ? 'connected' : 'disconnected'}`);
+        }
     }
 
     /**
@@ -63,28 +69,28 @@ export class ModbusService implements IModbusService {
 
         // Check holding registers first (read/write)
         if (modbusHoldingRegisters[key] !== undefined) {
-            return { 
-                address: modbusHoldingRegisters[key], 
-                fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER, 
-                value: 0 
+            return {
+                address: modbusHoldingRegisters[key],
+                fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER,
+                value: 0
             };
         }
 
         // Check coils (read/write)
         if (modbusCoils[key] !== undefined) {
-            return { 
-                address: modbusCoils[key], 
-                fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL, 
-                value: false 
+            return {
+                address: modbusCoils[key],
+                fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                value: false
             };
         }
 
         // Check input registers (read-only)
         if (modbusInputRegisters[key] !== undefined) {
-            return { 
-                address: modbusInputRegisters[key], 
-                fc: MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS, 
-                value: 0 
+            return {
+                address: modbusInputRegisters[key],
+                fc: MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS,
+                value: 0
             };
         }
 
@@ -95,29 +101,51 @@ export class ModbusService implements IModbusService {
      * Write value to Modbus device
      */
     async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
+        console.log(`ModbusService.writeToModbus called: key=${key}, address=${mapping.address}, value=${value}, fc=${mapping.fc}`);
+
         try {
             let writeValue = value;
-            
+
             // Apply scaling for numeric values
             if (typeof value === "number") {
                 writeValue = this.scalingUtils.scaleValue(key, value, "write");
+                console.log(`Scaled value for writing: ${value} -> ${writeValue}`);
             }
 
+            // Check if Modbus client is connected
+            if (!this.modbusClient) {
+                console.error("Modbus client is null or undefined");
+                throw new Error("Modbus client is not initialized");
+            }
+
+            if (!this.modbusClient.isConnected) {
+                console.error("Modbus client is not connected");
+                throw new Error("Modbus client not connected");
+            }
+
+            console.log(`Executing Modbus write: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+
             // Perform the write operation based on function code
-            if (mapping.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {
-                await this.modbusClient.writeRegister(mapping.address, writeValue as number);
-            } else if (mapping.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
-                await this.modbusClient.writeCoil(mapping.address, value as boolean);
+            if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
+                console.log(`Writing to register: address=${mapping.address}, value=${writeValue}`);
+                const result = await this.modbusClient.writeRegister(mapping.address, writeValue as number);
+                console.log(`Register write result:`, result);
+            } else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
+                console.log(`Writing to coil: address=${mapping.address}, value=${writeValue}`);
+                const result = await this.modbusClient.writeCoil(mapping.address, writeValue as boolean);
+                console.log(`Coil write result:`, result);
             } else {
+                console.error(`Unsupported write function code: ${mapping.fc}`);
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
             }
 
-            this.logger.debug(`Wrote to Modbus: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
-            
             // Store manual override information
             this.storeManualOverride(mapping.address, mapping.fc, writeValue);
 
+            console.log(`MODBUS WRITE SUCCESS: key=${key}, address=${mapping.address}, value=${writeValue}`);
+
         } catch (error) {
+            console.error(`MODBUS WRITE ERROR for ${key}:`, (error as Error).message);
             const errorMessage = ERROR_MESSAGES.MODBUS_WRITE_FAILED(key) + `: ${(error as Error).message}`;
             this.logger.error(errorMessage);
             throw new Error(errorMessage);
@@ -148,14 +176,14 @@ export class ModbusService implements IModbusService {
             }
 
             let readValue = result.data[0];
-            
+
             // Apply scaling for numeric values
             if (typeof readValue === "number") {
                 readValue = this.scalingUtils.scaleValue(key, readValue, "read");
             }
 
             this.logger.debug(`Read from Modbus: key=${key}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
-            
+
             return readValue;
 
         } catch (error) {
@@ -187,13 +215,13 @@ export class ModbusService implements IModbusService {
     private storeManualOverride(address: number, fc: number, value: any): void {
         const manualOverrides = this.getManualOverrides();
         const addressKey = `${address}-${fc}`;
-        
+
         manualOverrides[addressKey] = {
             fc,
             value,
             timestamp: Date.now()
         };
-        
+
         this.setManualOverrides(manualOverrides);
         this.logger.debug(`Stored manual override: address=${address}, fc=${fc}, value=${value}`);
     }
@@ -221,11 +249,11 @@ export class ModbusService implements IModbusService {
         const manualOverrides = this.getManualOverrides();
         const addressKey = `${address}-${fc}`;
         const override = manualOverrides[addressKey];
-        
+
         if (!override) {
             return false;
         }
-        
+
         const age = Date.now() - override.timestamp;
         return age <= maxAgeMs;
     }
