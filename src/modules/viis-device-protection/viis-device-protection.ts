@@ -9,10 +9,13 @@ module.exports = function (RED: NodeAPI) {
         RED.nodes.createNode(this, config);
         const node = this;
 
+        // Initialize GlobalContextHelper
+        const globalHelper = new GlobalContextHelper(node.context());
+
         // Environment variables for Modbus mappings
-        const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-        const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-        const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
+        const modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
+        const modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+        const modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
 
         // Modbus client configuration
         const modbusConfig = {
