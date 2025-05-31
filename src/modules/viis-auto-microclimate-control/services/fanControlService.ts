@@ -13,17 +13,18 @@ import {
     ILogger,
     FanRotationState
 } from "../interfaces/types";
-import { 
-    CONTEXT_KEYS, 
+import {
+    CONTEXT_KEYS,
     FAN_CONFIG,
     FAN_DAO_CONFIG,
     MODBUS_FUNCTION_CODES
 } from "../constants";
 import { Logger } from "../utils/logger";
-import { 
-    getFanGroups, 
-    getNextGroupIndex, 
+import {
+    getFanGroups,
+    getNextGroupIndex,
     createFanGroupActions,
+    createOptimizedFanGroupActions,
     createFanDaoActions,
     getRecommendedGroupSize,
     getAllFanKeys
@@ -34,21 +35,19 @@ export class FanControlService implements IFanControlService {
     private flowContext: any;
     private globalContext: any;
     private logger: ILogger;
-    private nodeId: string;
 
     constructor(options: ServiceOptions) {
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
         this.logger = new Logger(options.node, options.nodeId);
-        this.nodeId = options.nodeId;
     }
 
     /**
      * Process fan control based on configuration and sensor data
      */
     async processFanControl(
-        config: AutoControlConfig, 
-        sensorData: SensorData, 
+        config: AutoControlConfig,
+        sensorData: SensorData,
         deviceStatus: DeviceStatus
     ): Promise<ControlAction[]> {
         const actions: ControlAction[] = [];
@@ -68,7 +67,7 @@ export class FanControlService implements IFanControlService {
                 actions.push(...rotationActions);
             } else {
                 // Threshold mode (default)
-                const thresholdActions = await this.processThresholdMode(config, sensorData);
+                const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);
                 actions.push(...thresholdActions);
             }
 
@@ -91,7 +90,7 @@ export class FanControlService implements IFanControlService {
         try {
             const groupSize = config.set_gr_alternate_fan || 2;
             const rotationInterval = minutesToMs(config.set_time_alternate_fan || 15);
-            
+
             // Get fan groups
             const fanGroups = this.getFanGroups(groupSize);
             if (fanGroups.length === 0) {
@@ -101,20 +100,20 @@ export class FanControlService implements IFanControlService {
 
             // Get current rotation state
             let rotationState = this.getRotationState();
-            
+
             // Check if it's time to rotate
             if (hasTimeElapsed(rotationState.lastRotationTime, rotationInterval)) {
                 // Move to next group
                 rotationState.currentGroupIndex = getNextGroupIndex(
-                    rotationState.currentGroupIndex, 
+                    rotationState.currentGroupIndex,
                     fanGroups.length
                 );
                 rotationState.lastRotationTime = getCurrentTimestamp();
                 rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex];
-                
+
                 // Save updated state
                 this.saveRotationState(rotationState);
-                
+
                 this.logger.log(`Fan rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (${rotationState.activeGroup.join(', ')})`);
             }
 
@@ -136,7 +135,7 @@ export class FanControlService implements IFanControlService {
     /**
      * Process threshold mode fan control
      */
-    async processThresholdMode(config: AutoControlConfig, sensorData: SensorData): Promise<ControlAction[]> {
+    async processThresholdMode(config: AutoControlConfig, sensorData: SensorData, deviceStatus?: DeviceStatus): Promise<ControlAction[]> {
         try {
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
@@ -156,11 +155,16 @@ export class FanControlService implements IFanControlService {
 
             // Determine required group size based on thresholds
             const requiredGroupSize = getRecommendedGroupSize(tempIndoor, humiIndoor, thresholds);
-            
+
             this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, required group size=${requiredGroupSize}`);
 
             if (requiredGroupSize === 0) {
-                // No fans needed
+                // No fans needed - use optimized function if device status available
+                if (deviceStatus) {
+                    const coilMapping = this.getCoilMapping();
+                    const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
+                    return createOptimizedFanGroupActions([], false, "Temperature/humidity below K1 threshold", coilMapping, deviceStatusRecord);
+                }
                 return this.createTurnOffAllFansActions("Temperature/humidity below K1 threshold");
             }
 
@@ -171,11 +175,26 @@ export class FanControlService implements IFanControlService {
                 return [];
             }
 
-            // For threshold mode, use the first group of the required size
-            const targetGroup = fanGroups[0];
-            const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
+            // For threshold mode, determine target group based on requirements
+            let targetGroup: string[];
 
+            if (requiredGroupSize === 6) {
+                // K3 or K4: Use all 6 fans
+                targetGroup = getAllFanKeys();
+            } else {
+                // K1 or K2: Use rotation logic for smaller groups
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize);
+            }
+
+            const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
             const coilMapping = this.getCoilMapping();
+
+            // Use optimized function if device status is available
+            if (deviceStatus) {
+                const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
+                return createOptimizedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+            }
+
             return createFanGroupActions(targetGroup, true, reason, coilMapping);
 
         } catch (error) {
@@ -197,7 +216,7 @@ export class FanControlService implements IFanControlService {
             }
 
             const alternateInterval = minutesToMs(config.set_time_alternate_fan_dao || 5);
-            
+
             // Get last fan dao state change time
             const lastFanDaoTime = this.flowContext.get(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_time`) || 0;
             const currentFanDaoState = this.flowContext.get(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_state`) || false;
@@ -205,13 +224,13 @@ export class FanControlService implements IFanControlService {
             // Check if it's time to toggle fan dao state
             if (hasTimeElapsed(lastFanDaoTime, alternateInterval)) {
                 const newState = !currentFanDaoState;
-                
+
                 // Save new state
                 this.flowContext.set(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_time`, getCurrentTimestamp());
                 this.flowContext.set(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_state`, newState);
-                
+
                 this.logger.log(`Fan dao alternating: switching to ${newState ? 'ON' : 'OFF'}`);
-                
+
                 const coilMapping = this.getCoilMapping();
                 return createFanDaoActions(newState, `Fan dao alternating mode: ${newState ? 'ON' : 'OFF'}`, coilMapping);
             }
@@ -237,7 +256,7 @@ export class FanControlService implements IFanControlService {
      */
     private getRotationState(): FanRotationState {
         const saved = this.flowContext.get(CONTEXT_KEYS.FAN_ROTATION_STATE);
-        
+
         if (saved && typeof saved === 'object') {
             return saved;
         }
@@ -261,11 +280,27 @@ export class FanControlService implements IFanControlService {
     }
 
     /**
+     * Convert DeviceStatus to Record<string, boolean> for compatibility
+     */
+    private convertDeviceStatusToRecord(deviceStatus: DeviceStatus): Record<string, boolean> {
+        const result: Record<string, boolean> = {};
+
+        // Extract only boolean properties, excluding 'ts'
+        Object.keys(deviceStatus).forEach(key => {
+            if (key !== 'ts' && typeof deviceStatus[key] === 'boolean') {
+                result[key] = deviceStatus[key] as boolean;
+            }
+        });
+
+        return result;
+    }
+
+    /**
      * Get coil mapping from global context or fallback to constants
      */
     private getCoilMapping(): Record<string, number> {
         const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        
+
         // Merge with default mappings
         return {
             ...FAN_CONFIG.COIL_MAPPING,
@@ -298,6 +333,44 @@ export class FanControlService implements IFanControlService {
     }
 
     /**
+     * Get rotation target group for threshold mode with smaller group sizes
+     */
+    private getRotationTargetGroup(fanGroups: string[][], requiredGroupSize: number): string[] {
+        // For K1 and K2 thresholds, use rotation logic
+        const rotationInterval = minutesToMs(15); // Default 15 minutes for threshold rotation
+
+        // Get or initialize rotation state for threshold mode
+        const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
+        let rotationState = this.flowContext.get(contextKey);
+
+        if (!rotationState || typeof rotationState !== 'object') {
+            rotationState = {
+                currentGroupIndex: 0,
+                lastRotationTime: 0,
+                activeGroup: fanGroups[0] || []
+            };
+        }
+
+        // Check if it's time to rotate
+        if (hasTimeElapsed(rotationState.lastRotationTime, rotationInterval)) {
+            // Move to next group
+            rotationState.currentGroupIndex = getNextGroupIndex(
+                rotationState.currentGroupIndex,
+                fanGroups.length
+            );
+            rotationState.lastRotationTime = getCurrentTimestamp();
+            rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex];
+
+            // Save updated state
+            this.flowContext.set(contextKey, rotationState);
+
+            this.logger.log(`Threshold rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} for size ${requiredGroupSize}`);
+        }
+
+        return rotationState.activeGroup || fanGroups[0] || [];
+    }
+
+    /**
      * Get reason string for threshold mode
      */
     private getThresholdReason(temperature: number, humidity: number, thresholds: any): string {
@@ -310,7 +383,7 @@ export class FanControlService implements IFanControlService {
         } else if (temperature >= thresholds.k1) {
             return `K1 threshold: temp=${temperature}°C (≥${thresholds.k1})`;
         }
-        
+
         return `Below thresholds: temp=${temperature}°C, humidity=${humidity}%`;
     }
 }

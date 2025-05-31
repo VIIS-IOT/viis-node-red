@@ -99,6 +99,8 @@ export interface DeviceStatus {
     luoi_2_dai?: boolean;
     luoi_1_thu?: boolean;
     luoi_1_dai?: boolean;
+    // Index signature to allow string indexing
+    [key: string]: boolean | number | undefined;
 }
 
 // Fan rotation state

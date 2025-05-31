@@ -87,6 +87,7 @@ export function getInactiveFans(deviceStatus: Record<string, boolean>): string[]
 
 /**
  * Create fan control actions for a specific group
+ * Optimized to avoid unnecessary on/off cycles
  */
 export function createFanGroupActions(
     targetGroup: string[],
@@ -95,26 +96,34 @@ export function createFanGroupActions(
     coilMapping: Record<string, number>
 ): Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> {
     const actions: Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> = [];
+    const allFanKeys = getAllFanKeys();
 
-    // First, turn off all fans
-    getAllFanKeys().forEach(fanKey => {
-        const address = coilMapping[fanKey];
-        if (address !== undefined) {
-            actions.push({
-                deviceKey: fanKey,
-                value: false,
-                address: address,
-                fc: 5, // WRITE_SINGLE_COIL
-                reason: `Turn off ${fanKey} for group control`
-            });
-        }
-    });
-
-    // Then, turn on fans in target group if requested
-    if (turnOn) {
-        targetGroup.forEach(fanKey => {
+    if (!turnOn) {
+        // Turn off all fans when turnOn is false
+        allFanKeys.forEach(fanKey => {
             const address = coilMapping[fanKey];
             if (address !== undefined) {
+                actions.push({
+                    deviceKey: fanKey,
+                    value: false,
+                    address: address,
+                    fc: 5, // WRITE_SINGLE_COIL
+                    reason: reason
+                });
+            }
+        });
+        return actions;
+    }
+
+    // When turning on, only change fans that need to change state
+    // Turn off fans that should not be in the target group
+    allFanKeys.forEach(fanKey => {
+        const shouldBeOn = targetGroup.includes(fanKey);
+        const address = coilMapping[fanKey];
+
+        if (address !== undefined) {
+            if (shouldBeOn) {
+                // Turn on fans in target group
                 actions.push({
                     deviceKey: fanKey,
                     value: true,
@@ -122,9 +131,70 @@ export function createFanGroupActions(
                     fc: 5, // WRITE_SINGLE_COIL
                     reason: reason
                 });
+            } else {
+                // Turn off fans not in target group
+                actions.push({
+                    deviceKey: fanKey,
+                    value: false,
+                    address: address,
+                    fc: 5, // WRITE_SINGLE_COIL
+                    reason: `Turn off ${fanKey} for group control`
+                });
+            }
+        }
+    });
+
+    return actions;
+}
+
+/**
+ * Create optimized fan control actions that only change state when necessary
+ */
+export function createOptimizedFanGroupActions(
+    targetGroup: string[],
+    turnOn: boolean,
+    reason: string,
+    coilMapping: Record<string, number>,
+    currentDeviceStatus: Record<string, boolean>
+): Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> {
+    const actions: Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> = [];
+    const allFanKeys = getAllFanKeys();
+
+    if (!turnOn) {
+        // Turn off all fans that are currently on
+        allFanKeys.forEach(fanKey => {
+            const address = coilMapping[fanKey];
+            const currentState = currentDeviceStatus[fanKey] || false;
+
+            if (address !== undefined && currentState === true) {
+                actions.push({
+                    deviceKey: fanKey,
+                    value: false,
+                    address: address,
+                    fc: 5, // WRITE_SINGLE_COIL
+                    reason: reason
+                });
             }
         });
+        return actions;
     }
+
+    // When turning on, only change fans that need state change
+    allFanKeys.forEach(fanKey => {
+        const shouldBeOn = targetGroup.includes(fanKey);
+        const currentState = currentDeviceStatus[fanKey] || false;
+        const address = coilMapping[fanKey];
+
+        if (address !== undefined && shouldBeOn !== currentState) {
+            actions.push({
+                deviceKey: fanKey,
+                value: shouldBeOn,
+                address: address,
+                fc: 5, // WRITE_SINGLE_COIL
+                reason: shouldBeOn ? reason : `Turn off ${fanKey} for group control`
+            });
+        }
+    });
 
     return actions;
 }
