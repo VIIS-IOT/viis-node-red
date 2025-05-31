@@ -103,14 +103,14 @@ export class GlobalContextHelper {
     if (globalVarName) {
       const prefixedName = this.getPrefixedName(globalVarName);
       const globalValue = this.globalContext.get(prefixedName);
-      if (globalValue !== undefined) {
+      if (globalValue !== undefined && globalValue !== null && globalValue !== '') {
         return globalValue;
       }
     }
 
     // Fallback to process.env
     const processValue = process.env[envVarName];
-    if (processValue !== undefined) {
+    if (processValue !== undefined && processValue !== null && processValue !== '') {
       return processValue;
     }
 
@@ -168,11 +168,11 @@ export class GlobalContextHelper {
    * @param defaultValue - Default value if not found or invalid number
    * @returns Numeric value or default
    */
-  getNumericEnvVar(envVarName: string, defaultValue: number = 0): number {
-    const value = this.getEnvVar(envVarName);
+  getNumericEnvVar(envVarName: string, defaultValue?: number): number {
+    const value = this.getEnvVar(envVarName, defaultValue);
 
     if (value === undefined || value === null) {
-      return defaultValue;
+      return defaultValue || 0;
     }
 
     // If it's already a number, return it
@@ -183,7 +183,7 @@ export class GlobalContextHelper {
     // Try to parse as number
     const numValue = Number(value);
     if (isNaN(numValue)) {
-      return defaultValue;
+      return defaultValue || 0;
     }
 
     return numValue;

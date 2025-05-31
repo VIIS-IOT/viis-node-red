@@ -78,6 +78,24 @@ module.exports = function (RED: NodeAPI) {
                     reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
                 };
 
+                // Log Modbus configuration for debugging
+                logger.log(`Modbus Configuration: ${JSON.stringify(modbusConfig, null, 2)}`);
+
+                // Validate Modbus configuration
+                if (modbusConfig.type === "TCP" && (!modbusConfig.host || !modbusConfig.tcpPort)) {
+                    const error = "Invalid Modbus TCP configuration: host and tcpPort are required";
+                    logger.error(error);
+                    node.status({ fill: "red", shape: "ring", text: error });
+                    return;
+                }
+
+                if (modbusConfig.type === "RTU" && !modbusConfig.serialPort) {
+                    const error = "Invalid Modbus RTU configuration: serialPort is required";
+                    logger.error(error);
+                    node.status({ fill: "red", shape: "ring", text: error });
+                    return;
+                }
+
                 // Initialize MQTT client configuration
                 const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
                     ? {
@@ -95,6 +113,8 @@ module.exports = function (RED: NodeAPI) {
                         qos: MQTT_CONFIG.LOCAL.QOS,
                     };
 
+                logger.log(`mqttConfig: ${JSON.stringify(mqttConfig, null, 2)}`);
+
                 // Define MQTT topics
                 const subscribeTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
@@ -102,12 +122,52 @@ module.exports = function (RED: NodeAPI) {
                 const publishTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
                     : `v1/devices/me/telemetry/${deviceId}`;
-                console.log("mqttConfig is", mqttConfig)
-                // Initialize clients
-                const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
-                const mqttClient = config.mqttBroker === "thingsboard"
-                    ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
-                    : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
+                logger.log(`MQTT Configuration: ${JSON.stringify(mqttConfig, null, 2)}`);
+
+                // Initialize clients with better error handling
+                let modbusClient: any;
+                let mqttClient: any;
+
+                try {
+                    // Initialize Modbus client
+                    logger.log("Initializing Modbus client...");
+                    modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+
+                    // Wait a moment for Modbus connection to establish
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+
+                    // Check if Modbus client is actually connected
+                    if (!modbusClient.isConnectedCheck()) {
+                        throw new Error("Modbus client failed to connect - check device connection and configuration");
+                    }
+
+                    logger.log("Modbus client initialized successfully");
+                } catch (error) {
+                    const errorMsg = `Modbus initialization failed: ${(error as Error).message}`;
+                    logger.error(errorMsg);
+                    node.status({ fill: "red", shape: "ring", text: "Modbus connection failed" });
+                    return;
+                }
+
+                try {
+                    // Initialize MQTT client
+                    logger.warn("[MQTT-INIT] Starting MQTT client initialization...");
+                    logger.warn(`[MQTT-INIT] Broker type: ${config.mqttBroker}`);
+                    logger.warn(`[MQTT-INIT] MQTT config: ${JSON.stringify(mqttConfig, null, 2)}`);
+
+                    mqttClient = config.mqttBroker === "thingsboard"
+                        ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+                        : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
+
+                    logger.warn("[MQTT-INIT] MQTT client initialized successfully");
+                    logger.warn(`[MQTT-INIT] Client connected status: ${mqttClient.isConnected()}`);
+                } catch (error) {
+                    const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
+                    logger.error(`[MQTT-INIT] ${errorMsg}`);
+                    logger.error(`[MQTT-INIT] Error stack: ${(error as Error).stack}`);
+                    node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
+                    return;
+                }
 
                 if (!modbusClient || !mqttClient) {
                     node.error(ERROR_MESSAGES.CLIENT_INIT_FAILED);
@@ -135,28 +195,40 @@ module.exports = function (RED: NodeAPI) {
 
                 // Set up MQTT subscription
                 try {
+                    logger.warn("[MQTT-SUB] Setting up MQTT subscription...");
+                    logger.warn(`[MQTT-SUB] Subscribe topic: ${subscribeTopic}`);
+                    logger.warn(`[MQTT-SUB] Publish topic: ${publishTopic}`);
+
                     // Wait for client to be connected before subscribing
                     if (!mqttClient.isConnected()) {
-                        logger.log("MQTT client not connected, waiting for connection...");
+                        logger.warn("[MQTT-SUB] MQTT client not connected, waiting for connection...");
                         await new Promise<void>((resolve) => {
                             mqttClient.once("mqtt-status", ({ status }) => {
+                                logger.warn(`[MQTT-SUB] Received status event: ${status}`);
                                 if (status === "connected") {
+                                    logger.warn("[MQTT-SUB] Connection established, proceeding with subscription");
                                     resolve();
                                 }
                             });
 
                             // Set a timeout in case connection never happens
                             setTimeout(() => {
-                                logger.warn("MQTT connection timeout, proceeding anyway");
+                                logger.warn("[MQTT-SUB] MQTT connection timeout, proceeding anyway");
                                 resolve();
                             }, 5000);
                         });
+                    } else {
+                        logger.warn("[MQTT-SUB] MQTT client already connected");
                     }
 
+                    logger.warn(`[MQTT-SUB] Attempting to subscribe to: ${subscribeTopic}`);
                     await mqttClient.subscribe(subscribeTopic);
-                    logger.log(`Subscribed to topic: ${subscribeTopic}`);
+                    logger.warn(`[MQTT-SUB] Successfully subscribed to topic: ${subscribeTopic}`);
                 } catch (error) {
-                    node.error(`Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
+                    const errorMsg = `Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`;
+                    logger.error(`[MQTT-SUB] ${errorMsg}`);
+                    logger.error(`[MQTT-SUB] Error stack: ${(error as Error).stack}`);
+                    node.error(errorMsg);
                     node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
 
                     // Attempt to reconnect and resubscribe after a delay
@@ -184,17 +256,72 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 // Set up MQTT message handler
+                logger.warn("[MQTT-HANDLER] Setting up MQTT message event listener...");
                 mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
-                    messageHandler.processMqttMessage(
-                        message,
-                        subscribeTopic,
-                        async (payload: any) => {
-                            console.log("fuck you")
-                            ClientRegistry.logConnectionCounts(node);
-                            await rpcHandler.handleRpcRequest(payload);
+                    logger.warn(`[MQTT-HANDLER] Received MQTT message on topic: ${message.topic}`);
+                    logger.warn(`[MQTT-HANDLER] Message content: ${JSON.stringify(message)}`);
+                    logger.warn(`[MQTT-HANDLER] Expected subscribe topic: ${subscribeTopic}`);
+
+                    try {
+                        const result = messageHandler.processMqttMessage(
+                            message,
+                            subscribeTopic,
+                            async (payload: any) => {
+                                logger.warn("[MQTT-HANDLER] Processing MQTT RPC message with payload:");
+                                logger.warn(`[MQTT-HANDLER] Payload: ${JSON.stringify(payload)}`);
+                                ClientRegistry.logConnectionCounts(node);
+                                await rpcHandler.handleRpcRequest(payload);
+                            }
+                        );
+
+                        if (result === null) {
+                            logger.warn("[MQTT-HANDLER] Message was rejected or filtered out");
+                        } else {
+                            logger.warn("[MQTT-HANDLER] Message processed successfully");
                         }
-                    );
+                    } catch (error) {
+                        logger.error(`[MQTT-HANDLER] Error processing MQTT message: ${(error as Error).message}`);
+                    }
                 });
+                logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
+
+                // Test MQTT message reception after 5 seconds
+                setTimeout(() => {
+                    logger.warn("[TEST] Testing MQTT message reception...");
+                    logger.warn(`[TEST] Current subscribed topics: ${Array.from(mqttClient.subscribedTopics || []).join(', ')}`);
+                    logger.warn(`[TEST] MQTT client still connected: ${mqttClient.isConnected()}`);
+
+                    // Test if we can receive any message by subscribing to a test topic
+                    const testTopic = "test/viis/rpc";
+                    mqttClient.subscribe(testTopic).then(() => {
+                        logger.warn(`[TEST] Successfully subscribed to test topic: ${testTopic}`);
+
+                        // Publish a test message to ourselves
+                        setTimeout(() => {
+                            mqttClient.publish(testTopic, JSON.stringify({
+                                method: "test",
+                                params: { test: true },
+                                timestamp: Date.now()
+                            })).then(() => {
+                                logger.warn("[TEST] Test message published successfully");
+                            }).catch((error: Error) => {
+                                logger.error(`[TEST] Failed to publish test message: ${error.message}`);
+                            });
+                        }, 1000);
+                    }).catch((error: Error) => {
+                        logger.error(`[TEST] Failed to subscribe to test topic: ${error.message}`);
+                    });
+                }, 5000);
+
+                // Node initialization completed successfully
+                logger.warn("[INIT] ===== VIIS RPC Control Node initialization completed successfully =====");
+                logger.warn(`[INIT] Node ID: ${node.id}`);
+                logger.warn(`[INIT] MQTT Broker: ${config.mqttBroker}`);
+                logger.warn(`[INIT] Subscribe Topic: ${subscribeTopic}`);
+                logger.warn(`[INIT] Publish Topic: ${publishTopic}`);
+                logger.warn(`[INIT] MQTT Connected: ${mqttClient.isConnected()}`);
+                logger.warn(`[INIT] Modbus Connected: ${modbusClient.isConnectedCheck()}`);
+                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
 
                 // Handle input messages for dynamic configuration updates and RPC commands
                 node.on('input', (msg: any) => {

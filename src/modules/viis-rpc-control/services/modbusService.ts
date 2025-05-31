@@ -294,4 +294,35 @@ export class ModbusService implements IModbusService {
     hasModbusMapping(key: string): boolean {
         return this.findModbusMapping(key) !== null;
     }
+
+    /**
+     * Check Modbus connection and attempt to reconnect if needed
+     */
+    async checkConnection(): Promise<void> {
+        try {
+            if (!this.modbusClient) {
+                throw new Error("Modbus client is not initialized");
+            }
+
+            // Check if client reports as connected
+            if (!this.modbusClient.isConnectedCheck()) {
+                this.logger.warn("Modbus client reports as disconnected, attempting to reconnect...");
+                await this.modbusClient.reconnect();
+                return;
+            }
+
+            // Try a simple read operation to verify connection
+            try {
+                await this.modbusClient.readCoils(0, 1);
+                this.logger.debug("Modbus connection verified successfully");
+            } catch (testError) {
+                this.logger.warn(`Modbus connection test failed: ${(testError as Error).message}, attempting to reconnect...`);
+                await this.modbusClient.reconnect();
+            }
+        } catch (error) {
+            const errorMsg = `Modbus connection check failed: ${(error as Error).message}`;
+            this.logger.error(errorMsg);
+            throw new Error(errorMsg);
+        }
+    }
 }

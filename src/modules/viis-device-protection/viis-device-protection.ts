@@ -19,15 +19,15 @@ module.exports = function (RED: NodeAPI) {
 
         // Modbus client configuration
         const modbusConfig = {
-            type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
-            host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
-            serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
-            baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
-            parity: (process.env.MODBUS_PARITY as "none" | "even" | "odd") || "none",
-            unitId: parseInt(process.env.MODBUS_UNIT_ID || "1", 10),
-            timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
-            reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
+            type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
+            host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
+            tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
+            serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
+            baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
+            parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
+            unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
+            timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
+            reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
         };
 
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);

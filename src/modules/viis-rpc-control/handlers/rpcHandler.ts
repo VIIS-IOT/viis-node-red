@@ -48,15 +48,35 @@ export class RpcHandler implements IRpcHandler {
     async handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
         try {
             if (rpcBody.method === "set_state" && rpcBody.params) {
-                this.logger.warn(`Fuck you handleRpcRequest`);
+                this.logger.log(`Processing RPC request: ${JSON.stringify(rpcBody)}`);
                 await this.handleSetStateRequest(rpcBody.params);
             } else {
                 this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
             }
         } catch (error) {
-            const errorMessage = ERROR_MESSAGES.RPC_HANDLING_ERROR + `: ${(error as Error).message}`;
+            const err = error as Error;
+            let errorMessage = ERROR_MESSAGES.RPC_HANDLING_ERROR + `: ${err.message}`;
+
+            // Handle specific Modbus connection errors
+            if (err.message.includes("Port Not Open") ||
+                err.message.includes("Modbus client not connected") ||
+                err.message.includes("Failed to establish a stable connection")) {
+
+                errorMessage = `Modbus connection error: ${err.message}. Please check device connection and configuration.`;
+                this.node.status({ fill: "red", shape: "ring", text: "Modbus disconnected" });
+                this.logger.error(`Modbus connection lost: ${err.message}`);
+
+                // Attempt to trigger reconnection by notifying the service
+                try {
+                    await this.modbusService.checkConnection();
+                } catch (reconnectError) {
+                    this.logger.error(`Reconnection attempt failed: ${(reconnectError as Error).message}`);
+                }
+            } else {
+                this.node.status({ fill: "red", shape: "ring", text: "RPC error" });
+            }
+
             this.logger.error(errorMessage);
-            this.node.status({ fill: "red", shape: "ring", text: "RPC error" });
             throw new Error(errorMessage);
         }
     }

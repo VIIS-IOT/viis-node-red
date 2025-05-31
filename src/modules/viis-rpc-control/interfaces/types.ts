@@ -123,6 +123,7 @@ export interface IModbusService {
     findModbusMapping(key: string): ModbusMappingResult | null;
     writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void>;
     readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean>;
+    checkConnection(): Promise<void>;
 }
 
 // MQTT service interface
