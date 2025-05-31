@@ -22,6 +22,7 @@ import {
   PeriodicSnapshotConfig
 } from './viis-telemetry-processor';
 import { CONTEXT_KEYS } from './viis-telemetry-constants';
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 /**
  * Register viis-telemetry node with Node-RED
@@ -32,33 +33,18 @@ module.exports = function (RED: NodeAPI) {
    */
   RED.httpAdmin.get('/viis-telemetry/modbus-keys', (_req, res) => {
     try {
-      // Try to get from global context first, fallback to process.env
-      const globalContext = RED.settings.functionGlobalContext || {};
-
-      const getJsonEnvVar = (envVarName: string, globalVarName: string, defaultValue: any = {}): any => {
-        // Try global context first
-        const globalValue = globalContext[globalVarName];
-        if (globalValue !== undefined) {
-          return typeof globalValue === 'object' ? globalValue : defaultValue;
+      // Create a temporary global context helper for the HTTP endpoint
+      const tempNodeContext = {
+        global: {
+          get: (key: string) => RED.settings.functionGlobalContext?.[key]
         }
+      } as NodeContext;
 
-        // Fallback to process.env
-        const processValue = process.env[envVarName];
-        if (processValue) {
-          try {
-            return JSON.parse(processValue);
-          } catch (error) {
-            console.warn(`Failed to parse JSON for ${envVarName}:`, error.message);
-            return defaultValue;
-          }
-        }
+      const globalHelper = new GlobalContextHelper(tempNodeContext);
 
-        return defaultValue;
-      };
-
-      const modbusCoils = getJsonEnvVar('MODBUS_COILS', 'modbusCoils', {});
-      const modbusInputRegisters = getJsonEnvVar('MODBUS_INPUT_REGISTERS', 'modbusInputRegisters', {});
-      const modbusHoldingRegisters = getJsonEnvVar('MODBUS_HOLDING_REGISTERS', 'modbusHoldingRegisters', {});
+      const modbusCoils = globalHelper.getJsonEnvVar('MODBUS_COILS', {});
+      const modbusInputRegisters = globalHelper.getJsonEnvVar('MODBUS_INPUT_REGISTERS', {});
+      const modbusHoldingRegisters = globalHelper.getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {});
 
       const keys = [
         ...Object.keys(modbusHoldingRegisters),
@@ -97,6 +83,9 @@ module.exports = function (RED: NodeAPI) {
     const nodeContext: NodeContext = this.context();
     const flowContext = this.context().flow as NodeContext;
 
+    // Initialize GlobalContextHelper
+    const globalHelper = new GlobalContextHelper(this.context());
+
     // Wrap async initialization in IIFE to avoid Node-RED registration issues
     (async () => {
       try {
@@ -120,10 +109,10 @@ module.exports = function (RED: NodeAPI) {
         flowContext.set(thresholdConfigKey, configManager.getThresholdConfig());
 
         // Create client configurations
-        const modbusConfig = createModbusConfig();
-        const localMqttConfig = createLocalMqttConfig(envConfig.deviceId);
-        const thingsboardMqttConfig = createThingsboardMqttConfig(nodeContext);
-        const mysqlConfig = createMySqlConfig();
+        const modbusConfig = createModbusConfig(globalHelper);
+        const localMqttConfig = createLocalMqttConfig(globalHelper, envConfig.deviceId);
+        const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
+        const mysqlConfig = createMySqlConfig(globalHelper);
 
         // Get clients from registry
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
@@ -222,32 +211,32 @@ module.exports = function (RED: NodeAPI) {
   /**
    * Create Modbus configuration from environment variables
    */
-  function createModbusConfig() {
+  function createModbusConfig(globalHelper: GlobalContextHelper) {
     return {
-      type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
-      host: process.env.MODBUS_HOST || "localhost",
-      tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
-      serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
-      baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
-      parity: (process.env.MODBUS_PARITY as "none" | "even" | "odd") || "none",
-      unitId: parseInt(process.env.MODBUS_UNIT_ID || "1", 10),
-      timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
-      reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
+      type: (globalHelper.getEnvVar('MODBUS_TYPE', 'TCP') as "TCP" | "RTU"),
+      host: globalHelper.getEnvVar('MODBUS_HOST', 'localhost'),
+      tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
+      serialPort: globalHelper.getEnvVar('MODBUS_SERIAL_PORT', '/dev/ttyUSB0'),
+      baudRate: globalHelper.getNumericEnvVar('MODBUS_BAUD_RATE', 9600),
+      parity: (globalHelper.getEnvVar('MODBUS_PARITY', 'none') as "none" | "even" | "odd"),
+      unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1),
+      timeout: globalHelper.getNumericEnvVar('MODBUS_TIMEOUT', 5000),
+      reconnectInterval: globalHelper.getNumericEnvVar('MODBUS_RECONNECT_INTERVAL', 5000),
     };
   }
 
   /**
    * Create local MQTT configuration
    */
-  function createLocalMqttConfig(_deviceId: string): MqttConfig {
-    const host = process.env.EMQX_HOST || "emqx";
-    const port = parseInt(process.env.EMQX_PORT || "1883", 10);
+  function createLocalMqttConfig(globalHelper: GlobalContextHelper, _deviceId: string): MqttConfig {
+    const host = globalHelper.getEnvVar('EMQX_HOST', 'emqx');
+    const port = globalHelper.getNumericEnvVar('EMQX_PORT', 1883);
 
     return {
       broker: `mqtt://${host}:${port}`,
       clientId: `node-red-local-${Math.random().toString(16).substring(2, 10)}`,
-      username: process.env.EMQX_USERNAME || "",
-      password: process.env.EMQX_PASSWORD || "",
+      username: globalHelper.getEnvVar('EMQX_USERNAME', ''),
+      password: globalHelper.getEnvVar('EMQX_PASSWORD', ''),
       qos: 1,
     };
   }
@@ -255,25 +244,11 @@ module.exports = function (RED: NodeAPI) {
   /**
    * Create ThingsBoard MQTT configuration
    */
-  function createThingsboardMqttConfig(nodeContext: NodeContext): MqttConfig {
-    // Try to get from global context first, fallback to process.env
-    const globalContext = nodeContext.global;
-
-    const getEnvVar = (envVarName: string, globalVarName: string, defaultValue: string): string => {
-      // Try global context first
-      const globalValue = globalContext.get(globalVarName);
-      if (globalValue !== undefined) {
-        return String(globalValue);
-      }
-
-      // Fallback to process.env
-      return process.env[envVarName] || defaultValue;
-    };
-
-    const host = getEnvVar('THINGSBOARD_HOST', 'thingsboard_host', 'mqtt.viis.tech');
-    const port = getEnvVar('THINGSBOARD_PORT', 'thingsboard_port', '1883');
-    const deviceToken = getEnvVar('DEVICE_ACCESS_TOKEN', 'device_access_token', '');
-    const password = getEnvVar('THINGSBOARD_PASSWORD', 'thingsboard_password', '');
+  function createThingsboardMqttConfig(globalHelper: GlobalContextHelper): MqttConfig {
+    const host = globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
+    const port = globalHelper.getEnvVar('THINGSBOARD_PORT', '1883');
+    const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+    const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
 
     return {
       broker: `mqtt://${host}:${port}`,
@@ -287,14 +262,14 @@ module.exports = function (RED: NodeAPI) {
   /**
    * Create MySQL configuration
    */
-  function createMySqlConfig(): MySqlConfig {
+  function createMySqlConfig(globalHelper: GlobalContextHelper): MySqlConfig {
     return {
-      host: process.env.DATABASE_HOST || "localhost",
-      port: parseInt(process.env.DATABASE_PORT || "3306", 10),
-      user: process.env.DATABASE_USER || "root",
-      password: process.env.DATABASE_PASSWORD || "",
-      database: process.env.DATABASE_NAME || "your_database",
-      connectionLimit: parseInt(process.env.DATABASE_CONNECTION_LIMIT || "10", 10),
+      host: globalHelper.getEnvVar('DATABASE_HOST', 'localhost'),
+      port: globalHelper.getNumericEnvVar('DATABASE_PORT', 3306),
+      user: globalHelper.getEnvVar('DATABASE_USER', 'root'),
+      password: globalHelper.getEnvVar('DATABASE_PASSWORD', ''),
+      database: globalHelper.getEnvVar('DATABASE_NAME', 'your_database'),
+      connectionLimit: globalHelper.getNumericEnvVar('DATABASE_CONNECTION_LIMIT', 10),
     };
   }
 

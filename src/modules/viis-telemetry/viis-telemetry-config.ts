@@ -9,6 +9,7 @@ import {
   DEFAULT_REGISTER_CONFIG,
   MQTT_TOPICS
 } from "./viis-telemetry-constants";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 /** Extended node definition for viis-telemetry */
 export interface ViisTelemetryNodeDef extends NodeDef {
@@ -72,10 +73,12 @@ export interface EnvironmentConfig {
 export class ViisTelemetryConfigManager {
   private readonly nodeConfig: ViisTelemetryNodeDef;
   private readonly nodeContext?: NodeContext;
+  private readonly globalHelper?: GlobalContextHelper;
 
   constructor(nodeConfig: ViisTelemetryNodeDef, nodeContext?: NodeContext) {
     this.nodeConfig = nodeConfig;
     this.nodeContext = nodeContext;
+    this.globalHelper = nodeContext ? new GlobalContextHelper(nodeContext) : undefined;
   }
 
   /**
@@ -118,57 +121,21 @@ export class ViisTelemetryConfigManager {
    * Get environment-based configuration
    */
   getEnvironmentConfig(): EnvironmentConfig {
-    // Try to get from global context first, fallback to process.env
-    const globalContext = this.nodeContext?.global;
+    if (this.globalHelper) {
+      return {
+        deviceId: this.globalHelper.getEnvVar('DEVICE_ID', 'unknown'),
+        modbusCoils: this.globalHelper.getJsonEnvVar('MODBUS_COILS', {}),
+        modbusInputRegisters: this.globalHelper.getJsonEnvVar('MODBUS_INPUT_REGISTERS', {}),
+        modbusHoldingRegisters: this.globalHelper.getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {}),
+      };
+    }
 
-    const getEnvVar = (envVarName: string, defaultValue?: any): any => {
-      if (globalContext) {
-        // Map environment variable names to global context names
-        const mapping: Record<string, string> = {
-          'DEVICE_ID': 'device_id',
-          'MODBUS_COILS': 'modbusCoils',
-          'MODBUS_INPUT_REGISTERS': 'modbusInputRegisters',
-          'MODBUS_HOLDING_REGISTERS': 'modbusHoldingRegisters'
-        };
-
-        const globalVarName = mapping[envVarName];
-        if (globalVarName) {
-          const globalValue = globalContext.get(globalVarName);
-          if (globalValue !== undefined) {
-            return globalValue;
-          }
-        }
-      }
-
-      // Fallback to process.env
-      return process.env[envVarName] || defaultValue;
-    };
-
-    const getJsonEnvVar = (envVarName: string, defaultValue: any = {}): any => {
-      const value = getEnvVar(envVarName);
-
-      if (!value) {
-        return defaultValue;
-      }
-
-      // If it's already an object (from global context), return it
-      if (typeof value === 'object') {
-        return value;
-      }
-
-      // If it's a string (from process.env), try to parse it
-      if (typeof value === 'string') {
-        return this.parseJsonWithDefault(value, defaultValue);
-      }
-
-      return defaultValue;
-    };
-
+    // Fallback to process.env if no global helper
     return {
-      deviceId: getEnvVar('DEVICE_ID', "unknown"),
-      modbusCoils: getJsonEnvVar('MODBUS_COILS', {}),
-      modbusInputRegisters: getJsonEnvVar('MODBUS_INPUT_REGISTERS', {}),
-      modbusHoldingRegisters: getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {}),
+      deviceId: process.env.DEVICE_ID || 'unknown',
+      modbusCoils: this.parseJsonWithDefault(process.env.MODBUS_COILS, {}),
+      modbusInputRegisters: this.parseJsonWithDefault(process.env.MODBUS_INPUT_REGISTERS, {}),
+      modbusHoldingRegisters: this.parseJsonWithDefault(process.env.MODBUS_HOLDING_REGISTERS, {}),
     };
   }
 
