@@ -68,10 +68,10 @@ export class MessageHandler implements IMessageHandler {
         // Schedule cleanup after TTL
         setTimeout(() => {
             this.processedMessages.delete(messageId);
-            this.logger.debug(`Cleaned up processed message: ${messageId}`);
+            this.logger.warn(`Cleaned up processed message: ${messageId}`);
         }, DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
 
-        this.logger.debug(`Marked message as processed: ${messageId}`);
+        this.logger.warn(`Marked message as processed: ${messageId}`);
     }
 
     /**
@@ -80,7 +80,7 @@ export class MessageHandler implements IMessageHandler {
     clearProcessedMessages(): void {
         const count = this.processedMessages.size;
         this.processedMessages.clear();
-        this.logger.log(`Cleared ${count} processed messages`);
+        this.logger.warn(`Cleared ${count} processed messages`);
     }
 
     /**
@@ -115,18 +115,18 @@ export class MessageHandler implements IMessageHandler {
 
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
-            this.logger.debug(`Duplicate message detected and ignored: ${messageId}`);
+            this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
             return null;
         }
         else {
-            this.logger.debug(`New message detected: ${messageId}`);
+            this.logger.warn(`New message detected: ${messageId}`);
         }
 
         // Mark as processed
         this.markMessageProcessed(messageId);
 
         // Log processing
-        this.logger.log(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
+        this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
 
         // Process the message
         try {
@@ -253,6 +253,6 @@ export class MessageHandler implements IMessageHandler {
      */
     reset(): void {
         this.clearProcessedMessages();
-        this.logger.log("Message handler reset");
+        this.logger.warn("Message handler reset");
     }
 }

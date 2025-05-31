@@ -17,7 +17,7 @@ export const CONTEXT_KEYS = {
 // Debounce configuration
 export const DEBOUNCE_CONFIG = {
     TIME_MS: 200, // 200ms debounce
-    MESSAGE_CACHE_TTL: 10000, // 10 seconds
+    MESSAGE_CACHE_TTL: 100, // 10 seconds
 } as const;
 
 // MQTT configuration defaults
