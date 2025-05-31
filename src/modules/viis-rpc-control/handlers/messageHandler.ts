@@ -26,17 +26,27 @@ export class MessageHandler implements IMessageHandler {
      */
     generateMessageId(payload: any): string {
         try {
-            // this.logger.warn(`generateMessageId with payload: ${JSON.stringify(payload)}`);
-            // Check if payload has params object
+            // Kiểm tra payload và params
             if (!payload || !payload.params) {
                 throw new Error('Missing params in payload');
             }
-            // Create a stable hash based on params content only
-            const paramsStr = JSON.stringify(payload.params, Object.keys(payload.params).sort());
+            // Tạo chuỗi ổn định dựa trên cả key và value của params
+            // Sắp xếp key để đảm bảo tính ổn định khi string hóa
+            const paramsStr = JSON.stringify(payload.params, (key, value) => {
+                if (value && typeof value === 'object' && !Array.isArray(value)) {
+                    // Sắp xếp key của object để đảm bảo thứ tự nhất quán
+                    return Object.keys(value).sort().reduce((obj: any, k: string) => {
+                        obj[k] = value[k];
+                        return obj;
+                    }, {});
+                }
+                return value;
+            });
+            // Tạo hash base64 từ paramsStr và lấy 16 ký tự đầu
             const base64Hash = Buffer.from(paramsStr).toString('base64').slice(0, 16);
             return `${base64Hash}_${this.nodeId}`;
         } catch (error) {
-            // Fallback to timestamp-based ID if JSON.stringify or params access fails
+            // Fallback về ID dựa trên timestamp nếu có lỗi
             this.logger.warn(`Failed to generate stable message ID: ${(error as Error).message}`);
             return `${Date.now()}_${Math.random().toString(16).substring(2, 10)}_${this.nodeId}`;
         }
@@ -183,7 +193,7 @@ export class MessageHandler implements IMessageHandler {
 
             // Extract and validate payload
             const payload = this.extractPayload(message);
-
+            this.logger.debug(`extracted payload: ${JSON.stringify(payload)}`)
             // Process with deduplication
             return this.processMessage(payload, processor);
         } catch (error) {

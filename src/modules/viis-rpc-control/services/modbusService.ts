@@ -15,6 +15,7 @@ import { ModbusData } from "../../../core/modbus-client";
 import { MODBUS_FUNCTION_CODES, ERROR_MESSAGES, ENV_KEYS, DEFAULTS } from "../constants";
 import { Logger } from "../utils/logger";
 import { ScalingUtils } from "../utils/scaling";
+import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 
 export class ModbusService implements IModbusService {
     private modbusClient: any;
@@ -23,6 +24,7 @@ export class ModbusService implements IModbusService {
     private scalingUtils: ScalingUtils;
     private flowContext: any;
     private nodeId: string;
+    private globalHelper: GlobalContextHelper;
 
     constructor(options: ServiceOptions, modbusClient: any, scalingUtils: ScalingUtils) {
         this.modbusClient = modbusClient;
@@ -30,6 +32,7 @@ export class ModbusService implements IModbusService {
         this.flowContext = options.flowContext;
         this.nodeId = options.node.id;
         this.logger = new Logger(options.node, "MODBUS-SERVICE");
+        this.globalHelper = new GlobalContextHelper(options.node.context());
         this.environmentConfig = this.loadEnvironmentConfig();
 
         // Log Modbus client state during initialization
@@ -45,10 +48,10 @@ export class ModbusService implements IModbusService {
     private loadEnvironmentConfig(): EnvironmentConfig {
         try {
             return {
-                deviceId: process.env[ENV_KEYS.DEVICE_ID] || DEFAULTS.DEVICE_ID,
-                modbusCoils: JSON.parse(process.env[ENV_KEYS.MODBUS_COILS] || DEFAULTS.EMPTY_JSON),
-                modbusInputRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_INPUT_REGISTERS] || DEFAULTS.EMPTY_JSON),
-                modbusHoldingRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_HOLDING_REGISTERS] || DEFAULTS.EMPTY_JSON),
+                deviceId: this.globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, DEFAULTS.DEVICE_ID),
+                modbusCoils: this.globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_COILS, {}),
+                modbusInputRegisters: this.globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_INPUT_REGISTERS, {}),
+                modbusHoldingRegisters: this.globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_HOLDING_REGISTERS, {}),
             };
         } catch (error) {
             this.logger.error(`Failed to load environment config: ${(error as Error).message}`);

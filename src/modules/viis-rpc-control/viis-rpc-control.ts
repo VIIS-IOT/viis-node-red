@@ -67,31 +67,31 @@ module.exports = function (RED: NodeAPI) {
 
                 // Initialize Modbus client configuration
                 const modbusConfig = {
-                    type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
-                    host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
-                    tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
-                    serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
-                    baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
-                    parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
-                    unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
-                    timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
-                    reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10),
+                    type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
+                    host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
+                    tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                    serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                    baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                    parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
+                    unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                    timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                    reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
                 };
 
                 // Initialize MQTT client configuration
                 const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
                     ? {
-                        broker: `mqtt://${process.env[ENV_KEYS.THINGSBOARD_HOST] || MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST}:${process.env[ENV_KEYS.THINGSBOARD_PORT] || MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT}`,
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
                         clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
-                        username: process.env[ENV_KEYS.DEVICE_ACCESS_TOKEN] || "",
-                        password: process.env[ENV_KEYS.THINGSBOARD_PASSWORD] || "",
+                        username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
+                        password: globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PASSWORD, ""),
                         qos: MQTT_CONFIG.THINGSBOARD.QOS,
                     }
                     : {
-                        broker: `mqtt://${process.env[ENV_KEYS.EMQX_HOST] || MQTT_CONFIG.LOCAL.DEFAULT_HOST}:${process.env[ENV_KEYS.EMQX_PORT] || MQTT_CONFIG.LOCAL.DEFAULT_PORT}`,
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.EMQX_HOST, MQTT_CONFIG.LOCAL.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.EMQX_PORT, MQTT_CONFIG.LOCAL.DEFAULT_PORT)}`,
                         clientId: `node-red-local-rpc-${Math.random().toString(16).substring(2, 10)}`,
-                        username: process.env[ENV_KEYS.EMQX_USERNAME] || "",
-                        password: process.env[ENV_KEYS.EMQX_PASSWORD] || "",
+                        username: globalHelper.getEnvVar(ENV_KEYS.EMQX_USERNAME, ""),
+                        password: globalHelper.getEnvVar(ENV_KEYS.EMQX_PASSWORD, ""),
                         qos: MQTT_CONFIG.LOCAL.QOS,
                     };
 

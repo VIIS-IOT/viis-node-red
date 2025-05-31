@@ -1,5 +1,6 @@
 import { NodeAPI, NodeDef, Node } from "node-red";
 import ClientRegistry from "../../core/client-registry";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 interface ViisDeviceProtectionNodeDef extends NodeDef { }
 
