@@ -32,9 +32,33 @@ module.exports = function (RED: NodeAPI) {
    */
   RED.httpAdmin.get('/viis-telemetry/modbus-keys', (_req, res) => {
     try {
-      const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-      const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
-      const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+      // Try to get from global context first, fallback to process.env
+      const globalContext = RED.settings.functionGlobalContext || {};
+
+      const getJsonEnvVar = (envVarName: string, globalVarName: string, defaultValue: any = {}): any => {
+        // Try global context first
+        const globalValue = globalContext[globalVarName];
+        if (globalValue !== undefined) {
+          return typeof globalValue === 'object' ? globalValue : defaultValue;
+        }
+
+        // Fallback to process.env
+        const processValue = process.env[envVarName];
+        if (processValue) {
+          try {
+            return JSON.parse(processValue);
+          } catch (error) {
+            console.warn(`Failed to parse JSON for ${envVarName}:`, error.message);
+            return defaultValue;
+          }
+        }
+
+        return defaultValue;
+      };
+
+      const modbusCoils = getJsonEnvVar('MODBUS_COILS', 'modbusCoils', {});
+      const modbusInputRegisters = getJsonEnvVar('MODBUS_INPUT_REGISTERS', 'modbusInputRegisters', {});
+      const modbusHoldingRegisters = getJsonEnvVar('MODBUS_HOLDING_REGISTERS', 'modbusHoldingRegisters', {});
 
       const keys = [
         ...Object.keys(modbusHoldingRegisters),
@@ -77,7 +101,7 @@ module.exports = function (RED: NodeAPI) {
     (async () => {
       try {
         // Initialize configuration manager
-        const configManager = new ViisTelemetryConfigManager(config);
+        const configManager = new ViisTelemetryConfigManager(config, nodeContext);
         const pollingConfig = configManager.getPollingConfig();
         const envConfig = configManager.getEnvironmentConfig();
         const mqttTopicConfig = configManager.getMqttTopicConfig(envConfig.deviceId);
@@ -98,7 +122,7 @@ module.exports = function (RED: NodeAPI) {
         // Create client configurations
         const modbusConfig = createModbusConfig();
         const localMqttConfig = createLocalMqttConfig(envConfig.deviceId);
-        const thingsboardMqttConfig = createThingsboardMqttConfig();
+        const thingsboardMqttConfig = createThingsboardMqttConfig(nodeContext);
         const mysqlConfig = createMySqlConfig();
 
         // Get clients from registry
@@ -231,15 +255,31 @@ module.exports = function (RED: NodeAPI) {
   /**
    * Create ThingsBoard MQTT configuration
    */
-  function createThingsboardMqttConfig(): MqttConfig {
-    const host = process.env.THINGSBOARD_HOST || "mqtt.viis.tech";
-    const port = process.env.THINGSBOARD_PORT || "1883";
+  function createThingsboardMqttConfig(nodeContext: NodeContext): MqttConfig {
+    // Try to get from global context first, fallback to process.env
+    const globalContext = nodeContext.global;
+
+    const getEnvVar = (envVarName: string, globalVarName: string, defaultValue: string): string => {
+      // Try global context first
+      const globalValue = globalContext.get(globalVarName);
+      if (globalValue !== undefined) {
+        return String(globalValue);
+      }
+
+      // Fallback to process.env
+      return process.env[envVarName] || defaultValue;
+    };
+
+    const host = getEnvVar('THINGSBOARD_HOST', 'thingsboard_host', 'mqtt.viis.tech');
+    const port = getEnvVar('THINGSBOARD_PORT', 'thingsboard_port', '1883');
+    const deviceToken = getEnvVar('DEVICE_ACCESS_TOKEN', 'device_access_token', '');
+    const password = getEnvVar('THINGSBOARD_PASSWORD', 'thingsboard_password', '');
 
     return {
       broker: `mqtt://${host}:${port}`,
       clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substring(2, 10)}`,
-      username: process.env.DEVICE_ACCESS_TOKEN || "",
-      password: process.env.THINGSBOARD_PASSWORD || "",
+      username: deviceToken,
+      password: password,
       qos: 1,
     };
   }

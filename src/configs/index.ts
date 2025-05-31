@@ -8,61 +8,101 @@
 //     throw new Error("⚠️ Fuckkkk Couldn't find .env file  ⚠️");
 // }
 
-export default {
-    /**
-     * Your favorite port
-     */
-    port: Number(process.env.PORT || 3000),
-    serverUrl: process.env.VIIS_BACKEND || 'https://iot.viis.tech',
-    erpUrl: process.env.ERP_URL || 'https://erp.viis.tech',
-    noderedUrl: 'http://54.255.158.241:1880',
-    thingsboardUrl: process.env.THINGSBOARD_URL || 'https://device-iotcore.viis.tech/',
-    emqxEndpoint: process.env.EMQX_ENDPOINT || 'https://iot-bridge.viis.tech',
-    weatherApiUrl: 'https://api.weatherapi.com/v1',
-    webhookUrl: process.env.WEBHOOK_URL || 'https://webhook.viis.tech',
-    expiredCookie: Number(process.env.EXPIRED_DAY_COOKIE || 3) * 86400 * 1000,
+import { NodeContext } from "node-red";
+import { GlobalContextHelper } from "../ultils/global-context-helper";
 
-    cookieAuthName: `authorization`,
+/**
+ * Configuration factory function that uses global context when available
+ * @param nodeContext - Optional Node-RED node context for global variable access
+ * @returns Configuration object
+ */
+export function createConfig(nodeContext?: NodeContext) {
+    // Create helper if nodeContext is available
+    const helper = nodeContext ? new GlobalContextHelper(nodeContext) : null;
 
-    // Token for supper admin
-    basicAuthFrappe: process.env.BASIC_AUTH_FRAPPE,
+    // Helper function to get environment variable with fallback
+    const getEnvVar = (envVarName: string, defaultValue?: any): any => {
+        if (helper) {
+            return helper.getEnvVar(envVarName, defaultValue);
+        }
+        return process.env[envVarName] || defaultValue;
+    };
 
-    /**
-     * Thingsboard token
-     */
+    const getNumericEnvVar = (envVarName: string, defaultValue: number = 0): number => {
+        if (helper) {
+            return helper.getNumericEnvVar(envVarName, defaultValue);
+        }
+        return Number(process.env[envVarName] || defaultValue);
+    };
 
-    bearerAuthThingsboard: process.env.BEARER_AUTH_THINGSBOARD,
-    bearerAuthThingsboardSysAdmin: process.env.BEARER_AUTH_THINGSBOARD_SYSTEM,
-    /**
-     * Your secret sauce
-     */
-    jwtSecret: process.env.JWT_SECRET || 'axcela',
-    jwtTbSecret: process.env.JWT_TB_SECRET || 'axcela',
-    /**
-     * Used by winston logger
-     */
-    logs: {
-        level: process.env.LOG_LEVEL || 'silly',
-    },
+    const getBooleanEnvVar = (envVarName: string, defaultValue: boolean = false): boolean => {
+        if (helper) {
+            return helper.getBooleanEnvVar(envVarName, defaultValue);
+        }
+        const value = process.env[envVarName];
+        if (!value) return defaultValue;
+        return value.toLowerCase() === 'true' || value === '1';
+    };
 
-    /**
-     * API configs
-     */
-    api: {
-        prefix: process.env.API_PREFIX || '/api',
-    },
-    authorizationMode: process.env.AUTHORIZATION_MODE || 'adminToken',
-    cookieSessionSecure: Boolean(process.env.COOKIE_SESSION_SECURE || false),
-    cookieSessionSamsite: <any>process.env.COOKIE_SESSION_SAMESITE || 'lax',
+    return {
+        /**
+         * Your favorite port
+         */
+        port: getNumericEnvVar('PORT', 3000),
+        serverUrl: getEnvVar('VIIS_BACKEND', 'https://iot.viis.tech'),
+        erpUrl: getEnvVar('ERP_URL', 'https://erp.viis.tech'),
+        noderedUrl: 'http://54.255.158.241:1880',
+        thingsboardUrl: getEnvVar('THINGSBOARD_URL', 'https://device-iotcore.viis.tech/'),
+        emqxEndpoint: getEnvVar('EMQX_ENDPOINT', 'https://iot-bridge.viis.tech'),
+        weatherApiUrl: 'https://api.weatherapi.com/v1',
+        webhookUrl: getEnvVar('WEBHOOK_URL', 'https://webhook.viis.tech'),
+        expiredCookie: getNumericEnvVar('EXPIRED_DAY_COOKIE', 3) * 86400 * 1000,
 
-    snsTopicArnPrefix: process.env.SNS_TOPIC_ARN_PREFIX,
-    snsTopicOwner: process.env.SNS_TOPIC_OWNER,
-    snsGlobalTopicArn: process.env.SNS_GLOBAL_TOPIC_ARN,
-    snsPlatformApplicationArn: process.env.SNS_APPLICATION_ARN,
-    googleCloudToken: process.env.GOOGLE_CLOUD_TOKEN || 'GOOGLE_CLOUD_TOKEN',
-    weatherApiToken: process.env.WEATHER_API_TOKEN || 'WEATHER_API_TOKEN',
-    emqxAccessKey: process.env.EMQX_ACCESS_KEY || 'emqx',
-    emqxSecretKey: process.env.EMQX_SECRET_KEY || 'emqx',
-    AWS_SNS_ACCESS_KEY_ID: process.env.AWS_SNS_ACCESS_KEY_ID || '',
-    AWS_SNS_SECRET_ACCESS_KEY: process.env.AWS_SNS_SECRET_ACCESS_KEY || '',
-};
+        cookieAuthName: `authorization`,
+
+        // Token for supper admin
+        basicAuthFrappe: getEnvVar('BASIC_AUTH_FRAPPE'),
+
+        /**
+         * Thingsboard token
+         */
+
+        bearerAuthThingsboard: getEnvVar('BEARER_AUTH_THINGSBOARD'),
+        bearerAuthThingsboardSysAdmin: getEnvVar('BEARER_AUTH_THINGSBOARD_SYSTEM'),
+        /**
+         * Your secret sauce
+         */
+        jwtSecret: getEnvVar('JWT_SECRET', 'axcela'),
+        jwtTbSecret: getEnvVar('JWT_TB_SECRET', 'axcela'),
+        /**
+         * Used by winston logger
+         */
+        logs: {
+            level: getEnvVar('LOG_LEVEL', 'silly'),
+        },
+
+        /**
+         * API configs
+         */
+        api: {
+            prefix: getEnvVar('API_PREFIX', '/api'),
+        },
+        authorizationMode: getEnvVar('AUTHORIZATION_MODE', 'adminToken'),
+        cookieSessionSecure: getBooleanEnvVar('COOKIE_SESSION_SECURE', false),
+        cookieSessionSamsite: <any>getEnvVar('COOKIE_SESSION_SAMESITE', 'lax'),
+
+        snsTopicArnPrefix: getEnvVar('SNS_TOPIC_ARN_PREFIX'),
+        snsTopicOwner: getEnvVar('SNS_TOPIC_OWNER'),
+        snsGlobalTopicArn: getEnvVar('SNS_GLOBAL_TOPIC_ARN'),
+        snsPlatformApplicationArn: getEnvVar('SNS_APPLICATION_ARN'),
+        googleCloudToken: getEnvVar('GOOGLE_CLOUD_TOKEN', 'GOOGLE_CLOUD_TOKEN'),
+        weatherApiToken: getEnvVar('WEATHER_API_TOKEN', 'WEATHER_API_TOKEN'),
+        emqxAccessKey: getEnvVar('EMQX_ACCESS_KEY', 'emqx'),
+        emqxSecretKey: getEnvVar('EMQX_SECRET_KEY', 'emqx'),
+        AWS_SNS_ACCESS_KEY_ID: getEnvVar('AWS_SNS_ACCESS_KEY_ID', ''),
+        AWS_SNS_SECRET_ACCESS_KEY: getEnvVar('AWS_SNS_SECRET_ACCESS_KEY', ''),
+    };
+}
+
+// Default export for backward compatibility (uses process.env only)
+export default createConfig();

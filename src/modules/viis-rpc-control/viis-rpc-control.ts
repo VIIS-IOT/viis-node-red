@@ -98,7 +98,7 @@ module.exports = function (RED: NodeAPI) {
                 const publishTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
                     : `v1/devices/me/telemetry/${deviceId}`;
-
+                console.log("mqttConfig is", mqttConfig)
                 // Initialize clients
                 const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
                 const mqttClient = config.mqttBroker === "thingsboard"
