@@ -21,8 +21,16 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'DEVICE_PROFILE_LABEL': 'device_profile_label',
   'VIIS_BACKEND': 'backend_url',
   'BACKEND_URL': 'server_url',
+  // Modbus configuration
   'MODBUS_HOST': 'modbus_host',
   'MODBUS_TCP_PORT': 'modbus_tcp_port',
+  'MODBUS_TYPE': 'modbus_type',
+  'MODBUS_SERIAL_PORT': 'modbus_serial_port',
+  'MODBUS_BAUD_RATE': 'modbus_baud_rate',
+  'MODBUS_PARITY': 'modbus_parity',
+  'MODBUS_UNIT_ID': 'modbus_unit_id',
+  'MODBUS_TIMEOUT': 'modbus_timeout',
+  'MODBUS_RECONNECT_INTERVAL': 'modbus_reconnect_interval',
   'MODBUS_HOLDING_REGISTERS': 'modbusHoldingRegisters',
   'MODBUS_INPUT_REGISTERS': 'modbusInputRegisters',
   'MODBUS_COILS': 'modbusCoils',
@@ -31,6 +39,11 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'THINGSBOARD_PORT': 'thingsboard_port',
   'THINGSBOARD_PASSWORD': 'thingsboard_password',
   'THINGSBOARD_URL': 'thingsboard_url',
+  // EMQX configuration
+  'EMQX_HOST': 'emqx_host',
+  'EMQX_PORT': 'emqx_port',
+  'EMQX_USERNAME': 'emqx_username',
+  'EMQX_PASSWORD': 'emqx_password',
   // Additional mappings for other environment variables
   'PORT': 'port',
   'ERP_URL': 'erp_url',

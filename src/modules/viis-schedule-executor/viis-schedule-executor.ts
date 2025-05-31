@@ -7,6 +7,7 @@ import ClientRegistry from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
 import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, ScheduleExecutorNodeDef } from "./type";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 module.exports = function (RED: NodeAPI) {
     function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
@@ -27,6 +28,9 @@ module.exports = function (RED: NodeAPI) {
         const scheduleInterval = config.scheduleInterval;
         node.warn(`Schedule interval set to: ${scheduleInterval}`);
 
+        // Initialize GlobalContextHelper
+        const globalHelper = new GlobalContextHelper(node.context());
+
         let scheduleService: ScheduleService;
         try {
             scheduleService = new ScheduleService(node);
@@ -37,32 +41,32 @@ module.exports = function (RED: NodeAPI) {
         }
         // Modbus configuration
         const modbusConfig = {
-            type: (process.env.MODBUS_TYPE as "TCP" | "RTU") || "TCP",
-            host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
-            serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
-            baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
-            parity: (process.env.MODBUS_PARITY as "none" | "even" | "odd") || "none",
-            unitId: parseInt(process.env.MODBUS_UNIT_ID || "1", 10),
-            timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
-            reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
+            type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
+            host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
+            tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
+            serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
+            baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
+            parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
+            unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
+            timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
+            reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
         };
 
         // ThingsBoard MQTT configuration
         const thingsboardConfig: MqttConfig = {
-            broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
-            clientId: `node-red-tb-${Math.random().toString(16).substr(2, 8)}`,
-            username: process.env.DEVICE_ACCESS_TOKEN || "",
-            password: process.env.THINGSBOARD_PASSWORD || "",
+            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+            clientId: `node-red-tb-${Math.random().toString(16).substring(2, 10)}`,
+            username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
+            password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),
             qos: 1 as 0 | 1 | 2,
         };
 
         // EMQX (local) MQTT configuration
         const emqxConfig: MqttConfig = {
-            broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
-            clientId: `node-red-emqx-${Math.random().toString(16).substr(2, 8)}`,
-            username: process.env.EMQX_USERNAME || "",
-            password: process.env.EMQX_PASSWORD || "",
+            broker: `mqtt://${globalHelper.getEnvVar("EMQX_HOST", "emqx")}:${globalHelper.getEnvVar("EMQX_PORT", "1883")}`,
+            clientId: `node-red-emqx-${Math.random().toString(16).substring(2, 10)}`,
+            username: globalHelper.getEnvVar("EMQX_USERNAME", ""),
+            password: globalHelper.getEnvVar("EMQX_PASSWORD", ""),
             qos: 1 as 0 | 1 | 2,
         };
 
@@ -116,12 +120,7 @@ module.exports = function (RED: NodeAPI) {
                         const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         // --- Bổ sung reset các key time_valve_ và set_flow ---
-                        let holdingRegisters: Record<string, number> = {};
-                        try {
-                            holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
-                        } catch (err) {
-                            node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
-                        }
+                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
                         node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -199,12 +198,7 @@ module.exports = function (RED: NodeAPI) {
                     if (isDue && schedule.status !== "running") {
                         node.warn("start running schedule")
                         // --- Reset time_valve_ and set_flow keys except those present in action ---
-                        let holdingRegisters: Record<string, number> = {};
-                        try {
-                            holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
-                        } catch (err) {
-                            node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
-                        }
+                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
                         node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         // Parse action (may be string or object)
                         let actionObj: Record<string, any> = {};
@@ -266,12 +260,7 @@ module.exports = function (RED: NodeAPI) {
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         // --- Bổ sung reset các key time_valve_ và set_flow ---
-                        let holdingRegisters: Record<string, number> = {};
-                        try {
-                            holdingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || '{}');
-                        } catch (err) {
-                            node.error("Cannot parse MODBUS_HOLDING_REGISTERS from .env");
-                        }
+                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
                         node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))

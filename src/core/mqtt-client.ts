@@ -1,4 +1,4 @@
-import { NodeAPI, Node } from "node-red";
+import { Node } from "node-red";
 import mqtt, { MqttClient, IClientOptions, IClientPublishOptions } from "mqtt";
 import { EventEmitter } from "events";
 
@@ -11,6 +11,13 @@ export interface MqttConfig {
     connectTimeout?: number;
     keepalive?: number;
     qos: 0 | 1 | 2;
+    // Enhanced configuration for Google IoT standards
+    maxReconnectAttempts?: number;
+    reconnectBackoffMultiplier?: number;
+    maxReconnectDelay?: number;
+    healthCheckInterval?: number;
+    messageQueueSize?: number;
+    enableCircuitBreaker?: boolean;
 }
 
 export interface MqttMessage {
@@ -18,9 +25,28 @@ export interface MqttMessage {
     message: string | Buffer;
     qos: 0 | 1 | 2;
     retain: boolean;
+    timestamp?: number;
 }
 
-// Core MQTT Client
+export interface ConnectionState {
+    isConnected: boolean;
+    isConnecting: boolean;
+    lastConnectedAt?: number;
+    lastDisconnectedAt?: number;
+    reconnectAttempts: number;
+    totalReconnects: number;
+    circuitBreakerOpen: boolean;
+}
+
+export interface QueuedMessage {
+    topic: string;
+    message: string | Buffer;
+    options?: IClientPublishOptions;
+    timestamp: number;
+    retryCount: number;
+}
+
+// Enhanced MQTT Client with Google IoT standards compliance
 export class MqttClientCore extends EventEmitter {
     private client: MqttClient | null = null;
     private config: MqttConfig;
@@ -28,61 +54,372 @@ export class MqttClientCore extends EventEmitter {
     private connectionPromise: Promise<void> | null = null;
     private subscribedTopics: Set<string> = new Set();
 
+    // Enhanced state management
+    private connectionState: ConnectionState;
+    private messageQueue: QueuedMessage[] = [];
+    private healthCheckTimer: NodeJS.Timeout | null = null;
+    private reconnectTimer: NodeJS.Timeout | null = null;
+    private circuitBreakerTimer: NodeJS.Timeout | null = null;
+
+    // Event listeners for cleanup
+    private eventListeners: Map<string, (...args: any[]) => void> = new Map();
+
     constructor(config: MqttConfig, node: Node) {
         super();
         this.config = {
             reconnectPeriod: 5000,
             connectTimeout: 30000,
             keepalive: 60,
+            maxReconnectAttempts: 10,
+            reconnectBackoffMultiplier: 1.5,
+            maxReconnectDelay: 60000,
+            healthCheckInterval: 30000,
+            messageQueueSize: 100,
+            enableCircuitBreaker: true,
             ...config,
         };
         this.node = node;
-        this.initializeClient();
-    }
 
-    // Khởi tạo MQTT client
-    private initializeClient(): void {
-        const options: IClientOptions = {
-            clientId: this.config.clientId || `nodered_${Math.random().toString(16).substr(2, 8)}`,
-            username: this.config.username,
-            password: this.config.password,
-            reconnectPeriod: this.config.reconnectPeriod,
-            connectTimeout: this.config.connectTimeout,
-            keepalive: this.config.keepalive,
+        // Initialize connection state
+        this.connectionState = {
+            isConnected: false,
+            isConnecting: false,
+            reconnectAttempts: 0,
+            totalReconnects: 0,
+            circuitBreakerOpen: false
         };
 
-        this.client = mqtt.connect(this.config.broker!, options);
+        this.initializeClient();
+        this.startHealthCheck();
+    }
 
-        // Khai báo rõ ràng this.connectionPromise là Promise<void>
+    // Enhanced MQTT client initialization with proper error handling
+    private initializeClient(): void {
+        if (this.connectionState.circuitBreakerOpen) {
+            this.node.warn("Circuit breaker is open, skipping connection attempt");
+            return;
+        }
+
+        this.connectionState.isConnecting = true;
+        this.clearTimers();
+
+        const options: IClientOptions = {
+            clientId: this.config.clientId || `nodered_${Math.random().toString(16).substring(2, 8)}`,
+            username: this.config.username,
+            password: this.config.password,
+            reconnectPeriod: 0, // Disable auto-reconnect, we handle it manually
+            connectTimeout: this.config.connectTimeout,
+            keepalive: this.config.keepalive,
+            clean: true, // Clean session for ThingsBoard compatibility
+            will: {
+                topic: `v1/devices/me/attributes`,
+                payload: JSON.stringify({ status: "offline" }),
+                qos: 1,
+                retain: false
+            }
+        };
+
+        try {
+            this.client = mqtt.connect(this.config.broker!, options);
+            this.setupEventHandlers();
+            this.createConnectionPromise();
+        } catch (error) {
+            this.handleConnectionError(error as Error);
+        }
+    }
+
+    // Create a fresh connection promise for each connection attempt
+    private createConnectionPromise(): void {
         this.connectionPromise = new Promise<void>((resolve, reject) => {
-            this.client!.on("connect", () => {
-                this.node.status({ fill: "green", shape: "dot", text: "Connected" });
-                this.emit("mqtt-status", { status: "connected" });
-                this.resubscribeTopics();
-                resolve(); // Không trả về giá trị, chỉ resolve void
+            if (!this.client) {
+                reject(new Error("MQTT client not initialized"));
+                return;
+            }
+
+            const connectHandler = () => {
+                this.onConnected();
+                resolve();
+            };
+
+            const errorHandler = (error: Error) => {
+                this.handleConnectionError(error);
+                reject(error);
+            };
+
+            const timeoutHandler = setTimeout(() => {
+                this.handleConnectionError(new Error("Connection timeout"));
+                reject(new Error("Connection timeout"));
+            }, this.config.connectTimeout);
+
+            // Store event handlers for cleanup
+            this.eventListeners.set('connect', connectHandler);
+            this.eventListeners.set('error', errorHandler);
+            this.eventListeners.set('timeout', () => clearTimeout(timeoutHandler));
+
+            this.client.once("connect", () => {
+                clearTimeout(timeoutHandler);
+                connectHandler();
             });
 
-            this.client!.on("error", (error) => {
-                this.node.error(`MQTT Error: ${error.message}`);
-                this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
-                reject(error); // Reject với Error
+            this.client.once("error", (error) => {
+                clearTimeout(timeoutHandler);
+                errorHandler(error);
             });
         });
+    }
 
-        this.client.on("close", () => {
-            this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
-            this.emit("mqtt-status", { status: "disconnected" });
-        });
+    // Setup all event handlers with proper cleanup tracking
+    private setupEventHandlers(): void {
+        if (!this.client) return;
 
-        this.client.on("message", (topic, message, packet) => {
+        const closeHandler = () => this.onDisconnected();
+        const messageHandler = (topic: string, message: Buffer, packet: any) => {
             const mqttMessage: MqttMessage = {
                 topic,
                 message: message.toString(),
                 qos: packet.qos,
                 retain: packet.retain,
+                timestamp: Date.now()
             };
             this.emit("mqtt-message", { message: mqttMessage });
+        };
+
+        const offlineHandler = () => {
+            this.node.warn("MQTT client went offline");
+            this.onDisconnected();
+        };
+
+        // Store handlers for cleanup
+        this.eventListeners.set('close', closeHandler);
+        this.eventListeners.set('message', messageHandler);
+        this.eventListeners.set('offline', offlineHandler);
+
+        this.client.on("close", closeHandler);
+        this.client.on("message", messageHandler);
+        this.client.on("offline", offlineHandler);
+    }
+
+    // Connection state handlers
+    private onConnected(): void {
+        this.connectionState.isConnected = true;
+        this.connectionState.isConnecting = false;
+        this.connectionState.lastConnectedAt = Date.now();
+        this.connectionState.reconnectAttempts = 0;
+        this.connectionState.totalReconnects++;
+
+        this.node.status({ fill: "green", shape: "dot", text: "Connected" });
+        this.emit("mqtt-status", { status: "connected", state: this.connectionState });
+
+        // Resubscribe to topics
+        this.resubscribeTopics();
+
+        // Process queued messages
+        this.processMessageQueue();
+
+        // Send device online status to ThingsBoard
+        this.publishDeviceStatus("online");
+    }
+
+    private onDisconnected(): void {
+        this.connectionState.isConnected = false;
+        this.connectionState.isConnecting = false;
+        this.connectionState.lastDisconnectedAt = Date.now();
+
+        this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
+        this.emit("mqtt-status", { status: "disconnected", state: this.connectionState });
+
+        // Schedule reconnection if not manually disconnected
+        this.scheduleReconnection();
+    }
+
+    // Enhanced error handling with circuit breaker pattern
+    private handleConnectionError(error: Error): void {
+        this.connectionState.isConnecting = false;
+        this.connectionState.reconnectAttempts++;
+
+        this.node.error(`MQTT Connection Error: ${error.message}`);
+        this.node.status({
+            fill: "yellow",
+            shape: "ring",
+            text: `Error: ${error.message} (Attempt ${this.connectionState.reconnectAttempts})`
         });
+
+        // Circuit breaker logic
+        if (this.config.enableCircuitBreaker &&
+            this.connectionState.reconnectAttempts >= (this.config.maxReconnectAttempts || 10)) {
+            this.openCircuitBreaker();
+        } else {
+            this.scheduleReconnection();
+        }
+
+        this.emit("mqtt-error", { error, state: this.connectionState });
+    }
+
+    // Circuit breaker implementation
+    private openCircuitBreaker(): void {
+        this.connectionState.circuitBreakerOpen = true;
+        this.node.warn("Circuit breaker opened - stopping reconnection attempts");
+
+        // Close circuit breaker after a timeout
+        this.circuitBreakerTimer = setTimeout(() => {
+            this.connectionState.circuitBreakerOpen = false;
+            this.connectionState.reconnectAttempts = 0;
+            this.node.log("Circuit breaker closed - reconnection attempts resumed");
+        }, 300000); // 5 minutes
+    }
+
+    // Smart reconnection with exponential backoff
+    private scheduleReconnection(): void {
+        if (this.connectionState.circuitBreakerOpen || this.reconnectTimer) {
+            return;
+        }
+
+        const baseDelay = this.config.reconnectPeriod || 5000;
+        const multiplier = this.config.reconnectBackoffMultiplier || 1.5;
+        const maxDelay = this.config.maxReconnectDelay || 60000;
+
+        const delay = Math.min(
+            baseDelay * Math.pow(multiplier, this.connectionState.reconnectAttempts),
+            maxDelay
+        );
+
+        this.node.log(`Scheduling reconnection in ${delay}ms (attempt ${this.connectionState.reconnectAttempts + 1})`);
+
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.initializeClient();
+        }, delay);
+    }
+
+    // Timer management
+    private clearTimers(): void {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        if (this.circuitBreakerTimer) {
+            clearTimeout(this.circuitBreakerTimer);
+            this.circuitBreakerTimer = null;
+        }
+    }
+
+    // Health check implementation
+    private startHealthCheck(): void {
+        if (!this.config.healthCheckInterval) return;
+
+        this.healthCheckTimer = setInterval(() => {
+            if (this.connectionState.isConnected && this.client) {
+                // Send a lightweight telemetry message as health check for ThingsBoard
+                this.publishHealthCheck();
+            }
+        }, this.config.healthCheckInterval);
+    }
+
+    // Message queue management for offline scenarios
+    private processMessageQueue(): void {
+        if (!this.connectionState.isConnected || this.messageQueue.length === 0) {
+            return;
+        }
+
+        const messagesToProcess = [...this.messageQueue];
+        this.messageQueue = [];
+
+        messagesToProcess.forEach(queuedMessage => {
+            this.publishMessage(
+                queuedMessage.topic,
+                queuedMessage.message,
+                queuedMessage.options
+            ).catch((error: Error) => {
+                // Re-queue failed messages with retry limit
+                if (queuedMessage.retryCount < 3) {
+                    queuedMessage.retryCount++;
+                    this.queueMessage(queuedMessage);
+                } else {
+                    this.node.warn(`Dropping message after 3 retries: ${queuedMessage.topic} - ${error.message}`);
+                }
+            });
+        });
+    }
+
+    private queueMessage(message: QueuedMessage): void {
+        if (this.messageQueue.length >= (this.config.messageQueueSize || 100)) {
+            // Remove oldest message to make room
+            this.messageQueue.shift();
+            this.node.warn("Message queue full, dropping oldest message");
+        }
+        this.messageQueue.push(message);
+    }
+
+    // ThingsBoard specific methods
+    private async publishDeviceStatus(status: "online" | "offline"): Promise<void> {
+        if (!this.connectionState.isConnected) return;
+
+        const statusMessage = {
+            status,
+            timestamp: Date.now(),
+            clientId: this.config.clientId
+        };
+
+        try {
+            await this.publishMessage(
+                "v1/devices/me/attributes",
+                JSON.stringify(statusMessage),
+                { qos: 1, retain: false }
+            );
+        } catch (error) {
+            this.node.warn(`Failed to publish device status: ${(error as Error).message}`);
+            throw error;
+        }
+    }
+
+    private publishHealthCheck(): void {
+        if (!this.connectionState.isConnected) return;
+
+        const healthData = {
+            heartbeat: Date.now(),
+            uptime: process.uptime(),
+            memory: process.memoryUsage().heapUsed
+        };
+
+        this.publishMessage(
+            "v1/devices/me/telemetry",
+            JSON.stringify(healthData),
+            { qos: 0, retain: false }
+        ).catch((error: Error) => {
+            this.node.warn(`Health check failed: ${error.message}`);
+            this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
+        });
+    }
+
+    // Alias for publish method to maintain consistency
+    private async publishMessage(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
+        if (!this.connectionState.isConnected) {
+            // Queue message if offline
+            const queuedMessage: QueuedMessage = {
+                topic,
+                message,
+                options,
+                timestamp: Date.now(),
+                retryCount: 0
+            };
+            this.queueMessage(queuedMessage);
+            return;
+        }
+
+        return this.publish(topic, message, options);
+    }
+
+    // Get connection state for monitoring
+    public getConnectionState(): ConnectionState {
+        return { ...this.connectionState };
+    }
+
+    // Get queue status for monitoring
+    public getQueueStatus(): { size: number; maxSize: number } {
+        return {
+            size: this.messageQueue.length,
+            maxSize: this.config.messageQueueSize || 100
+        };
     }
 
     // Chờ kết nối trước khi sử dụng
@@ -173,13 +510,76 @@ export class MqttClientCore extends EventEmitter {
         });
     }
 
-    // Ngắt kết nối thủ công
-    public disconnect(): void {
+    // Enhanced disconnect with proper resource cleanup
+    public async disconnect(): Promise<void> {
+        this.node.log("Initiating MQTT client disconnect...");
+
+        // Clear all timers
+        this.clearTimers();
+        if (this.healthCheckTimer) {
+            clearInterval(this.healthCheckTimer);
+            this.healthCheckTimer = null;
+        }
+
+        // Send offline status before disconnecting
+        if (this.connectionState.isConnected) {
+            try {
+                await this.publishDeviceStatus("offline");
+            } catch (error) {
+                this.node.warn(`Failed to send offline status: ${(error as Error).message}`);
+            }
+        }
+
+        // Remove all event listeners
         if (this.client) {
-            this.client.end(() => {
-                this.node.log("MQTT client disconnected manually");
+            this.eventListeners.forEach((handler, event) => {
+                this.client?.removeListener(event as any, handler);
+            });
+            this.eventListeners.clear();
+
+            // Graceful disconnect
+            return new Promise<void>((resolve) => {
+                if (this.client) {
+                    this.client.end(false, {}, () => {
+                        this.node.log("MQTT client disconnected successfully");
+                        this.client = null;
+                        this.connectionPromise = null;
+                        resolve();
+                    });
+                } else {
+                    resolve();
+                }
             });
         }
+
+        // Reset state
+        this.connectionState.isConnected = false;
+        this.connectionState.isConnecting = false;
+        this.messageQueue = [];
+        this.subscribedTopics.clear();
+    }
+
+    // Force disconnect for emergency situations
+    public forceDisconnect(): void {
+        this.node.warn("Force disconnecting MQTT client");
+
+        this.clearTimers();
+        if (this.healthCheckTimer) {
+            clearInterval(this.healthCheckTimer);
+            this.healthCheckTimer = null;
+        }
+
+        if (this.client) {
+            this.client.end(true); // Force close
+            this.client = null;
+        }
+
+        this.connectionPromise = null;
+        this.connectionState.isConnected = false;
+        this.connectionState.isConnecting = false;
+        this.messageQueue = [];
+        this.subscribedTopics.clear();
+        this.eventListeners.clear();
     }
 
     // Kiểm tra trạng thái kết nối

@@ -7,6 +7,7 @@ import { SyncScheduleService } from "../../services/syncSchedule/SyncScheduleSer
 import Container, { Service } from "typedi";
 import { Node } from "node-red";
 import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig } from "./type";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 // require('dotenv').config();
 
@@ -17,9 +18,11 @@ import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig } f
 export class ScheduleService {
     private syncScheduleService: SyncScheduleService;
     private node: Node; // Thêm biến để giữ node từ Node-RED
+    private globalHelper: GlobalContextHelper; // Thêm GlobalContextHelper
 
     constructor(node?: Node) { // Thêm tham số node vào constructor
         this.node = node; // Lưu node để truy cập global context
+        this.globalHelper = node ? new GlobalContextHelper(node.context()) : null; // Khởi tạo GlobalContextHelper
         try {
             this.syncScheduleService = Container.get(SyncScheduleService);
             console.log("SyncScheduleService initialized successfully");
@@ -192,8 +195,8 @@ export class ScheduleService {
                     }
                 }
             }
-            const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-            const modbusHolding = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+            const modbusCoils = this.globalHelper ? this.globalHelper.getJsonEnvVar("MODBUS_COILS", {}) : JSON.parse(process.env.MODBUS_COILS || "{}");
+            const modbusHolding = this.globalHelper ? this.globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) : JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
 
             for (const key in actionObj) {
                 if (actionObj.hasOwnProperty(key)) {
@@ -436,7 +439,7 @@ export class ScheduleService {
             console.log(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
 
             // Publish to EMQX local
-            const deviceId = process.env.DEVICE_ID || "unknown";
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             console.log(`Published MQTT notification to EMQX local for ${schedule.name}`);

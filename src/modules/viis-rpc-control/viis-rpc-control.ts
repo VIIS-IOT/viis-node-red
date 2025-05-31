@@ -14,6 +14,7 @@ import { ModbusService } from "./services/modbusService";
 import { ValidationService } from "./services/validationService";
 import { Logger } from "./utils/logger";
 import { ScalingUtils } from "./utils/scaling";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import {
     MQTT_CONFIG,
     MODBUS_CONFIG,
@@ -37,6 +38,9 @@ module.exports = function (RED: NodeAPI) {
         const flowContext = node.context().flow;
         const globalContext = node.context().global;
 
+        // Initialize GlobalContextHelper
+        const globalHelper = new GlobalContextHelper(node.context());
+
         // Create service options
         const serviceOptions = {
             node,
@@ -59,7 +63,7 @@ module.exports = function (RED: NodeAPI) {
                 const scalingUtils = new ScalingUtils(configService, new Logger(node, "SCALING"));
 
                 // Load environment configuration
-                const deviceId = process.env[ENV_KEYS.DEVICE_ID] || DEFAULTS.DEVICE_ID;
+                const deviceId = globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, DEFAULTS.DEVICE_ID);
 
                 // Initialize Modbus client configuration
                 const modbusConfig = {
