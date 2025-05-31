@@ -51,6 +51,13 @@ module.exports = function (RED: NodeAPI) {
         // Wrap async initialization in IIFE
         (async () => {
             try {
+                // Add random delay to stagger initialization when multiple nodes deploy simultaneously
+                const initDelay = Math.random() * 2000; // 0-2 seconds
+                logger.warn(`[INIT] Node ${node.id} waiting ${Math.round(initDelay)}ms before initialization to avoid conflicts`);
+                await new Promise(resolve => setTimeout(resolve, initDelay));
+
+                logger.warn(`[INIT] Node ${node.id} starting initialization sequence`);
+
                 // Initialize configuration service
                 const configService = new ConfigService(serviceOptions);
                 configService.initializeConfig(config.configKeys, config.scaleConfigs);
@@ -152,8 +159,15 @@ module.exports = function (RED: NodeAPI) {
                 try {
                     // Initialize MQTT client
                     logger.warn("[MQTT-INIT] Starting MQTT client initialization...");
+                    logger.warn(`[MQTT-INIT] Node ID: ${node.id}`);
                     logger.warn(`[MQTT-INIT] Broker type: ${config.mqttBroker}`);
                     logger.warn(`[MQTT-INIT] MQTT config: ${JSON.stringify(mqttConfig, null, 2)}`);
+
+                    // Log current client registry state
+                    ClientRegistry.logConnectionCounts(node);
+
+                    // Add delay to avoid race conditions with other nodes
+                    await new Promise(resolve => setTimeout(resolve, 1000));
 
                     mqttClient = config.mqttBroker === "thingsboard"
                         ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
@@ -161,6 +175,9 @@ module.exports = function (RED: NodeAPI) {
 
                     logger.warn("[MQTT-INIT] MQTT client initialized successfully");
                     logger.warn(`[MQTT-INIT] Client connected status: ${mqttClient.isConnected()}`);
+
+                    // Log final client registry state
+                    ClientRegistry.logConnectionCounts(node);
                 } catch (error) {
                     const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
                     logger.error(`[MQTT-INIT] ${errorMsg}`);
@@ -196,8 +213,17 @@ module.exports = function (RED: NodeAPI) {
                 // Set up MQTT subscription
                 try {
                     logger.warn("[MQTT-SUB] Setting up MQTT subscription...");
+                    logger.warn(`[MQTT-SUB] Node ID: ${node.id}`);
                     logger.warn(`[MQTT-SUB] Subscribe topic: ${subscribeTopic}`);
                     logger.warn(`[MQTT-SUB] Publish topic: ${publishTopic}`);
+
+                    // Verify MQTT client is still valid
+                    if (!mqttClient) {
+                        throw new Error("MQTT client is null after initialization");
+                    }
+
+                    logger.warn(`[MQTT-SUB] MQTT client instance exists: ${!!mqttClient}`);
+                    logger.warn(`[MQTT-SUB] MQTT client type: ${mqttClient.constructor.name}`);
 
                     // Wait for client to be connected before subscribing
                     if (!mqttClient.isConnected()) {
@@ -284,34 +310,6 @@ module.exports = function (RED: NodeAPI) {
                     }
                 });
                 logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
-
-                // Test MQTT message reception after 5 seconds
-                setTimeout(() => {
-                    logger.warn("[TEST] Testing MQTT message reception...");
-                    logger.warn(`[TEST] Current subscribed topics: ${Array.from(mqttClient.subscribedTopics || []).join(', ')}`);
-                    logger.warn(`[TEST] MQTT client still connected: ${mqttClient.isConnected()}`);
-
-                    // Test if we can receive any message by subscribing to a test topic
-                    const testTopic = "test/viis/rpc";
-                    mqttClient.subscribe(testTopic).then(() => {
-                        logger.warn(`[TEST] Successfully subscribed to test topic: ${testTopic}`);
-
-                        // Publish a test message to ourselves
-                        setTimeout(() => {
-                            mqttClient.publish(testTopic, JSON.stringify({
-                                method: "test",
-                                params: { test: true },
-                                timestamp: Date.now()
-                            })).then(() => {
-                                logger.warn("[TEST] Test message published successfully");
-                            }).catch((error: Error) => {
-                                logger.error(`[TEST] Failed to publish test message: ${error.message}`);
-                            });
-                        }, 1000);
-                    }).catch((error: Error) => {
-                        logger.error(`[TEST] Failed to subscribe to test topic: ${error.message}`);
-                    });
-                }, 5000);
 
                 // Node initialization completed successfully
                 logger.warn("[INIT] ===== VIIS RPC Control Node initialization completed successfully =====");

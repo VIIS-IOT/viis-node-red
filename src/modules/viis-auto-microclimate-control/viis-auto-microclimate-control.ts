@@ -37,185 +37,204 @@ module.exports = function (RED: NodeAPI) {
         // Set initial status
         node.status({ fill: "yellow", shape: "ring", text: STATUS_MESSAGES.INITIALIZING });
 
-        try {
-            logger.log("Initializing VIIS Auto Microclimate Control Node");
+        // Wrap initialization in async IIFE
+        (async () => {
+            try {
+                // Add delay to ensure RPC control initializes first (it needs MQTT priority)
+                const initDelay = 3000 + Math.random() * 1000; // 3-4 seconds delay
+                logger.log(`[AUTO-INIT] Node ${node.id} waiting ${Math.round(initDelay)}ms to let RPC control initialize first`);
+                await new Promise(resolve => setTimeout(resolve, initDelay));
 
-            // Get context references
-            const flowContext = node.context().flow;
-            const globalContext = node.context().global;
+                logger.log("Initializing VIIS Auto Microclimate Control Node");
 
-            // Read environment configuration
-            const environmentConfig: EnvironmentConfig = {
-                deviceId: process.env[ENV_KEYS.DEVICE_ID] || "unknown",
-                modbusCoils: JSON.parse(process.env[ENV_KEYS.MODBUS_COILS] || "{}"),
-                modbusInputRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_INPUT_REGISTERS] || "{}"),
-                modbusHoldingRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_HOLDING_REGISTERS] || "{}")
-            };
+                // Get context references
+                const flowContext = node.context().flow;
+                const globalContext = node.context().global;
 
-            logger.log(`Environment config loaded: device=${environmentConfig.deviceId}`);
+                // Read environment configuration
+                const environmentConfig: EnvironmentConfig = {
+                    deviceId: process.env[ENV_KEYS.DEVICE_ID] || "unknown",
+                    modbusCoils: JSON.parse(process.env[ENV_KEYS.MODBUS_COILS] || "{}"),
+                    modbusInputRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_INPUT_REGISTERS] || "{}"),
+                    modbusHoldingRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_HOLDING_REGISTERS] || "{}")
+                };
 
-            // Initialize Modbus client configuration
-            const modbusConfig = {
-                type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
-                host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
-                tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
-                serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
-                baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
-                parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
-                unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
-                timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
-                reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10)
-            };
+                logger.log(`Environment config loaded: device=${environmentConfig.deviceId}`);
 
-            // Get or create Modbus client
-            const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+                // Initialize Modbus client configuration
+                const modbusConfig = {
+                    type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
+                    host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
+                    tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
+                    serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
+                    baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
+                    parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
+                    unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
+                    timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
+                    reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10)
+                };
 
-            if (!modbusClient) {
-                throw new Error("Failed to initialize Modbus client");
-            }
+                // Get or create Modbus client
+                logger.log(`[AUTO-CONTROL-INIT] Node ID: ${node.id} - Initializing Modbus client...`);
 
-            logger.log(`Modbus client initialized: ${modbusConfig.type} ${modbusConfig.host}:${modbusConfig.tcpPort}`);
+                // Log current client registry state before getting Modbus client
+                ClientRegistry.logConnectionCounts(node);
 
-            // Create service options
-            const serviceOptions: ServiceOptions = {
-                node: node,
-                flowContext: flowContext,
-                globalContext: globalContext,
-                nodeId: node.id,
-                environmentConfig: environmentConfig
-            };
+                const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
 
-            // Initialize services
-            const configService = new ConfigService(serviceOptions);
-            const sensorService = new SensorService(serviceOptions);
-            const modbusService = new ModbusService(serviceOptions, modbusClient);
-            const fanControlService = new FanControlService(serviceOptions);
-            const waterPumpControlService = new WaterPumpControlService(serviceOptions);
-            const curtainControlService = new CurtainControlService(serviceOptions);
-
-            // Initialize auto control handler
-            const pollingInterval = config.pollingInterval || CONTROL_CONFIG.POLLING_INTERVAL_MS;
-            const autoControlHandler = new AutoControlHandler(
-                serviceOptions,
-                configService,
-                sensorService,
-                modbusService,
-                fanControlService,
-                waterPumpControlService,
-                curtainControlService,
-                pollingInterval
-            );
-
-            logger.log("All services initialized successfully");
-
-            // Start control loop
-            autoControlHandler.startControlLoop();
-            logger.log("Auto control loop started");
-
-            // Handle input messages for manual control or configuration updates
-            node.on('input', (msg: any) => {
-                try {
-                    logger.debug('Input message received');
-
-                    if (msg.payload && typeof msg.payload === 'object') {
-                        // Handle control commands
-                        if (msg.payload.command) {
-                            handleControlCommand(msg.payload.command, msg.payload.params);
-                        }
-
-                        // Handle configuration updates
-                        if (msg.payload.updateConfig) {
-                            configService.invalidateCache();
-                            sensorService.invalidateCache();
-                            logger.log("Configuration cache invalidated");
-                        }
-                    }
-
-                } catch (error) {
-                    logger.error(`Input message processing error: ${(error as Error).message}`);
+                if (!modbusClient) {
+                    throw new Error("Failed to initialize Modbus client");
                 }
-            });
 
-            // Handle control commands
-            function handleControlCommand(command: string, params: any) {
-                try {
-                    switch (command) {
-                        case 'start':
-                            if (!autoControlHandler.isControlActive()) {
-                                autoControlHandler.startControlLoop();
-                                logger.log("Control loop started via command");
+                logger.log(`[AUTO-CONTROL-INIT] Modbus client initialized: ${modbusConfig.type} ${modbusConfig.host}:${modbusConfig.tcpPort}`);
+
+                // Log final client registry state after getting Modbus client
+                ClientRegistry.logConnectionCounts(node);
+
+                // Create service options
+                const serviceOptions: ServiceOptions = {
+                    node: node,
+                    flowContext: flowContext,
+                    globalContext: globalContext,
+                    nodeId: node.id,
+                    environmentConfig: environmentConfig
+                };
+
+                // Initialize services
+                const configService = new ConfigService(serviceOptions);
+                const sensorService = new SensorService(serviceOptions);
+                const modbusService = new ModbusService(serviceOptions, modbusClient);
+                const fanControlService = new FanControlService(serviceOptions);
+                const waterPumpControlService = new WaterPumpControlService(serviceOptions);
+                const curtainControlService = new CurtainControlService(serviceOptions);
+
+                // Initialize auto control handler
+                const pollingInterval = config.pollingInterval || CONTROL_CONFIG.POLLING_INTERVAL_MS;
+                const autoControlHandler = new AutoControlHandler(
+                    serviceOptions,
+                    configService,
+                    sensorService,
+                    modbusService,
+                    fanControlService,
+                    waterPumpControlService,
+                    curtainControlService,
+                    pollingInterval
+                );
+
+                logger.log("All services initialized successfully");
+
+                // Start control loop
+                autoControlHandler.startControlLoop();
+                logger.log("Auto control loop started");
+
+                // Handle input messages for manual control or configuration updates
+                node.on('input', (msg: any) => {
+                    try {
+                        logger.debug('Input message received');
+
+                        if (msg.payload && typeof msg.payload === 'object') {
+                            // Handle control commands
+                            if (msg.payload.command) {
+                                handleControlCommand(msg.payload.command, msg.payload.params);
                             }
-                            break;
 
-                        case 'stop':
-                            if (autoControlHandler.isControlActive()) {
-                                autoControlHandler.stopControlLoop();
-                                logger.log("Control loop stopped via command");
+                            // Handle configuration updates
+                            if (msg.payload.updateConfig) {
+                                configService.invalidateCache();
+                                sensorService.invalidateCache();
+                                logger.log("Configuration cache invalidated");
                             }
-                            break;
+                        }
 
-                        case 'execute':
-                            autoControlHandler.executeControlCycle();
-                            logger.log("Manual control cycle executed");
-                            break;
+                    } catch (error) {
+                        logger.error(`Input message processing error: ${(error as Error).message}`);
+                    }
+                });
 
-                        case 'status':
-                            const status = autoControlHandler.getControlStatus();
-                            node.send({
-                                payload: {
-                                    command: 'status_response',
-                                    status: status
+                // Handle control commands
+                function handleControlCommand(command: string, params: any) {
+                    try {
+                        switch (command) {
+                            case 'start':
+                                if (!autoControlHandler.isControlActive()) {
+                                    autoControlHandler.startControlLoop();
+                                    logger.log("Control loop started via command");
                                 }
-                            });
-                            break;
+                                break;
 
-                        case 'updateInterval':
-                            if (params && typeof params.interval === 'number') {
-                                autoControlHandler.updatePollingInterval(params.interval);
-                                logger.log(`Polling interval updated to ${params.interval}ms`);
-                            }
-                            break;
+                            case 'stop':
+                                if (autoControlHandler.isControlActive()) {
+                                    autoControlHandler.stopControlLoop();
+                                    logger.log("Control loop stopped via command");
+                                }
+                                break;
 
-                        default:
-                            logger.warn(`Unknown control command: ${command}`);
+                            case 'execute':
+                                autoControlHandler.executeControlCycle();
+                                logger.log("Manual control cycle executed");
+                                break;
+
+                            case 'status':
+                                const status = autoControlHandler.getControlStatus();
+                                node.send({
+                                    payload: {
+                                        command: 'status_response',
+                                        status: status
+                                    }
+                                });
+                                break;
+
+                            case 'updateInterval':
+                                if (params && typeof params.interval === 'number') {
+                                    autoControlHandler.updatePollingInterval(params.interval);
+                                    logger.log(`Polling interval updated to ${params.interval}ms`);
+                                }
+                                break;
+
+                            default:
+                                logger.warn(`Unknown control command: ${command}`);
+                        }
+                    } catch (error) {
+                        logger.error(`Control command error: ${(error as Error).message}`);
                     }
-                } catch (error) {
-                    logger.error(`Control command error: ${(error as Error).message}`);
                 }
+
+                // Handle node close
+                node.on('close', (done: () => void) => {
+                    try {
+                        logger.log("Shutting down auto control node");
+
+                        // Stop control loop
+                        if (autoControlHandler.isControlActive()) {
+                            autoControlHandler.stopControlLoop();
+                        }
+
+                        // Release Modbus client
+                        ClientRegistry.releaseClient("modbus", node);
+
+                        logger.log("Auto control node shutdown complete");
+                        done();
+
+                    } catch (error) {
+                        logger.error(`Shutdown error: ${(error as Error).message}`);
+                        done();
+                    }
+                });
+
+                // Set ready status
+                node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
+                logger.log("VIIS Auto Microclimate Control Node ready");
+
+            } catch (error) {
+                const errorMessage = `${ERROR_MESSAGES.CONTROL_LOGIC_ERROR}: ${(error as Error).message}`;
+                logger.error(errorMessage);
+                node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.ERROR });
+                node.error(errorMessage);
             }
-
-            // Handle node close
-            node.on('close', (done: () => void) => {
-                try {
-                    logger.log("Shutting down auto control node");
-
-                    // Stop control loop
-                    if (autoControlHandler.isControlActive()) {
-                        autoControlHandler.stopControlLoop();
-                    }
-
-                    // Release Modbus client
-                    ClientRegistry.releaseClient("modbus", node);
-
-                    logger.log("Auto control node shutdown complete");
-                    done();
-
-                } catch (error) {
-                    logger.error(`Shutdown error: ${(error as Error).message}`);
-                    done();
-                }
-            });
-
-            // Set ready status
-            node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
-            logger.log("VIIS Auto Microclimate Control Node ready");
-
-        } catch (error) {
-            const errorMessage = `${ERROR_MESSAGES.CONTROL_LOGIC_ERROR}: ${(error as Error).message}`;
-            logger.error(errorMessage);
-            node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.ERROR });
-            node.error(errorMessage);
-        }
+        })().catch((error) => {
+            logger.error(`Async initialization failed: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Async init failed" });
+        });
     }
 
     // Register the node
