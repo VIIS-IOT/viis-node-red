@@ -16,6 +16,9 @@ class ClientRegistry {
         mysql: 0
     };
 
+    // Store the config used for the shared modbus client
+    private static modbusConfig: ModbusConfig | null = null;
+
     // Mutex-like flags to prevent race conditions
     private static initializingFlags = {
         thingsboard: false,
@@ -100,6 +103,34 @@ class ClientRegistry {
         return this.localMqttInstance;
     }
 
+    /**
+     * Validate if the provided config matches the existing shared config
+     */
+    private static validateModbusConfig(config: ModbusConfig, node: Node): boolean {
+        if (!this.modbusConfig) {
+            return true; // No existing config, any config is valid
+        }
+
+        const configMatches = (
+            this.modbusConfig.type === config.type &&
+            this.modbusConfig.host === config.host &&
+            this.modbusConfig.tcpPort === config.tcpPort &&
+            this.modbusConfig.serialPort === config.serialPort &&
+            this.modbusConfig.baudRate === config.baudRate &&
+            this.modbusConfig.parity === config.parity &&
+            this.modbusConfig.unitId === config.unitId
+        );
+
+        if (!configMatches) {
+            node.warn(`[MODBUS-CONFIG-MISMATCH] Node ${node.id} config differs from shared config:`);
+            node.warn(`  Existing: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
+            node.warn(`  Requested: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
+            node.warn(`  Using existing shared connection with config from first node.`);
+        }
+
+        return configMatches;
+    }
+
     static getModbusClient(config: ModbusConfig, node: Node): ModbusClientCore {
         // Wait if another node is already initializing
         while (this.initializingFlags.modbus) {
@@ -108,6 +139,9 @@ class ClientRegistry {
             const start = Date.now();
             while (Date.now() - start < 100) { /* busy wait */ }
         }
+
+        // Validate config compatibility
+        this.validateModbusConfig(config, node);
 
         if (!this.modbusInstance || !this.modbusInstance.isConnectedCheck()) {
             this.initializingFlags.modbus = true;
@@ -119,9 +153,17 @@ class ClientRegistry {
                     this.activeConnections.modbus--;
                     node.log("Previous Modbus instance disconnected due to invalid state");
                 }
-                this.modbusInstance = new ModbusClientCore(config, node);
+
+                // Store the config from the first node that creates the connection
+                if (!this.modbusConfig) {
+                    this.modbusConfig = { ...config };
+                    node.warn(`[MODBUS-INIT] Storing shared config: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
+                }
+
+                // Always use the stored config to ensure consistency
+                this.modbusInstance = new ModbusClientCore(this.modbusConfig, node);
                 this.activeConnections.modbus++;
-                node.log("Created new ModbusClientCore instance");
+                node.log("Created new ModbusClientCore instance with shared config");
                 this.logActiveConnections(node);
             } finally {
                 this.initializingFlags.modbus = false;
@@ -131,6 +173,7 @@ class ClientRegistry {
         this.clientUsers.modbus.add(node.id);
         node.warn(`[MODBUS-INIT] Node ${node.id} got Modbus client, ref count: ${this.referenceCount.modbus}`);
         node.warn(`[MODBUS-INIT] Active users: ${Array.from(this.clientUsers.modbus).join(', ')}`);
+        node.warn(`[MODBUS-INIT] Shared connection config: ${this.modbusConfig?.type} ${this.modbusConfig?.host}:${this.modbusConfig?.tcpPort}`);
         return this.modbusInstance;
     }
 
@@ -153,8 +196,9 @@ class ClientRegistry {
                 this.modbusInstance.disconnect();
                 this.activeConnections.modbus--;
                 this.modbusInstance = null;
+                this.modbusConfig = null; // Reset config when no nodes are using the client
                 this.clientUsers.modbus.clear();
-                node.log("Disconnected and cleared ModbusClientCore instance");
+                node.log("Disconnected and cleared ModbusClientCore instance and config");
                 this.logActiveConnections(node);
             }
         } else if (type === "thingsboard" && this.thingsboardMqttInstance) {
@@ -198,6 +242,12 @@ class ClientRegistry {
     static logConnectionCounts(node: Node) {
         node.warn(`Reference counts - Modbus: ${this.referenceCount.modbus}, ThingsBoard: ${this.referenceCount.thingsboard}, Local MQTT: ${this.referenceCount.local}`);
         this.logActiveConnections(node);
+
+        // Log shared modbus config if exists
+        if (this.modbusConfig && this.referenceCount.modbus > 0) {
+            node.warn(`Shared Modbus config: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
+            node.warn(`Modbus users: ${Array.from(this.clientUsers.modbus).join(', ')}`);
+        }
     }
 }
 

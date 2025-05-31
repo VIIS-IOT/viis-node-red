@@ -1,0 +1,170 @@
+[
+    {
+        "id": "demo-flow",
+        "type": "tab",
+        "label": "Modbus Connection Sharing Demo",
+        "disabled": false,
+        "info": "Demo flow để test connection sharing giữa nhiều VIIS Modbus Getter nodes"
+    },
+    {
+        "id": "modbus-getter-1",
+        "type": "viis-modbus-getter",
+        "z": "demo-flow",
+        "name": "Temperature Sensor",
+        "x": 200,
+        "y": 100,
+        "wires": [["debug-temp"]]
+    },
+    {
+        "id": "modbus-getter-2", 
+        "type": "viis-modbus-getter",
+        "z": "demo-flow",
+        "name": "Humidity Sensor",
+        "x": 200,
+        "y": 200,
+        "wires": [["debug-humidity"]]
+    },
+    {
+        "id": "modbus-getter-3",
+        "type": "viis-modbus-getter", 
+        "z": "demo-flow",
+        "name": "Pressure Sensor",
+        "x": 200,
+        "y": 300,
+        "wires": [["debug-pressure"]]
+    },
+    {
+        "id": "inject-temp",
+        "type": "inject",
+        "z": "demo-flow",
+        "name": "Read Temperature",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"address\": 0, \"length\": 1, \"fc\": 3}",
+        "payloadType": "json",
+        "x": 50,
+        "y": 100,
+        "wires": [["modbus-getter-1"]]
+    },
+    {
+        "id": "inject-humidity",
+        "type": "inject",
+        "z": "demo-flow", 
+        "name": "Read Humidity",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "3",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"address\": 1, \"length\": 1, \"fc\": 3}",
+        "payloadType": "json",
+        "x": 50,
+        "y": 200,
+        "wires": [["modbus-getter-2"]]
+    },
+    {
+        "id": "inject-pressure",
+        "type": "inject",
+        "z": "demo-flow",
+        "name": "Read Pressure", 
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "7",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"address\": 2, \"length\": 1, \"fc\": 3}",
+        "payloadType": "json",
+        "x": 50,
+        "y": 300,
+        "wires": [["modbus-getter-3"]]
+    },
+    {
+        "id": "debug-temp",
+        "type": "debug",
+        "z": "demo-flow",
+        "name": "Temperature Debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 400,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "debug-humidity",
+        "type": "debug",
+        "z": "demo-flow",
+        "name": "Humidity Debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 400,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "debug-pressure",
+        "type": "debug",
+        "z": "demo-flow",
+        "name": "Pressure Debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 400,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "comment-1",
+        "type": "comment",
+        "z": "demo-flow",
+        "name": "Connection Sharing Demo",
+        "info": "Flow này demo việc chia sẻ modbus connection giữa 3 VIIS Modbus Getter nodes.\n\nKiểm tra debug logs để thấy:\n- Reference count tăng khi deploy nodes\n- Chỉ 1 connection được tạo\n- Reference count giảm khi xóa nodes\n- Connection cleanup khi xóa hết nodes",
+        "x": 150,
+        "y": 50,
+        "wires": []
+    },
+    {
+        "id": "comment-2", 
+        "type": "comment",
+        "z": "demo-flow",
+        "name": "Cách test:",
+        "info": "1. Deploy flow này\n2. Mở debug sidebar\n3. Kiểm tra logs cho [MODBUS-INIT] messages\n4. Xem reference count = 3\n5. Disable/enable nodes để test reference counting\n6. Xóa nodes để test cleanup",
+        "x": 100,
+        "y": 380,
+        "wires": []
+    }
+]
