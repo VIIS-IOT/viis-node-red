@@ -1,0 +1,11 @@
+export enum UserRoleTypeEnum {
+  VIIS_ROOT_USER = 'VIIS_ROOT_USER',
+  ROOT_USER = 'System User',
+  TENANT_SUPER_ADMIN = 'TENANT_SUPER_ADMIN',
+  TENANT_ADMIN = 'TENANT_ADMIN',
+  TENANT_USER = 'TENANT_USER',
+  TENANT_CUSTOM_ROLE = 'TENANT_CUSTOM_ROLE',
+  CUSTOMER_USER = 'Viis IoT User',
+}
+
+export default UserRoleTypeEnum;

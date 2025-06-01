@@ -1,6 +1,7 @@
 import { Entity, PrimaryColumn, Column, ManyToOne, JoinColumn, Unique } from 'typeorm';
 import { TabiotDeviceProfile } from '../device-profile/TabiotDeviceProfile';
 import { CustomBaseEntity } from '../base/Base';
+import { TabiotCustomer } from '../customer/customer';
 
 @Entity('tabiot_device')
 @Unique(['id'])
@@ -51,6 +52,15 @@ export class TabiotDevice extends CustomBaseEntity {
     @Column({ type: 'varchar', length: 255, nullable: true })
     customer_name?: string;
 
+    @Column({ type: 'varchar', length: 140, nullable: true })
+    customer_id: string;
+
+    @ManyToOne(() => TabiotCustomer, cus => cus.devices, {
+        nullable: true,
+        onDelete: 'SET NULL', // Khi bảng liên quan bị xóa, giá trị sẽ được đặt thành NULL
+    })
+    @JoinColumn({ name: 'customer_id', referencedColumnName: 'name' })
+    customer: TabiotCustomer;
     @Column({ type: 'varchar', length: 255, nullable: true })
     image?: string;
 
