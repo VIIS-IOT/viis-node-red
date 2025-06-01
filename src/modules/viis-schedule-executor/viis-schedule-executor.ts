@@ -1,4 +1,4 @@
-import { NodeAPI, NodeDef, Node } from "node-red";
+import { NodeAPI, Node } from "node-red";
 
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore, MqttConfig } from "../../core/mqtt-client";
@@ -29,12 +29,34 @@ module.exports = function (RED: NodeAPI) {
             globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
         }
 
+        // Initialize schedule status tracking to detect status changes
+        if (!globalContext.get("scheduleStatusHistory")) {
+            globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
+        }
+
         node.name = config.name;
         const scheduleInterval = config.scheduleInterval;
         node.warn(`Schedule interval set to: ${scheduleInterval}`);
 
         // Initialize GlobalContextHelper
         const globalHelper = new GlobalContextHelper(node.context());
+
+        // Helper function to check and track status changes
+        const hasStatusChanged = (scheduleName: string, newStatus: string): boolean => {
+            const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
+            const previousStatus = statusHistory[scheduleName];
+            const changed = previousStatus !== newStatus;
+
+            // Update status history
+            statusHistory[scheduleName] = newStatus;
+            globalContext.set("scheduleStatusHistory", statusHistory);
+
+            if (changed) {
+                node.warn(`Status changed for ${scheduleName}: ${previousStatus || 'undefined'} -> ${newStatus}`);
+            }
+
+            return changed;
+        };
 
         let scheduleService: ScheduleService;
         try {
@@ -119,6 +141,9 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     if (schedule.status === "running") {
+                        // Check if status will actually change
+                        const statusChanged = hasStatusChanged(schedule.name, "finished");
+
                         schedule.status = "finished";
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, "finished");
@@ -152,12 +177,17 @@ module.exports = function (RED: NodeAPI) {
                             scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
                             node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
-                        await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
-                        // await scheduleService.syncScheduleLog(schedule, true);
+
+                        // Only publish MQTT and sync log if status actually changed
+                        if (statusChanged) {
+                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
+                            await scheduleService.syncScheduleLog(schedule, true);
+                        }
                     } else {
                         node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, schedule.status as "running" | "finished");
+                        // No MQTT/log needed since status didn't change, just disabled
                     }
 
 
@@ -207,6 +237,10 @@ module.exports = function (RED: NodeAPI) {
 
                     if (isDue && schedule.status !== "running") {
                         node.warn("start running schedule")
+
+                        // Check if status will actually change
+                        const statusChanged = hasStatusChanged(schedule.name, "running");
+
                         // --- Reset time_valve_ and set_flow keys except those present in action ---
                         const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
                         node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
@@ -254,8 +288,12 @@ module.exports = function (RED: NodeAPI) {
                                     node.error(`Error writing modbus: ${(error as Error).message}`);
                                 }
                             }
-                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, writeSuccess);
-                            await scheduleService.syncScheduleLog(schedule, writeSuccess);
+
+                            // Only publish MQTT and sync log if status actually changed
+                            if (statusChanged) {
+                                await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, writeSuccess);
+                                await scheduleService.syncScheduleLog(schedule, writeSuccess);
+                            }
                         }
                     } else if (schedule.status === "running" && isDue) {
                         // Trường hợp đang running - chỉ kiểm tra định kỳ để tránh spam
@@ -268,8 +306,7 @@ module.exports = function (RED: NodeAPI) {
                             const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
                             if (writeSuccess) {
                                 node.warn(`Re-executed commands for schedule ${schedule.name} after detecting changes`);
-                                // Chỉ publish MQTT khi thực sự có thay đổi
-                                await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
+                                // Note: No MQTT publishing here since this is just command re-execution, not status change
                             }
                             // Cập nhật timestamp
                             lastCheckTimestamps[schedule.name] = now;
@@ -278,6 +315,10 @@ module.exports = function (RED: NodeAPI) {
                         // Không sync log liên tục khi đang running
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                         node.warn("strart finishing schedule")
+
+                        // Check if status will actually change
+                        const statusChanged = hasStatusChanged(schedule.name, "finished");
+
                         await scheduleService.updateScheduleStatus(schedule, "finished");
 
                         // Xóa timestamp khi schedule kết thúc
@@ -308,17 +349,18 @@ module.exports = function (RED: NodeAPI) {
                             await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
                             scheduleService.clearActiveCommands(schedule.name);
                         }
-                        await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
-                        // await scheduleService.syncScheduleLog(schedule, true);
+
+                        // Only publish MQTT and sync log if status actually changed
+                        if (statusChanged) {
+                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
+                            await scheduleService.syncScheduleLog(schedule, true);
+                        }
                     } else {
                         node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
                 }
                 // Cleanup activeModbusCommands - chỉ cleanup những schedule không còn trong DB hoặc bị disable
                 const enabledScheduleIds = schedules.map(s => s.name);
-                const runningScheduleIds = schedules
-                    .filter(s => s.status === "running" && scheduleService.isScheduleDue(s))
-                    .map(s => s.name);
 
                 for (const scheduleId in activeModbusCommands) {
                     // Chỉ cleanup nếu schedule không còn tồn tại trong DB hoặc không còn enabled
@@ -334,6 +376,16 @@ module.exports = function (RED: NodeAPI) {
                         }
                     }
                 }
+
+                // Cleanup old status history entries for schedules that are no longer enabled
+                const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
+                for (const scheduleId in statusHistory) {
+                    if (!enabledScheduleIds.includes(scheduleId)) {
+                        delete statusHistory[scheduleId];
+                        node.warn(`Cleaned up status history for disabled schedule ${scheduleId}`);
+                    }
+                }
+                globalContext.set("scheduleStatusHistory", statusHistory);
                 node.status({ fill: "green", shape: "dot", text: "Schedules processed" });
                 send(msg);
                 done();
@@ -344,7 +396,7 @@ module.exports = function (RED: NodeAPI) {
             }
         });
 
-        node.on("close", function (done) {
+        node.on("close", function (done: () => void) {
             ClientRegistry.releaseClient("modbus", node);
             ClientRegistry.releaseClient("thingsboard", node);
             ClientRegistry.releaseClient("local", node);
