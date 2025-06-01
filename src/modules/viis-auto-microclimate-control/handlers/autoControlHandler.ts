@@ -101,11 +101,11 @@ export class AutoControlHandler implements IAutoControlHandler {
                 return;
             }
 
-            if (!this.sensorService.isDataValid()) {
-                this.logger.warn("Sensor data is invalid or too old, skipping control cycle");
-                this.node.status({ fill: "yellow", shape: "ring", text: "Stale data" });
-                return;
-            }
+            // if (!this.sensorService.isDataValid()) {
+            //     this.logger.warn("Sensor data is invalid or too old, skipping control cycle");
+            //     this.node.status({ fill: "yellow", shape: "ring", text: "Stale data" });
+            //     return;
+            // }
 
             // Check if Modbus is ready
             if (!this.modbusService.isReady()) {

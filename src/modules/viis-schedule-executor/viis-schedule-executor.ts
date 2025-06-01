@@ -24,6 +24,11 @@ module.exports = function (RED: NodeAPI) {
             globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
         }
 
+        // Initialize last check timestamps to avoid frequent re-execution checks
+        if (!globalContext.get("scheduleLastCheckTimestamps")) {
+            globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
+        }
+
         node.name = config.name;
         const scheduleInterval = config.scheduleInterval;
         node.warn(`Schedule interval set to: ${scheduleInterval}`);
@@ -117,6 +122,11 @@ module.exports = function (RED: NodeAPI) {
                         schedule.status = "finished";
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, "finished");
+
+                        // Xóa timestamp khi schedule bị disable qua RPC
+                        const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
+                        delete lastCheckTimestamps[schedule.name];
+                        globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         // --- Bổ sung reset các key time_valve_ và set_flow ---
@@ -248,16 +258,33 @@ module.exports = function (RED: NodeAPI) {
                             await scheduleService.syncScheduleLog(schedule, writeSuccess);
                         }
                     } else if (schedule.status === "running" && isDue) {
-                        // Trường hợp đang running nhưng có thể đã mất điện
-                        const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
-                        if (writeSuccess) {
-                            node.warn(`Re-executed commands for schedule ${schedule.name} after power loss or frequently`);
-                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
-                            await scheduleService.syncScheduleLog(schedule, true);
+                        // Trường hợp đang running - chỉ kiểm tra định kỳ để tránh spam
+                        const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
+                        const now = Date.now();
+                        const lastCheck = lastCheckTimestamps[schedule.name] || 0;
+                        const checkInterval = 60000; // Chỉ kiểm tra mỗi 60 giây
+
+                        if (now - lastCheck >= checkInterval) {
+                            const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
+                            if (writeSuccess) {
+                                node.warn(`Re-executed commands for schedule ${schedule.name} after detecting changes`);
+                                // Chỉ publish MQTT khi thực sự có thay đổi
+                                await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
+                            }
+                            // Cập nhật timestamp
+                            lastCheckTimestamps[schedule.name] = now;
+                            globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         }
+                        // Không sync log liên tục khi đang running
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                         node.warn("strart finishing schedule")
                         await scheduleService.updateScheduleStatus(schedule, "finished");
+
+                        // Xóa timestamp khi schedule kết thúc
+                        const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
+                        delete lastCheckTimestamps[schedule.name];
+                        globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
+
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         // --- Bổ sung reset các key time_valve_ và set_flow ---
                         const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});

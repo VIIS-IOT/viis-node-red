@@ -57,6 +57,14 @@ export class ScheduleService {
                 await AppDataSource.initialize();
                 console.log("AppDataSource initialized successfully");
             }
+
+            // Lấy device_id từ global variable
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : (process.env.DEVICE_ID || "");
+            if (!deviceId) {
+                console.warn("No DEVICE_ID found in global variable, returning empty schedules");
+                return [];
+            }
+
             const repository = AppDataSource.getRepository(TabiotSchedule);
             const schedules = await repository
                 .createQueryBuilder("schedule")
@@ -66,10 +74,11 @@ export class ScheduleService {
                 .where("schedule.enable = :enable", { enable: 1 })
                 .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
                 .andWhere("schedule.is_deleted = :isDeleted", { isDeleted: 0 })
+                .andWhere("schedule.device_id = :deviceId", { deviceId: deviceId })
                 .printSql()
                 .getMany();
             // console.log(`schedules sql: ${JSON.stringify(schedules)}`)
-            console.log(`Retrieved ${schedules.length} schedules from DB`);
+            console.log(`Retrieved ${schedules.length} schedules from DB for device_id: ${deviceId}`);
             return schedules;
         } catch (error) {
             console.error(`Error in getDueSchedules: ${(error as Error).message}`);
@@ -655,7 +664,7 @@ export class ScheduleService {
             return false;
         }
 
-        console.log(`Checking and re-executing commands for schedule ${schedule.name} after power loss for non-overridden keys`);
+        // console.log(`Checking commands for schedule ${schedule.name} for non-overridden keys`);
 
         // Kiểm tra và thực thi holding commands
         const holdingCommandsToExecute: ModbusCmd[] = [];
@@ -669,7 +678,7 @@ export class ScheduleService {
                     holdingCommandsToExecute.push(cmd);
                     console.log(`Holding register at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
                 } else {
-                    console.log(`Holding register at ${cmd.address} already correct: ${currentValue}`);
+                    // console.log(`Holding register at ${cmd.address} already correct: ${currentValue}`);
                 }
             } catch (error) {
                 console.error(`Error reading holding register ${cmd.address}: ${(error as Error).message}`);
@@ -688,7 +697,7 @@ export class ScheduleService {
                     coilCommandsToExecute.push(cmd);
                     console.log(`Coil at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
                 } else {
-                    console.log(`Coil at ${cmd.address} already correct: ${currentValue}`);
+                    // console.log(`Coil at ${cmd.address} already correct: ${currentValue}`);
                 }
             } catch (error) {
                 console.error(`Error reading coil ${cmd.address}: ${(error as Error).message}`);
@@ -698,7 +707,7 @@ export class ScheduleService {
 
         // Nếu không có lệnh nào cần thực thi, trả về false ngay lập tức
         if (holdingCommandsToExecute.length === 0 && coilCommandsToExecute.length === 0) {
-            console.log(`All registers and coils for schedule ${schedule.name} are already in correct state. No re-execution needed.`);
+            // console.log(`All registers and coils for schedule ${schedule.name} are already in correct state. No re-execution needed.`);
             return false;
         }
 
