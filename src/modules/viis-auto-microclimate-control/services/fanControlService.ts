@@ -57,7 +57,9 @@ export class FanControlService implements IFanControlService {
             if (config.set_mode_fan !== 1) {
                 this.logger.debug("Fan control is disabled");
                 // Turn off all fans if control is disabled
-                return this.createTurnOffAllFansActions("Fan control disabled");
+                // return this.createTurnOffAllFansActions("Fan control disabled");
+                // Do nothing
+                return [];
             }
 
             // Process based on auto mode

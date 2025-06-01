@@ -12,8 +12,8 @@ import {
     ServiceOptions,
     ILogger
 } from "../interfaces/types";
-import { 
-    CONTEXT_KEYS, 
+import {
+    CONTEXT_KEYS,
     WATER_PUMP_CONFIG,
     MODBUS_FUNCTION_CODES
 } from "../constants";
@@ -34,15 +34,18 @@ export class WaterPumpControlService implements IWaterPumpControlService {
      * Process water pump control based on configuration and sensor data
      */
     async processWaterPumpControl(
-        config: AutoControlConfig, 
-        sensorData: SensorData, 
+        config: AutoControlConfig,
+        sensorData: SensorData,
         deviceStatus: DeviceStatus
     ): Promise<ControlAction[]> {
         try {
             // Check if water pump control is enabled
             if (config.set_mode_tuong_nuoc !== 1) {
                 this.logger.debug("Water pump control is disabled");
-                return this.createWaterPumpAction(false, "Water pump control disabled");
+
+                // return this.createWaterPumpAction(false, "Water pump control disabled");
+                // do nothin
+                return [];
             }
 
             const humiIndoor = sensorData.humi_indoor;
@@ -63,15 +66,15 @@ export class WaterPumpControlService implements IWaterPumpControlService {
 
             // Get current water pump state
             const currentPumpState = deviceStatus.bom_nuoc_1 || false;
-            
+
             // Get water pump state from flow context (for hysteresis)
             const waterPumpState = this.getWaterPumpState();
-            
+
             // Determine if pump should be on based on thresholds and hysteresis
             const shouldPumpBeOn = this.determinePumpState(
-                humiIndoor, 
-                lowThreshold, 
-                highThreshold, 
+                humiIndoor,
+                lowThreshold,
+                highThreshold,
                 currentPumpState,
                 waterPumpState
             );
@@ -80,10 +83,10 @@ export class WaterPumpControlService implements IWaterPumpControlService {
             if (shouldPumpBeOn !== currentPumpState) {
                 const reason = this.getPumpControlReason(humiIndoor, lowThreshold, highThreshold, shouldPumpBeOn);
                 this.logger.log(`Water pump control: ${shouldPumpBeOn ? 'ON' : 'OFF'} - ${reason}`);
-                
+
                 // Update state tracking
                 this.updateWaterPumpState(shouldPumpBeOn, humiIndoor);
-                
+
                 return this.createWaterPumpAction(shouldPumpBeOn, reason);
             }
 
@@ -108,17 +111,17 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         stateHistory: any
     ): boolean {
         // Simple threshold logic with hysteresis to prevent rapid switching
-        
+
         if (humidity <= lowThreshold) {
             // Humidity is low, turn on pump
             return true;
         }
-        
+
         if (humidity >= highThreshold) {
             // Humidity is high, turn off pump
             return false;
         }
-        
+
         // Humidity is between thresholds, maintain current state (hysteresis)
         return currentState;
     }
@@ -135,27 +138,27 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         try {
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
-            
+
             if (tempIndoor === undefined || humiIndoor === undefined) {
                 return [];
             }
 
             const k4Threshold = config.set_k4_fan || 40;
-            
+
             // Check K4 conditions: temperature >= K4 threshold OR humidity < 75%
             const k4TempCondition = tempIndoor >= k4Threshold;
             const k4HumiCondition = humiIndoor < 75;
-            
+
             if (k4TempCondition || k4HumiCondition) {
                 const reason = `K4 priority override: temp=${tempIndoor}°C${k4TempCondition ? ` (≥${k4Threshold})` : ''}, humidity=${humiIndoor}%${k4HumiCondition ? ' (<75%)' : ''}`;
                 this.logger.log(`Water pump K4 override: ON - ${reason}`);
-                
+
                 // Update state tracking
                 this.updateWaterPumpState(true, humiIndoor, true);
-                
+
                 return this.createWaterPumpAction(true, reason);
             }
-            
+
             return [];
 
         } catch (error) {
@@ -171,7 +174,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         const coilMapping = this.getCoilMapping();
         const pumpKey = "bom_nuoc_1";
         const address = coilMapping[pumpKey];
-        
+
         if (address === undefined) {
             this.logger.error(`No coil address found for water pump: ${pumpKey}`);
             return [];
@@ -203,7 +206,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
      */
     private updateWaterPumpState(isOn: boolean, humidity: number, isK4Override: boolean = false): void {
         const currentState = this.getWaterPumpState();
-        
+
         const newState = {
             isOn: isOn,
             lastChangeTime: Date.now(),
@@ -211,7 +214,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
             changeCount: currentState.changeCount + 1,
             isK4Override: isK4Override
         };
-        
+
         this.flowContext.set(CONTEXT_KEYS.WATER_PUMP_STATE, newState);
     }
 
@@ -220,7 +223,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
      */
     private getCoilMapping(): Record<string, number> {
         const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        
+
         // Merge with default mappings
         return {
             ...WATER_PUMP_CONFIG.COIL_MAPPING,
@@ -232,9 +235,9 @@ export class WaterPumpControlService implements IWaterPumpControlService {
      * Get reason string for pump control action
      */
     private getPumpControlReason(
-        humidity: number, 
-        lowThreshold: number, 
-        highThreshold: number, 
+        humidity: number,
+        lowThreshold: number,
+        highThreshold: number,
         turnOn: boolean
     ): string {
         if (turnOn) {
@@ -261,7 +264,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         lastAction: string;
     } {
         const state = this.getWaterPumpState();
-        
+
         return {
             isEnabled: true, // This would come from config in a real implementation
             currentState: state,
