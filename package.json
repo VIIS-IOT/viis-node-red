@@ -38,7 +38,8 @@
       "viis-crud-schedule": "dist/modules/viis-crud-schedule/viis-crud-schedule.js",
       "viis-sync-schedule": "dist/modules/viis-sync-schedule/viis-sync-schedule.js",
       "viis-auto-microclimate-control": "dist/modules/viis-auto-microclimate-control/viis-auto-microclimate-control.js",
-      "viis-modbus-getter": "dist/modules/viis-modbus-getter/viis-modbus-getter.js"
+      "viis-modbus-getter": "dist/modules/viis-modbus-getter/viis-modbus-getter.js",
+      "viis-modbus-poller": "dist/modules/viis-modbus-poller/viis-modbus-poller.js"
     }
   },
   "dependencies": {

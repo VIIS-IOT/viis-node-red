@@ -3,6 +3,9 @@
  * All functions and types here are exported for testing and reuse.
  */
 
+import { MySqlClientCore } from "../../core/mysql-client";
+import { TabiotDeviceTelemetry } from "../../orm/entities/device-telemetry/TabiotDeviceTelemetry";
+
 /** Telemetry data structure with key-value pairs */
 export interface TelemetryData {
   [key: string]: number | boolean | string;
@@ -88,6 +91,14 @@ export interface PublishTelemetryParams {
   thingsboardClient: MqttPublisher;
   emqxTopic: string;
   thingsboardTopic: string;
+}
+
+/** Parameters for saving telemetry data to MySQL */
+export interface SaveTelemetryParams {
+  data: TelemetryData;
+  deviceId: string;
+  mysqlClient: MySqlClientCore;
+  timestamp?: number;
 }
 
 /** Parameters for debug logging */
