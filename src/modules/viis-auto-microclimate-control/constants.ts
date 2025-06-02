@@ -45,14 +45,23 @@ export const FAN_CONFIG = {
             ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
         ]
     },
-    
-    // Default thresholds
+
+    // Default temperature thresholds (°C)
+    DEFAULT_TEMPERATURE_THRESHOLDS: {
+        K1: 25,
+        K2: 30,
+        K3: 35,
+        K4: 40
+    },
+
+    // Default humidity thresholds (%) - for future use
     DEFAULT_HUMIDITY_THRESHOLDS: {
         K2_HUMIDITY: 65,
         K3_HUMIDITY: 55,
-        K4_HUMIDITY: 75
+        K4_HUMIDITY: 75,
+        ENABLE_HUMIDITY_CHECK: false // Currently disabled
     },
-    
+
     // Modbus mapping for fans
     COIL_MAPPING: {
         "quat_1": 0,
@@ -91,20 +100,20 @@ export const CURTAIN_CONFIG = {
         "luoi_1": { thu: "luoi_1_thu", dai: "luoi_1_dai" },
         "luoi_2": { thu: "luoi_2_thu", dai: "luoi_2_dai" }
     },
-    
+
     COIL_MAPPING: {
         "luoi_1_thu": 16,
         "luoi_1_dai": 17,
         "luoi_2_thu": 12,
         "luoi_2_dai": 13
     },
-    
+
     // Coil pairs for conflict prevention
     COIL_PAIRS: [
         { key1: "luoi_1_thu", key2: "luoi_1_dai" },
         { key1: "luoi_2_thu", key2: "luoi_2_dai" }
     ],
-    
+
     DEFAULT_THRESHOLDS: {
         LIGHT_DAI: 50000, // lux
         LIGHT_THU: 30000, // lux
@@ -117,31 +126,31 @@ export const CONFIG_KEYS = [
     // Operational settings
     "operational_script",
     "script_run_day",
-    
+
     // Fan control
     "set_mode_fan",
     "set_auto_mode_fan",
     "set_k1_fan",
-    "set_k2_fan", 
+    "set_k2_fan",
     "set_k3_fan",
     "set_k4_fan",
     "set_gr_alternate_fan",
     "set_time_alternate_fan",
     "set_time_fan_on",
     "set_time_fan_off",
-    
+
     // Fan dao control
     "set_mode_fan_dao",
     "set_auto_mode_fan_dao",
     "set_threshold_on_fan_dao",
     "set_threshold_off_fan_dao",
     "set_time_alternate_fan_dao",
-    
+
     // Water pump control
     "set_mode_tuong_nuoc",
     "set_threshold_low_water_bump",
     "set_threshold_high_water_bump",
-    
+
     // Curtain control
     "set_mode_luoi",
     "set_auto_mode_luoi",
@@ -157,7 +166,7 @@ export const CONFIG_KEYS = [
     "set_light_dai_luoi_4",
     "set_light_thu_luoi_4",
     "set_tolerance_light_luoi_4",
-    
+
     // Environmental settings
     "ideal_light_time",
     "time_on_cooling",

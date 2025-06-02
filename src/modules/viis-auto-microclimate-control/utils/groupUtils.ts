@@ -233,22 +233,55 @@ export function isValidFanGroupSize(groupSize: number): boolean {
 }
 
 /**
- * Get recommended group size based on temperature/humidity thresholds
+ * Get recommended group size based on temperature thresholds
+ * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */
-export function getRecommendedGroupSize(temperature: number, humidity: number, thresholds: {
-    k1: number,
-    k2: number,
-    k3: number,
-    k4: number
-}): number {
-    if (temperature >= thresholds.k4 || humidity < 75) {
-        return 6; // All fans
-    } else if (temperature >= thresholds.k3 || humidity < 55) {
-        return 6; // All fans
-    } else if (temperature >= thresholds.k2 || humidity < 65) {
-        return 4; // 4 fans
+export function getRecommendedGroupSize(
+    temperature: number,
+    humidity: number,
+    thresholds: {
+        k1: number,
+        k2: number,
+        k3: number,
+        k4: number
+    },
+    options?: {
+        enableHumidityCheck?: boolean,
+        humidityThresholds?: {
+            k2: number,
+            k3: number,
+            k4: number
+        }
+    }
+): number {
+    // For future humidity integration
+    const enableHumidity = options?.enableHumidityCheck || false;
+    const humidityThresholds = options?.humidityThresholds || {
+        k2: 65,
+        k3: 55,
+        k4: 75
+    };
+
+    // Temperature-only logic (current implementation)
+    if (temperature >= thresholds.k4) {
+        return 6; // All fans for K4
+    } else if (temperature >= thresholds.k3) {
+        return 6; // All fans for K3
+    } else if (temperature >= thresholds.k2) {
+        return 4; // 4 fans for K2
     } else if (temperature >= thresholds.k1) {
-        return 2; // 2 fans
+        return 2; // 2 fans for K1
+    }
+
+    // Future humidity logic (currently disabled)
+    if (enableHumidity) {
+        if (humidity < humidityThresholds.k4) {
+            return 6; // All fans for low humidity K4
+        } else if (humidity < humidityThresholds.k3) {
+            return 6; // All fans for low humidity K3
+        } else if (humidity < humidityThresholds.k2) {
+            return 4; // 4 fans for low humidity K2
+        }
     }
 
     return 0; // No fans needed

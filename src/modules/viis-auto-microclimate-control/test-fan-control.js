@@ -94,15 +94,15 @@ const mockCoilMapping = {
 // Test the optimized fan group actions
 console.log('=== Testing Optimized Fan Group Actions ===');
 
-// Test 1: K4 scenario - should turn on all 6 fans
-console.log('\nTest 1: K4 scenario (temp=33.2°C, K4=33°C)');
+// Test 1: K4 scenario - should turn on all 6 fans (temperature-based only)
+console.log('\nTest 1: K4 scenario (temp=42°C, K4=40°C)');
 const allFanKeys = getAllFanKeys();
 console.log('All fan keys:', allFanKeys);
 
 const k4Actions = createOptimizedFanGroupActions(
     allFanKeys, // All 6 fans should be on for K4
     true,
-    'K4 threshold: temp=33.2°C (≥33) or humidity=94% (<75%)',
+    'K4 threshold: temp=42°C (≥40°C), humidity=80%',
     mockCoilMapping,
     mockDeviceStatus
 );
@@ -140,11 +140,11 @@ if (noChangeActions.length === 0) {
     });
 }
 
-// Test 3: K2 scenario - should turn on 4 fans with rotation
-console.log('\nTest 3: K2 scenario (temp=30°C, humidity=60%)');
+// Test 3: K2 scenario - should turn on 4 fans with rotation (temperature-based only)
+console.log('\nTest 3: K2 scenario (temp=32°C, K2=30°C)');
 const k2SensorData = {
-    temp_indoor: 30,
-    humi_indoor: 60 // Below 65%, triggers K2 condition
+    temp_indoor: 32,
+    humi_indoor: 70 // Humidity is informational only
 };
 
 // For K2, we should get 4 fans (first group)
@@ -152,7 +152,7 @@ const k2TargetGroup = ['quat_1', 'quat_2', 'quat_3', 'quat_4'];
 const k2Actions = createOptimizedFanGroupActions(
     k2TargetGroup,
     true,
-    'K2 threshold: temp=30°C (≥30) or humidity=60% (<65%)',
+    'K2 threshold: temp=32°C (≥30°C), humidity=70%',
     mockCoilMapping,
     mockDeviceStatus
 );
@@ -167,7 +167,7 @@ console.log('\nTest 4: Turn off all fans (below K1 threshold)');
 const turnOffActions = createOptimizedFanGroupActions(
     [],
     false,
-    'Temperature/humidity below K1 threshold',
+    'Temperature below K1 threshold: 22°C (<25°C), humidity=75%',
     mockCoilMapping,
     mockDeviceStatusAllOn
 );
@@ -178,8 +178,9 @@ turnOffActions.forEach(action => {
 });
 
 console.log('\n=== Test Summary ===');
-console.log('✓ K4 scenario: All 6 fans should be turned on');
+console.log('✓ K4 scenario (temp≥40°C): All 6 fans should be turned on');
 console.log('✓ No unnecessary actions when fans already in correct state');
-console.log('✓ K2 scenario: 4 fans should be turned on');
+console.log('✓ K2 scenario (temp≥30°C): 4 fans should be turned on');
 console.log('✓ Turn off scenario: Only currently on fans are turned off');
-console.log('\nThe optimized fan control logic should now work correctly!');
+console.log('✓ Temperature-only logic: Humidity is informational only');
+console.log('\nThe optimized fan control logic (temperature-based) should now work correctly!');

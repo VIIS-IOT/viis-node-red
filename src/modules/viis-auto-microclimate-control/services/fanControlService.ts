@@ -162,12 +162,13 @@ export class FanControlService implements IFanControlService {
 
             if (requiredGroupSize === 0) {
                 // No fans needed - use optimized function if device status available
+                const reason = `Temperature below K1 threshold: ${tempIndoor}°C (<${thresholds.k1}°C), humidity=${humiIndoor}%`;
                 if (deviceStatus) {
                     const coilMapping = this.getCoilMapping();
                     const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
-                    return createOptimizedFanGroupActions([], false, "Temperature/humidity below K1 threshold", coilMapping, deviceStatusRecord);
+                    return createOptimizedFanGroupActions([], false, reason, coilMapping, deviceStatusRecord);
                 }
-                return this.createTurnOffAllFansActions("Temperature/humidity below K1 threshold");
+                return this.createTurnOffAllFansActions(reason);
             }
 
             // Get appropriate fan groups
@@ -373,19 +374,19 @@ export class FanControlService implements IFanControlService {
     }
 
     /**
-     * Get reason string for threshold mode
+     * Get reason string for threshold mode (temperature-based only)
      */
     private getThresholdReason(temperature: number, humidity: number, thresholds: any): string {
-        if (temperature >= thresholds.k4 || humidity < 75) {
-            return `K4 threshold: temp=${temperature}°C (≥${thresholds.k4}) or humidity=${humidity}% (<75%)`;
-        } else if (temperature >= thresholds.k3 || humidity < 55) {
-            return `K3 threshold: temp=${temperature}°C (≥${thresholds.k3}) or humidity=${humidity}% (<55%)`;
-        } else if (temperature >= thresholds.k2 || humidity < 65) {
-            return `K2 threshold: temp=${temperature}°C (≥${thresholds.k2}) or humidity=${humidity}% (<65%)`;
+        if (temperature >= thresholds.k4) {
+            return `K4 threshold: temp=${temperature}°C (≥${thresholds.k4}°C), humidity=${humidity}%`;
+        } else if (temperature >= thresholds.k3) {
+            return `K3 threshold: temp=${temperature}°C (≥${thresholds.k3}°C), humidity=${humidity}%`;
+        } else if (temperature >= thresholds.k2) {
+            return `K2 threshold: temp=${temperature}°C (≥${thresholds.k2}°C), humidity=${humidity}%`;
         } else if (temperature >= thresholds.k1) {
-            return `K1 threshold: temp=${temperature}°C (≥${thresholds.k1})`;
+            return `K1 threshold: temp=${temperature}°C (≥${thresholds.k1}°C), humidity=${humidity}%`;
         }
 
-        return `Below thresholds: temp=${temperature}°C, humidity=${humidity}%`;
+        return `Below K1 threshold: temp=${temperature}°C (<${thresholds.k1}°C), humidity=${humidity}%`;
     }
 }
