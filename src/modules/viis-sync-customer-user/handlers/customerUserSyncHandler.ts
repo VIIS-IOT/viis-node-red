@@ -51,18 +51,20 @@ export class CustomerUserSyncHandler {
      * @param node - Node-RED node instance
      * @param deviceId - Device ID for authentication
      * @param showDetailedLogs - Whether to show detailed logs
+     * @param maxRetries - Maximum number of retries for API calls
      */
     constructor(
         dbService: DatabaseService,
         node: Node,
         deviceId: string,
-        showDetailedLogs: boolean = false
+        showDetailedLogs: boolean = false,
+        maxRetries: number = 3
     ) {
         this.customerRepo = dbService.getCustomerRepository();
         this.customerUserRepo = dbService.getCustomerUserRepository();
         this.credentialsRepo = dbService.getCustomerUserCredentialsRepository();
         this.node = node;
-        this.apiService = new ApiService(deviceId);
+        this.apiService = new ApiService(deviceId, maxRetries, node, showDetailedLogs);
         this.syncStateService = new SyncStateService(node);
         this.showDetailedLogs = showDetailedLogs;
 
@@ -70,6 +72,7 @@ export class CustomerUserSyncHandler {
         this.resetSyncStats();
 
         logger.info(node, 'CustomerUserSyncHandler initialized');
+        logger.debug(node, `Configuration: deviceId=${deviceId}, showDetailedLogs=${showDetailedLogs}, maxRetries=${maxRetries}`, showDetailedLogs);
     }
 
     /**
@@ -93,6 +96,8 @@ export class CustomerUserSyncHandler {
      * @returns Promise that resolves to the sync result
      */
     async syncAll(): Promise<SyncResult> {
+        const syncTimer = logger.startTimer('Full sync operation');
+
         // Reset sync statistics
         this.resetSyncStats();
 
@@ -103,15 +108,40 @@ export class CustomerUserSyncHandler {
             logger.info(this.node, 'Starting synchronization of all customers and users');
 
             // Fetch all customers and their users from server
+            const apiTimer = logger.startTimer('API fetch customers');
             const serverResponse = await this.apiService.getAllCustomers();
+            logger.endTimer(this.node, apiTimer, this.showDetailedLogs);
+
             const serverCustomers = serverResponse.result.data;
 
             this.syncStats.totalCustomers = serverCustomers.length;
             logger.info(this.node, `Received ${serverCustomers.length} customers from server`);
 
+            if (this.showDetailedLogs) {
+                const totalUsers = serverCustomers.reduce((sum, customer) => sum + (customer.users?.length || 0), 0);
+                logger.debug(this.node, `Total users across all customers: ${totalUsers}`, true);
+                logger.debug(this.node, `Server response structure: ${JSON.stringify(serverResponse, null, 2)}`, true);
+            }
+
             // Process each customer
+            let processedCustomers = 0;
             for (const serverCustomer of serverCustomers) {
-                await this.syncCustomer(serverCustomer);
+                const customerTimer = logger.startTimer(`Sync customer: ${serverCustomer.name}`);
+
+                try {
+                    await this.syncCustomer(serverCustomer);
+                    processedCustomers++;
+
+                    logger.endTimer(this.node, customerTimer, this.showDetailedLogs);
+
+                    if (this.showDetailedLogs) {
+                        logger.debug(this.node, `Progress: ${processedCustomers}/${serverCustomers.length} customers processed`, true);
+                    }
+                } catch (error) {
+                    logger.endTimer(this.node, customerTimer, this.showDetailedLogs);
+                    logger.errorWithStack(this.node, `Failed to sync customer ${serverCustomer.name}`, error as Error, this.showDetailedLogs);
+                    throw error;
+                }
             }
 
             // Create sync result
@@ -124,20 +154,18 @@ export class CustomerUserSyncHandler {
             // Record successful sync
             this.syncStateService.recordSyncResult(result);
 
-            logger.info(
-                this.node,
-                `Synchronization completed successfully: Created ${this.syncStats.customersCreated} customers, ` +
-                `updated ${this.syncStats.customersUpdated} customers, ` +
-                `created ${this.syncStats.usersCreated} users, ` +
-                `updated ${this.syncStats.usersUpdated} users, ` +
-                `created ${this.syncStats.credentialsCreated} credentials, ` +
-                `updated ${this.syncStats.credentialsUpdated} credentials`
-            );
+            const totalDuration = logger.endTimer(this.node, syncTimer, this.showDetailedLogs);
+
+            logger.info(this.node, 'Synchronization completed successfully');
+            logger.syncStats(this.node, this.syncStats, this.showDetailedLogs);
+            logger.info(this.node, `Total sync duration: ${totalDuration}ms`);
 
             return result;
         } catch (error) {
-            // Create error sync result
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const totalDuration = logger.endTimer(this.node, syncTimer, this.showDetailedLogs);
+
+            // Create failed sync result
             const result: SyncResult = {
                 success: false,
                 errorMessage,
@@ -148,7 +176,8 @@ export class CustomerUserSyncHandler {
             // Record failed sync
             this.syncStateService.recordSyncResult(result);
 
-            logger.error(this.node, `Synchronization failed: ${errorMessage}`);
+            logger.errorWithStack(this.node, `Synchronization failed after ${totalDuration}ms`, error as Error, this.showDetailedLogs);
+            logger.syncStats(this.node, this.syncStats, this.showDetailedLogs);
             throw error;
         }
     }
@@ -180,27 +209,34 @@ export class CustomerUserSyncHandler {
             logger.debug(this.node, `Customer data: ${JSON.stringify(serverCustomer)}`, this.showDetailedLogs);
 
             // Check if customer already exists in local database
+            const dbTimer = logger.startTimer(`DB query for customer: ${serverCustomer.name}`);
             const localCustomer = await this.customerRepo.findOne({
                 where: { name: serverCustomer.name }
             });
+            logger.endTimer(this.node, dbTimer, this.showDetailedLogs);
+
+            logger.dbOperation(this.node, 'FIND_ONE', 'TabiotCustomer', { name: serverCustomer.name }, this.showDetailedLogs);
 
             if (!localCustomer) {
                 // Customer doesn't exist locally, create it
+                logger.info(this.node, `Customer ${serverCustomer.name} not found locally, creating new record`);
                 await this.createCustomer(serverCustomer);
             } else {
                 // Customer exists locally, update if needed
+                logger.info(this.node, `Customer ${serverCustomer.name} found locally, checking for updates`);
                 await this.updateCustomerIfNeeded(localCustomer, serverCustomer);
             }
 
             // Sync users for this customer if they exist
             if (serverCustomer.users && serverCustomer.users.length > 0) {
+                logger.info(this.node, `Found ${serverCustomer.users.length} users for customer: ${serverCustomer.name}`);
                 await this.syncUsersForCustomer(serverCustomer);
             } else {
                 logger.info(this.node, `No users found for customer: ${serverCustomer.name}`);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            logger.error(this.node, `Failed to sync customer ${serverCustomer.name}: ${errorMessage}`);
+            logger.errorWithStack(this.node, `Failed to sync customer ${serverCustomer.name}`, error as Error, this.showDetailedLogs);
             throw error;
         }
     }
@@ -211,6 +247,8 @@ export class CustomerUserSyncHandler {
      * @returns Promise that resolves when the customer is created
      */
     private async createCustomer(serverCustomer: ServerCustomer): Promise<void> {
+        const createTimer = logger.startTimer(`Create customer: ${serverCustomer.name}`);
+
         try {
             logger.info(this.node, `Creating new customer: ${serverCustomer.name}`);
 
@@ -245,13 +283,23 @@ export class CustomerUserSyncHandler {
             newCustomer.creation = adjustToUTC7(new Date());
             newCustomer.modified = adjustToUTC7(new Date());
 
+            if (this.showDetailedLogs) {
+                logger.debug(this.node, `Customer entity prepared: ${JSON.stringify(newCustomer, null, 2)}`, true);
+            }
+
             // Save the customer to the database
+            const saveTimer = logger.startTimer(`DB save customer: ${serverCustomer.name}`);
             await this.customerRepo.save(newCustomer);
+            logger.endTimer(this.node, saveTimer, this.showDetailedLogs);
+
+            logger.dbOperation(this.node, 'SAVE', 'TabiotCustomer', { name: serverCustomer.name, id: serverCustomer.id }, this.showDetailedLogs);
+
             this.syncStats.customersCreated++;
-            logger.info(this.node, `Created customer: ${serverCustomer.name}`);
+            logger.endTimer(this.node, createTimer, this.showDetailedLogs);
+            logger.info(this.node, `Successfully created customer: ${serverCustomer.name} (ID: ${serverCustomer.id})`);
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            logger.error(this.node, `Failed to create customer ${serverCustomer.name}: ${errorMessage}`);
+            logger.endTimer(this.node, createTimer, this.showDetailedLogs);
+            logger.errorWithStack(this.node, `Failed to create customer ${serverCustomer.name}`, error as Error, this.showDetailedLogs);
             throw error;
         }
     }

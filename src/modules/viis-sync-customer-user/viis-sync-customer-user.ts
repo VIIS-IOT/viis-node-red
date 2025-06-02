@@ -62,7 +62,8 @@ export = function (RED: NodeAPI) {
                     dbService,
                     node,
                     config.deviceId,
-                    config.showDetailedLogs
+                    config.showDetailedLogs,
+                    config.maxRetries
                 );
 
                 // Update node status with initial state
@@ -175,11 +176,14 @@ export = function (RED: NodeAPI) {
                 throw new Error('Sync handler not initialized');
             }
 
+            const syncStartTime = Date.now();
             logger.info(node, `Performing ${type} sync`);
+            logger.debug(node, `Sync configuration: deviceId=${config.deviceId}, maxRetries=${config.maxRetries}, showDetailedLogs=${config.showDetailedLogs}`, config.showDetailedLogs);
             updateNodeStatus('syncing', `${type.charAt(0).toUpperCase() + type.slice(1)} sync...`);
 
             try {
                 const result = await customerUserSyncHandler.syncAll();
+                const syncDuration = Date.now() - syncStartTime;
 
                 // Update node status based on result
                 if (result.success) {
@@ -187,19 +191,29 @@ export = function (RED: NodeAPI) {
                         'success',
                         `Sync complete (${result.totalCustomers} customers, ${result.totalUsers} users)`
                     );
-                    logger.info(node, `${type.charAt(0).toUpperCase() + type.slice(1)} sync completed successfully`);
+                    logger.info(node, `${type.charAt(0).toUpperCase() + type.slice(1)} sync completed successfully in ${syncDuration}ms`);
+
+                    if (config.showDetailedLogs) {
+                        logger.debug(node, `Sync result details: ${JSON.stringify(result, null, 2)}`, true);
+                    }
                 } else {
                     updateNodeStatus('error', 'Sync failed');
                     logger.error(
                         node,
-                        `${type.charAt(0).toUpperCase() + type.slice(1)} sync failed: ${result.errorMessage || 'Unknown error'}`
+                        `${type.charAt(0).toUpperCase() + type.slice(1)} sync failed after ${syncDuration}ms: ${result.errorMessage || 'Unknown error'}`
                     );
                 }
 
                 return result;
             } catch (error) {
+                const syncDuration = Date.now() - syncStartTime;
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                logger.error(node, `${type.charAt(0).toUpperCase() + type.slice(1)} sync failed: ${errorMessage}`);
+                logger.error(node, `${type.charAt(0).toUpperCase() + type.slice(1)} sync failed after ${syncDuration}ms: ${errorMessage}`);
+
+                if (config.showDetailedLogs && error instanceof Error && error.stack) {
+                    logger.debug(node, `Error stack trace: ${error.stack}`, true);
+                }
+
                 updateNodeStatus('error', 'Sync failed');
                 throw error;
             }
