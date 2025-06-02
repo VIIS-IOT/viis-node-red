@@ -10,8 +10,8 @@ import { ServerCustomer } from '../interfaces/types';
  * Service for API operations related to customer users
  */
 export class ApiService {
-    /** Access token for API authentication */
-    private readonly accessToken: string;
+    /** Device ID for API authentication */
+    private readonly deviceId: string;
     /** Base URL for API calls */
     private readonly baseUrl: string;
     /** Maximum number of retries for failed API calls */
@@ -19,14 +19,14 @@ export class ApiService {
 
     /**
      * Creates a new API service
-     * @param accessToken - Device access token for authentication
+     * @param deviceId - Device ID for authentication
      * @param maxRetries - Maximum number of retries for failed API calls
      */
-    constructor(accessToken: string, maxRetries: number = 3) {
-        this.accessToken = accessToken;
+    constructor(deviceId: string, maxRetries: number = 3) {
+        this.deviceId = deviceId;
         // Use global context instead of process.env for hot-reload capability
         const globalContext = (global as any).get?.() || {};
-        this.baseUrl = globalContext.API_URL || 'https://api.vngcloud.vn/viis/iot/v2';
+        this.baseUrl = globalContext.VIIS_BACKEND || globalContext.API_URL || 'https://iot.viis.tech';
         this.maxRetries = maxRetries;
     }
 
@@ -37,15 +37,25 @@ export class ApiService {
     async getAllCustomers(): Promise<{ result: { data: ServerCustomer[] } }> {
         const config: AxiosRequestConfig = {
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.accessToken}`
+                'Content-Type': 'application/json'
             }
         };
+
+        // Build the API URL with query parameters
+        const queryParams = new URLSearchParams({
+            size: '10000',
+            page: '1',
+            order_by: 'name DESC',
+            device_id: this.deviceId,
+            includeUsers: 'true'
+        });
+
+        const apiUrl = `${this.baseUrl}/api/v2/iot-customer/customers?${queryParams.toString()}`;
 
         try {
             // Make the API call to get customers with their users
             const response: AxiosResponse = await this.retryApiCall(
-                () => axios.get(`${this.baseUrl}/customers?includeUsers=true`, config)
+                () => axios.get(apiUrl, config)
             );
 
             // Return the data from the response

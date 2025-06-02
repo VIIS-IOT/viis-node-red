@@ -49,20 +49,20 @@ export class CustomerUserSyncHandler {
      * Creates a new customer user sync handler
      * @param dbService - Database service for repository access
      * @param node - Node-RED node instance
-     * @param accessToken - Device access token for authentication
+     * @param deviceId - Device ID for authentication
      * @param showDetailedLogs - Whether to show detailed logs
      */
     constructor(
         dbService: DatabaseService,
         node: Node,
-        accessToken: string,
+        deviceId: string,
         showDetailedLogs: boolean = false
     ) {
         this.customerRepo = dbService.getCustomerRepository();
         this.customerUserRepo = dbService.getCustomerUserRepository();
         this.credentialsRepo = dbService.getCustomerUserCredentialsRepository();
         this.node = node;
-        this.apiService = new ApiService(accessToken);
+        this.apiService = new ApiService(deviceId);
         this.syncStateService = new SyncStateService(node);
         this.showDetailedLogs = showDetailedLogs;
 

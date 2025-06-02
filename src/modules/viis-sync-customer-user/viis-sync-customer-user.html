@@ -9,8 +9,8 @@
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
     <div class="form-row">
-        <label for="node-input-accessToken"><i class="fa fa-key"></i> Access Token</label>
-        <input type="password" id="node-input-accessToken" placeholder="Device access token">
+        <label for="node-input-deviceId"><i class="fa fa-key"></i> Device ID</label>
+        <input type="text" id="node-input-deviceId" placeholder="Device ID">
     </div>
     <div class="form-row">
         <label for="node-input-syncInterval"><i class="fa fa-clock-o"></i> Sync Interval (min)</label>
@@ -68,7 +68,7 @@
     
     <h3>Configuration</h3>
     <ul>
-        <li><code>Access Token</code> - Authentication token for the VIIS IoT API</li>
+        <li><code>Device ID</code> - Device ID for authentication with the VIIS IoT API</li>
         <li><code>Sync Interval</code> - How often to automatically sync (in minutes, 0 to disable)</li>
         <li><code>Sync on Startup</code> - Whether to perform a sync when the node starts</li>
         <li><code>Detailed Logs</code> - Enable to see more detailed log information</li>
@@ -82,7 +82,7 @@
         color: '#a6bbcf',
         defaults: {
             name: { value: "" },
-            accessToken: { value: "", required: true },
+            deviceId: { value: "", required: true },
             syncInterval: { value: 60, required: true, validate: RED.validators.number() },
             syncOnStartup: { value: true },
             showDetailedLogs: { value: false },
@@ -91,7 +91,7 @@
         inputs: 1,
         outputs: 1,
         icon: "sync.png",
-        label: function() {
+        label: function () {
             return this.name || "viis-sync-customer-user";
         },
         paletteLabel: "sync customer user",

@@ -17,8 +17,8 @@ import { SYNC_DEFAULTS } from './constants';
  * @extends NodeDef
  */
 interface ViisSyncCustomerUserNodeDef extends NodeDef {
-    /** Access token for device authentication */
-    accessToken: string;
+    /** Device ID for authentication */
+    deviceId: string;
     /** Sync interval in minutes */
     syncInterval: number;
     /** Whether to sync on startup */
@@ -61,7 +61,7 @@ export = function (RED: NodeAPI) {
                 customerUserSyncHandler = new CustomerUserSyncHandler(
                     dbService,
                     node,
-                    config.accessToken,
+                    config.deviceId,
                     config.showDetailedLogs
                 );
 
