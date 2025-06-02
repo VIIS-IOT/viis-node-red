@@ -78,37 +78,44 @@ export class ModbusClientCore extends EventEmitter {
         }
     }
 
-    // Kết nối TCP với các tùy chọn nâng cao
+    // Kết nối TCP với các tùy chọn tối ưu cho STM32
     private async connectTCP(): Promise<void> {
         if (!this.config.host || !this.config.tcpPort) {
             throw new Error("Host and tcpPort are required for Modbus TCP");
         }
 
-        // Tùy chọn nâng cao cho kết nối TCP
+        // Tùy chọn tối ưu cho STM32 và embedded devices
         const tcpOptions = {
             port: this.config.tcpPort,
-            // Thêm các tùy chọn socket để cải thiện độ ổn định
+            // Tùy chọn socket được tối ưu cho embedded devices
             socketOptions: {
-                // Gửi gói tin keep-alive để giữ kết nối
-                keepAlive: true,
-                // Gửi gói tin keep-alive sau 10 giây không hoạt động
-                keepAliveInitialDelay: 10000,
-                // Đặt timeout cho socket (ms)
-                timeout: this.config.timeout || 5000,
-                // Không trì hoãn gửi dữ liệu (Nagle's algorithm)
-                noDelay: true
+                // KHÔNG dùng keep-alive với STM32 vì có thể gây vấn đề
+                keepAlive: false,
+                // Timeout ngắn hơn cho embedded devices
+                timeout: Math.min(this.config.timeout || 3000, 3000),
+                // Không trì hoãn gửi dữ liệu (quan trọng cho real-time)
+                noDelay: true,
+                // Thêm các tùy chọn cho embedded devices
+                family: 4, // Force IPv4
+                // Retry connection nhanh hơn
+                connectTimeout: 2000
             }
         };
 
-        this.node.log(`Connecting to Modbus TCP at ${this.config.host}:${this.config.tcpPort} with enhanced options`);
+        this.node.log(`[STM32-OPTIMIZED] Connecting to Modbus TCP at ${this.config.host}:${this.config.tcpPort}`);
 
         try {
-            // Thử kết nối với tùy chọn nâng cao
-            await this.client.connectTCP(this.config.host, tcpOptions);
-            this.node.log(`Successfully connected to Modbus TCP at ${this.config.host}:${this.config.tcpPort}`);
+            // Thử kết nối với timeout ngắn cho STM32
+            const connectPromise = this.client.connectTCP(this.config.host, tcpOptions);
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Connection timeout after 2s')), 2000);
+            });
+
+            await Promise.race([connectPromise, timeoutPromise]);
+            this.node.log(`[STM32-SUCCESS] Connected to STM32 Modbus at ${this.config.host}:${this.config.tcpPort}`);
         } catch (error) {
             const err = error as Error;
-            this.node.error(`Failed to connect to Modbus TCP at ${this.config.host}:${this.config.tcpPort}: ${err.message}`);
+            this.node.error(`[STM32-FAILED] Failed to connect to STM32 at ${this.config.host}:${this.config.tcpPort}: ${err.message}`);
             throw error;
         }
     }
@@ -183,14 +190,15 @@ export class ModbusClientCore extends EventEmitter {
     private scheduleReconnect(): void {
         // Nếu đã có timer đang chạy, không tạo thêm
         if (this.reconnectTimer) {
-            this.node.log(`Reconnect already scheduled, skipping new schedule`);
+            this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
             return;
         }
 
-        // Sử dụng thời gian reconnect ngắn hơn cho lần thử đầu tiên
-        const quickReconnectTime = Math.min(1000, this.config.reconnectInterval || 5000);
+        // STM32 cần thời gian recovery ngắn hơn nhưng ổn định
+        const quickReconnectTime = 2000; // 2 giây cho STM32
+        const standardReconnectTime = Math.max(this.config.reconnectInterval || 5000, 5000); // Tối thiểu 5s
 
-        this.node.log(`Scheduling quick reconnect in ${quickReconnectTime}ms for ${this.config.type}`);
+        this.node.log(`[STM32-RECONNECT] Scheduling quick reconnect in ${quickReconnectTime}ms`);
 
         // Thử kết nối lại nhanh
         this.reconnectTimer = setTimeout(async () => {
@@ -200,30 +208,25 @@ export class ModbusClientCore extends EventEmitter {
 
                 // Thử kết nối lại
                 await this.initializeClient();
-                this.node.log(`Reconnected successfully for ${this.config.type}`);
+                this.node.log(`[STM32-RECONNECT] Quick reconnect successful`);
 
                 // Xóa timer
                 clearTimeout(this.reconnectTimer!);
                 this.reconnectTimer = undefined;
 
-                // Kiểm tra kết nối
-                try {
-                    await this.client.readCoils(0, 1);
-                    this.node.log(`Connection verified successfully`);
-                } catch (verifyError) {
-                    this.node.error(`Connection verification failed: ${(verifyError as Error).message}`);
-                    throw verifyError;
-                }
+                // KHÔNG verify với readCoils ngay - STM32 cần thời gian ổn định
+                this.node.log(`[STM32-RECONNECT] Connection established, allowing STM32 to stabilize`);
+
             } catch (error) {
                 const err = error as Error;
-                this.node.error(`Quick reconnect failed: ${err.message}`);
+                this.node.warn(`[STM32-RECONNECT] Quick attempt failed: ${err.message}`);
 
                 // Xóa timer hiện tại
                 clearTimeout(this.reconnectTimer!);
                 this.reconnectTimer = undefined;
 
-                // Lên lịch thử lại với thời gian dài hơn
-                this.node.log(`Scheduling standard reconnect in ${this.config.reconnectInterval}ms for ${this.config.type}`);
+                // Lên lịch thử lại với thời gian dài hơn cho STM32
+                this.node.log(`[STM32-RECONNECT] Scheduling standard reconnect in ${standardReconnectTime}ms`);
                 this.reconnectTimer = setTimeout(async () => {
                     try {
                         // Tạo client mới lần nữa
@@ -231,34 +234,70 @@ export class ModbusClientCore extends EventEmitter {
 
                         // Thử kết nối lại
                         await this.initializeClient();
-                        this.node.log(`Reconnected successfully on standard attempt for ${this.config.type}`);
+                        this.node.log(`[STM32-RECONNECT] Standard reconnect successful`);
 
                         // Xóa timer
                         clearTimeout(this.reconnectTimer!);
                         this.reconnectTimer = undefined;
                     } catch (retryError) {
-                        this.node.error(`Standard reconnect failed: ${(retryError as Error).message}`);
+                        this.node.warn(`[STM32-RECONNECT] Standard attempt failed: ${(retryError as Error).message}`);
 
                         // Xóa timer
                         clearTimeout(this.reconnectTimer!);
                         this.reconnectTimer = undefined;
 
-                        // Lên lịch thử lại
-                        this.scheduleReconnect();
+                        // Lên lịch thử lại với exponential backoff cho STM32
+                        this.scheduleReconnectWithBackoff();
                     }
-                }, this.config.reconnectInterval);
+                }, standardReconnectTime);
             }
         }, quickReconnectTime);
     }
 
+    // Thêm exponential backoff cho STM32
+    private scheduleReconnectWithBackoff(attempt: number = 1): void {
+        const maxAttempts = 5;
+        const baseDelay = 5000; // 5 giây
+        const maxDelay = 30000; // Tối đa 30 giây
+
+        if (attempt > maxAttempts) {
+            this.node.error(`[STM32-RECONNECT] Max reconnection attempts (${maxAttempts}) reached. Stopping automatic reconnection.`);
+            return;
+        }
+
+        // Exponential backoff: 5s, 10s, 20s, 30s, 30s
+        const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+
+        this.node.log(`[STM32-RECONNECT] Scheduling backoff reconnect attempt ${attempt}/${maxAttempts} in ${delay}ms`);
+
+        this.reconnectTimer = setTimeout(async () => {
+            try {
+                this.client = new ModbusRTU();
+                await this.initializeClient();
+                this.node.log(`[STM32-RECONNECT] Backoff reconnect successful on attempt ${attempt}`);
+
+                clearTimeout(this.reconnectTimer!);
+                this.reconnectTimer = undefined;
+            } catch (error) {
+                this.node.warn(`[STM32-RECONNECT] Backoff attempt ${attempt} failed: ${(error as Error).message}`);
+
+                clearTimeout(this.reconnectTimer!);
+                this.reconnectTimer = undefined;
+
+                // Thử lại với attempt tăng lên
+                this.scheduleReconnectWithBackoff(attempt + 1);
+            }
+        }, delay);
+    }
+
 
     private startConnectionCheck(): void {
-        // Kiểm tra kết nối thường xuyên hơn (mỗi 10 giây)
+        // Kiểm tra kết nối ít thường xuyên hơn cho STM32 (mỗi 15 giây)
         setInterval(async () => {
             try {
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
                 if (!this.isConnected || !this.client.isOpen) {
-                    this.node.log("Connection check: Connection appears to be closed, attempting to reconnect...");
+                    this.node.log("[STM32-CHECK] Connection appears to be closed, attempting to reconnect...");
                     // Đánh dấu là đã ngắt kết nối
                     this.isConnected = false;
                     // Thử kết nối lại
@@ -266,29 +305,34 @@ export class ModbusClientCore extends EventEmitter {
                     return;
                 }
 
-                // Thử đọc 1 coil để kiểm tra kết nối thực tế
-                await this.client.readCoils(0, 1);
-
-                // Nếu đọc thành công nhưng trạng thái là disconnected, cập nhật lại
-                if (!this.isConnected) {
-                    this.isConnected = true;
-                    this.node.status({ fill: "green", shape: "dot", text: "Connected" });
-                    this.emit("modbus-status", { status: "connected" });
-                    this.node.log("Connection check: Connection restored");
+                // CHỈ kiểm tra connection status, KHÔNG đọc data để tránh làm phiền STM32
+                // STM32 có thể bận xử lý và không phản hồi ngay
+                if (this.client.isOpen && this.isConnected) {
+                    // Connection vẫn OK, không cần làm gì
+                    return;
                 }
+
+                // Nếu có vấn đề với connection state
+                if (!this.isConnected) {
+                    this.node.log("[STM32-CHECK] Connection state inconsistent, attempting reconnect...");
+                    await this.initializeClient();
+                }
+
             } catch (error) {
                 const err = error as Error;
-                this.node.log(`Connection check failed: ${err.message}`);
+                this.node.log(`[STM32-CHECK] Connection check failed: ${err.message}`);
 
                 // Nếu lỗi liên quan đến kết nối, đánh dấu là đã ngắt kết nối
                 if (err.message.includes("Timed out") ||
                     err.message.includes("Port Not Open") ||
                     err.message.includes("ECONNREFUSED") ||
                     err.message.includes("ETIMEDOUT") ||
-                    err.message.includes("ECONNRESET")) {
+                    err.message.includes("ECONNRESET") ||
+                    err.message.includes("socket hang up") ||
+                    err.message.includes("EPIPE")) {
 
                     this.isConnected = false;
-                    this.node.status({ fill: "red", shape: "ring", text: `Disconnected: ${err.message}` });
+                    this.node.status({ fill: "red", shape: "ring", text: `STM32 Disconnected` });
                     this.emit("modbus-status", { status: "disconnected", error: err.message });
 
                     // Đóng kết nối hiện tại nếu còn mở
@@ -305,13 +349,13 @@ export class ModbusClientCore extends EventEmitter {
                     this.handleError(err);
                 }
             }
-        }, 10000); // Kiểm tra mỗi 10 giây
+        }, 15000); // Kiểm tra mỗi 15 giây cho STM32
     }
 
     private async ensureConnected(): Promise<void> {
         // Kiểm tra kết nối hiện tại
         if (!this.isConnected || !this.client.isOpen) {
-            this.node.log("Connection lost or not initialized, attempting to reconnect...");
+            this.node.log("[STM32-ENSURE] Connection lost or not initialized, attempting to reconnect...");
 
             // Đóng kết nối hiện tại nếu còn mở
             try {
@@ -325,9 +369,9 @@ export class ModbusClientCore extends EventEmitter {
             // Tạo client mới để tránh vấn đề với client cũ
             this.client = new ModbusRTU();
 
-            // Thử kết nối lại
+            // Thử kết nối lại với retry logic tối ưu cho STM32
             let retryCount = 0;
-            const maxRetries = 3;
+            const maxRetries = 2; // Giảm số retry cho STM32
 
             while (retryCount < maxRetries) {
                 try {
@@ -336,114 +380,128 @@ export class ModbusClientCore extends EventEmitter {
                 } catch (error) {
                     retryCount++;
                     const err = error as Error;
-                    this.node.log(`Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
+                    this.node.log(`[STM32-ENSURE] Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
 
                     if (retryCount >= maxRetries) {
-                        throw new Error(`Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
+                        throw new Error(`[STM32-ENSURE] Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
                     }
 
-                    // Đợi một khoảng thời gian trước khi thử lại
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // Đợi lâu hơn cho STM32 recovery
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
         }
 
-        // Kiểm tra thử một thao tác đơn giản để xác nhận kết nối
-        try {
-            await this.client.readCoils(0, 1);
-        } catch (error) {
-            const err = error as Error;
-            this.node.log(`Connection verification failed: ${err.message}, forcing reinitialization...`);
+        // KHÔNG verify với readCoils cho STM32 - có thể gây thêm lỗi
+        // STM32 cần thời gian để ổn định sau khi kết nối
+        if (this.isConnected && this.client.isOpen) {
+            // Connection đã OK, không cần verify thêm
+            return;
+        }
 
-            // Đóng kết nối hiện tại
-            try {
-                this.client.close();
-            } catch (closeErr) {
-                // Bỏ qua lỗi khi đóng kết nối
-            }
-
-            // Tạo client mới
-            this.client = new ModbusRTU();
-            this.isConnected = false;
-
-            // Thử kết nối lại một lần nữa
-            await this.initializeClient();
-
-            // Kiểm tra lại kết nối
-            try {
-                await this.client.readCoils(0, 1);
-            } catch (verifyError) {
-                // Nếu vẫn thất bại, ném lỗi để hàm gọi xử lý
-                throw new Error(`Failed to establish a stable connection: ${(verifyError as Error).message}`);
-            }
+        // Chỉ verify nếu thực sự cần thiết
+        if (!this.isConnected) {
+            throw new Error("[STM32-ENSURE] Connection could not be established");
         }
     }
 
     public async readCoils(address: number, length: number): Promise<ModbusData> {
         await this.ensureConnected();
-        //this.node.log(`Modbus: Reading Coils at address ${address}, length ${length}...`);
+
         try {
-            const { data } = await this.client.readCoils(address, length);
-            //this.node.log(`Modbus: Successfully read Coils at address ${address}, length ${length}`);
+            // Thêm timeout wrapper cho STM32
+            const readPromise = this.client.readCoils(address, length);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Read coils timeout after 3s`)), 3000);
+            });
+
+            const { data } = await Promise.race([readPromise, timeoutPromise]);
             return { address, data };
         } catch (error) {
-            //this.node.log(`Modbus: Error reading Coils at address ${address}, length ${length}: ${(error as Error).message}`);
-            this.handleError(error as Error);
+            const err = error as Error;
+            this.node.warn(`[STM32-READ] Error reading coils at ${address}: ${err.message}`);
+            this.handleError(err);
             throw error;
         }
     }
 
     public async readInputRegisters(address: number, length: number): Promise<ModbusData> {
         await this.ensureConnected();
-        //this.node.log(`Modbus: Reading Input Registers at address ${address}, length ${length}...`);
+
         try {
-            const { data } = await this.client.readInputRegisters(address, length);
-            //this.node.log(`Modbus: Successfully read Input Registers at address ${address}, length ${length}`);
+            // Thêm timeout wrapper cho STM32
+            const readPromise = this.client.readInputRegisters(address, length);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Read input registers timeout after 3s`)), 3000);
+            });
+
+            const { data } = await Promise.race([readPromise, timeoutPromise]);
             return { address, data };
         } catch (error) {
-            //this.node.log(`Modbus: Error reading Input Registers at address ${address}, length ${length}: ${(error as Error).message}`);
-            this.handleError(error as Error);
+            const err = error as Error;
+            this.node.warn(`[STM32-READ] Error reading input registers at ${address}: ${err.message}`);
+            this.handleError(err);
             throw error;
         }
     }
 
     public async readHoldingRegisters(address: number, length: number): Promise<ModbusData> {
         await this.ensureConnected();
-        //this.node.log(`Modbus: Reading Holding Registers at address ${address}, length ${length}...`);
+
         try {
-            const { data } = await this.client.readHoldingRegisters(address, length);
-            //this.node.log(`Modbus: Successfully read Holding Registers at address ${address}, length ${length}`);
+            // Thêm timeout wrapper cho STM32
+            const readPromise = this.client.readHoldingRegisters(address, length);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Read holding registers timeout after 3s`)), 3000);
+            });
+
+            const { data } = await Promise.race([readPromise, timeoutPromise]);
             return { address, data };
         } catch (error) {
-            //this.node.log(`Modbus: Error reading Holding Registers at address ${address}, length ${length}: ${(error as Error).message}`);
-            this.handleError(error as Error);
+            const err = error as Error;
+            this.node.warn(`[STM32-READ] Error reading holding registers at ${address}: ${err.message}`);
+            this.handleError(err);
             throw error;
         }
     }
 
     // Ghi Holding Register
     public async writeRegister(address: number, value: number): Promise<void> {
-        if (!this.isConnected) throw new Error("Modbus client not connected");
-        //this.node.log(`Modbus: Writing Holding Register at address ${address}, value ${value}...`); // Log write request
+        await this.ensureConnected();
+
         try {
-            await this.client.writeRegister(address, value);
-            //this.node.log(`Modbus: Successfully wrote Holding Register at address ${address}, value ${value}`); // Log write success
+            // Thêm timeout wrapper cho STM32 write operations
+            const writePromise = this.client.writeRegister(address, value);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Write register timeout after 3s`)), 3000);
+            });
+
+            await Promise.race([writePromise, timeoutPromise]);
+            this.node.log(`[STM32-WRITE] Successfully wrote register ${address} = ${value}`);
         } catch (error) {
-            //this.node.log(`Modbus: Error writing Holding Register at address ${address}, value ${value}: ${(error as Error).message}`); // Log write error
-            this.handleError(error as Error);
+            const err = error as Error;
+            this.node.warn(`[STM32-WRITE] Error writing register ${address}: ${err.message}`);
+            this.handleError(err);
             throw error;
         }
     }
 
     public async writeCoil(address: number, value: boolean): Promise<void> {
         await this.ensureConnected();
-        //this.node.log(`Modbus: Writing Coil at address ${address}, value ${value}...`);
+
         try {
-            await this.client.writeCoil(address, value);
-            //this.node.log(`Modbus: Successfully wrote Coil at address ${address}, value ${value}`);
+            // Thêm timeout wrapper cho STM32 write operations
+            const writePromise = this.client.writeCoil(address, value);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Write coil timeout after 3s`)), 3000);
+            });
+
+            await Promise.race([writePromise, timeoutPromise]);
+            this.node.log(`[STM32-WRITE] Successfully wrote coil ${address} = ${value}`);
         } catch (error) {
-            //this.node.log(`Modbus: Error writing Coil at address ${address}, value ${value}: ${(error as Error).message}`);
-            this.handleError(error as Error);
+            const err = error as Error;
+            this.node.warn(`[STM32-WRITE] Error writing coil ${address}: ${err.message}`);
+            this.handleError(err);
             throw error;
         }
     }
