@@ -76,6 +76,12 @@ export = function (RED: NodeAPI) {
 
                 logger.log("All clients initialized successfully");
 
+                // Validate single modbus connection requirement
+                const isValidConnection = ClientRegistry.validateSingleModbusConnection(node);
+                if (!isValidConnection) {
+                    throw new Error("CRITICAL: Multiple modbus connections detected! This violates system requirements.");
+                }
+
                 // Initialize database service
                 const databaseService = new DatabaseService(logger);
 
