@@ -7,6 +7,7 @@ import { DataSource, Repository } from 'typeorm';
 import { TabiotCustomer } from '../../../orm/entities/customer/customer';
 import { IotCustomerUser } from '../../../orm/entities/customer/customer_user';
 import { IotCustomerUserCredentials } from '../../../orm/entities/customer/customer_user_credentials';
+import { IotDynamicRole } from '../../../orm/entities/dynamicRole/dynamicRole';
 import { AppDataSource } from '../../../orm/dataSource';
 import { logger } from '../utils/logger';
 
@@ -113,6 +114,17 @@ export class DatabaseService {
             throw new Error('Database not initialized');
         }
         return this.dataSource.getRepository(IotCustomerUserCredentials);
+    }
+
+    /**
+     * Gets the repository for IotDynamicRole entities
+     * @returns Repository for dynamic role entities
+     */
+    getDynamicRoleRepository(): Repository<IotDynamicRole> {
+        if (!this.isInitialized()) {
+            throw new Error('Database not initialized');
+        }
+        return this.dataSource.getRepository(IotDynamicRole);
     }
 
     /**

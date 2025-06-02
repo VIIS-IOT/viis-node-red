@@ -44,6 +44,17 @@ export interface ServerCustomer {
 }
 
 /**
+ * Server Dynamic Role data structure
+ */
+export interface ServerDynamicRole {
+    name: string;                    // Required
+    label?: string;
+    role?: string;
+    sections?: string;
+    iot_customer?: string;           // Customer reference
+}
+
+/**
  * Server Customer User data structure
  */
 export interface ServerCustomerUser {
@@ -72,6 +83,7 @@ export interface ServerCustomerUser {
     is_deactivated?: number;
     customer_id?: string;
     iot_dynamic_role?: string;
+    dynamicRole?: ServerDynamicRole;  // Add dynamic role information
     credentials?: ServerCustomerUserCredentials;
 }
 

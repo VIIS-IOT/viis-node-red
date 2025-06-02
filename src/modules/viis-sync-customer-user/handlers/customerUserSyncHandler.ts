@@ -7,11 +7,12 @@ import { Node } from 'node-red';
 import { Repository } from 'typeorm';
 import { DatabaseService } from '../services/databaseService';
 import { ApiService } from '../services/apiService';
-import { ServerCustomer, ServerCustomerUser, ServerCustomerUserCredentials } from '../interfaces/types';
+import { ServerCustomer, ServerCustomerUser, ServerCustomerUserCredentials, ServerDynamicRole } from '../interfaces/types';
 import { logger } from '../utils/logger';
 import { TabiotCustomer } from '../../../orm/entities/customer/customer';
 import { IotCustomerUser } from '../../../orm/entities/customer/customer_user';
 import { IotCustomerUserCredentials } from '../../../orm/entities/customer/customer_user_credentials';
+import { IotDynamicRole } from '../../../orm/entities/dynamicRole/dynamicRole';
 import { adjustToUTC7 } from '../../../ultils/helper';
 import { SyncStateService, SyncResult } from '../services/syncStateService';
 
@@ -25,6 +26,8 @@ export class CustomerUserSyncHandler {
     private readonly customerUserRepo: Repository<IotCustomerUser>;
     /** Repository for customer user credentials */
     private readonly credentialsRepo: Repository<IotCustomerUserCredentials>;
+    /** Repository for dynamic roles */
+    private readonly dynamicRoleRepo: Repository<IotDynamicRole>;
     /** Node-RED node instance */
     private readonly node: Node;
     /** API service for server communication */
@@ -63,6 +66,7 @@ export class CustomerUserSyncHandler {
         this.customerRepo = dbService.getCustomerRepository();
         this.customerUserRepo = dbService.getCustomerUserRepository();
         this.credentialsRepo = dbService.getCustomerUserCredentialsRepository();
+        this.dynamicRoleRepo = dbService.getDynamicRoleRepository();
         this.node = node;
         this.apiService = new ApiService(deviceId, maxRetries, node, showDetailedLogs);
         this.syncStateService = new SyncStateService(node);
@@ -235,7 +239,6 @@ export class CustomerUserSyncHandler {
                 logger.info(this.node, `No users found for customer: ${serverCustomer.name}`);
             }
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             logger.errorWithStack(this.node, `Failed to sync customer ${serverCustomer.name}`, error as Error, this.showDetailedLogs);
             throw error;
         }
@@ -399,18 +402,67 @@ export class CustomerUserSyncHandler {
 
             logger.info(this.node, `Synchronizing ${serverCustomer.users.length} users for customer: ${serverCustomer.name}`);
 
-            // Process each user
+            // STEP 1: Pre-sync all unique dynamic roles for this customer
+            // This ensures all roles exist before we try to create users that reference them
+            await this.preSyncDynamicRolesForCustomer(serverCustomer);
+
+            // STEP 2: Process each user (roles should now exist)
             for (const serverUser of serverCustomer.users) {
                 await this.syncUser(serverUser, serverCustomer.name);
             }
 
-            // Check for deleted users
+            // STEP 3: Check for deleted users
             await this.detectDeletedUsers(serverCustomer.users, serverCustomer.name);
 
             logger.info(this.node, `Completed synchronizing users for customer: ${serverCustomer.name}`);
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            logger.error(this.node, `Failed to sync users for customer ${serverCustomer.name}: ${errorMessage}`);
+            logger.errorWithStack(this.node, `Failed to sync users for customer ${serverCustomer.name}`, error as Error, this.showDetailedLogs);
+            throw error;
+        }
+    }
+
+    /**
+     * Pre-synchronizes all unique dynamic roles for a customer
+     * This ensures all roles exist before users are created/updated
+     * @param serverCustomer - Customer data from server
+     * @returns Promise that resolves when all dynamic roles are synchronized
+     */
+    private async preSyncDynamicRolesForCustomer(serverCustomer: ServerCustomer): Promise<void> {
+        try {
+            if (!serverCustomer.users || serverCustomer.users.length === 0) {
+                return;
+            }
+
+            // Collect all unique dynamic roles from users
+            const uniqueRoles = new Map<string, ServerDynamicRole>();
+
+            for (const user of serverCustomer.users) {
+                if (user.dynamicRole && user.dynamicRole.name) {
+                    uniqueRoles.set(user.dynamicRole.name, user.dynamicRole);
+                }
+            }
+
+            if (uniqueRoles.size === 0) {
+                logger.info(this.node, `No dynamic roles to pre-sync for customer: ${serverCustomer.name}`);
+                return;
+            }
+
+            logger.info(this.node, `Pre-syncing ${uniqueRoles.size} unique dynamic roles for customer: ${serverCustomer.name}`);
+
+            // Sync each unique role
+            for (const [roleName, role] of uniqueRoles) {
+                try {
+                    logger.info(this.node, `Pre-syncing dynamic role: ${roleName}`);
+                    await this.syncDynamicRole(role, serverCustomer.name);
+                } catch (error) {
+                    logger.errorWithStack(this.node, `Failed to pre-sync dynamic role ${roleName}`, error as Error, this.showDetailedLogs);
+                    // Continue with other roles even if one fails
+                }
+            }
+
+            logger.info(this.node, `Completed pre-syncing dynamic roles for customer: ${serverCustomer.name}`);
+        } catch (error) {
+            logger.errorWithStack(this.node, `Failed to pre-sync dynamic roles for customer ${serverCustomer.name}`, error as Error, this.showDetailedLogs);
             throw error;
         }
     }
@@ -425,6 +477,19 @@ export class CustomerUserSyncHandler {
         try {
             logger.info(this.node, `Synchronizing user: ${serverUser.name}`);
             logger.debug(this.node, `User data: ${JSON.stringify(serverUser)}`, this.showDetailedLogs);
+
+            // Validate dynamic role reference if present
+            if (serverUser.iot_dynamic_role) {
+                // Check if the referenced role exists (should exist from pre-sync)
+                const existingRole = await this.dynamicRoleRepo.findOne({
+                    where: { name: serverUser.iot_dynamic_role }
+                });
+                if (!existingRole) {
+                    logger.warn(this.node, `Dynamic role ${serverUser.iot_dynamic_role} not found, will clear role reference for user ${serverUser.name}`);
+                    // Clear the role reference to avoid foreign key constraint error
+                    serverUser.iot_dynamic_role = undefined;
+                }
+            }
 
             // Check if user already exists in local database
             const localUser = await this.customerUserRepo.findOne({
@@ -444,8 +509,7 @@ export class CustomerUserSyncHandler {
                 await this.syncUserCredentials(serverUser.credentials, serverUser.name);
             }
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            logger.error(this.node, `Failed to sync user ${serverUser.name}: ${errorMessage}`);
+            logger.errorWithStack(this.node, `Failed to sync user ${serverUser.name}`, error as Error, this.showDetailedLogs);
             throw error;
         }
     }
@@ -699,9 +763,150 @@ export class CustomerUserSyncHandler {
     }
 
     /**
+     * Synchronizes a dynamic role
+     * @param serverDynamicRole - Dynamic role data from server
+     * @param customerId - Parent customer ID
+     * @returns Promise that resolves when the dynamic role is synchronized
+     */
+    private async syncDynamicRole(serverDynamicRole: ServerDynamicRole, customerId: string): Promise<void> {
+        try {
+            logger.info(this.node, `Synchronizing dynamic role: ${serverDynamicRole.name}`);
+            logger.debug(this.node, `Dynamic role data: ${JSON.stringify(serverDynamicRole)}`, this.showDetailedLogs);
+
+            // Check if dynamic role already exists in local database
+            const localDynamicRole = await this.dynamicRoleRepo.findOne({
+                where: { name: serverDynamicRole.name }
+            });
+
+            if (!localDynamicRole) {
+                // Dynamic role doesn't exist locally, create it
+                await this.createDynamicRole(serverDynamicRole, customerId);
+            } else {
+                // Dynamic role exists locally, update if needed
+                await this.updateDynamicRoleIfNeeded(localDynamicRole, serverDynamicRole, customerId);
+            }
+        } catch (error) {
+            logger.errorWithStack(this.node, `Failed to sync dynamic role ${serverDynamicRole.name}`, error as Error, this.showDetailedLogs);
+            throw error;
+        }
+    }
+
+    /**
+     * Creates a new dynamic role in the local database
+     * @param serverDynamicRole - Dynamic role data from server
+     * @param customerId - Parent customer ID
+     * @returns Promise that resolves when the dynamic role is created
+     */
+    private async createDynamicRole(serverDynamicRole: ServerDynamicRole, customerId: string): Promise<void> {
+        const createTimer = logger.startTimer(`Create dynamic role: ${serverDynamicRole.name}`);
+
+        try {
+            logger.info(this.node, `Creating new dynamic role: ${serverDynamicRole.name}`);
+
+            // Create new dynamic role entity
+            const newDynamicRole = new IotDynamicRole();
+            newDynamicRole.name = serverDynamicRole.name;
+            newDynamicRole.label = serverDynamicRole.label;
+            newDynamicRole.role = serverDynamicRole.role;
+            newDynamicRole.sections = serverDynamicRole.sections;
+
+            // Set the customer relationship if provided
+            if (serverDynamicRole.iot_customer || customerId) {
+                // Get the customer entity to establish the relationship
+                const customer = await this.customerRepo.findOne({
+                    where: { name: serverDynamicRole.iot_customer || customerId }
+                });
+                if (customer) {
+                    newDynamicRole.iot_customer = customer;
+                }
+            }
+
+            // Set the created and modified timestamps
+            newDynamicRole.creation = adjustToUTC7(new Date());
+            newDynamicRole.modified = adjustToUTC7(new Date());
+
+            if (this.showDetailedLogs) {
+                logger.debug(this.node, `Dynamic role entity prepared: ${JSON.stringify(newDynamicRole, null, 2)}`, true);
+            }
+
+            // Save the dynamic role to the database
+            const saveTimer = logger.startTimer(`DB save dynamic role: ${serverDynamicRole.name}`);
+            await this.dynamicRoleRepo.save(newDynamicRole);
+            logger.endTimer(this.node, saveTimer, this.showDetailedLogs);
+
+            logger.dbOperation(this.node, 'SAVE', 'IotDynamicRole', { name: serverDynamicRole.name }, this.showDetailedLogs);
+
+            logger.endTimer(this.node, createTimer, this.showDetailedLogs);
+            logger.info(this.node, `Successfully created dynamic role: ${serverDynamicRole.name}`);
+        } catch (error) {
+            logger.endTimer(this.node, createTimer, this.showDetailedLogs);
+            logger.errorWithStack(this.node, `Failed to create dynamic role ${serverDynamicRole.name}`, error as Error, this.showDetailedLogs);
+            throw error;
+        }
+    }
+
+    /**
+     * Updates a local dynamic role if the server version is newer
+     * @param localDynamicRole - Local dynamic role entity
+     * @param serverDynamicRole - Dynamic role data from server
+     * @param customerId - Parent customer ID
+     * @returns Promise that resolves when the dynamic role is updated (if needed)
+     */
+    private async updateDynamicRoleIfNeeded(localDynamicRole: IotDynamicRole, serverDynamicRole: ServerDynamicRole, customerId: string): Promise<void> {
+        try {
+            logger.info(this.node, `Checking for updates to dynamic role: ${serverDynamicRole.name}`);
+
+            // Check if any fields need updating
+            let needsUpdate = false;
+
+            if (localDynamicRole.label !== serverDynamicRole.label ||
+                localDynamicRole.role !== serverDynamicRole.role ||
+                localDynamicRole.sections !== serverDynamicRole.sections) {
+                needsUpdate = true;
+            }
+
+            // Check if customer relationship needs updating
+            const expectedCustomerName = serverDynamicRole.iot_customer || customerId;
+            if (expectedCustomerName && (!localDynamicRole.iot_customer || localDynamicRole.iot_customer.name !== expectedCustomerName)) {
+                needsUpdate = true;
+            }
+
+            if (!needsUpdate) {
+                logger.info(this.node, `No updates needed for dynamic role: ${serverDynamicRole.name}`);
+                return;
+            }
+
+            // Update dynamic role fields
+            localDynamicRole.label = serverDynamicRole.label;
+            localDynamicRole.role = serverDynamicRole.role;
+            localDynamicRole.sections = serverDynamicRole.sections;
+
+            // Update customer relationship if needed
+            if (expectedCustomerName && (!localDynamicRole.iot_customer || localDynamicRole.iot_customer.name !== expectedCustomerName)) {
+                const customer = await this.customerRepo.findOne({
+                    where: { name: expectedCustomerName }
+                });
+                if (customer) {
+                    localDynamicRole.iot_customer = customer;
+                }
+            }
+
+            // Update the modified timestamp
+            localDynamicRole.modified = adjustToUTC7(new Date());
+
+            // Save the updated dynamic role to the database
+            await this.dynamicRoleRepo.save(localDynamicRole);
+            logger.info(this.node, `Updated dynamic role: ${serverDynamicRole.name}`);
+        } catch (error) {
+            logger.errorWithStack(this.node, `Failed to update dynamic role ${serverDynamicRole.name}`, error as Error, this.showDetailedLogs);
+            throw error;
+        }
+    }
+
+    /**
      * Detects users that exist locally but are not present in server data
      * Marks these users as deleted in the local database
-     * 
+     *
      * @param serverUsers - Array of users from the server
      * @param customerId - Customer ID
      * @returns Promise that resolves when deleted users are processed
