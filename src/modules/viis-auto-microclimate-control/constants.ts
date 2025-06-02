@@ -115,8 +115,9 @@ export const CURTAIN_CONFIG = {
     ],
 
     DEFAULT_THRESHOLDS: {
-        LIGHT_DAI: 50000, // lux
-        LIGHT_THU: 30000, // lux
+        LIGHT_DAI: 50000, // lux - outdoor light threshold for extending curtain
+        LIGHT_THU: 30000, // lux - outdoor light threshold for retracting curtain
+        LIGHT_INDOOR_THU: 15000, // lux - indoor light threshold for retracting curtain (when too dark inside)
         TOLERANCE_TIME: 5 // minutes
     }
 } as const;
@@ -156,15 +157,19 @@ export const CONFIG_KEYS = [
     "set_auto_mode_luoi",
     "set_light_dai_luoi_1",
     "set_light_thu_luoi_1",
+    "set_light_indoor_thu_luoi_1", // New: indoor light threshold for luoi_1
     "set_tolerance_light_luoi_1",
     "set_light_dai_luoi_2",
     "set_light_thu_luoi_2",
+    "set_light_indoor_thu_luoi_2", // New: indoor light threshold for luoi_2
     "set_tolerance_light_luoi_2",
     "set_light_dai_luoi_3",
     "set_light_thu_luoi_3",
+    "set_light_indoor_thu_luoi_3", // New: indoor light threshold for luoi_3
     "set_tolerance_light_luoi_3",
     "set_light_dai_luoi_4",
     "set_light_thu_luoi_4",
+    "set_light_indoor_thu_luoi_4", // New: indoor light threshold for luoi_4
     "set_tolerance_light_luoi_4",
 
     // Environmental settings

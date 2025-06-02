@@ -47,15 +47,19 @@ export interface AutoControlConfig {
     set_auto_mode_luoi?: number;
     set_light_dai_luoi_1?: number;
     set_light_thu_luoi_1?: number;
+    set_light_indoor_thu_luoi_1?: number; // New: indoor light threshold for luoi_1
     set_tolerance_light_luoi_1?: number;
     set_light_dai_luoi_2?: number;
     set_light_thu_luoi_2?: number;
+    set_light_indoor_thu_luoi_2?: number; // New: indoor light threshold for luoi_2
     set_tolerance_light_luoi_2?: number;
     set_light_dai_luoi_3?: number;
     set_light_thu_luoi_3?: number;
+    set_light_indoor_thu_luoi_3?: number; // New: indoor light threshold for luoi_3
     set_tolerance_light_luoi_3?: number;
     set_light_dai_luoi_4?: number;
     set_light_thu_luoi_4?: number;
+    set_light_indoor_thu_luoi_4?: number; // New: indoor light threshold for luoi_4
     set_tolerance_light_luoi_4?: number;
 
     // Environmental settings

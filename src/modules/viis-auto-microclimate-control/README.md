@@ -56,15 +56,27 @@ The node reads configuration from the global variable `configKeyValues` containi
 ### Curtain Settings
 ```javascript
 {
-  "set_mode_luoi": 1,                 // Enable curtain control
-  "set_light_dai_luoi_1": 50000,      // Light threshold for extending (lux)
-  "set_light_thu_luoi_1": 30000,      // Light threshold for retracting (lux)
-  "set_tolerance_light_luoi_1": 5,    // Tolerance time (minutes)
-  "set_light_dai_luoi_2": 50000,      // Luoi 2 extend threshold
-  "set_light_thu_luoi_2": 30000,      // Luoi 2 retract threshold
-  "set_tolerance_light_luoi_2": 5     // Luoi 2 tolerance time
+  "set_mode_luoi": 1,                      // Enable curtain control
+  "set_light_dai_luoi_1": 50000,          // Outdoor light threshold for extending (lux)
+  "set_light_thu_luoi_1": 30000,          // Outdoor light threshold for retracting (lux)
+  "set_light_indoor_thu_luoi_1": 15000,   // Indoor light threshold for retracting (lux)
+  "set_tolerance_light_luoi_1": 5,        // Tolerance time (minutes)
+  "set_light_dai_luoi_2": 50000,          // Luoi 2 outdoor extend threshold
+  "set_light_thu_luoi_2": 30000,          // Luoi 2 outdoor retract threshold
+  "set_light_indoor_thu_luoi_2": 15000,   // Luoi 2 indoor retract threshold
+  "set_tolerance_light_luoi_2": 5         // Luoi 2 tolerance time
 }
 ```
+
+#### Curtain Control Logic
+The curtain control now uses both outdoor and indoor light sensors for better automation:
+
+- **Extend curtains (dai)**: When `light_outdoor >= dai_threshold`
+- **Retract curtains (thu)**: When either:
+  - `light_outdoor <= thu_threshold` (original logic), OR
+  - `light_indoor <= indoor_thu_threshold` (new logic - prevents over-darkening)
+
+This dual-sensor approach solves the problem where curtains would stay closed even when indoor light becomes too low, because outdoor light doesn't change when curtains are closed.
 
 ## Input Data
 

@@ -124,9 +124,17 @@
     <h4>Curtain Settings</h4>
     <ul>
         <li><code>set_mode_luoi</code>: Enable/disable curtain control (0=off, 1=on)</li>
-        <li><code>set_light_dai_luoi_1/2</code>: Light threshold for extending curtains (lux)</li>
-        <li><code>set_light_thu_luoi_1/2</code>: Light threshold for retracting curtains (lux)</li>
+        <li><code>set_light_dai_luoi_1/2</code>: Outdoor light threshold for extending curtains (lux)</li>
+        <li><code>set_light_thu_luoi_1/2</code>: Outdoor light threshold for retracting curtains (lux)</li>
+        <li><code>set_light_indoor_thu_luoi_1/2</code>: Indoor light threshold for retracting curtains when too dark inside (lux)</li>
         <li><code>set_tolerance_light_luoi_1/2</code>: Tolerance time in minutes</li>
+    </ul>
+
+    <h5>Curtain Control Logic</h5>
+    <p>Curtains will:</p>
+    <ul>
+        <li><strong>Extend (dai)</strong>: When outdoor light ≥ dai threshold</li>
+        <li><strong>Retract (thu)</strong>: When outdoor light ≤ thu threshold OR indoor light ≤ indoor thu threshold</li>
     </ul>
     
     <h3>Input Data</h3>

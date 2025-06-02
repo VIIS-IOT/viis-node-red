@@ -130,14 +130,15 @@ const testScenarios = {
         ]
     },
 
-    // Scenario 4: High light - curtain extension
+    // Scenario 4: High outdoor light - curtain extension
     scenario4: {
-        description: "High light - should extend curtains after tolerance",
+        description: "High outdoor light - should extend curtains after tolerance",
         config: { ...exampleConfig },
         sensorData: {
             ...exampleSensorData,
             temp_indoor: 24.0,
-            light_indoor: 55000 // Above dai threshold (50000 lux)
+            light_outdoor: 55000, // Above dai threshold (50000 lux)
+            light_indoor: 25000   // Indoor light still good
         },
         expectedActions: [
             "Start tolerance timer for curtain extension",
@@ -145,8 +146,24 @@ const testScenarios = {
         ]
     },
 
-    // Scenario 5: Rotation mode
+    // Scenario 5: Low indoor light - curtain retraction (new logic)
     scenario5: {
+        description: "Low indoor light - should retract curtains to allow more light",
+        config: { ...exampleConfig },
+        sensorData: {
+            ...exampleSensorData,
+            temp_indoor: 24.0,
+            light_outdoor: 40000, // Between thresholds (not triggering outdoor logic)
+            light_indoor: 10000   // Below indoor thu threshold (15000 lux)
+        },
+        expectedActions: [
+            "Start tolerance timer for curtain retraction due to low indoor light",
+            "After 5 minutes: retract curtains (thu)"
+        ]
+    },
+
+    // Scenario 6: Rotation mode
+    scenario6: {
         description: "Fan rotation mode - should rotate fan groups",
         config: {
             ...exampleConfig,

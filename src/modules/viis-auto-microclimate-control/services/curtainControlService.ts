@@ -48,30 +48,41 @@ export class CurtainControlService implements ICurtainControlService {
             }
 
             const lightOutdoor = sensorData.light_outdoor;
+            const lightIndoor = sensorData.light_indoor;
+
             if (lightOutdoor === undefined) {
                 this.logger.warn("Missing outdoor light data for curtain control");
                 return [];
             }
 
+            if (lightIndoor === undefined) {
+                this.logger.warn("Missing indoor light data for curtain control");
+                return [];
+            }
+
             const actions: ControlAction[] = [];
 
-            // Process luoi_1 control
+            // Process luoi_1 control with both outdoor and indoor light
             const luoi1Actions = await this.processLuoiControl(
                 "luoi_1",
                 lightOutdoor,
+                lightIndoor,
                 config.set_light_dai_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI,
                 config.set_light_thu_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU,
+                config.set_light_indoor_thu_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_INDOOR_THU,
                 config.set_tolerance_light_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME,
                 deviceStatus
             );
             actions.push(...luoi1Actions);
 
-            // Process luoi_2 control
+            // Process luoi_2 control with both outdoor and indoor light
             const luoi2Actions = await this.processLuoiControl(
                 "luoi_2",
                 lightOutdoor,
+                lightIndoor,
                 config.set_light_dai_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI,
                 config.set_light_thu_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU,
+                config.set_light_indoor_thu_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_INDOOR_THU,
                 config.set_tolerance_light_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME,
                 deviceStatus
             );
@@ -90,13 +101,15 @@ export class CurtainControlService implements ICurtainControlService {
     }
 
     /**
-     * Process control for a specific luoi based on outdoor light
+     * Process control for a specific luoi based on both outdoor and indoor light
      */
     private async processLuoiControl(
         luoiKey: string,
-        lightValue: number,
+        lightOutdoor: number,
+        lightIndoor: number,
         daiThreshold: number,
         thuThreshold: number,
+        indoorThuThreshold: number,
         toleranceMinutes: number,
         deviceStatus: DeviceStatus
     ): Promise<ControlAction[]> {
@@ -113,18 +126,27 @@ export class CurtainControlService implements ICurtainControlService {
             const currentThuState = deviceStatus[thuKey as keyof DeviceStatus] || false;
             const currentDaiState = deviceStatus[daiKey as keyof DeviceStatus] || false;
 
-            // Determine desired action based on outdoor light thresholds
+            // Determine desired action based on light thresholds
             let desiredAction: "dai" | "thu" | "none" = "none";
 
-            if (lightValue >= daiThreshold) {
+            if (lightOutdoor >= daiThreshold) {
                 // Outdoor light is high, should extend curtain (dai) to block sunlight
                 if (!currentDaiState) {
                     desiredAction = "dai";
                 }
-            } else if (lightValue <= thuThreshold) {
-                // Outdoor light is low, should retract curtain (thu) to allow light in
+            } else if (lightOutdoor <= thuThreshold || lightIndoor <= indoorThuThreshold) {
+                // Should retract curtain (thu) if:
+                // 1. Outdoor light is low (original logic), OR
+                // 2. Indoor light is too low (new logic - curtain blocking too much light)
                 if (!currentThuState) {
                     desiredAction = "thu";
+
+                    // Log the reason for better debugging
+                    if (lightOutdoor <= thuThreshold) {
+                        this.logger.debug(`${luoiKey}: thu action due to low outdoor light (${lightOutdoor} <= ${thuThreshold})`);
+                    } else {
+                        this.logger.debug(`${luoiKey}: thu action due to low indoor light (${lightIndoor} <= ${indoorThuThreshold})`);
+                    }
                 }
             }
 
@@ -143,13 +165,13 @@ export class CurtainControlService implements ICurtainControlService {
                     luoiId: luoiKey,
                     startTime: getCurrentTimestamp(),
                     targetAction: desiredAction,
-                    lightValue: lightValue
+                    lightValue: lightOutdoor // Store outdoor light value for reference
                 };
 
                 toleranceTimers.push(newTimer);
                 this.saveToleranceTimers(toleranceTimers);
 
-                this.logger.debug(`Started tolerance timer for ${luoiKey}: ${desiredAction} action (light_outdoor=${lightValue}, threshold=${desiredAction === 'dai' ? daiThreshold : thuThreshold})`);
+                this.logger.debug(`Started tolerance timer for ${luoiKey}: ${desiredAction} action (light_outdoor=${lightOutdoor}, light_indoor=${lightIndoor}, threshold=${desiredAction === 'dai' ? daiThreshold : thuThreshold})`);
                 return [];
             }
 
@@ -172,7 +194,7 @@ export class CurtainControlService implements ICurtainControlService {
                 // Action changed, restart timer
                 existingTimer.targetAction = desiredAction;
                 existingTimer.startTime = getCurrentTimestamp();
-                existingTimer.lightValue = lightValue;
+                existingTimer.lightValue = lightOutdoor; // Update with current outdoor light
                 this.saveToleranceTimers(toleranceTimers);
 
                 this.logger.debug(`Restarted tolerance timer for ${luoiKey}: ${desiredAction} action`);
