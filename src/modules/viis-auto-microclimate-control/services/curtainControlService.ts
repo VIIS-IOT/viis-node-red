@@ -13,8 +13,8 @@ import {
     ILogger,
     CurtainToleranceTimer
 } from "../interfaces/types";
-import { 
-    CONTEXT_KEYS, 
+import {
+    CONTEXT_KEYS,
     CURTAIN_CONFIG,
     MODBUS_FUNCTION_CODES
 } from "../constants";
@@ -36,8 +36,8 @@ export class CurtainControlService implements ICurtainControlService {
      * Process curtain control based on configuration and sensor data
      */
     async processCurtainControl(
-        config: AutoControlConfig, 
-        sensorData: SensorData, 
+        config: AutoControlConfig,
+        sensorData: SensorData,
         deviceStatus: DeviceStatus
     ): Promise<ControlAction[]> {
         try {
@@ -47,9 +47,9 @@ export class CurtainControlService implements ICurtainControlService {
                 return [];
             }
 
-            const lightIndoor = sensorData.light_indoor;
-            if (lightIndoor === undefined) {
-                this.logger.warn("Missing indoor light data for curtain control");
+            const lightOutdoor = sensorData.light_outdoor;
+            if (lightOutdoor === undefined) {
+                this.logger.warn("Missing outdoor light data for curtain control");
                 return [];
             }
 
@@ -58,7 +58,7 @@ export class CurtainControlService implements ICurtainControlService {
             // Process luoi_1 control
             const luoi1Actions = await this.processLuoiControl(
                 "luoi_1",
-                lightIndoor,
+                lightOutdoor,
                 config.set_light_dai_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI,
                 config.set_light_thu_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU,
                 config.set_tolerance_light_luoi_1 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME,
@@ -69,7 +69,7 @@ export class CurtainControlService implements ICurtainControlService {
             // Process luoi_2 control
             const luoi2Actions = await this.processLuoiControl(
                 "luoi_2",
-                lightIndoor,
+                lightOutdoor,
                 config.set_light_dai_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI,
                 config.set_light_thu_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU,
                 config.set_tolerance_light_luoi_2 || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME,
@@ -90,7 +90,7 @@ export class CurtainControlService implements ICurtainControlService {
     }
 
     /**
-     * Process control for a specific luoi
+     * Process control for a specific luoi based on outdoor light
      */
     private async processLuoiControl(
         luoiKey: string,
@@ -113,16 +113,16 @@ export class CurtainControlService implements ICurtainControlService {
             const currentThuState = deviceStatus[thuKey as keyof DeviceStatus] || false;
             const currentDaiState = deviceStatus[daiKey as keyof DeviceStatus] || false;
 
-            // Determine desired action based on light thresholds
+            // Determine desired action based on outdoor light thresholds
             let desiredAction: "dai" | "thu" | "none" = "none";
-            
+
             if (lightValue >= daiThreshold) {
-                // Light is high, should extend (dai)
+                // Outdoor light is high, should extend curtain (dai) to block sunlight
                 if (!currentDaiState) {
                     desiredAction = "dai";
                 }
             } else if (lightValue <= thuThreshold) {
-                // Light is low, should retract (thu)
+                // Outdoor light is low, should retract curtain (thu) to allow light in
                 if (!currentThuState) {
                     desiredAction = "thu";
                 }
@@ -145,26 +145,26 @@ export class CurtainControlService implements ICurtainControlService {
                     targetAction: desiredAction,
                     lightValue: lightValue
                 };
-                
+
                 toleranceTimers.push(newTimer);
                 this.saveToleranceTimers(toleranceTimers);
-                
-                this.logger.debug(`Started tolerance timer for ${luoiKey}: ${desiredAction} action (light=${lightValue}, threshold=${desiredAction === 'dai' ? daiThreshold : thuThreshold})`);
+
+                this.logger.debug(`Started tolerance timer for ${luoiKey}: ${desiredAction} action (light_outdoor=${lightValue}, threshold=${desiredAction === 'dai' ? daiThreshold : thuThreshold})`);
                 return [];
             }
 
             // Check if existing timer has elapsed and action is still needed
             if (existingTimer.targetAction === desiredAction) {
                 const toleranceMs = minutesToMs(toleranceMinutes);
-                
+
                 if (hasTimeElapsed(existingTimer.startTime, toleranceMs)) {
                     // Execute the action
                     this.logger.log(`Tolerance timer elapsed for ${luoiKey}: executing ${desiredAction} action`);
-                    
+
                     // Remove the timer
                     const updatedTimers = toleranceTimers.filter(timer => timer.luoiId !== luoiKey);
                     this.saveToleranceTimers(updatedTimers);
-                    
+
                     // Execute the luoi command
                     return await this.handleLuoiCommand(luoiKey, desiredAction);
                 }
@@ -174,7 +174,7 @@ export class CurtainControlService implements ICurtainControlService {
                 existingTimer.startTime = getCurrentTimestamp();
                 existingTimer.lightValue = lightValue;
                 this.saveToleranceTimers(toleranceTimers);
-                
+
                 this.logger.debug(`Restarted tolerance timer for ${luoiKey}: ${desiredAction} action`);
             }
 
@@ -223,7 +223,7 @@ export class CurtainControlService implements ICurtainControlService {
                     fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: `${luoiKey} extend: turn off retract coil`
                 });
-                
+
                 actions.push({
                     deviceKey: daiKey,
                     value: true,
@@ -231,9 +231,9 @@ export class CurtainControlService implements ICurtainControlService {
                     fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: `${luoiKey} extend: turn on extend coil`
                 });
-                
+
                 this.logger.log(`${luoiKey} extending: ${thuKey}=OFF, ${daiKey}=ON`);
-                
+
             } else if (action === "thu") {
                 // Retract: turn off dai, turn on thu
                 actions.push({
@@ -243,7 +243,7 @@ export class CurtainControlService implements ICurtainControlService {
                     fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: `${luoiKey} retract: turn off extend coil`
                 });
-                
+
                 actions.push({
                     deviceKey: thuKey,
                     value: true,
@@ -251,7 +251,7 @@ export class CurtainControlService implements ICurtainControlService {
                     fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: `${luoiKey} retract: turn on retract coil`
                 });
-                
+
                 this.logger.log(`${luoiKey} retracting: ${daiKey}=OFF, ${thuKey}=ON`);
             }
 
@@ -275,12 +275,12 @@ export class CurtainControlService implements ICurtainControlService {
             const validTimers = toleranceTimers.filter(timer => {
                 const age = getCurrentTimestamp() - timer.startTime;
                 const maxAge = minutesToMs(30); // Maximum 30 minutes
-                
+
                 if (age > maxAge) {
                     this.logger.debug(`Removing expired tolerance timer for ${timer.luoiId}`);
                     return false;
                 }
-                
+
                 return true;
             });
 
@@ -316,7 +316,7 @@ export class CurtainControlService implements ICurtainControlService {
      */
     private getCoilMapping(): Record<string, number> {
         const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        
+
         // Merge with default mappings
         return {
             ...CURTAIN_CONFIG.COIL_MAPPING,
@@ -333,7 +333,7 @@ export class CurtainControlService implements ICurtainControlService {
         luoiStates: Record<string, { thu: boolean; dai: boolean }>;
     } {
         const toleranceTimers = this.getToleranceTimers();
-        
+
         return {
             isEnabled: true, // This would come from config in a real implementation
             toleranceTimers: toleranceTimers,

@@ -79,7 +79,7 @@ The node reads sensor data from global variables:
   "humi_indoor": 85,
   "humi_outdoor": 98.5,
   "light_indoor": 0,
-  "light_outdoor": 0
+  "light_outdoor": 0  // Used for curtain control
 }
 ```
 

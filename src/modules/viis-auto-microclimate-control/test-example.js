@@ -14,16 +14,16 @@ const exampleConfig = {
     "set_k4_fan": 40,
     "set_gr_alternate_fan": 2,
     "set_time_alternate_fan": 15,
-    
+
     // Fan dao control
     "set_mode_fan_dao": 1,
     "set_time_alternate_fan_dao": 5,
-    
+
     // Water pump control
     "set_mode_tuong_nuoc": 1,
     "set_threshold_low_water_bump": 60,
     "set_threshold_high_water_bump": 80,
-    
+
     // Curtain control
     "set_mode_luoi": 1,
     "set_light_dai_luoi_1": 50000,
@@ -41,8 +41,8 @@ const exampleSensorData = {
     "temp_indoor": 32.0,  // Above K2 threshold (30°C)
     "humi_indoor": 70,    // Between water pump thresholds
     "humi_outdoor": 85,
-    "light_indoor": 45000, // Between curtain thresholds
-    "light_outdoor": 60000
+    "light_indoor": 45000, // Indoor light (not used for curtain control)
+    "light_outdoor": 60000 // Outdoor light (used for curtain control - above DAI threshold)
 };
 
 // Example device status for global variable coilRegisterData
@@ -100,7 +100,7 @@ const testScenarios = {
             "Turn on 4 fans in rotation group"
         ]
     },
-    
+
     // Scenario 2: K4 emergency threshold
     scenario2: {
         description: "K4 emergency threshold - should activate all fans + water pump",
@@ -115,7 +115,7 @@ const testScenarios = {
             "Turn on water pump (K4 override)"
         ]
     },
-    
+
     // Scenario 3: Low humidity - water pump activation
     scenario3: {
         description: "Low humidity - should activate water pump",
@@ -129,7 +129,7 @@ const testScenarios = {
             "Turn on water pump due to low humidity"
         ]
     },
-    
+
     // Scenario 4: High light - curtain extension
     scenario4: {
         description: "High light - should extend curtains after tolerance",
@@ -144,7 +144,7 @@ const testScenarios = {
             "After 5 minutes: extend curtains (dai)"
         ]
     },
-    
+
     // Scenario 5: Rotation mode
     scenario5: {
         description: "Fan rotation mode - should rotate fan groups",
@@ -165,13 +165,13 @@ const testScenarios = {
 // Function to set up test environment
 function setupTestEnvironment(scenario) {
     console.log(`\n=== Setting up ${scenario.description} ===`);
-    
+
     // In a real Node-RED environment, you would set these global variables:
     // global.set("configKeyValues", scenario.config);
     // global.set("holdingRegisterData", scenario.sensorData);
     // global.set("coilRegisterData", exampleDeviceStatus);
     // global.set("modbusCoils", exampleModbusCoils);
-    
+
     console.log("Configuration:", JSON.stringify(scenario.config, null, 2));
     console.log("Sensor Data:", JSON.stringify(scenario.sensorData, null, 2));
     console.log("Expected Actions:", scenario.expectedActions);
@@ -194,7 +194,7 @@ function simulateControlCommands() {
         },
         {
             description: "Update polling interval to 5 seconds",
-            payload: { 
+            payload: {
                 command: "updateInterval",
                 params: { interval: 5000 }
             }
@@ -204,7 +204,7 @@ function simulateControlCommands() {
             payload: { command: "stop" }
         }
     ];
-    
+
     console.log("\n=== Control Commands ===");
     commands.forEach(cmd => {
         console.log(`${cmd.description}:`, JSON.stringify(cmd.payload));
@@ -214,12 +214,12 @@ function simulateControlCommands() {
 // Function to validate expected output
 function validateOutput(output) {
     console.log("\n=== Output Validation ===");
-    
+
     const requiredFields = [
         'timestamp', 'success', 'actionsExecuted', 'errors',
         'sensorData', 'controlStatus', 'actions'
     ];
-    
+
     requiredFields.forEach(field => {
         if (output.payload && output.payload[field] !== undefined) {
             console.log(`✓ ${field}: ${JSON.stringify(output.payload[field])}`);
@@ -233,15 +233,15 @@ function validateOutput(output) {
 function runTests() {
     console.log("VIIS Auto Microclimate Control Node - Test Examples");
     console.log("==================================================");
-    
+
     // Run each test scenario
     Object.entries(testScenarios).forEach(([key, scenario]) => {
         setupTestEnvironment(scenario);
     });
-    
+
     // Show control commands
     simulateControlCommands();
-    
+
     // Example output validation
     const exampleOutput = {
         payload: {
@@ -267,7 +267,7 @@ function runTests() {
             ]
         }
     };
-    
+
     validateOutput(exampleOutput);
 }
 
