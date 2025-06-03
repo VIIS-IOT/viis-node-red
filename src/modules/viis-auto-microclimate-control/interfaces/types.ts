@@ -29,6 +29,8 @@ export interface AutoControlConfig {
     set_time_alternate_fan?: number;
     set_time_fan_on?: number;
     set_time_fan_off?: number;
+    set_fan_group_transition_delay?: number; // Fan group transition delay in seconds
+    set_fan_group_off_delay?: number; // Delay after turning off fans before turning on new group (seconds)
 
     // Fan dao control
     set_mode_fan_dao?: number;
@@ -112,6 +114,17 @@ export interface FanRotationState {
     currentGroupIndex: number;
     lastRotationTime: number;
     activeGroup: string[];
+}
+
+// Fan group transition state for managing delayed switching
+export interface FanGroupTransitionState {
+    isTransitioning: boolean;
+    phase: 'off' | 'delay' | 'on' | 'complete';
+    previousGroup: string[];
+    nextGroup: string[];
+    transitionStartTime: number;
+    offDelayStartTime: number;
+    reason: string;
 }
 
 // Curtain tolerance timer state

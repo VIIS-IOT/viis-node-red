@@ -29,15 +29,26 @@ class FanControlService {
                 // Do nothing
                 return [];
             }
+            // First, process any ongoing fan group transitions
+            const transitionActions = await this.processFanGroupTransition(config);
+            actions.push(...transitionActions);
+            // If a transition is in progress, don't start new fan control logic
+            if (this.isTransitionInProgress()) {
+                this.logger.debug("Fan group transition in progress, skipping new fan control logic");
+                // Still process fan dao control as it's independent
+                const fanDaoActions = await this.processFanDaoControl(config);
+                actions.push(...fanDaoActions);
+                return actions;
+            }
             // Process based on auto mode
             if (config.set_auto_mode_fan === 1) {
                 // Rotation mode
-                const rotationActions = await this.processRotationMode(config);
+                const rotationActions = await this.processRotationModeWithTransition(config);
                 actions.push(...rotationActions);
             }
             else {
                 // Threshold mode (default)
-                const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);
+                const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
                 actions.push(...thresholdActions);
             }
             // Process fan dao control
@@ -293,6 +304,271 @@ class FanControlService {
             return `K1 threshold: temp=${temperature}°C (≥${thresholds.k1}°C), humidity=${humidity}%`;
         }
         return `Below K1 threshold: temp=${temperature}°C (<${thresholds.k1}°C), humidity=${humidity}%`;
+    }
+    /**
+     * Process rotation mode with transition support
+     */
+    async processRotationModeWithTransition(config) {
+        try {
+            const groupSize = config.set_gr_alternate_fan || 2;
+            const rotationInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan || 15);
+            // Get fan groups
+            const fanGroups = this.getFanGroups(groupSize);
+            if (fanGroups.length === 0) {
+                this.logger.warn("No fan groups available for rotation");
+                return [];
+            }
+            // Get current rotation state
+            let rotationState = this.getRotationState();
+            // Check if it's time to rotate
+            if ((0, timeUtils_1.hasTimeElapsed)(rotationState.lastRotationTime, rotationInterval)) {
+                const previousGroup = [...rotationState.activeGroup];
+                // Move to next group
+                rotationState.currentGroupIndex = (0, groupUtils_1.getNextGroupIndex)(rotationState.currentGroupIndex, fanGroups.length);
+                rotationState.lastRotationTime = (0, timeUtils_1.getCurrentTimestamp)();
+                rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex];
+                // Save updated state
+                this.saveRotationState(rotationState);
+                const reason = `Fan rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (${rotationState.activeGroup.join(', ')})`;
+                this.logger.log(reason);
+                // Check if transition is needed
+                if (this.requiresGroupTransition(previousGroup, rotationState.activeGroup)) {
+                    this.initiateFanGroupTransition(previousGroup, rotationState.activeGroup, reason);
+                    return []; // Transition will be handled in next cycle
+                }
+                else {
+                    // No transition needed, create actions directly
+                    const coilMapping = this.getCoilMapping();
+                    return (0, groupUtils_1.createOptimizedFanGroupActions)(rotationState.activeGroup, true, reason, coilMapping, this.getCurrentDeviceStatus());
+                }
+            }
+            // No rotation needed, maintain current group
+            const coilMapping = this.getCoilMapping();
+            return (0, groupUtils_1.createOptimizedFanGroupActions)(rotationState.activeGroup, true, `Rotation mode: maintaining group ${rotationState.currentGroupIndex + 1}/${fanGroups.length}`, coilMapping, this.getCurrentDeviceStatus());
+        }
+        catch (error) {
+            this.logger.error(`Rotation mode processing error: ${error.message}`);
+            return [];
+        }
+    }
+    /**
+     * Process threshold mode with transition support
+     */
+    async processThresholdModeWithTransition(config, sensorData, deviceStatus) {
+        try {
+            const temperature = sensorData.temp_indoor;
+            const humidity = sensorData.humi_indoor;
+            if (temperature === undefined || humidity === undefined) {
+                this.logger.warn("Missing temperature or humidity data for threshold mode");
+                return [];
+            }
+            // Get temperature thresholds
+            const thresholds = {
+                k1: config.set_k1_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K1,
+                k2: config.set_k2_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K2,
+                k3: config.set_k3_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K3,
+                k4: config.set_k4_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
+            };
+            const reason = this.getThresholdReason(temperature, humidity, thresholds);
+            const coilMapping = this.getCoilMapping();
+            const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
+            // Determine required group size and target group
+            let targetGroup = [];
+            let requiredGroupSize = 0;
+            if (temperature >= thresholds.k4) {
+                // K4: All fans (6 fans)
+                requiredGroupSize = 6;
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                targetGroup = fanGroups[0] || [];
+            }
+            else if (temperature >= thresholds.k3) {
+                // K3: 4 fans
+                requiredGroupSize = 4;
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+            }
+            else if (temperature >= thresholds.k2) {
+                // K2: 2 fans with rotation
+                requiredGroupSize = 2;
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+            }
+            else if (temperature >= thresholds.k1) {
+                // K1: 1 fan with rotation
+                requiredGroupSize = 1;
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+            }
+            else {
+                // Below K1: Turn off all fans
+                return (0, groupUtils_1.createOptimizedFanGroupActions)([], false, reason, coilMapping, deviceStatusRecord);
+            }
+            // Get current active fans
+            const currentActiveFans = Object.keys(deviceStatusRecord).filter(key => deviceStatusRecord[key] === true && (0, groupUtils_1.getAllFanKeys)().includes(key));
+            // Check if transition is needed
+            if (this.requiresGroupTransition(currentActiveFans, targetGroup)) {
+                this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
+                return []; // Transition will be handled in next cycle
+            }
+            else {
+                // No transition needed, create actions directly
+                return (0, groupUtils_1.createOptimizedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+            }
+        }
+        catch (error) {
+            this.logger.error(`Threshold mode processing error: ${error.message}`);
+            return [];
+        }
+    }
+    /**
+     * Get fan group transition delay configuration
+     */
+    getFanGroupTransitionDelayMs(config) {
+        const delaySeconds = config.set_fan_group_transition_delay ||
+            (constants_1.CONTROL_CONFIG.FAN_GROUP_TRANSITION_DELAY_MS / 1000);
+        return delaySeconds * 1000;
+    }
+    /**
+     * Get fan group off delay configuration
+     */
+    getFanGroupOffDelayMs(config) {
+        const delaySeconds = config.set_fan_group_off_delay ||
+            (constants_1.CONTROL_CONFIG.FAN_GROUP_OFF_DELAY_MS / 1000);
+        return delaySeconds * 1000;
+    }
+    /**
+     * Get current fan group transition state
+     */
+    getFanGroupTransitionState() {
+        const state = this.flowContext.get(constants_1.CONTEXT_KEYS.FAN_GROUP_TRANSITION_STATE);
+        return state || null;
+    }
+    /**
+     * Save fan group transition state
+     */
+    saveFanGroupTransitionState(state) {
+        this.flowContext.set(constants_1.CONTEXT_KEYS.FAN_GROUP_TRANSITION_STATE, state);
+    }
+    /**
+     * Clear fan group transition state
+     */
+    clearFanGroupTransitionState() {
+        this.flowContext.set(constants_1.CONTEXT_KEYS.FAN_GROUP_TRANSITION_STATE, null);
+    }
+    /**
+     * Check if fan groups are different (requires transition)
+     */
+    requiresGroupTransition(currentGroup, newGroup) {
+        if (currentGroup.length !== newGroup.length) {
+            return true;
+        }
+        // Sort both arrays to compare content regardless of order
+        const sortedCurrent = [...currentGroup].sort();
+        const sortedNew = [...newGroup].sort();
+        return !sortedCurrent.every((fan, index) => fan === sortedNew[index]);
+    }
+    /**
+     * Initiate fan group transition with delay
+     */
+    initiateFanGroupTransition(previousGroup, nextGroup, reason) {
+        const transitionState = {
+            isTransitioning: true,
+            phase: 'off',
+            previousGroup: [...previousGroup],
+            nextGroup: [...nextGroup],
+            transitionStartTime: (0, timeUtils_1.getCurrentTimestamp)(),
+            offDelayStartTime: 0,
+            reason: reason
+        };
+        this.saveFanGroupTransitionState(transitionState);
+        this.logger.log(`Initiated fan group transition: [${previousGroup.join(', ')}] → [${nextGroup.join(', ')}] - ${reason}`);
+    }
+    /**
+     * Process ongoing fan group transition
+     */
+    async processFanGroupTransition(config) {
+        const transitionState = this.getFanGroupTransitionState();
+        if (!transitionState || !transitionState.isTransitioning) {
+            return [];
+        }
+        const now = (0, timeUtils_1.getCurrentTimestamp)();
+        const coilMapping = this.getCoilMapping();
+        const actions = [];
+        switch (transitionState.phase) {
+            case 'off':
+                // Turn off previous group
+                if (transitionState.previousGroup.length > 0) {
+                    const offActions = (0, groupUtils_1.createOptimizedFanGroupActions)(transitionState.previousGroup, false, `Transition phase 1: Turn off previous group - ${transitionState.reason}`, coilMapping, this.getCurrentDeviceStatus());
+                    actions.push(...offActions);
+                }
+                // Move to delay phase
+                transitionState.phase = 'delay';
+                transitionState.offDelayStartTime = now;
+                this.saveFanGroupTransitionState(transitionState);
+                this.logger.log(`Fan transition: Previous group turned off, starting delay phase`);
+                break;
+            case 'delay':
+                // Check if delay period has elapsed
+                const offDelayMs = this.getFanGroupOffDelayMs(config);
+                if ((0, timeUtils_1.hasTimeElapsed)(transitionState.offDelayStartTime, offDelayMs)) {
+                    // Move to on phase
+                    transitionState.phase = 'on';
+                    this.saveFanGroupTransitionState(transitionState);
+                    this.logger.log(`Fan transition: Delay completed (${offDelayMs}ms), turning on new group`);
+                }
+                else {
+                    // Still in delay, no actions
+                    const remaining = offDelayMs - (now - transitionState.offDelayStartTime);
+                    this.logger.debug(`Fan transition: Delay in progress, ${remaining}ms remaining`);
+                }
+                break;
+            case 'on':
+                // Turn on new group
+                if (transitionState.nextGroup.length > 0) {
+                    const onActions = (0, groupUtils_1.createOptimizedFanGroupActions)(transitionState.nextGroup, true, `Transition phase 2: Turn on new group - ${transitionState.reason}`, coilMapping, this.getCurrentDeviceStatus());
+                    actions.push(...onActions);
+                }
+                // Move to complete phase
+                transitionState.phase = 'complete';
+                this.saveFanGroupTransitionState(transitionState);
+                this.logger.log(`Fan transition: New group turned on, transition completing`);
+                break;
+            case 'complete':
+                // Check if overall transition delay has elapsed
+                const transitionDelayMs = this.getFanGroupTransitionDelayMs(config);
+                if ((0, timeUtils_1.hasTimeElapsed)(transitionState.transitionStartTime, transitionDelayMs)) {
+                    // Transition complete, clear state
+                    this.clearFanGroupTransitionState();
+                    this.logger.log(`Fan group transition completed successfully`);
+                }
+                else {
+                    // Still in cooldown period
+                    const remaining = transitionDelayMs - (now - transitionState.transitionStartTime);
+                    this.logger.debug(`Fan transition: Cooldown in progress, ${remaining}ms remaining`);
+                }
+                break;
+        }
+        return actions;
+    }
+    /**
+     * Check if fan group transition is in progress
+     */
+    isTransitionInProgress() {
+        const transitionState = this.getFanGroupTransitionState();
+        return (transitionState === null || transitionState === void 0 ? void 0 : transitionState.isTransitioning) === true;
+    }
+    /**
+     * Get current device status from global context
+     */
+    getCurrentDeviceStatus() {
+        const coilData = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA) || {};
+        const deviceStatus = {};
+        // Map coil data to device status
+        const coilMapping = this.getCoilMapping();
+        Object.entries(coilMapping).forEach(([deviceKey, address]) => {
+            deviceStatus[deviceKey] = coilData[address] === true;
+        });
+        return deviceStatus;
     }
 }
 exports.FanControlService = FanControlService;
