@@ -5,11 +5,10 @@
  */
 
 import { NodeAPI, NodeDef, Node } from "node-red";
-import { DatabaseService } from "./services/databaseService";
-import { ApiRoutes } from "./routes/apiRoutes";
-import { ApiMiddleware } from "./middleware/apiMiddleware";
 import { logger } from "./utils/logger";
+import { DatabaseService } from "./services/databaseService";
 import { AuthService } from "./services/authService";
+import { ApiRoutes } from "./routes/api.routes";
 
 /**
  * Configuration interface for VIIS REST API node
@@ -57,7 +56,6 @@ export = function (RED: NodeAPI) {
         let databaseService: DatabaseService;
         let authService: AuthService;
         let apiRoutes: ApiRoutes;
-        let apiMiddleware: ApiMiddleware;
 
         // Async initialization
         (async () => {
@@ -80,13 +78,9 @@ export = function (RED: NodeAPI) {
                 authService = new AuthService(databaseService, apiConfig.jwtSecret, node);
                 logger.info(node, "Auth service initialized");
 
-                // Initialize middleware
-                apiMiddleware = new ApiMiddleware(authService, apiConfig, node);
-                logger.info(node, "API middleware initialized");
-
                 // Initialize and register API routes
                 apiRoutes = new ApiRoutes(databaseService, authService, node);
-                await apiRoutes.registerRoutes(RED, apiConfig, apiMiddleware);
+                await apiRoutes.registerRoutes(RED, apiConfig);
                 logger.info(node, `API routes registered with prefix: ${apiConfig.apiPrefix}`);
 
                 node.status({ fill: "green", shape: "dot", text: "API server running" });

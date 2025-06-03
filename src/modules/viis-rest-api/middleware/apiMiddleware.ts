@@ -5,12 +5,14 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { Node } from 'node-red';
-import rateLimit from 'express-rate-limit';
-import cors from 'cors';
-import helmet from 'helmet';
-import compression from 'compression';
 import { AuthService, JwtPayload } from '../services/authService';
 import { logger } from '../utils/logger';
+
+// Use require for middleware modules to avoid TypeScript import issues
+const rateLimit = require('express-rate-limit');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
 
 /**
  * Extended Request interface with user data
@@ -135,7 +137,7 @@ export class ApiMiddleware {
             const originalSend = res.send;
 
             // Override res.send to log response
-            res.send = function(body) {
+            res.send = function (body) {
                 const duration = Date.now() - start;
                 const statusCode = res.statusCode;
                 const method = req.method;
@@ -163,7 +165,7 @@ export class ApiMiddleware {
 
             // Don't leak error details in production
             const isDevelopment = process.env.NODE_ENV === 'development';
-            
+
             if (error.name === 'ValidationError') {
                 return res.status(400).json({
                     error: 'Bad Request',
@@ -202,7 +204,7 @@ export class ApiMiddleware {
         return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
             try {
                 const authHeader = req.headers.authorization;
-                
+
                 if (!authHeader || !authHeader.startsWith('Bearer ')) {
                     return res.status(401).json({
                         error: 'Unauthorized',
@@ -211,7 +213,7 @@ export class ApiMiddleware {
                 }
 
                 const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-                
+
                 // Verify token
                 const decoded = await this.authService.verifyToken(token);
                 req.user = decoded;
@@ -236,7 +238,7 @@ export class ApiMiddleware {
         return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
             try {
                 const authHeader = req.headers.authorization;
-                
+
                 if (authHeader && authHeader.startsWith('Bearer ')) {
                     const token = authHeader.substring(7);
                     const decoded = await this.authService.verifyToken(token);
@@ -290,7 +292,7 @@ export class ApiMiddleware {
             }
 
             const requestedCustomerId = req.params.customerId || req.query.customer_id;
-            
+
             // Admin can access any customer
             if (req.user.is_admin === 1) {
                 return next();

@@ -1,19 +1,47 @@
 # VIIS REST API Node
 
-A comprehensive REST API server node for Node-RED that provides authentication and data access endpoints using Node-RED's built-in Express server with TypeORM database integration.
+A comprehensive REST API server node for Node-RED with **NestJS-like architecture** that provides authentication and data access endpoints using Node-RED's built-in Express server with TypeORM database integration.
 
 ## Features
 
+- ✅ **NestJS-like Architecture** - Controllers, Services, Validators, and Middleware
 - ✅ **Real User Authentication** - JWT-based authentication with database validation
 - ✅ **TypeORM Integration** - Reuses existing database entities and connections
 - ✅ **Built-in Express Server** - Uses Node-RED's Express server (no separate server needed)
-- ✅ **Security Middleware** - CORS, Helmet, Rate limiting, Compression
+- ✅ **Input Validation** - Comprehensive validation with Joi schemas
+- ✅ **Type Safety** - Full TypeScript support with interfaces and types
+- ✅ **Security Middleware** - CORS, authentication, authorization, and rate limiting
 - ✅ **Comprehensive Logging** - Detailed API request/response logging
 - ✅ **Role-based Access** - Admin and customer-level access controls
+- ✅ **Error Handling** - Standardized error responses and HTTP status codes
 - ✅ **Hot-reload Support** - Environment variable changes without restart
 
 ## Architecture
 
+### NestJS-like Structure
+```
+viis-rest-api/
+├── controllers/              # HTTP Request Handlers
+│   ├── auth.controller.ts    # Authentication endpoints
+│   ├── user.controller.ts    # User management endpoints
+│   └── health.controller.ts  # Health check endpoints
+├── services/                 # Business Logic Layer
+│   ├── auth.service.ts       # Authentication business logic
+│   └── database.service.ts   # Database operations
+├── validators/               # Input Validation Layer
+│   ├── auth.validator.ts     # Authentication validation
+│   └── user.validator.ts     # User validation
+├── middleware/               # Cross-cutting Concerns
+│   ├── auth.middleware.ts    # JWT authentication
+│   └── validation.middleware.ts # Request validation
+├── types/                    # TypeScript Definitions
+│   ├── auth.types.ts         # Authentication types
+│   └── user.types.ts         # User types
+└── routes/                   # Route Registration
+    └── api.routes.ts         # Central route registry
+```
+
+### API Endpoints
 ```
 Node-RED Server (port 1880)
 ├── Editor UI (/admin)
@@ -22,8 +50,8 @@ Node-RED Server (port 1880)
 └── VIIS-REST-API Custom Node
     ├── /api/v2/auth/*     (Authentication)
     ├── /api/v2/users/*    (User Management)
-    ├── /api/v2/devices/*  (Device Management)
-    ├── /api/v2/telemetry/* (Telemetry Data)
+    ├── /api/v2/devices/*  (Device Management - Future)
+    ├── /api/v2/telemetry/* (Telemetry Data - Future)
     └── /api/v2/health     (Health Check)
 ```
 

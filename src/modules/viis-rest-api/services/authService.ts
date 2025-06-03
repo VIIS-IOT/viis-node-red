@@ -4,9 +4,11 @@
  */
 
 import { Node } from 'node-red';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
+
+// Use require for modules with potential import issues
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 import { DatabaseService } from './databaseService';
 import { IotCustomerUser } from '../../../orm/entities/customer/customer_user';
 import { IotCustomerUserCredentials } from '../../../orm/entities/customer/customer_user_credentials';
@@ -191,7 +193,7 @@ export class AuthService {
      */
     private async findUser(username: string): Promise<IotCustomerUser | null> {
         const customerUserRepo = this.databaseService.getCustomerUserRepository();
-        
+
         return await customerUserRepo.findOne({
             where: [
                 { name: username },
@@ -207,7 +209,7 @@ export class AuthService {
      */
     private async findUserCredentials(userId: string): Promise<IotCustomerUserCredentials | null> {
         const credentialsRepo = this.databaseService.getCustomerUserCredentialsRepository();
-        
+
         return await credentialsRepo.findOne({
             where: { user_id: userId }
         });
@@ -320,7 +322,7 @@ export class AuthService {
 
         // Generate JWT token
         const token = jwt.sign(payload, this.jwtSecret, { algorithm: 'HS512' });
-        
+
         logger.debug(this.node, `JWT token generated for user: ${user.name}`);
         return token;
     }
