@@ -8,11 +8,11 @@ class MockContext {
     constructor() {
         this.data = {};
     }
-    
+
     get(key) {
         return this.data[key];
     }
-    
+
     set(key, value) {
         this.data[key] = value;
     }
@@ -41,6 +41,14 @@ const CONTEXT_KEYS = {
 
 const FAN_CONFIG = {
     GROUPS: {
+        ONE_FAN: [
+            ["quat_1"],
+            ["quat_2"],
+            ["quat_3"],
+            ["quat_4"],
+            ["quat_5"],
+            ["quat_6"]
+        ],
         TWO_FANS: [
             ["quat_1", "quat_2"],
             ["quat_3", "quat_4"],
@@ -71,6 +79,8 @@ const MODBUS_FUNCTION_CODES = {
 // Utility functions
 function getFanGroups(groupSize) {
     switch (groupSize) {
+        case 1:
+            return FAN_CONFIG.GROUPS.ONE_FAN.map(group => [...group]);
         case 2:
             return FAN_CONFIG.GROUPS.TWO_FANS.map(group => [...group]);
         case 4:
@@ -101,7 +111,7 @@ function getCurrentTimestamp() {
 function createFanGroupActions(targetGroup, turnOn, reason, coilMapping) {
     const actions = [];
     const allFanKeys = ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'];
-    
+
     // Turn off all fans first
     allFanKeys.forEach(fanKey => {
         const address = coilMapping[fanKey];
@@ -115,7 +125,7 @@ function createFanGroupActions(targetGroup, turnOn, reason, coilMapping) {
             });
         }
     });
-    
+
     // Turn on target group if needed
     if (turnOn) {
         targetGroup.forEach(fanKey => {
@@ -131,7 +141,7 @@ function createFanGroupActions(targetGroup, turnOn, reason, coilMapping) {
             }
         });
     }
-    
+
     return actions;
 }
 
@@ -142,7 +152,7 @@ class TestFanControlService {
         this.globalContext = new MockContext();
         this.logger = new MockLogger();
     }
-    
+
     async processRotationMode(config) {
         try {
             const groupSize = config.set_gr_alternate_fan || 2;
@@ -188,7 +198,7 @@ class TestFanControlService {
             return [];
         }
     }
-    
+
     getRotationState() {
         const saved = this.flowContext.get(CONTEXT_KEYS.FAN_ROTATION_STATE);
 
@@ -206,11 +216,11 @@ class TestFanControlService {
         this.saveRotationState(defaultState);
         return defaultState;
     }
-    
+
     saveRotationState(state) {
         this.flowContext.set(CONTEXT_KEYS.FAN_ROTATION_STATE, state);
     }
-    
+
     getCoilMapping() {
         const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
         return {
@@ -223,9 +233,9 @@ class TestFanControlService {
 // Test rotation mode
 async function testRotationMode() {
     console.log('=== Testing Fan Rotation Mode in Service ===\n');
-    
+
     const service = new TestFanControlService();
-    
+
     // Test configuration for rotation mode
     const rotationConfig = {
         set_mode_fan: 1,           // Fan control enabled
@@ -233,61 +243,61 @@ async function testRotationMode() {
         set_gr_alternate_fan: 2,   // 2-fan groups
         set_time_alternate_fan: 1  // 1 minute for testing (instead of 15)
     };
-    
+
     console.log('Test 1: Initial rotation state');
     let actions = await service.processRotationMode(rotationConfig);
     console.log('Actions generated:', actions.length);
     actions.forEach(action => {
         console.log(`  ${action.deviceKey}: ${action.value} - ${action.reason}`);
     });
-    
+
     // Simulate time passing (force rotation)
     console.log('\nTest 2: Force rotation by setting old timestamp');
     const rotationState = service.getRotationState();
     rotationState.lastRotationTime = Date.now() - (2 * 60 * 1000); // 2 minutes ago
     service.saveRotationState(rotationState);
-    
+
     actions = await service.processRotationMode(rotationConfig);
     console.log('Actions after forced rotation:', actions.length);
     actions.forEach(action => {
         console.log(`  ${action.deviceKey}: ${action.value} - ${action.reason}`);
     });
-    
+
     // Test multiple rotations
     console.log('\nTest 3: Multiple rotation cycles');
     for (let i = 0; i < 4; i++) {
         console.log(`\nRotation cycle ${i + 1}:`);
-        
+
         // Force time elapsed
         const state = service.getRotationState();
         state.lastRotationTime = Date.now() - (2 * 60 * 1000);
         service.saveRotationState(state);
-        
+
         actions = await service.processRotationMode(rotationConfig);
         const currentState = service.getRotationState();
-        
+
         console.log(`  Group ${currentState.currentGroupIndex + 1}: [${currentState.activeGroup.join(', ')}]`);
         console.log(`  Actions: ${actions.filter(a => a.value === true).length} fans turned on`);
     }
-    
+
     // Test different group sizes
     console.log('\nTest 4: Different group sizes');
-    
-    const groupSizes = [2, 4, 6];
+
+    const groupSizes = [1, 2, 4, 6];
     for (const groupSize of groupSizes) {
         console.log(`\nTesting group size: ${groupSize}`);
-        
+
         const config = {
             ...rotationConfig,
             set_gr_alternate_fan: groupSize
         };
-        
+
         // Reset rotation state
         service.flowContext.data = {};
-        
+
         actions = await service.processRotationMode(config);
         const state = service.getRotationState();
-        
+
         console.log(`  Active group: [${state.activeGroup.join(', ')}]`);
         console.log(`  Fans to turn on: ${actions.filter(a => a.value === true).length}`);
     }
@@ -299,7 +309,7 @@ testRotationMode().then(() => {
     console.log('✓ Initial rotation state works correctly');
     console.log('✓ Time-based rotation triggers properly');
     console.log('✓ Multiple rotation cycles work in sequence');
-    console.log('✓ Different group sizes (2, 4, 6 fans) work correctly');
+    console.log('✓ Different group sizes (1, 2, 4, 6 fans) work correctly');
     console.log('✓ Fan rotation mode is working correctly!');
 }).catch(error => {
     console.error('Test failed:', error);

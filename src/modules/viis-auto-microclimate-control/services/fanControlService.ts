@@ -186,7 +186,7 @@ export class FanControlService implements IFanControlService {
                 targetGroup = getAllFanKeys();
             } else {
                 // K1 or K2: Use rotation logic for smaller groups
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize);
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
             }
 
             const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
@@ -338,9 +338,9 @@ export class FanControlService implements IFanControlService {
     /**
      * Get rotation target group for threshold mode with smaller group sizes
      */
-    private getRotationTargetGroup(fanGroups: string[][], requiredGroupSize: number): string[] {
-        // For K1 and K2 thresholds, use rotation logic
-        const rotationInterval = minutesToMs(15); // Default 15 minutes for threshold rotation
+    private getRotationTargetGroup(fanGroups: string[][], requiredGroupSize: number, config: AutoControlConfig): string[] {
+        // For K1 and K2 thresholds, use rotation logic with same interval as rotation mode
+        const rotationInterval = minutesToMs(config.set_time_alternate_fan || 15);
 
         // Get or initialize rotation state for threshold mode
         const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
@@ -367,7 +367,7 @@ export class FanControlService implements IFanControlService {
             // Save updated state
             this.flowContext.set(contextKey, rotationState);
 
-            this.logger.log(`Threshold rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} for size ${requiredGroupSize}`);
+            this.logger.log(`Threshold rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} for size ${requiredGroupSize} (interval: ${config.set_time_alternate_fan || 15}min)`);
         }
 
         return rotationState.activeGroup || fanGroups[0] || [];

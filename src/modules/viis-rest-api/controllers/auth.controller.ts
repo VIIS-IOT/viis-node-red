@@ -56,8 +56,8 @@ export class AuthController extends BaseController {
         // Validate request body
         const loginData: LoginRequest = req.body;
 
-        logger.info(this.node, `AuthController.login - this exists: ${!!this}`);
-        logger.info(this.node, `AuthController.login - this.authService exists: ${!!this.authService}`);
+        logger.warn(this.node, `AuthController.login - this exists: ${!!this}`);
+        logger.warn(this.node, `AuthController.login - this.authService exists: ${!!this.authService}`);
 
         // Authenticate user
         const loginResponse: LoginResponse = await this.authService.login(loginData);

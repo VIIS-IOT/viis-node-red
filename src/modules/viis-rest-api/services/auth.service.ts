@@ -85,10 +85,11 @@ export class AuthService implements IService {
         try {
             const username = loginData.usr.toString().trim();
             const password = loginData.pwd.toString();
-
-            logger.info(this.node, `Login attempt for user: ${username}`);
-            logger.debug(this.node, `AuthService.login - this exists: ${!!this}`);
-            logger.debug(this.node, `AuthService.login - this.databaseService exists: ${!!this.databaseService}`);
+            console.log("add debug")
+            logger.info(this.node, `Login attempt for user 2: ${username}`);
+            logger.info(this.node, `fuck`)
+            // logger.info(this.node, `AuthService.login - this exists: ${!!this}`);
+            // logger.info(this.node, `AuthService.login - this.databaseService exists: ${!!this.databaseService}`);
 
             // Find user by username, email, or user_name
             const user = await this.findUser(username);
@@ -243,8 +244,8 @@ export class AuthService implements IService {
      * Find user by username, email, or user_name
      */
     private async findUser(username: string): Promise<any> {
-        logger.debug(this.node, `findUser called with username: ${username}`);
-        logger.debug(this.node, `this.databaseService exists: ${!!this.databaseService}`);
+        logger.warn(this.node, `findUser called with username: ${username}`);
+        logger.warn(this.node, `this.databaseService exists: ${!!this.databaseService}`);
 
         this.ensureDatabaseService();
         const userRepo = this.databaseService.getCustomerUserRepository();

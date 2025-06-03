@@ -39,8 +39,8 @@ The node reads configuration from the global variable `configKeyValues` containi
   "set_k2_fan": 30,               // K2 temperature threshold (°C)
   "set_k3_fan": 35,               // K3 temperature threshold (°C)
   "set_k4_fan": 40,               // K4 temperature threshold (°C)
-  "set_gr_alternate_fan": 2,      // Group size for rotation (2, 4, or 6)
-  "set_time_alternate_fan": 15    // Rotation interval (minutes)
+  "set_gr_alternate_fan": 2,      // Group size for rotation (1, 2, 4, or 6)
+  "set_time_alternate_fan": 15    // Rotation interval (minutes) - used for both rotation mode and threshold mode
 }
 ```
 

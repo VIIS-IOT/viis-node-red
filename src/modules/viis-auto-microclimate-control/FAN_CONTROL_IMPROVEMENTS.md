@@ -45,7 +45,7 @@ export function createOptimizedFanGroupActions(
 #### Thêm hàm `getRotationTargetGroup`:
 - Xử lý rotation logic cho ngưỡng K1 và K2
 - Tách biệt rotation state cho từng group size
-- Interval mặc định 15 phút cho threshold rotation
+- Sử dụng cùng interval với rotation mode (`set_time_alternate_fan`)
 
 ### 3. **Logic ngưỡng nhiệt độ/độ ẩm được cải thiện**
 

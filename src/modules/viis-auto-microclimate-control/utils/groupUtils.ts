@@ -10,6 +10,8 @@ import { FAN_CONFIG } from "../constants";
  */
 export function getFanGroups(groupSize: number): string[][] {
     switch (groupSize) {
+        case 1:
+            return FAN_CONFIG.GROUPS.ONE_FAN.map(group => [...group]);
         case 2:
             return FAN_CONFIG.GROUPS.TWO_FANS.map(group => [...group]);
         case 4:
@@ -229,7 +231,7 @@ export function createFanDaoActions(
  * Validate fan group configuration
  */
 export function isValidFanGroupSize(groupSize: number): boolean {
-    return [2, 4, 6].includes(groupSize);
+    return [1, 2, 4, 6].includes(groupSize);
 }
 
 /**

@@ -134,10 +134,9 @@ export class CurtainControlService implements ICurtainControlService {
                 if (!currentDaiState) {
                     desiredAction = "dai";
                 }
-            } else if (lightOutdoor <= thuThreshold || lightIndoor <= indoorThuThreshold) {
+            } else if (lightOutdoor <= thuThreshold) {
                 // Should retract curtain (thu) if:
-                // 1. Outdoor light is low (original logic), OR
-                // 2. Indoor light is too low (new logic - curtain blocking too much light)
+                // 1. Outdoor light is low (original logic)
                 if (!currentThuState) {
                     desiredAction = "thu";
 

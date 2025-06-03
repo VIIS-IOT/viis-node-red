@@ -32,6 +32,14 @@ export const CONTROL_CONFIG = {
 export const FAN_CONFIG = {
     // Fan grouping configurations
     GROUPS: {
+        ONE_FAN: [
+            ["quat_1"],
+            ["quat_2"],
+            ["quat_3"],
+            ["quat_4"],
+            ["quat_5"],
+            ["quat_6"]
+        ],
         TWO_FANS: [
             ["quat_1", "quat_2"],
             ["quat_3", "quat_4"],
