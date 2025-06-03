@@ -129,15 +129,20 @@ export class ApiRoutes {
      * Register routes from all controllers
      */
     private registerControllerRoutes(RED: NodeAPI, config: ApiConfig): void {
+        logger.info(this.node, `Starting route registration for ${this.controllers.size} controllers...`);
+
         this.controllers.forEach((controller, controllerName) => {
             const routes = controller.getRoutes();
+            logger.info(this.node, `Controller '${controllerName}' has ${routes.length} routes`);
 
             routes.forEach(route => {
                 this.registerRoute(RED, config, controller, route, controllerName);
             });
 
-            logger.debug(this.node, `Registered ${routes.length} routes for ${controllerName} controller`);
+            logger.info(this.node, `✓ Registered ${routes.length} routes for ${controllerName} controller`);
         });
+
+        logger.info(this.node, `Route registration completed!`);
     }
 
     /**
@@ -182,7 +187,7 @@ export class ApiRoutes {
         // Register the route
         expressMethod.call(RED.httpNode, fullPath, ...middlewares, handler);
 
-        logger.debug(this.node, `Registered ${route.method} ${fullPath} -> ${controllerName}.${route.handler}`);
+        logger.info(this.node, `✓ Registered ${route.method} ${fullPath} -> ${controllerName}.${route.handler}`);
     }
 
     /**

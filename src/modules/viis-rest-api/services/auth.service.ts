@@ -7,16 +7,16 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { Node } from 'node-red';
-import { DatabaseService } from './database.service';
 import { logger } from '../utils/logger';
-import { 
-    LoginRequest, 
-    LoginResponse, 
-    JwtPayload, 
+import {
+    LoginRequest,
+    LoginResponse,
+    JwtPayload,
     UserInfo,
-    PasswordHashType 
+    PasswordHashType
 } from '../types/auth.types';
 import { IService, ApiError, ErrorType } from '../types/common.types';
+import { DatabaseService } from './database.service';
 
 /**
  * Authentication service class
@@ -171,8 +171,8 @@ export class AuthService implements IService {
                 where: { name: userId },
                 relations: ['iot_customer'],
                 select: [
-                    'name', 'first_name', 'last_name', 'email', 
-                    'customer_id', 'is_admin', 'iot_dynamic_role', 
+                    'name', 'first_name', 'last_name', 'email',
+                    'customer_id', 'is_admin', 'iot_dynamic_role',
                     'phone_number', 'user_id'
                 ]
             });
@@ -209,7 +209,7 @@ export class AuthService implements IService {
      */
     private async findUser(username: string): Promise<any> {
         const userRepo = this.databaseService.getCustomerUserRepository();
-        
+
         return await userRepo.findOne({
             where: [
                 { name: username },
@@ -224,7 +224,7 @@ export class AuthService implements IService {
      */
     private async findUserCredentials(username: string): Promise<any> {
         const credRepo = this.databaseService.getCustomerUserCredentialRepository();
-        
+
         return await credRepo.findOne({
             where: { name: username }
         });
@@ -237,7 +237,7 @@ export class AuthService implements IService {
         if (!roleName) return null;
 
         const roleRepo = this.databaseService.getIotDynamicRoleRepository();
-        
+
         return await roleRepo.findOne({
             where: { name: roleName }
         });
@@ -289,9 +289,9 @@ export class AuthService implements IService {
      * Generate JWT token
      */
     private async generateJwtToken(
-        user: any, 
-        credentials: any, 
-        dynamicRole: any, 
+        user: any,
+        credentials: any,
+        dynamicRole: any,
         sessionId: string
     ): Promise<string> {
         const payload: JwtPayload = {

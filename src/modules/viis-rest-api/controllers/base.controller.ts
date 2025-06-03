@@ -4,7 +4,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { Node } from 'node-red';
-import { IController, RouteDefinition, RequestContext } from '../types/common.types';
+import { IController, RouteDefinition, RequestContext, ApiError } from '../types/common.types';
 import { ResponseHelper } from '../utils/response.helper';
 import { logger } from '../utils/logger';
 
@@ -52,7 +52,7 @@ export abstract class BaseController implements IController {
     ) {
         return (req: Request, res: Response, next: NextFunction) => {
             const context = this.createContext(req);
-            
+
             // Log request
             logger.info(this.node, `${req.method} ${req.path}`, {
                 requestId: context.requestId,
@@ -74,7 +74,7 @@ export abstract class BaseController implements IController {
                         requestId: context.requestId,
                         error: error.stack
                     });
-                    
+
                     ResponseHelper.error(res, error, undefined, undefined, this.node);
                 });
         };
@@ -97,7 +97,7 @@ export abstract class BaseController implements IController {
      */
     protected error(
         res: Response,
-        error: string | Error,
+        error: string | ApiError,
         statusCode: number = 500,
         details?: any
     ): void {

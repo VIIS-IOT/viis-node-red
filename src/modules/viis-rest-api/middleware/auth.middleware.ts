@@ -88,8 +88,8 @@ export class AuthMiddleware {
         if (requestedCustomerId && requestedCustomerId !== user.customer_id) {
             logger.warn(this.node, `User ${user.user_id} attempted to access customer ${requestedCustomerId}`);
             return ResponseHelper.authorizationError(
-                res, 
-                'Access denied: You can only access your own customer data', 
+                res,
+                'Access denied: You can only access your own customer data',
                 this.node
             );
         }
@@ -101,10 +101,10 @@ export class AuthMiddleware {
     /**
      * Optional authentication middleware (doesn't fail if no token)
      */
-    optionalAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    optionalAuth = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
         try {
             const authHeader = req.headers.authorization;
-            
+
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 // No token provided, continue without authentication
                 return next();
@@ -139,12 +139,12 @@ export class AuthMiddleware {
             }
 
             const userRole = user.iot_dynamic_role;
-            
+
             if (!allowedRoles.includes(userRole)) {
                 logger.warn(this.node, `User ${user.user_id} with role ${userRole} denied access. Required roles: ${allowedRoles.join(', ')}`);
                 return ResponseHelper.authorizationError(
-                    res, 
-                    `Access denied: Required role(s): ${allowedRoles.join(', ')}`, 
+                    res,
+                    `Access denied: Required role(s): ${allowedRoles.join(', ')}`,
                     this.node
                 );
             }

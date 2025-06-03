@@ -4,11 +4,11 @@
 
 import { Request, Response } from 'express';
 import { BaseController } from './base.controller';
-import { AuthService } from '../services/auth.service';
 import { AuthValidator } from '../validators/auth.validator';
 import { RouteDefinition } from '../types/common.types';
 import { LoginRequest, LoginResponse, TokenVerificationResponse } from '../types/auth.types';
 import { Node } from 'node-red';
+import { AuthService } from '../services/auth.service';
 
 /**
  * Authentication controller class
@@ -93,7 +93,7 @@ export class AuthController extends BaseController {
     logout = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         // Get authenticated user
         const user = this.getAuthenticatedUser(req);
-        
+
         if (!user) {
             return this.authenticationError(res, 'User not authenticated');
         }
@@ -109,7 +109,7 @@ export class AuthController extends BaseController {
     getCurrentUser = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         // Get authenticated user
         const user = this.getAuthenticatedUser(req);
-        
+
         if (!user) {
             return this.authenticationError(res, 'User not authenticated');
         }

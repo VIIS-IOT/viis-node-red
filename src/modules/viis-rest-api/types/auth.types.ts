@@ -2,6 +2,8 @@
  * @fileoverview Authentication types and interfaces
  */
 
+import { Request } from 'express';
+
 /**
  * Login request interface
  */

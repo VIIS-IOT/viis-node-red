@@ -6,9 +6,9 @@
 
 import { NodeAPI, NodeDef, Node } from "node-red";
 import { logger } from "./utils/logger";
-import { DatabaseService } from "./services/databaseService";
-import { AuthService } from "./services/authService";
+import { AuthService } from "./services/auth.service";
 import { ApiRoutes } from "./routes/api.routes";
+import { DatabaseService } from "./services/database.service";
 
 /**
  * Configuration interface for VIIS REST API node
@@ -95,7 +95,7 @@ export = function (RED: NodeAPI) {
         })();
 
         // Cleanup on node removal
-        node.on('close', async (done) => {
+        node.on('close', async (done: () => void) => {
             try {
                 logger.info(node, "Shutting down VIIS REST API...");
 
