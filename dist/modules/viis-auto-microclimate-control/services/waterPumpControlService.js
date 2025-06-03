@@ -95,7 +95,7 @@ class WaterPumpControlService {
             // Check K4 conditions: temperature >= K4 threshold OR humidity < 75%
             const k4TempCondition = tempIndoor >= k4Threshold;
             const k4HumiCondition = humiIndoor < 75;
-            if ((k4TempCondition && currentSetModeFan && !currentSetAutoModeFan) || k4HumiCondition) {
+            if ((k4TempCondition || k4HumiCondition) && currentSetModeFan && !currentSetAutoModeFan) {
                 const reason = `K4 priority override: temp=${tempIndoor}°C${k4TempCondition ? ` (≥${k4Threshold})` : ''}, humidity=${humiIndoor}%${k4HumiCondition ? ' (<75%)' : ''}`;
                 this.logger.log(`Water pump K4 override: ON - ${reason}`);
                 // Update state tracking
