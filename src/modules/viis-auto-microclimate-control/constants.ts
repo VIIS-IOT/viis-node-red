@@ -8,6 +8,8 @@ export const CONTEXT_KEYS = {
     // Flow context keys (node-specific)
     FAN_ROTATION_STATE: "fanRotationState",
     FAN_ROTATION_TIMER: "fanRotationTimer",
+    FAN_GROUP_TRANSITION_STATE: "fanGroupTransitionState",
+    FAN_GROUP_TRANSITION_TIMER: "fanGroupTransitionTimer",
     WATER_PUMP_STATE: "waterPumpState",
     CURTAIN_TOLERANCE_TIMERS: "curtainToleranceTimers",
     LAST_CONTROL_EXECUTION: "lastControlExecution",
@@ -26,6 +28,9 @@ export const CONTROL_CONFIG = {
     MODBUS_TIMEOUT_MS: 5000,
     RETRY_ATTEMPTS: 3,
     RETRY_DELAY_MS: 1000,
+    // Fan group transition delays
+    FAN_GROUP_TRANSITION_DELAY_MS: 2000, // 2 seconds default delay between fan group switches
+    FAN_GROUP_OFF_DELAY_MS: 1000, // 1 second delay after turning off fans before turning on new group
 } as const;
 
 // Fan control constants
@@ -147,6 +152,8 @@ export const CONFIG_KEYS = [
     "set_time_alternate_fan",
     "set_time_fan_on",
     "set_time_fan_off",
+    "set_fan_group_transition_delay", // Fan group transition delay in seconds
+    "set_fan_group_off_delay", // Delay after turning off fans before turning on new group (seconds)
 
     // Fan dao control
     "set_mode_fan_dao",
