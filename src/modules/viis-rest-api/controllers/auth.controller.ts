@@ -9,6 +9,7 @@ import { RouteDefinition } from '../types/common.types';
 import { LoginRequest, LoginResponse, TokenVerificationResponse } from '../types/auth.types';
 import { Node } from 'node-red';
 import { AuthService } from '../services/auth.service';
+import { logger } from '../utils/logger';
 
 /**
  * Authentication controller class
@@ -54,6 +55,9 @@ export class AuthController extends BaseController {
     login = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         // Validate request body
         const loginData: LoginRequest = req.body;
+
+        logger.info(this.node, `AuthController.login - this exists: ${!!this}`);
+        logger.info(this.node, `AuthController.login - this.authService exists: ${!!this.authService}`);
 
         // Authenticate user
         const loginResponse: LoginResponse = await this.authService.login(loginData);
