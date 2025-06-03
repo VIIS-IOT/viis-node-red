@@ -51,6 +51,7 @@ exports.FAN_CONFIG = {
         ],
         FOUR_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4"],
+            ["quat_3", "quat_4", "quat_5", "quat_6"],
             ["quat_5", "quat_6", "quat_1", "quat_2"]
         ],
         SIX_FANS: [
