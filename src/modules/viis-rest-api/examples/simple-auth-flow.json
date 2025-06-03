@@ -1,0 +1,266 @@
+[
+    {
+        "id": "viis-rest-api-server",
+        "type": "viis-rest-api",
+        "z": "example-flow",
+        "name": "VIIS API Server",
+        "enabled": true,
+        "apiPrefix": "/api/v2",
+        "enableLogging": true,
+        "enableCors": true,
+        "jwtSecret": "",
+        "enableRateLimit": true,
+        "maxRequestsPerMinute": 100,
+        "x": 200,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "http-login-test",
+        "type": "http in",
+        "z": "example-flow",
+        "name": "Test Login",
+        "url": "/test/login",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 150,
+        "y": 200,
+        "wires": [
+            ["login-request"]
+        ]
+    },
+    {
+        "id": "login-request",
+        "type": "http request",
+        "z": "example-flow",
+        "name": "Call Login API",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://localhost:1880/api/v2/auth/login",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "other",
+                "keyValue": "Content-Type",
+                "valueType": "other",
+                "valueValue": "application/json"
+            }
+        ],
+        "x": 350,
+        "y": 200,
+        "wires": [
+            ["login-response"]
+        ]
+    },
+    {
+        "id": "login-response",
+        "type": "http response",
+        "z": "example-flow",
+        "name": "Login Response",
+        "statusCode": "",
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "x": 550,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "http-get-user-test",
+        "type": "http in",
+        "z": "example-flow",
+        "name": "Test Get User",
+        "url": "/test/user",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 150,
+        "y": 300,
+        "wires": [
+            ["prepare-auth-header"]
+        ]
+    },
+    {
+        "id": "prepare-auth-header",
+        "type": "function",
+        "z": "example-flow",
+        "name": "Add Auth Header",
+        "func": "// Get token from query parameter or header\nconst token = msg.req.query.token || msg.req.headers.authorization;\n\nif (!token) {\n    msg.statusCode = 400;\n    msg.payload = {\n        error: \"Bad Request\",\n        message: \"Token required in query parameter or Authorization header\"\n    };\n    return msg;\n}\n\n// Set authorization header\nmsg.headers = {\n    \"Authorization\": token.startsWith('Bearer ') ? token : `Bearer ${token}`,\n    \"Content-Type\": \"application/json\"\n};\n\n// Clear payload for GET request\nmsg.payload = \"\";\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 350,
+        "y": 300,
+        "wires": [
+            ["get-user-request"]
+        ]
+    },
+    {
+        "id": "get-user-request",
+        "type": "http request",
+        "z": "example-flow",
+        "name": "Call Get User API",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://localhost:1880/api/v2/users/me",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": false,
+        "x": 550,
+        "y": 300,
+        "wires": [
+            ["user-response"]
+        ]
+    },
+    {
+        "id": "user-response",
+        "type": "http response",
+        "z": "example-flow",
+        "name": "User Response",
+        "statusCode": "",
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "x": 750,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "http-health-test",
+        "type": "http in",
+        "z": "example-flow",
+        "name": "Test Health",
+        "url": "/test/health",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 150,
+        "y": 400,
+        "wires": [
+            ["health-request"]
+        ]
+    },
+    {
+        "id": "health-request",
+        "type": "http request",
+        "z": "example-flow",
+        "name": "Call Health API",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://localhost:1880/api/v2/health",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": false,
+        "x": 350,
+        "y": 400,
+        "wires": [
+            ["health-response"]
+        ]
+    },
+    {
+        "id": "health-response",
+        "type": "http response",
+        "z": "example-flow",
+        "name": "Health Response",
+        "statusCode": "",
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "x": 550,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "inject-login-test",
+        "type": "inject",
+        "z": "example-flow",
+        "name": "Test Login",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "url",
+                "v": "http://localhost:1880/test/login",
+                "vt": "str"
+            },
+            {
+                "p": "method",
+                "v": "POST",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"usr\":\"admin@example.com\",\"pwd\":\"password123\"}",
+        "payloadType": "json",
+        "x": 150,
+        "y": 500,
+        "wires": [
+            ["http-request-test"]
+        ]
+    },
+    {
+        "id": "http-request-test",
+        "type": "http request",
+        "z": "example-flow",
+        "name": "HTTP Test",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "other",
+                "keyValue": "Content-Type",
+                "valueType": "other",
+                "valueValue": "application/json"
+            }
+        ],
+        "x": 350,
+        "y": 500,
+        "wires": [
+            ["debug-response"]
+        ]
+    },
+    {
+        "id": "debug-response",
+        "type": "debug",
+        "z": "example-flow",
+        "name": "Debug Response",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 550,
+        "y": 500,
+        "wires": []
+    }
+]
