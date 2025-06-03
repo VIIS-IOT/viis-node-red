@@ -53,7 +53,7 @@ export class AuthController extends BaseController {
      */
     login = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         // Validate request body
-        const loginData: LoginRequest = await this.authValidator.validateLogin(req.body);
+        const loginData: LoginRequest = req.body;
 
         // Authenticate user
         const loginResponse: LoginResponse = await this.authService.login(loginData);

@@ -5,10 +5,10 @@
 import { Request, Response } from 'express';
 import { BaseController } from './base.controller';
 import { DatabaseService } from '../services/database.service';
-import { UserValidator } from '../validators/user.validator';
 import { RouteDefinition } from '../types/common.types';
 import { UserQueryParams, UserResponse } from '../types/user.types';
 import { Node } from 'node-red';
+import { UserValidator } from '../validators/user.validator';
 
 /**
  * User management controller class
@@ -139,7 +139,7 @@ export class UserController extends BaseController {
      */
     getCurrentUser = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         const user = this.getAuthenticatedUser(req);
-        
+
         if (!user) {
             return this.authenticationError(res, 'User not authenticated');
         }
@@ -150,8 +150,8 @@ export class UserController extends BaseController {
             where: { name: user.user_id },
             relations: ['iot_customer'],
             select: [
-                'name', 'first_name', 'last_name', 'email', 
-                'customer_id', 'is_admin', 'iot_dynamic_role', 
+                'name', 'first_name', 'last_name', 'email',
+                'customer_id', 'is_admin', 'iot_dynamic_role',
                 'phone_number', 'user_id', 'is_deactivated'
             ]
         });
@@ -194,8 +194,8 @@ export class UserController extends BaseController {
             where: { name: userId },
             relations: ['iot_customer'],
             select: [
-                'name', 'first_name', 'last_name', 'email', 
-                'customer_id', 'is_admin', 'iot_dynamic_role', 
+                'name', 'first_name', 'last_name', 'email',
+                'customer_id', 'is_admin', 'iot_dynamic_role',
                 'phone_number', 'user_id', 'is_deactivated'
             ]
         });

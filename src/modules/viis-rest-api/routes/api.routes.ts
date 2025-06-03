@@ -70,6 +70,9 @@ export class ApiRoutes {
             // Register controller routes
             this.registerControllerRoutes(RED, config);
 
+            // Add debug route to list all registered routes
+            this.addDebugRoutes(RED, config);
+
             // Setup error handling
             this.setupErrorHandling(RED, config);
 
@@ -146,6 +149,37 @@ export class ApiRoutes {
     }
 
     /**
+     * Add debug routes for troubleshooting
+     */
+    private addDebugRoutes(RED: NodeAPI, config: ApiConfig): void {
+        // Debug route to list all registered routes
+        RED.httpNode.get(`${config.apiPrefix}/debug/routes`, (_req: any, res: any) => {
+            const routeList: any[] = [];
+
+            this.controllers.forEach((controller, controllerName) => {
+                const routes = controller.getRoutes();
+                routes.forEach(route => {
+                    routeList.push({
+                        controller: controllerName,
+                        method: route.method,
+                        path: `${config.apiPrefix}${route.path}`,
+                        handler: route.handler,
+                        middleware: route.middleware || []
+                    });
+                });
+            });
+
+            ResponseHelper.success(res, {
+                totalRoutes: routeList.length,
+                apiPrefix: config.apiPrefix,
+                routes: routeList
+            }, 200, 'Registered routes');
+        });
+
+        logger.info(this.node, `✓ Added debug route: GET ${config.apiPrefix}/debug/routes`);
+    }
+
+    /**
      * Register a single route
      */
     private registerRoute(
@@ -184,8 +218,8 @@ export class ApiRoutes {
             return;
         }
 
-        // Register the route
-        expressMethod.call(RED.httpNode, fullPath, ...middlewares, handler);
+        // Register the route with proper context binding
+        expressMethod.call(RED.httpNode, fullPath, ...middlewares, handler.bind(controller));
 
         logger.info(this.node, `✓ Registered ${route.method} ${fullPath} -> ${controllerName}.${route.handler}`);
     }

@@ -12,8 +12,7 @@ import {
     LoginRequest,
     LoginResponse,
     JwtPayload,
-    UserInfo,
-    PasswordHashType
+    UserInfo
 } from '../types/auth.types';
 import { IService, ApiError, ErrorType } from '../types/common.types';
 import { DatabaseService } from './database.service';
@@ -27,6 +26,16 @@ export class AuthService implements IService {
     private node: Node;
 
     constructor(databaseService: DatabaseService, jwtSecret: string, node: Node) {
+        if (!databaseService) {
+            throw new Error("DatabaseService is required for AuthService");
+        }
+        if (!jwtSecret) {
+            throw new Error("JWT secret is required for AuthService");
+        }
+        if (!node) {
+            throw new Error("Node instance is required for AuthService");
+        }
+
         this.databaseService = databaseService;
         this.jwtSecret = jwtSecret;
         this.node = node;
@@ -44,6 +53,29 @@ export class AuthService implements IService {
      */
     async cleanup(): Promise<void> {
         logger.info(this.node, "Authentication service cleanup completed");
+    }
+
+    /**
+     * Ensure database service is available and initialized
+     */
+    private ensureDatabaseService(): void {
+        if (!this.databaseService) {
+            logger.error(this.node, "DatabaseService is not initialized in AuthService");
+            throw new ApiError(
+                ErrorType.DATABASE_ERROR,
+                "Database service not available",
+                500
+            );
+        }
+
+        if (!this.databaseService.isInitialized()) {
+            logger.error(this.node, "DatabaseService is not initialized");
+            throw new ApiError(
+                ErrorType.DATABASE_ERROR,
+                "Database service not initialized",
+                500
+            );
+        }
     }
 
     /**
@@ -166,6 +198,7 @@ export class AuthService implements IService {
      */
     async getUserInfo(userId: string): Promise<UserInfo | null> {
         try {
+            this.ensureDatabaseService();
             const userRepo = this.databaseService.getCustomerUserRepository();
             const user = await userRepo.findOne({
                 where: { name: userId },
@@ -208,6 +241,7 @@ export class AuthService implements IService {
      * Find user by username, email, or user_name
      */
     private async findUser(username: string): Promise<any> {
+        this.ensureDatabaseService();
         const userRepo = this.databaseService.getCustomerUserRepository();
 
         return await userRepo.findOne({
@@ -223,6 +257,7 @@ export class AuthService implements IService {
      * Find user credentials
      */
     private async findUserCredentials(username: string): Promise<any> {
+        this.ensureDatabaseService();
         const credRepo = this.databaseService.getCustomerUserCredentialRepository();
 
         return await credRepo.findOne({
@@ -236,6 +271,7 @@ export class AuthService implements IService {
     private async getUserDynamicRole(roleName?: string): Promise<any> {
         if (!roleName) return null;
 
+        this.ensureDatabaseService();
         const roleRepo = this.databaseService.getIotDynamicRoleRepository();
 
         return await roleRepo.findOne({

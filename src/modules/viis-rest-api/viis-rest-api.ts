@@ -76,6 +76,7 @@ export = function (RED: NodeAPI) {
 
                 // Initialize auth service
                 authService = new AuthService(databaseService, apiConfig.jwtSecret, node);
+                await authService.initialize();
                 logger.info(node, "Auth service initialized");
 
                 // Initialize and register API routes
@@ -99,7 +100,10 @@ export = function (RED: NodeAPI) {
             try {
                 logger.info(node, "Shutting down VIIS REST API...");
 
-                // Cleanup database connections
+                // Cleanup services
+                if (authService) {
+                    await authService.cleanup();
+                }
                 if (databaseService) {
                     await databaseService.cleanup();
                 }
