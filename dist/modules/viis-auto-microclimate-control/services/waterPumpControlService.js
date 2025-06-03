@@ -84,6 +84,7 @@ class WaterPumpControlService {
      */
     checkK4PriorityOverride(config, sensorData) {
         try {
+            return [];
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
             if (tempIndoor === undefined || humiIndoor === undefined) {

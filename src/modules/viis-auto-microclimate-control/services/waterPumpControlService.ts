@@ -136,6 +136,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         sensorData: SensorData
     ): ControlAction[] {
         try {
+            return []
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
 
