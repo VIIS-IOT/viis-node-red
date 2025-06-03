@@ -1,43 +1,57 @@
 /**
- * @fileoverview Validation middleware
+ * @fileoverview Validation middleware using class-validator
+ *
+ * This middleware provides a foundation for request validation across all API modules.
+ * It demonstrates the recommended patterns for:
+ * - DTO-based validation using class-validator
+ * - Consistent error handling and response formatting
+ * - Type-safe request processing
+ * - Reusable validation patterns for other modules
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { Node } from 'node-red';
-import Joi from 'joi';
+import { Service } from 'typedi';
+import { validate, ValidationError } from 'class-validator';
+import { plainToClass, ClassConstructor } from 'class-transformer';
 import { ResponseHelper } from '../utils/response.helper';
 import { logger } from '../utils/logger';
+import { ApiError, ErrorType } from '../types/common.types';
 
 /**
- * Validation middleware class
+ * Validation middleware class using class-validator
+ *
+ * Provides reusable validation patterns that can be used across all API modules.
+ * This serves as the foundation for consistent request validation.
  */
+@Service()
 export class ValidationMiddleware {
-    private node: Node;
-
-    constructor(node: Node) {
-        this.node = node;
-    }
+    constructor(private node: Node) { }
 
     /**
-     * Validate request body
+     * Validate request body using DTO class
+     *
+     * @example
+     * ```typescript
+     * // In route handler:
+     * app.post('/login',
+     *   validationMiddleware.validateBody(LoginDto),
+     *   authController.login
+     * );
+     * ```
      */
-    validateBody = (schema: Joi.ObjectSchema) => {
-        return (req: Request, res: Response, next: NextFunction): void => {
+    validateBody = <T extends object>(dtoClass: ClassConstructor<T>) => {
+        return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
             try {
-                const { error, value } = schema.validate(req.body, {
-                    abortEarly: false,
-                    stripUnknown: true,
-                    convert: true
+                const dto = plainToClass(dtoClass, req.body);
+                const errors = await validate(dto, {
+                    whitelist: true,
+                    forbidNonWhitelisted: true
                 });
 
-                if (error) {
-                    const details = error.details.map(detail => ({
-                        field: detail.path.join('.'),
-                        message: detail.message,
-                        value: detail.context?.value
-                    }));
-
-                    logger.warn(this.node, `Body validation failed: ${error.message}`);
+                if (errors.length > 0) {
+                    const details = this.formatValidationErrors(errors);
+                    logger.warn(this.node, `Body validation failed for ${dtoClass.name}`);
                     return ResponseHelper.validationError(
                         res,
                         'Request body validation failed',
@@ -46,8 +60,8 @@ export class ValidationMiddleware {
                     );
                 }
 
-                // Replace request body with validated and sanitized data
-                req.body = value;
+                // Replace request body with validated and transformed data
+                req.body = dto;
                 next();
 
             } catch (error) {
@@ -63,25 +77,20 @@ export class ValidationMiddleware {
     };
 
     /**
-     * Validate request query parameters
+     * Validate request query parameters using DTO class
      */
-    validateQuery = (schema: Joi.ObjectSchema) => {
-        return (req: Request, res: Response, next: NextFunction): void => {
+    validateQuery = <T extends object>(dtoClass: ClassConstructor<T>) => {
+        return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
             try {
-                const { error, value } = schema.validate(req.query, {
-                    abortEarly: false,
-                    stripUnknown: true,
-                    convert: true
+                const dto = plainToClass(dtoClass, req.query);
+                const errors = await validate(dto, {
+                    whitelist: true,
+                    forbidNonWhitelisted: true
                 });
 
-                if (error) {
-                    const details = error.details.map(detail => ({
-                        field: detail.path.join('.'),
-                        message: detail.message,
-                        value: detail.context?.value
-                    }));
-
-                    logger.warn(this.node, `Query validation failed: ${error.message}`);
+                if (errors.length > 0) {
+                    const details = this.formatValidationErrors(errors);
+                    logger.warn(this.node, `Query validation failed for ${dtoClass.name}`);
                     return ResponseHelper.validationError(
                         res,
                         'Query parameters validation failed',
@@ -90,8 +99,8 @@ export class ValidationMiddleware {
                     );
                 }
 
-                // Replace request query with validated and sanitized data
-                req.query = value;
+                // Replace request query with validated and transformed data
+                req.query = dto as any;
                 next();
 
             } catch (error) {
@@ -107,25 +116,20 @@ export class ValidationMiddleware {
     };
 
     /**
-     * Validate request parameters
+     * Validate request parameters using DTO class
      */
-    validateParams = (schema: Joi.ObjectSchema) => {
-        return (req: Request, res: Response, next: NextFunction): void => {
+    validateParams = <T extends object>(dtoClass: ClassConstructor<T>) => {
+        return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
             try {
-                const { error, value } = schema.validate(req.params, {
-                    abortEarly: false,
-                    stripUnknown: true,
-                    convert: true
+                const dto = plainToClass(dtoClass, req.params);
+                const errors = await validate(dto, {
+                    whitelist: true,
+                    forbidNonWhitelisted: true
                 });
 
-                if (error) {
-                    const details = error.details.map(detail => ({
-                        field: detail.path.join('.'),
-                        message: detail.message,
-                        value: detail.context?.value
-                    }));
-
-                    logger.warn(this.node, `Params validation failed: ${error.message}`);
+                if (errors.length > 0) {
+                    const details = this.formatValidationErrors(errors);
+                    logger.warn(this.node, `Params validation failed for ${dtoClass.name}`);
                     return ResponseHelper.validationError(
                         res,
                         'URL parameters validation failed',
@@ -134,8 +138,8 @@ export class ValidationMiddleware {
                     );
                 }
 
-                // Replace request params with validated and sanitized data
-                req.params = value;
+                // Replace request params with validated and transformed data
+                req.params = dto as any;
                 next();
 
             } catch (error) {
@@ -151,56 +155,79 @@ export class ValidationMiddleware {
     };
 
     /**
-     * Validate pagination parameters
+     * Format validation errors for consistent API responses
+     *
+     * This method provides a standardized way to format validation errors
+     * that can be reused across all API modules.
      */
-    validatePagination = (req: Request, res: Response, next: NextFunction): void => {
-        const paginationSchema = Joi.object({
-            page: Joi.number().integer().min(1).default(1),
-            limit: Joi.number().integer().min(1).max(100).default(10),
-            offset: Joi.number().integer().min(0).optional()
-        });
+    private formatValidationErrors(errors: ValidationError[]): any[] {
+        const details: any[] = [];
 
-        this.validateQuery(paginationSchema)(req, res, next);
-    };
+        const extractErrors = (error: ValidationError, parentPath = '') => {
+            const fieldPath = parentPath ? `${parentPath}.${error.property}` : error.property;
 
-    /**
-     * Validate common ID parameter
-     */
-    validateIdParam = (paramName: string = 'id') => {
-        const schema = Joi.object({
-            [paramName]: Joi.string().required().min(1).max(255).messages({
-                'string.empty': `${paramName} is required`,
-                'string.min': `${paramName} must be at least 1 character`,
-                'string.max': `${paramName} must not exceed 255 characters`,
-                'any.required': `${paramName} is required`
-            })
-        });
-
-        return this.validateParams(schema);
-    };
-
-    /**
-     * Validate date range parameters
-     */
-    validateDateRange = (req: Request, res: Response, next: NextFunction): void => {
-        const dateRangeSchema = Joi.object({
-            startDate: Joi.date().iso().optional(),
-            endDate: Joi.date().iso().optional(),
-            start_date: Joi.date().iso().optional(),
-            end_date: Joi.date().iso().optional()
-        }).custom((value, helpers) => {
-            const startDate = value.startDate || value.start_date;
-            const endDate = value.endDate || value.end_date;
-
-            if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
-                return helpers.error('date.range', { 
-                    message: 'Start date must be before end date' 
+            if (error.constraints) {
+                Object.values(error.constraints).forEach(message => {
+                    details.push({
+                        field: fieldPath,
+                        message,
+                        value: error.value
+                    });
                 });
             }
 
-            return value;
-        });
+            if (error.children && error.children.length > 0) {
+                error.children.forEach(child => extractErrors(child, fieldPath));
+            }
+        };
 
-        this.validateQuery(dateRangeSchema)(req, res, next);
+        errors.forEach(error => extractErrors(error));
+        return details;
+    }
+
+    /**
+     * Create a validation middleware that validates against multiple DTO classes
+     * Useful for endpoints that accept different request formats
+     *
+     * @example
+     * ```typescript
+     * // Validate either LoginDto or RefreshTokenDto
+     * app.post('/auth',
+     *   validationMiddleware.validateOneOf([LoginDto, RefreshTokenDto]),
+     *   authController.authenticate
+     * );
+     * ```
+     */
+    validateOneOf = <T extends object>(dtoClasses: ClassConstructor<T>[]) => {
+        return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+            const errors: string[] = [];
+
+            for (const dtoClass of dtoClasses) {
+                try {
+                    const dto = plainToClass(dtoClass, req.body);
+                    const validationErrors = await validate(dto, {
+                        whitelist: true,
+                        forbidNonWhitelisted: true
+                    });
+
+                    if (validationErrors.length === 0) {
+                        req.body = dto;
+                        return next();
+                    }
+
+                    errors.push(`${dtoClass.name}: ${validationErrors.length} validation errors`);
+                } catch (error) {
+                    errors.push(`${dtoClass.name}: ${(error as Error).message}`);
+                }
+            }
+
+            logger.warn(this.node, `Validation failed for all DTO classes: ${errors.join(', ')}`);
+            ResponseHelper.validationError(
+                res,
+                'Request does not match any expected format',
+                { attemptedValidations: errors },
+                this.node
+            );
+        };
     };
 }

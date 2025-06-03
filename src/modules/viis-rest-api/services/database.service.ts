@@ -5,6 +5,7 @@
 
 import { DataSource, Repository } from 'typeorm';
 import { Node } from 'node-red';
+import { Service } from 'typedi';
 import { AppDataSource } from '../../../orm/dataSource';
 import { TabiotCustomer } from '../../../orm/entities/customer/customer';
 import { IotCustomerUser } from '../../../orm/entities/customer/customer_user';
@@ -22,6 +23,7 @@ import { IService, ApiError, ErrorType } from '../types/common.types';
  * Database service for VIIS REST API
  * Provides centralized access to all TypeORM repositories
  */
+@Service()
 export class DatabaseService implements IService {
     /** TypeORM data source */
     private readonly dataSource: DataSource;

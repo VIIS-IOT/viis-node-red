@@ -3,20 +3,28 @@
  */
 
 import { Request, Response } from 'express';
+import { Inject } from 'typedi';
 import { BaseController } from './base.controller';
 import { DatabaseService } from '../services/database.service';
+import { Controller } from '../decorators/controller.decorator';
 import { RouteDefinition } from '../types/common.types';
 import { Node } from 'node-red';
 
 /**
  * Health check controller class
+ *
+ * Provides system health monitoring endpoints:
+ * - Basic health status for load balancers
+ * - Detailed health information for administrators
+ * - Database connectivity checks
  */
+@Controller('/health')
 export class HealthController extends BaseController {
-    private databaseService: DatabaseService;
-
-    constructor(databaseService: DatabaseService, node: Node) {
+    constructor(
+        @Inject() private databaseService: DatabaseService,
+        @Inject('node') node: Node
+    ) {
         super(node);
-        this.databaseService = databaseService;
     }
 
     /**
@@ -43,7 +51,7 @@ export class HealthController extends BaseController {
      */
     getHealth = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         const isDbConnected = this.databaseService.isInitialized();
-        
+
         const healthStatus = {
             status: isDbConnected ? "ok" : "error",
             timestamp: new Date().toISOString(),
@@ -62,7 +70,7 @@ export class HealthController extends BaseController {
      */
     getDetailedHealth = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
         const startTime = Date.now();
-        
+
         // Check database connection
         let dbStatus = "disconnected";
         let dbResponseTime = 0;

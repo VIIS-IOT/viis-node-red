@@ -3,24 +3,32 @@
  */
 
 import { Request, Response } from 'express';
+import { Inject } from 'typedi';
 import { BaseController } from './base.controller';
 import { DatabaseService } from '../services/database.service';
+import { Controller } from '../decorators/controller.decorator';
 import { RouteDefinition } from '../types/common.types';
 import { UserQueryParams, UserResponse } from '../types/user.types';
+import { GetUsersQueryDto, UserParamsDto } from '../dto/user.dto';
 import { Node } from 'node-red';
 import { UserValidator } from '../validators/user.validator';
 
 /**
  * User management controller class
+ *
+ * Demonstrates patterns for user management endpoints:
+ * - Pagination and filtering
+ * - Role-based access control
+ * - Consistent validation and error handling
  */
+@Controller('/users')
 export class UserController extends BaseController {
-    private databaseService: DatabaseService;
-    private userValidator: UserValidator;
-
-    constructor(databaseService: DatabaseService, node: Node) {
+    constructor(
+        @Inject() private databaseService: DatabaseService,
+        @Inject() private userValidator: UserValidator,
+        @Inject('node') node: Node
+    ) {
         super(node);
-        this.databaseService = databaseService;
-        this.userValidator = new UserValidator();
     }
 
     /**

@@ -1,8 +1,9 @@
 /**
- * @fileoverview Base validator class using Joi for validation
+ * @fileoverview Base validator class using class-validator for validation
  */
 
-import Joi from 'joi';
+import { validate, ValidationError } from 'class-validator';
+import { plainToClass, ClassConstructor } from 'class-transformer';
 import { IValidator, ApiError, ErrorType } from '../types/common.types';
 
 /**
@@ -10,31 +11,24 @@ import { IValidator, ApiError, ErrorType } from '../types/common.types';
  */
 export abstract class BaseValidator implements IValidator {
     /**
-     * Validate data against schema
+     * Validate data using class-validator
      */
-    async validate(data: any, schema?: Joi.ObjectSchema): Promise<any> {
-        if (!schema) {
-            throw new ApiError(
-                ErrorType.INTERNAL_ERROR,
-                'Validation schema not provided',
-                500
-            );
-        }
-
+    async validate<T extends object>(
+        dtoClass: ClassConstructor<T>,
+        data: any
+    ): Promise<T> {
         try {
-            const { error, value } = schema.validate(data, {
-                abortEarly: false,
-                stripUnknown: true,
-                convert: true
+            // Transform plain object to class instance
+            const dto = plainToClass(dtoClass, data);
+
+            // Validate the DTO
+            const errors = await validate(dto, {
+                whitelist: true,
+                forbidNonWhitelisted: true
             });
 
-            if (error) {
-                const details = error.details.map(detail => ({
-                    field: detail.path.join('.'),
-                    message: detail.message,
-                    value: detail.context?.value
-                }));
-
+            if (errors.length > 0) {
+                const details = this.formatValidationErrors(errors);
                 throw new ApiError(
                     ErrorType.VALIDATION_ERROR,
                     'Validation failed',
@@ -43,7 +37,7 @@ export abstract class BaseValidator implements IValidator {
                 );
             }
 
-            return value;
+            return dto;
         } catch (error) {
             if (error instanceof ApiError) {
                 throw error;
@@ -53,84 +47,84 @@ export abstract class BaseValidator implements IValidator {
                 ErrorType.VALIDATION_ERROR,
                 'Validation error occurred',
                 400,
-                { originalError: error.message }
+                { originalError: (error as Error).message }
             );
         }
     }
 
     /**
-     * Common validation schemas
+     * Format validation errors for API response
      */
-    protected static commonSchemas = {
-        id: Joi.string().required().min(1).max(255),
-        email: Joi.string().email().required(),
-        password: Joi.string().min(6).max(255).required(),
-        name: Joi.string().min(1).max(255).required(),
-        optionalName: Joi.string().min(1).max(255).optional(),
-        phone: Joi.string().pattern(/^[+]?[\d\s\-()]+$/).optional(),
-        boolean: Joi.boolean().optional(),
-        number: Joi.number().integer().min(0).optional(),
-        positiveNumber: Joi.number().integer().min(1).optional(),
-        pagination: Joi.object({
-            page: Joi.number().integer().min(1).default(1),
-            limit: Joi.number().integer().min(1).max(100).default(10)
-        }).optional(),
-        search: Joi.string().min(1).max(255).optional(),
-        customerId: Joi.string().min(1).max(255).optional(),
-        deviceId: Joi.string().min(1).max(255).required(),
-        timestamp: Joi.date().iso().optional(),
-        dateRange: Joi.object({
-            startDate: Joi.date().iso().optional(),
-            endDate: Joi.date().iso().optional()
-        }).optional()
-    };
+    private formatValidationErrors(errors: ValidationError[]): any[] {
+        const details: any[] = [];
 
-    /**
-     * Validate pagination parameters
-     */
-    protected validatePagination(data: any) {
-        return this.validate(data, BaseValidator.commonSchemas.pagination);
+        const extractErrors = (error: ValidationError, parentPath = '') => {
+            const fieldPath = parentPath ? `${parentPath}.${error.property}` : error.property;
+
+            if (error.constraints) {
+                Object.values(error.constraints).forEach(message => {
+                    details.push({
+                        field: fieldPath,
+                        message,
+                        value: error.value
+                    });
+                });
+            }
+
+            if (error.children && error.children.length > 0) {
+                error.children.forEach(child => extractErrors(child, fieldPath));
+            }
+        };
+
+        errors.forEach(error => extractErrors(error));
+        return details;
     }
 
     /**
-     * Validate ID parameter
+     * Validate data with custom error handling
      */
-    protected validateId(id: any) {
-        return this.validate({ id }, Joi.object({ id: BaseValidator.commonSchemas.id }));
+    protected async validateWithCustomError<T extends object>(
+        dtoClass: ClassConstructor<T>,
+        data: any,
+        errorMessage?: string
+    ): Promise<T> {
+        try {
+            return await this.validate(dtoClass, data);
+        } catch (error) {
+            if (error instanceof ApiError && errorMessage) {
+                error.message = errorMessage;
+            }
+            throw error;
+        }
     }
 
     /**
-     * Validate email
+     * Validate query parameters using DTO class
      */
-    protected validateEmail(email: any) {
-        return this.validate({ email }, Joi.object({ email: BaseValidator.commonSchemas.email }));
+    async validateQuery<T extends object>(
+        dtoClass: ClassConstructor<T>,
+        query: any
+    ): Promise<T> {
+        return this.validate(dtoClass, query);
     }
 
     /**
-     * Create custom validation schema
+     * Validate request body using DTO class
      */
-    protected createSchema(schemaDefinition: Record<string, Joi.Schema>): Joi.ObjectSchema {
-        return Joi.object(schemaDefinition);
+    async validateBody<T extends object>(
+        dtoClass: ClassConstructor<T>,
+        body: any
+    ): Promise<T> {
+        return this.validate(dtoClass, body);
     }
 
     /**
-     * Validate query parameters
+     * Validate request parameters using DTO class
      */
-    async validateQuery(query: any, schema: Joi.ObjectSchema): Promise<any> {
-        return this.validate(query, schema);
-    }
-
-    /**
-     * Validate request body
-     */
-    async validateBody(body: any, schema: Joi.ObjectSchema): Promise<any> {
-        return this.validate(body, schema);
-    }
-
-    /**
-     * Validate request parameters
-     */
-    async validateParams(params: any, schema: Joi.ObjectSchema): Promise<any> {
-        return this.validate(params, schema);
+    async validateParams<T extends object>(
+        dtoClass: ClassConstructor<T>,
+        params: any
+    ): Promise<T> {
+        return this.validate(dtoClass, params);
     }
 }

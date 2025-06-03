@@ -4,6 +4,7 @@
  */
 
 import { NodeAPI, Node } from 'node-red';
+import Container from 'typedi';
 import { DatabaseService } from '../services/database.service';
 import { AuthService } from '../services/auth.service';
 import { AuthController } from '../controllers/auth.controller';
@@ -20,6 +21,12 @@ const bodyParser = require('body-parser');
 
 /**
  * API routes registry class
+ *
+ * This class demonstrates the recommended patterns for API route management:
+ * - Uses TypeDI container for dependency resolution
+ * - Provides consistent middleware application
+ * - Supports dynamic route registration
+ * - Serves as a template for other API modules
  */
 export class ApiRoutes {
     private databaseService: DatabaseService;
@@ -34,26 +41,31 @@ export class ApiRoutes {
         this.authService = authService;
         this.node = node;
         this.authMiddleware = new AuthMiddleware(authService, node);
-        this.validationMiddleware = new ValidationMiddleware(node);
+        this.validationMiddleware = Container.get(ValidationMiddleware);
 
-        // Initialize controllers
+        // Initialize controllers using TypeDI container
         this.initializeControllers();
     }
 
     /**
-     * Initialize all controllers
+     * Initialize all controllers using TypeDI container
+     *
+     * This method demonstrates how to resolve controllers from the DI container.
+     * Controllers are automatically instantiated with their dependencies injected.
      */
     private initializeControllers(): void {
-        // Auth controller
-        this.controllers.set('auth', new AuthController(this.authService, this.node));
+        try {
+            // Get controllers from TypeDI container
+            // The @Controller decorator and @Inject decorators handle dependency injection
+            this.controllers.set('auth', Container.get(AuthController));
+            this.controllers.set('user', Container.get(UserController));
+            this.controllers.set('health', Container.get(HealthController));
 
-        // User controller
-        this.controllers.set('user', new UserController(this.databaseService, this.node));
-
-        // Health controller
-        this.controllers.set('health', new HealthController(this.databaseService, this.node));
-
-        logger.info(this.node, `Initialized ${this.controllers.size} controllers`);
+            logger.info(this.node, `Initialized ${this.controllers.size} controllers using TypeDI container`);
+        } catch (error) {
+            logger.error(this.node, `Failed to initialize controllers: ${(error as Error).message}`);
+            throw error;
+        }
     }
 
     /**
@@ -238,9 +250,13 @@ export class ApiRoutes {
             case 'optionalAuth':
                 return this.authMiddleware.optionalAuth;
             case 'pagination':
-                return this.validationMiddleware.validatePagination;
+                // For pagination, use GetUsersQueryDto or create a specific pagination DTO
+                logger.warn(this.node, `Pagination middleware should use DTO validation instead`);
+                return null;
             case 'dateRange':
-                return this.validationMiddleware.validateDateRange;
+                // For date range, create a specific DTO with date validation
+                logger.warn(this.node, `Date range middleware should use DTO validation instead`);
+                return null;
             default:
                 logger.warn(this.node, `Unknown middleware: ${middlewareName}`);
                 return null;

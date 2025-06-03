@@ -3,25 +3,34 @@
  */
 
 import { Request, Response } from 'express';
+import { Inject } from 'typedi';
 import { BaseController } from './base.controller';
 import { AuthValidator } from '../validators/auth.validator';
+import { Controller } from '../decorators/controller.decorator';
 import { RouteDefinition } from '../types/common.types';
 import { LoginRequest, LoginResponse, TokenVerificationResponse } from '../types/auth.types';
+import { LoginDto } from '../dto/auth.dto';
 import { Node } from 'node-red';
 import { AuthService } from '../services/auth.service';
 import { logger } from '../utils/logger';
 
 /**
  * Authentication controller class
+ *
+ * This controller demonstrates the recommended patterns for VIIS API modules:
+ * - Uses @Controller decorator for dependency injection
+ * - Injects services via constructor with @Inject decorators
+ * - Follows consistent error handling and validation patterns
+ * - Serves as a template for other API module controllers
  */
+@Controller('/auth')
 export class AuthController extends BaseController {
-    private authService: AuthService;
-    private authValidator: AuthValidator;
-
-    constructor(authService: AuthService, node: Node) {
+    constructor(
+        @Inject() private authService: AuthService,
+        @Inject() private authValidator: AuthValidator,
+        @Inject('node') node: Node
+    ) {
         super(node);
-        this.authService = authService;
-        this.authValidator = new AuthValidator();
     }
 
     /**
@@ -51,13 +60,17 @@ export class AuthController extends BaseController {
 
     /**
      * Login endpoint
+     *
+     * Demonstrates the recommended validation and response pattern:
+     * 1. Validate request body using class-validator DTO
+     * 2. Call service method with validated data
+     * 3. Return standardized response using BaseController helpers
      */
     login = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
-        // Validate request body
-        const loginData: LoginRequest = req.body;
+        // Validate request body using class-validator DTO
+        const loginData: LoginDto = await this.authValidator.validateLogin(req.body);
 
-        logger.warn(this.node, `AuthController.login - this exists: ${!!this}`);
-        logger.warn(this.node, `AuthController.login - this.authService exists: ${!!this.authService}`);
+        logger.info(this.node, `Login attempt for user: ${loginData.usr}`);
 
         // Authenticate user
         const loginResponse: LoginResponse = await this.authService.login(loginData);

@@ -1,166 +1,123 @@
 /**
- * @fileoverview User validator
+ * @fileoverview User validator using class-validator
+ *
+ * Demonstrates comprehensive user validation patterns that can be reused
+ * across different API modules for user management functionality.
  */
 
-import Joi from 'joi';
+import { Service } from 'typedi';
 import { BaseValidator } from './base.validator';
+import { GetUsersQueryDto, UserParamsDto, CreateUserDto, UpdateUserDto } from '../dto/user.dto';
 import { UserQueryParams, CreateUserRequest, UpdateUserRequest } from '../types/user.types';
 
 /**
- * User validator class
+ * User validator class using class-validator
+ *
+ * Provides validation methods for all user-related operations.
+ * This serves as a template for user validation in other API modules.
  */
+@Service()
 export class UserValidator extends BaseValidator {
-    /**
-     * User query parameters validation schema
-     */
-    private static userQuerySchema = Joi.object({
-        page: Joi.number().integer().min(1).default(1),
-        limit: Joi.number().integer().min(1).max(100).default(10),
-        customer_id: Joi.string().min(1).max(255).optional(),
-        is_admin: Joi.number().integer().valid(0, 1).optional(),
-        iot_dynamic_role: Joi.string().min(1).max(255).optional(),
-        search: Joi.string().min(1).max(255).optional(),
-        is_deactivated: Joi.number().integer().valid(0, 1).optional()
-    });
-
-    /**
-     * User ID parameter validation schema
-     */
-    private static userIdParamSchema = Joi.object({
-        userId: Joi.string().required().min(1).max(255).messages({
-            'string.empty': 'User ID is required',
-            'string.min': 'User ID must be at least 1 character',
-            'string.max': 'User ID must not exceed 255 characters',
-            'any.required': 'User ID is required'
-        })
-    });
-
-    /**
-     * Create user request validation schema
-     */
-    private static createUserSchema = Joi.object({
-        name: Joi.string().required().min(1).max(255).messages({
-            'string.empty': 'Username is required',
-            'string.min': 'Username must be at least 1 character',
-            'string.max': 'Username must not exceed 255 characters',
-            'any.required': 'Username is required'
-        }),
-        first_name: Joi.string().min(1).max(255).optional(),
-        last_name: Joi.string().min(1).max(255).optional(),
-        email: Joi.string().email().required().messages({
-            'string.email': 'Please provide a valid email address',
-            'any.required': 'Email is required'
-        }),
-        customer_id: Joi.string().required().min(1).max(255).messages({
-            'string.empty': 'Customer ID is required',
-            'any.required': 'Customer ID is required'
-        }),
-        is_admin: Joi.number().integer().valid(0, 1).default(0),
-        iot_dynamic_role: Joi.string().min(1).max(255).optional(),
-        phone_number: Joi.string().pattern(/^[+]?[\d\s\-()]+$/).optional().messages({
-            'string.pattern.base': 'Please provide a valid phone number'
-        }),
-        password: Joi.string().min(6).max(255).required().messages({
-            'string.min': 'Password must be at least 6 characters',
-            'string.max': 'Password must not exceed 255 characters',
-            'any.required': 'Password is required'
-        })
-    });
-
-    /**
-     * Update user request validation schema
-     */
-    private static updateUserSchema = Joi.object({
-        first_name: Joi.string().min(1).max(255).optional(),
-        last_name: Joi.string().min(1).max(255).optional(),
-        email: Joi.string().email().optional().messages({
-            'string.email': 'Please provide a valid email address'
-        }),
-        customer_id: Joi.string().min(1).max(255).optional(),
-        is_admin: Joi.number().integer().valid(0, 1).optional(),
-        iot_dynamic_role: Joi.string().min(1).max(255).optional(),
-        phone_number: Joi.string().pattern(/^[+]?[\d\s\-()]+$/).optional().messages({
-            'string.pattern.base': 'Please provide a valid phone number'
-        }),
-        is_deactivated: Joi.number().integer().valid(0, 1).optional()
-    }).min(1).messages({
-        'object.min': 'At least one field must be provided for update'
-    });
 
     /**
      * Validate user query parameters
      */
-    async validateUserQuery(data: any): Promise<UserQueryParams> {
-        return this.validate(data, UserValidator.userQuerySchema);
+    async validateUserQuery(data: any): Promise<GetUsersQueryDto> {
+        return this.validate(GetUsersQueryDto, data);
     }
 
     /**
      * Validate user ID parameter
      */
-    async validateUserIdParam(data: any): Promise<{ userId: string }> {
-        return this.validate(data, UserValidator.userIdParamSchema);
+    async validateUserIdParam(data: any): Promise<UserParamsDto> {
+        return this.validate(UserParamsDto, data);
     }
 
     /**
      * Validate create user request
      */
-    async validateCreateUser(data: any): Promise<CreateUserRequest> {
-        return this.validate(data, UserValidator.createUserSchema);
+    async validateCreateUser(data: any): Promise<CreateUserDto> {
+        return this.validate(CreateUserDto, data);
     }
 
     /**
      * Validate update user request
      */
-    async validateUpdateUser(data: any): Promise<UpdateUserRequest> {
-        return this.validate(data, UserValidator.updateUserSchema);
+    async validateUpdateUser(data: any): Promise<UpdateUserDto> {
+        return this.validate(UpdateUserDto, data);
     }
 
     /**
-     * Validate email uniqueness (for create/update operations)
+     * Validate email format
+     *
+     * Simple email format validation using regex.
+     * For production use, consider more sophisticated email validation.
      */
-    async validateEmailFormat(email: string): Promise<boolean> {
-        const emailSchema = Joi.string().email().required();
-        try {
-            await emailSchema.validateAsync(email);
-            return true;
-        } catch {
-            return false;
-        }
+    validateEmailFormat(email: string): boolean {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
     }
 
     /**
      * Validate username format
+     *
+     * Ensures username contains only allowed characters.
      */
-    async validateUsernameFormat(username: string): Promise<boolean> {
-        const usernameSchema = Joi.string().min(1).max(255).pattern(/^[a-zA-Z0-9_.-]+$/).required();
-        try {
-            await usernameSchema.validateAsync(username);
-            return true;
-        } catch {
-            return false;
-        }
+    validateUsernameFormat(username: string): boolean {
+        const usernameRegex = /^[a-zA-Z0-9_.-]+$/;
+        return usernameRegex.test(username) && username.length >= 1 && username.length <= 255;
     }
 
     /**
      * Validate password strength
+     *
+     * Checks for minimum security requirements.
+     * Can be extended with more sophisticated password policies.
      */
-    async validatePasswordStrength(password: string): Promise<{ valid: boolean; message?: string }> {
-        const passwordSchema = Joi.string()
-            .min(6)
-            .max(255)
-            .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-            .required()
-            .messages({
-                'string.min': 'Password must be at least 6 characters',
-                'string.max': 'Password must not exceed 255 characters',
-                'string.pattern.base': 'Password must contain at least one lowercase letter, one uppercase letter, and one number'
-            });
-
-        try {
-            await passwordSchema.validateAsync(password);
-            return { valid: true };
-        } catch (error: any) {
-            return { valid: false, message: error.message };
+    validatePasswordStrength(password: string): { valid: boolean; message?: string } {
+        if (password.length < 6) {
+            return { valid: false, message: 'Password must be at least 6 characters' };
         }
+
+        if (password.length > 255) {
+            return { valid: false, message: 'Password must not exceed 255 characters' };
+        }
+
+        // Check for at least one lowercase, uppercase, and digit
+        const hasLowercase = /[a-z]/.test(password);
+        const hasUppercase = /[A-Z]/.test(password);
+        const hasDigit = /\d/.test(password);
+
+        if (!hasLowercase || !hasUppercase || !hasDigit) {
+            return {
+                valid: false,
+                message: 'Password must contain at least one lowercase letter, one uppercase letter, and one number'
+            };
+        }
+
+        return { valid: true };
+    }
+
+    /**
+     * Validate user permissions
+     *
+     * Helper method to validate user role and permission combinations.
+     * Useful for authorization checks in user management endpoints.
+     */
+    validateUserPermissions(isAdmin: boolean, dynamicRole?: string): { valid: boolean; message?: string } {
+        // Admin users don't need dynamic roles
+        if (isAdmin) {
+            return { valid: true };
+        }
+
+        // Non-admin users should have a dynamic role
+        if (!dynamicRole || dynamicRole.trim().length === 0) {
+            return {
+                valid: false,
+                message: 'Non-admin users must have a dynamic role assigned'
+            };
+        }
+
+        return { valid: true };
     }
 }

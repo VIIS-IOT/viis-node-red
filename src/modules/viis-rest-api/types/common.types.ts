@@ -96,10 +96,20 @@ export interface IService {
 }
 
 /**
- * Validator interface
+ * Validator interface for class-validator based validation
+ *
+ * This interface defines the contract for all validators in the VIIS API modules.
+ * It supports the new class-validator approach with DTO classes.
  */
 export interface IValidator {
-    validate(data: any): Promise<any>;
+    /**
+     * Validate data using a DTO class with class-validator decorators
+     *
+     * @param dtoClass - The DTO class constructor with validation decorators
+     * @param data - The data to validate
+     * @returns Promise resolving to the validated and transformed DTO instance
+     */
+    validate<T extends object>(dtoClass: any, data: any): Promise<T>;
 }
 
 /**

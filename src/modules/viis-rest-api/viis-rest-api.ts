@@ -9,6 +9,9 @@ import { logger } from "./utils/logger";
 import { AuthService } from "./services/auth.service";
 import { ApiRoutes } from "./routes/api.routes";
 import { DatabaseService } from "./services/database.service";
+import { ContainerSetup } from "./container/container.setup";
+import Container from "typedi";
+import "reflect-metadata";
 
 /**
  * Configuration interface for VIIS REST API node
@@ -69,15 +72,17 @@ export = function (RED: NodeAPI) {
                 node.status({ fill: "yellow", shape: "dot", text: "Initializing..." });
                 logger.info(node, "Initializing VIIS REST API...");
 
-                // Initialize database service
-                databaseService = new DatabaseService(node);
-                await databaseService.initialize();
-                logger.info(node, "Database service initialized");
+                // Initialize TypeDI container with all dependencies
+                await ContainerSetup.initialize({
+                    node,
+                    jwtSecret: apiConfig.jwtSecret
+                });
+                logger.info(node, "TypeDI container initialized");
 
-                // Initialize auth service
-                authService = new AuthService(databaseService, apiConfig.jwtSecret, node);
-                await authService.initialize();
-                logger.info(node, "Auth service initialized");
+                // Get services from container
+                databaseService = Container.get(DatabaseService);
+                authService = Container.get(AuthService);
+                logger.info(node, "Services resolved from container");
 
                 // Initialize and register API routes
                 apiRoutes = new ApiRoutes(databaseService, authService, node);
@@ -107,6 +112,9 @@ export = function (RED: NodeAPI) {
                 if (databaseService) {
                     await databaseService.cleanup();
                 }
+
+                // Reset TypeDI container to prevent memory leaks
+                ContainerSetup.reset();
 
                 // Remove registered routes (Node-RED handles this automatically)
                 logger.info(node, "VIIS REST API shutdown complete");

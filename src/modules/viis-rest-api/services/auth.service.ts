@@ -7,6 +7,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { Node } from 'node-red';
+import { Service } from 'typedi';
 import { logger } from '../utils/logger';
 import {
     LoginRequest,
@@ -20,6 +21,7 @@ import { DatabaseService } from './database.service';
 /**
  * Authentication service class
  */
+@Service()
 export class AuthService implements IService {
     private databaseService: DatabaseService;
     private jwtSecret: string;
