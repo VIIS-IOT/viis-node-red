@@ -79,15 +79,30 @@ export class FanControlService implements IFanControlService {
                 return actions;
             }
 
+            // Check if transition delays are configured
+            const transitionDelayMs = this.getFanGroupTransitionDelayMs(config);
+            const offDelayMs = this.getFanGroupOffDelayMs(config);
+            const useTransitions = transitionDelayMs > 0 || offDelayMs > 0;
+
             // Process based on auto mode
             if (config.set_auto_mode_fan === 1) {
                 // Rotation mode
-                const rotationActions = await this.processRotationModeWithTransition(config);
-                actions.push(...rotationActions);
+                if (useTransitions) {
+                    const rotationActions = await this.processRotationModeWithTransition(config);
+                    actions.push(...rotationActions);
+                } else {
+                    const rotationActions = await this.processRotationMode(config);
+                    actions.push(...rotationActions);
+                }
             } else {
                 // Threshold mode (default)
-                const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
-                actions.push(...thresholdActions);
+                if (useTransitions) {
+                    const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
+                    actions.push(...thresholdActions);
+                } else {
+                    const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);
+                    actions.push(...thresholdActions);
+                }
             }
 
             // Process fan dao control
@@ -554,7 +569,8 @@ export class FanControlService implements IFanControlService {
      * Get fan group transition delay configuration
      */
     private getFanGroupTransitionDelayMs(config: AutoControlConfig): number {
-        const delaySeconds = config.set_fan_group_transition_delay ||
+        const delaySeconds = config.set_fan_group_transition_delay !== undefined ?
+            config.set_fan_group_transition_delay :
             (CONTROL_CONFIG.FAN_GROUP_TRANSITION_DELAY_MS / 1000);
         return delaySeconds * 1000;
     }
@@ -563,7 +579,8 @@ export class FanControlService implements IFanControlService {
      * Get fan group off delay configuration
      */
     private getFanGroupOffDelayMs(config: AutoControlConfig): number {
-        const delaySeconds = config.set_fan_group_off_delay ||
+        const delaySeconds = config.set_fan_group_off_delay !== undefined ?
+            config.set_fan_group_off_delay :
             (CONTROL_CONFIG.FAN_GROUP_OFF_DELAY_MS / 1000);
         return delaySeconds * 1000;
     }
