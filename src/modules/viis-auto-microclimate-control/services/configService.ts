@@ -36,7 +36,7 @@ export class ConfigService implements IConfigService {
 
             // Read fresh config from global context
             const configKeyValues = this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {};
-            
+
             if (!configKeyValues || typeof configKeyValues !== 'object') {
                 this.logger.warn("No configuration found in global context, using defaults");
                 return this.getDefaultConfig();
@@ -44,7 +44,7 @@ export class ConfigService implements IConfigService {
 
             // Extract only the keys we care about
             const config: AutoControlConfig = {};
-            
+
             CONFIG_KEYS.forEach(key => {
                 if (configKeyValues.hasOwnProperty(key)) {
                     config[key] = configKeyValues[key];
@@ -53,11 +53,11 @@ export class ConfigService implements IConfigService {
 
             // Validate and apply defaults for missing values
             this.applyDefaults(config);
-            
+
             // Cache the config
             this.cachedConfig = config;
             this.lastConfigUpdate = Date.now();
-            
+
             this.logger.debug(`Configuration loaded: ${JSON.stringify(config)}`);
             return config;
 
@@ -73,53 +73,53 @@ export class ConfigService implements IConfigService {
     isConfigValid(): boolean {
         try {
             const config = this.getConfig();
-            
+
             // Check critical configuration values
             const criticalChecks = [
                 // Fan control modes should be 0 or 1
                 config.set_mode_fan === undefined || [0, 1].includes(config.set_mode_fan),
                 config.set_auto_mode_fan === undefined || [0, 1].includes(config.set_auto_mode_fan),
-                
+
                 // Water pump mode should be 0 or 1
                 config.set_mode_tuong_nuoc === undefined || [0, 1].includes(config.set_mode_tuong_nuoc),
-                
+
                 // Curtain mode should be 0 or 1
                 config.set_mode_luoi === undefined || [0, 1].includes(config.set_mode_luoi),
-                
+
                 // Temperature thresholds should be reasonable
                 config.set_k1_fan === undefined || (config.set_k1_fan >= 0 && config.set_k1_fan <= 100),
                 config.set_k2_fan === undefined || (config.set_k2_fan >= 0 && config.set_k2_fan <= 100),
                 config.set_k3_fan === undefined || (config.set_k3_fan >= 0 && config.set_k3_fan <= 100),
                 config.set_k4_fan === undefined || (config.set_k4_fan >= 0 && config.set_k4_fan <= 100),
-                
+
                 // Group size should be valid
-                config.set_gr_alternate_fan === undefined || [2, 4, 6].includes(config.set_gr_alternate_fan),
-                
+                config.set_gr_alternate_fan === undefined || [1, 2, 4, 6].includes(config.set_gr_alternate_fan),
+
                 // Time intervals should be positive
                 config.set_time_alternate_fan === undefined || config.set_time_alternate_fan > 0,
                 config.set_time_alternate_fan_dao === undefined || config.set_time_alternate_fan_dao > 0,
-                
+
                 // Humidity thresholds should be reasonable (0-100%)
                 config.set_threshold_low_water_bump === undefined || (config.set_threshold_low_water_bump >= 0 && config.set_threshold_low_water_bump <= 100),
                 config.set_threshold_high_water_bump === undefined || (config.set_threshold_high_water_bump >= 0 && config.set_threshold_high_water_bump <= 100),
-                
+
                 // Light thresholds should be positive
                 config.set_light_dai_luoi_1 === undefined || config.set_light_dai_luoi_1 >= 0,
                 config.set_light_thu_luoi_1 === undefined || config.set_light_thu_luoi_1 >= 0,
                 config.set_light_dai_luoi_2 === undefined || config.set_light_dai_luoi_2 >= 0,
                 config.set_light_thu_luoi_2 === undefined || config.set_light_thu_luoi_2 >= 0,
-                
+
                 // Tolerance times should be positive
                 config.set_tolerance_light_luoi_1 === undefined || config.set_tolerance_light_luoi_1 > 0,
                 config.set_tolerance_light_luoi_2 === undefined || config.set_tolerance_light_luoi_2 > 0
             ];
 
             const isValid = criticalChecks.every(check => check);
-            
+
             if (!isValid) {
                 this.logger.warn("Configuration validation failed");
             }
-            
+
             return isValid;
 
         } catch (error) {
