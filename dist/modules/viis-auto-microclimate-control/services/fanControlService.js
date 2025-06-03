@@ -40,16 +40,32 @@ class FanControlService {
                 actions.push(...fanDaoActions);
                 return actions;
             }
+            // Check if transition delays are configured
+            const transitionDelayMs = this.getFanGroupTransitionDelayMs(config);
+            const offDelayMs = this.getFanGroupOffDelayMs(config);
+            const useTransitions = transitionDelayMs > 0 || offDelayMs > 0;
             // Process based on auto mode
             if (config.set_auto_mode_fan === 1) {
                 // Rotation mode
-                const rotationActions = await this.processRotationModeWithTransition(config);
-                actions.push(...rotationActions);
+                if (useTransitions) {
+                    const rotationActions = await this.processRotationModeWithTransition(config);
+                    actions.push(...rotationActions);
+                }
+                else {
+                    const rotationActions = await this.processRotationMode(config);
+                    actions.push(...rotationActions);
+                }
             }
             else {
                 // Threshold mode (default)
-                const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
-                actions.push(...thresholdActions);
+                if (useTransitions) {
+                    const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
+                    actions.push(...thresholdActions);
+                }
+                else {
+                    const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);
+                    actions.push(...thresholdActions);
+                }
             }
             // Process fan dao control
             const fanDaoActions = await this.processFanDaoControl(config);
@@ -339,12 +355,12 @@ class FanControlService {
                 else {
                     // No transition needed, create actions directly
                     const coilMapping = this.getCoilMapping();
-                    return (0, groupUtils_1.createOptimizedFanGroupActions)(rotationState.activeGroup, true, reason, coilMapping, this.getCurrentDeviceStatus());
+                    return (0, groupUtils_1.createFanGroupActions)(rotationState.activeGroup, true, reason, coilMapping);
                 }
             }
             // No rotation needed, maintain current group
             const coilMapping = this.getCoilMapping();
-            return (0, groupUtils_1.createOptimizedFanGroupActions)(rotationState.activeGroup, true, `Rotation mode: maintaining group ${rotationState.currentGroupIndex + 1}/${fanGroups.length}`, coilMapping, this.getCurrentDeviceStatus());
+            return (0, groupUtils_1.createFanGroupActions)(rotationState.activeGroup, true, `Rotation mode: maintaining group ${rotationState.currentGroupIndex + 1}/${fanGroups.length}`, coilMapping);
         }
         catch (error) {
             this.logger.error(`Rotation mode processing error: ${error.message}`);
@@ -411,8 +427,8 @@ class FanControlService {
                 return []; // Transition will be handled in next cycle
             }
             else {
-                // No transition needed, create actions directly
-                return (0, groupUtils_1.createOptimizedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+                // No transition needed, create actions directly using non-optimized function for consistency
+                return (0, groupUtils_1.createFanGroupActions)(targetGroup, true, reason, coilMapping);
             }
         }
         catch (error) {
@@ -424,7 +440,8 @@ class FanControlService {
      * Get fan group transition delay configuration
      */
     getFanGroupTransitionDelayMs(config) {
-        const delaySeconds = config.set_fan_group_transition_delay ||
+        const delaySeconds = config.set_fan_group_transition_delay !== undefined ?
+            config.set_fan_group_transition_delay :
             (constants_1.CONTROL_CONFIG.FAN_GROUP_TRANSITION_DELAY_MS / 1000);
         return delaySeconds * 1000;
     }
@@ -432,7 +449,8 @@ class FanControlService {
      * Get fan group off delay configuration
      */
     getFanGroupOffDelayMs(config) {
-        const delaySeconds = config.set_fan_group_off_delay ||
+        const delaySeconds = config.set_fan_group_off_delay !== undefined ?
+            config.set_fan_group_off_delay :
             (constants_1.CONTROL_CONFIG.FAN_GROUP_OFF_DELAY_MS / 1000);
         return delaySeconds * 1000;
     }
@@ -496,16 +514,15 @@ class FanControlService {
         const actions = [];
         switch (transitionState.phase) {
             case 'off':
-                // Turn off previous group
-                if (transitionState.previousGroup.length > 0) {
-                    const offActions = (0, groupUtils_1.createOptimizedFanGroupActions)(transitionState.previousGroup, false, `Transition phase 1: Turn off previous group - ${transitionState.reason}`, coilMapping, this.getCurrentDeviceStatus());
-                    actions.push(...offActions);
-                }
+                // Turn off ALL fans to ensure clean slate for transition
+                // This prevents accumulation of active fans from previous transitions
+                const offActions = this.createTurnOffAllFansActions(`Transition phase 1: Turn off all fans for clean transition - ${transitionState.reason}`);
+                actions.push(...offActions);
                 // Move to delay phase
                 transitionState.phase = 'delay';
                 transitionState.offDelayStartTime = now;
                 this.saveFanGroupTransitionState(transitionState);
-                this.logger.log(`Fan transition: Previous group turned off, starting delay phase`);
+                this.logger.log(`Fan transition: All fans turned off, starting delay phase`);
                 break;
             case 'delay':
                 // Check if delay period has elapsed
@@ -523,15 +540,21 @@ class FanControlService {
                 }
                 break;
             case 'on':
-                // Turn on new group
+                // Turn on new group using non-optimized function to ensure proper fan control
+                // This ensures that only the target group is on and all others are explicitly off
                 if (transitionState.nextGroup.length > 0) {
-                    const onActions = (0, groupUtils_1.createOptimizedFanGroupActions)(transitionState.nextGroup, true, `Transition phase 2: Turn on new group - ${transitionState.reason}`, coilMapping, this.getCurrentDeviceStatus());
+                    const onActions = (0, groupUtils_1.createFanGroupActions)(transitionState.nextGroup, true, `Transition phase 2: Turn on new group - ${transitionState.reason}`, coilMapping);
                     actions.push(...onActions);
+                }
+                else {
+                    // If no target group, ensure all fans are off
+                    const offActions = this.createTurnOffAllFansActions(`Transition phase 2: No target group, turn off all fans - ${transitionState.reason}`);
+                    actions.push(...offActions);
                 }
                 // Move to complete phase
                 transitionState.phase = 'complete';
                 this.saveFanGroupTransitionState(transitionState);
-                this.logger.log(`Fan transition: New group turned on, transition completing`);
+                this.logger.log(`Fan transition: New group activated, transition completing`);
                 break;
             case 'complete':
                 // Check if overall transition delay has elapsed

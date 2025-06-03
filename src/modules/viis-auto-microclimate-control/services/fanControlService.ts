@@ -465,24 +465,22 @@ export class FanControlService implements IFanControlService {
                 } else {
                     // No transition needed, create actions directly
                     const coilMapping = this.getCoilMapping();
-                    return createOptimizedFanGroupActions(
+                    return createFanGroupActions(
                         rotationState.activeGroup,
                         true,
                         reason,
-                        coilMapping,
-                        this.getCurrentDeviceStatus()
+                        coilMapping
                     );
                 }
             }
 
             // No rotation needed, maintain current group
             const coilMapping = this.getCoilMapping();
-            return createOptimizedFanGroupActions(
+            return createFanGroupActions(
                 rotationState.activeGroup,
                 true,
                 `Rotation mode: maintaining group ${rotationState.currentGroupIndex + 1}/${fanGroups.length}`,
-                coilMapping,
-                this.getCurrentDeviceStatus()
+                coilMapping
             );
 
         } catch (error) {
@@ -555,8 +553,8 @@ export class FanControlService implements IFanControlService {
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             } else {
-                // No transition needed, create actions directly
-                return createOptimizedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+                // No transition needed, create actions directly using non-optimized function for consistency
+                return createFanGroupActions(targetGroup, true, reason, coilMapping);
             }
 
         } catch (error) {
@@ -659,23 +657,18 @@ export class FanControlService implements IFanControlService {
 
         switch (transitionState.phase) {
             case 'off':
-                // Turn off previous group
-                if (transitionState.previousGroup.length > 0) {
-                    const offActions = createOptimizedFanGroupActions(
-                        transitionState.previousGroup,
-                        false,
-                        `Transition phase 1: Turn off previous group - ${transitionState.reason}`,
-                        coilMapping,
-                        this.getCurrentDeviceStatus()
-                    );
-                    actions.push(...offActions);
-                }
+                // Turn off ALL fans to ensure clean slate for transition
+                // This prevents accumulation of active fans from previous transitions
+                const offActions = this.createTurnOffAllFansActions(
+                    `Transition phase 1: Turn off all fans for clean transition - ${transitionState.reason}`
+                );
+                actions.push(...offActions);
 
                 // Move to delay phase
                 transitionState.phase = 'delay';
                 transitionState.offDelayStartTime = now;
                 this.saveFanGroupTransitionState(transitionState);
-                this.logger.log(`Fan transition: Previous group turned off, starting delay phase`);
+                this.logger.log(`Fan transition: All fans turned off, starting delay phase`);
                 break;
 
             case 'delay':
@@ -694,22 +687,28 @@ export class FanControlService implements IFanControlService {
                 break;
 
             case 'on':
-                // Turn on new group
+                // Turn on new group using non-optimized function to ensure proper fan control
+                // This ensures that only the target group is on and all others are explicitly off
                 if (transitionState.nextGroup.length > 0) {
-                    const onActions = createOptimizedFanGroupActions(
+                    const onActions = createFanGroupActions(
                         transitionState.nextGroup,
                         true,
                         `Transition phase 2: Turn on new group - ${transitionState.reason}`,
-                        coilMapping,
-                        this.getCurrentDeviceStatus()
+                        coilMapping
                     );
                     actions.push(...onActions);
+                } else {
+                    // If no target group, ensure all fans are off
+                    const offActions = this.createTurnOffAllFansActions(
+                        `Transition phase 2: No target group, turn off all fans - ${transitionState.reason}`
+                    );
+                    actions.push(...offActions);
                 }
 
                 // Move to complete phase
                 transitionState.phase = 'complete';
                 this.saveFanGroupTransitionState(transitionState);
-                this.logger.log(`Fan transition: New group turned on, transition completing`);
+                this.logger.log(`Fan transition: New group activated, transition completing`);
                 break;
 
             case 'complete':
