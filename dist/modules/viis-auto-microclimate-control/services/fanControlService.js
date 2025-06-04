@@ -477,7 +477,7 @@ class FanControlService {
             // Get current active fans
             const currentActiveFans = Object.keys(deviceStatusRecord).filter(key => deviceStatusRecord[key] === true && (0, groupUtils_1.getAllFanKeys)().includes(key));
             // Check if transition is needed with improved logic
-            if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize)) {
+            if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize, config)) {
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             }
@@ -544,7 +544,7 @@ class FanControlService {
      * Check if fan group transition is needed with stability logic
      * This prevents unnecessary transitions when the fan count requirement is already met
      */
-    requiresStableGroupTransition(currentGroup, newGroup, requiredGroupSize) {
+    requiresStableGroupTransition(currentGroup, newGroup, requiredGroupSize, config) {
         // If we're already in a transition, don't start another one
         if (this.isTransitionInProgress()) {
             return false;
@@ -570,13 +570,16 @@ class FanControlService {
                 }
                 // For different groups of same size, check if this is a planned rotation
                 // by verifying the rotation interval has elapsed
-                const rotationInterval = (0, timeUtils_1.minutesToMs)(15); // Default rotation interval
+                // Use config parameter if available, otherwise read from global config
+                const configuredInterval = (config === null || config === void 0 ? void 0 : config.set_time_alternate_fan) ||
+                    (this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
+                const rotationInterval = (0, timeUtils_1.minutesToMs)(configuredInterval);
                 const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
                 const rotationState = this.flowContext.get(contextKey);
                 if (rotationState && typeof rotationState === 'object') {
                     const timeSinceLastRotation = (0, timeUtils_1.getCurrentTimestamp)() - (rotationState.lastRotationTime || 0);
                     if (timeSinceLastRotation < rotationInterval * 0.9) { // 90% of interval to prevent premature rotation
-                        this.logger.debug(`Rotation interval not met, skipping transition (${Math.round(timeSinceLastRotation / 1000)}s < ${Math.round(rotationInterval * 0.9 / 1000)}s)`);
+                        this.logger.debug(`Rotation interval not met, skipping transition (${Math.round(timeSinceLastRotation / 1000)}s < ${Math.round(rotationInterval * 0.9 / 1000)}s) - configured: ${configuredInterval}min`);
                         return false;
                     }
                 }

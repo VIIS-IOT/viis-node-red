@@ -621,7 +621,7 @@ export class FanControlService implements IFanControlService {
             );
 
             // Check if transition is needed with improved logic
-            if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize)) {
+            if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize, config)) {
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             } else {
@@ -696,7 +696,7 @@ export class FanControlService implements IFanControlService {
      * Check if fan group transition is needed with stability logic
      * This prevents unnecessary transitions when the fan count requirement is already met
      */
-    private requiresStableGroupTransition(currentGroup: string[], newGroup: string[], requiredGroupSize: number): boolean {
+    private requiresStableGroupTransition(currentGroup: string[], newGroup: string[], requiredGroupSize: number, config?: AutoControlConfig): boolean {
         // If we're already in a transition, don't start another one
         if (this.isTransitionInProgress()) {
             return false;
@@ -726,14 +726,17 @@ export class FanControlService implements IFanControlService {
 
                 // For different groups of same size, check if this is a planned rotation
                 // by verifying the rotation interval has elapsed
-                const rotationInterval = minutesToMs(15); // Default rotation interval
+                // Use config parameter if available, otherwise read from global config
+                const configuredInterval = config?.set_time_alternate_fan ||
+                    (this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
+                const rotationInterval = minutesToMs(configuredInterval);
                 const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
                 const rotationState = this.flowContext.get(contextKey);
 
                 if (rotationState && typeof rotationState === 'object') {
                     const timeSinceLastRotation = getCurrentTimestamp() - (rotationState.lastRotationTime || 0);
                     if (timeSinceLastRotation < rotationInterval * 0.9) { // 90% of interval to prevent premature rotation
-                        this.logger.debug(`Rotation interval not met, skipping transition (${Math.round(timeSinceLastRotation / 1000)}s < ${Math.round(rotationInterval * 0.9 / 1000)}s)`);
+                        this.logger.debug(`Rotation interval not met, skipping transition (${Math.round(timeSinceLastRotation / 1000)}s < ${Math.round(rotationInterval * 0.9 / 1000)}s) - configured: ${configuredInterval}min`);
                         return false;
                     }
                 }
