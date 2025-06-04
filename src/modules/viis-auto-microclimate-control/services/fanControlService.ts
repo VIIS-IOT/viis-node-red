@@ -728,7 +728,7 @@ export class FanControlService implements IFanControlService {
                 // by verifying the rotation interval has elapsed
                 // Use config parameter if available, otherwise read from global config
                 const configuredInterval = config?.set_time_alternate_fan ||
-                    (this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
+                    (this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 2;
                 const rotationInterval = minutesToMs(configuredInterval);
                 const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
                 const rotationState = this.flowContext.get(contextKey);

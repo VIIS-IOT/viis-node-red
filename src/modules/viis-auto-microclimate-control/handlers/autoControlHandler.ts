@@ -241,6 +241,9 @@ export class AutoControlHandler implements IAutoControlHandler {
         sensorData: any
     ): void {
         try {
+            // Get detailed fan control debug information
+            const fanDebugInfo = this.getFanControlDebugInfo(config, sensorData);
+
             const outputMessage = {
                 payload: {
                     timestamp: result.timestamp,
@@ -250,13 +253,17 @@ export class AutoControlHandler implements IAutoControlHandler {
                     sensorData: {
                         temp_indoor: sensorData.temp_indoor,
                         humi_indoor: sensorData.humi_indoor,
-                        light_indoor: sensorData.light_indoor
+                        light_indoor: sensorData.light_indoor,
+                        temp_outdoor: sensorData.temp_outdoor,
+                        humi_outdoor: sensorData.humi_outdoor,
+                        light_outdoor: sensorData.light_outdoor
                     },
                     controlStatus: {
                         fanControlEnabled: config.set_mode_fan === 1,
                         waterPumpEnabled: config.set_mode_tuong_nuoc === 1,
                         curtainControlEnabled: config.set_mode_luoi === 1
                     },
+                    fanControl: fanDebugInfo,
                     actions: result.actionsExecuted.map(action => ({
                         device: action.deviceKey,
                         value: action.value,
@@ -269,6 +276,216 @@ export class AutoControlHandler implements IAutoControlHandler {
 
         } catch (error) {
             this.logger.error(`Failed to send output message: ${(error as Error).message}`);
+        }
+    }
+
+    /**
+     * Get detailed fan control debugging information
+     */
+    private getFanControlDebugInfo(config: any, sensorData: any): any {
+        try {
+            if (config.set_mode_fan !== 1) {
+                return {
+                    enabled: false,
+                    reason: "Fan control disabled"
+                };
+            }
+
+            const temperature = sensorData.temp_indoor;
+            const humidity = sensorData.humi_indoor;
+
+            if (temperature === undefined || humidity === undefined) {
+                return {
+                    enabled: true,
+                    error: "Missing temperature or humidity data"
+                };
+            }
+
+            // Get temperature thresholds
+            const thresholds = {
+                k1: config.set_k1_fan || 25,
+                k2: config.set_k2_fan || 30,
+                k3: config.set_k3_fan || 35,
+                k4: config.set_k4_fan || 40
+            };
+
+            // Determine current threshold level
+            let currentThreshold = "BELOW_K1";
+            let requiredFanCount = 0;
+
+            if (temperature >= thresholds.k4) {
+                currentThreshold = "K4";
+                requiredFanCount = 6;
+            } else if (temperature >= thresholds.k3) {
+                currentThreshold = "K3";
+                requiredFanCount = 6;
+            } else if (temperature >= thresholds.k2) {
+                currentThreshold = "K2";
+                requiredFanCount = 4;
+            } else if (temperature >= thresholds.k1) {
+                currentThreshold = "K1";
+                requiredFanCount = 2;
+            }
+
+            // Get current device status
+            const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
+            const currentActiveFans = Object.keys(deviceStatus).filter(key =>
+                deviceStatus[key] === true && ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'].includes(key)
+            );
+
+            // Get rotation state information
+            const rotationInfo = this.getRotationStateInfo(config, requiredFanCount);
+
+            // Get transition state information
+            const transitionInfo = this.getTransitionStateInfo();
+
+            // Get fan group information
+            const fanGroupInfo = this.getFanGroupInfo(requiredFanCount, currentActiveFans);
+
+            return {
+                enabled: true,
+                mode: config.set_auto_mode_fan === 1 ? "ROTATION" : "THRESHOLD",
+                temperature: temperature,
+                humidity: humidity,
+                thresholds: thresholds,
+                currentThreshold: currentThreshold,
+                requiredFanCount: requiredFanCount,
+                currentActiveFans: currentActiveFans,
+                currentActiveFanCount: currentActiveFans.length,
+                rotationInterval: config.set_time_alternate_fan || 15,
+                fanGroups: fanGroupInfo,
+                rotation: rotationInfo,
+                transition: transitionInfo
+            };
+
+        } catch (error) {
+            return {
+                enabled: true,
+                error: `Debug info error: ${(error as Error).message}`
+            };
+        }
+    }
+
+    /**
+     * Get rotation state information for debugging
+     */
+    private getRotationStateInfo(config: any, requiredFanCount: number): any {
+        try {
+            if (config.set_auto_mode_fan === 1) {
+                // Rotation mode
+                const rotationState = this.flowContext.get('fanRotationState');
+                return {
+                    type: "ROTATION_MODE",
+                    state: rotationState,
+                    groupSize: config.set_gr_alternate_fan || 2
+                };
+            } else {
+                // Threshold mode rotation
+                const contextKey = `fanRotationState_threshold_${requiredFanCount}`;
+                const thresholdRotationState = this.flowContext.get(contextKey);
+                return {
+                    type: "THRESHOLD_MODE",
+                    state: thresholdRotationState,
+                    contextKey: contextKey,
+                    requiredFanCount: requiredFanCount
+                };
+            }
+        } catch (error) {
+            return {
+                error: `Rotation info error: ${(error as Error).message}`
+            };
+        }
+    }
+
+    /**
+     * Get transition state information for debugging
+     */
+    private getTransitionStateInfo(): any {
+        try {
+            const transitionState = this.flowContext.get('fanGroupTransitionState');
+            const lastCompletionTime = this.flowContext.get('fanGroupTransitionState_last_completion');
+
+            return {
+                isTransitioning: transitionState?.isTransitioning || false,
+                phase: transitionState?.phase || null,
+                previousGroup: transitionState?.previousGroup || [],
+                nextGroup: transitionState?.nextGroup || [],
+                reason: transitionState?.reason || null,
+                lastCompletionTime: lastCompletionTime || 0,
+                timeSinceLastCompletion: lastCompletionTime ? Date.now() - lastCompletionTime : null
+            };
+        } catch (error) {
+            return {
+                error: `Transition info error: ${(error as Error).message}`
+            };
+        }
+    }
+
+    /**
+     * Get fan group information for debugging
+     */
+    private getFanGroupInfo(requiredFanCount: number, currentActiveFans: string[]): any {
+        try {
+            // Define fan group configurations
+            const fanGroupConfigs: Record<number, string[][]> = {
+                1: [
+                    ["quat_1"], ["quat_2"], ["quat_3"], ["quat_4"], ["quat_5"], ["quat_6"]
+                ],
+                2: [
+                    ["quat_1", "quat_2"], ["quat_3", "quat_4"], ["quat_5", "quat_6"]
+                ],
+                4: [
+                    ["quat_1", "quat_2", "quat_3", "quat_4"],
+                    ["quat_3", "quat_4", "quat_5", "quat_6"],
+                    ["quat_5", "quat_6", "quat_1", "quat_2"]
+                ],
+                6: [
+                    ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
+                ]
+            };
+
+            const availableGroups: string[][] = fanGroupConfigs[requiredFanCount] || [];
+
+            // Find which group the current active fans match
+            let currentGroupIndex = -1;
+            let currentGroupName = "UNKNOWN";
+
+            if (currentActiveFans.length > 0) {
+                const sortedCurrentFans = [...currentActiveFans].sort();
+                currentGroupIndex = availableGroups.findIndex(group => {
+                    const sortedGroup = [...group].sort();
+                    return sortedCurrentFans.length === sortedGroup.length &&
+                        sortedCurrentFans.every((fan, index) => fan === sortedGroup[index]);
+                });
+
+                if (currentGroupIndex >= 0) {
+                    currentGroupName = `GROUP_${currentGroupIndex + 1}`;
+                } else {
+                    currentGroupName = "CUSTOM";
+                }
+            } else {
+                currentGroupName = "NONE";
+            }
+
+            return {
+                requiredFanCount: requiredFanCount,
+                availableGroups: availableGroups,
+                totalAvailableGroups: availableGroups.length,
+                currentGroupIndex: currentGroupIndex,
+                currentGroupName: currentGroupName,
+                currentActiveFans: currentActiveFans,
+                isValidGroup: currentGroupIndex >= 0,
+                groupDetails: availableGroups.map((group, index) => ({
+                    groupIndex: index,
+                    groupName: `GROUP_${index + 1}`,
+                    fans: group,
+                    isActive: currentGroupIndex === index
+                }))
+            };
+        } catch (error) {
+            return {
+                error: `Fan group info error: ${(error as Error).message}`
+            };
         }
     }
 

@@ -572,7 +572,7 @@ class FanControlService {
                 // by verifying the rotation interval has elapsed
                 // Use config parameter if available, otherwise read from global config
                 const configuredInterval = (config === null || config === void 0 ? void 0 : config.set_time_alternate_fan) ||
-                    (this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
+                    (this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 2;
                 const rotationInterval = (0, timeUtils_1.minutesToMs)(configuredInterval);
                 const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
                 const rotationState = this.flowContext.get(contextKey);
