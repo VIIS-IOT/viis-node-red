@@ -47,7 +47,7 @@ class WaterPumpControlService {
             // Check if state change is needed
             if (shouldPumpBeOn !== currentPumpState) {
                 const reason = this.getPumpControlReason(humiIndoor, lowThreshold, highThreshold, shouldPumpBeOn);
-                this.logger.log(`Water pump control: ${shouldPumpBeOn ? 'ON' : 'OFF'} - ${reason}`);
+                this.logger.warn(`Water pump control: ${shouldPumpBeOn ? 'ON' : 'OFF'} - ${reason}`);
                 // Update state tracking
                 this.updateWaterPumpState(shouldPumpBeOn, humiIndoor);
                 return this.createWaterPumpAction(shouldPumpBeOn, reason);
@@ -98,7 +98,7 @@ class WaterPumpControlService {
             const k4HumiCondition = humiIndoor < 75;
             if ((k4TempCondition || k4HumiCondition) && currentSetModeFan && !currentSetAutoModeFan) {
                 const reason = `K4 priority override: temp=${tempIndoor}°C${k4TempCondition ? ` (≥${k4Threshold})` : ''}, humidity=${humiIndoor}%${k4HumiCondition ? ' (<75%)' : ''}`;
-                this.logger.log(`Water pump K4 override: ON - ${reason}`);
+                this.logger.warn(`Water pump K4 override: ON - ${reason}`);
                 // Update state tracking
                 this.updateWaterPumpState(true, humiIndoor, true);
                 return this.createWaterPumpAction(true, reason);

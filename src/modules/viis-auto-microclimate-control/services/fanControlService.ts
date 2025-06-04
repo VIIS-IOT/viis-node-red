@@ -31,7 +31,7 @@ import {
     getRecommendedGroupSize,
     getAllFanKeys
 } from "../utils/groupUtils";
-import { minutesToMs, hasTimeElapsed, getCurrentTimestamp, delay } from "../utils/timeUtils";
+import { minutesToMs, hasTimeElapsed, getCurrentTimestamp } from "../utils/timeUtils";
 
 export class FanControlService implements IFanControlService {
     private flowContext: any;
@@ -148,7 +148,7 @@ export class FanControlService implements IFanControlService {
                 // Save updated state
                 this.saveRotationState(rotationState);
 
-                this.logger.log(`Fan rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (${rotationState.activeGroup.join(', ')})`);
+                this.logger.warn(`Fan rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (${rotationState.activeGroup.join(', ')})`);
             }
 
             // Create actions for current active group
@@ -264,7 +264,7 @@ export class FanControlService implements IFanControlService {
                 this.flowContext.set(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_time`, getCurrentTimestamp());
                 this.flowContext.set(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_state`, newState);
 
-                this.logger.log(`Fan dao alternating: switching to ${newState ? 'ON' : 'OFF'}`);
+                this.logger.warn(`Fan dao alternating: switching to ${newState ? 'ON' : 'OFF'}`);
 
                 const coilMapping = this.getCoilMapping();
                 return createFanDaoActions(newState, `Fan dao alternating mode: ${newState ? 'ON' : 'OFF'}`, coilMapping);
@@ -399,10 +399,82 @@ export class FanControlService implements IFanControlService {
             // Save updated state
             this.flowContext.set(contextKey, rotationState);
 
-            this.logger.log(`Threshold rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} for size ${requiredGroupSize} (interval: ${config.set_time_alternate_fan || 15}min)`);
+            this.logger.warn(`Threshold rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} for size ${requiredGroupSize} (interval: ${config.set_time_alternate_fan || 15}min)`);
         }
 
         return rotationState.activeGroup || fanGroups[0] || [];
+    }
+
+    /**
+     * Get stable rotation target group that prevents unnecessary transitions
+     */
+    private getStableRotationTargetGroup(
+        fanGroups: string[][],
+        requiredGroupSize: number,
+        config: AutoControlConfig,
+        deviceStatusRecord: Record<string, boolean>
+    ): string[] {
+        // Check if we're currently in a transition - if so, don't change target
+        if (this.isTransitionInProgress()) {
+            const transitionState = this.getFanGroupTransitionState();
+            if (transitionState?.nextGroup && transitionState.nextGroup.length > 0) {
+                this.logger.debug(`Transition in progress, maintaining target group: [${transitionState.nextGroup.join(', ')}]`);
+                return transitionState.nextGroup;
+            }
+        }
+
+        // Get current active fans of the required type
+        const currentActiveFans = Object.keys(deviceStatusRecord).filter(key =>
+            deviceStatusRecord[key] === true && getAllFanKeys().includes(key)
+        );
+
+        // If we already have the correct number of fans active, check if we should rotate
+        if (currentActiveFans.length === requiredGroupSize) {
+            // Check if current fans match any of the valid groups
+            const currentMatchesValidGroup = fanGroups.some(group =>
+                this.arraysEqual(currentActiveFans.sort(), group.sort())
+            );
+
+            if (currentMatchesValidGroup) {
+                // Current group is valid, check if it's time to rotate
+                const rotationInterval = minutesToMs(config.set_time_alternate_fan || 15);
+                const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
+                let rotationState = this.flowContext.get(contextKey);
+
+                if (!rotationState || typeof rotationState !== 'object') {
+                    // Initialize with current group
+                    const currentGroupIndex = fanGroups.findIndex(group =>
+                        this.arraysEqual(currentActiveFans.sort(), group.sort())
+                    );
+                    rotationState = {
+                        currentGroupIndex: currentGroupIndex >= 0 ? currentGroupIndex : 0,
+                        lastRotationTime: getCurrentTimestamp(),
+                        activeGroup: currentActiveFans
+                    };
+                    this.flowContext.set(contextKey, rotationState);
+                }
+
+                // Only rotate if enough time has passed
+                if (hasTimeElapsed(rotationState.lastRotationTime, rotationInterval)) {
+                    return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                } else {
+                    // Not time to rotate yet, keep current group
+                    return currentActiveFans;
+                }
+            }
+        }
+
+        // If we don't have the right number of fans or they don't match a valid group,
+        // use the standard rotation logic
+        return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+    }
+
+    /**
+     * Helper method to compare arrays for equality
+     */
+    private arraysEqual(a: string[], b: string[]): boolean {
+        if (a.length !== b.length) return false;
+        return a.every((val, index) => val === b[index]);
     }
 
     /**
@@ -456,7 +528,7 @@ export class FanControlService implements IFanControlService {
                 this.saveRotationState(rotationState);
 
                 const reason = `Fan rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (${rotationState.activeGroup.join(', ')})`;
-                this.logger.log(reason);
+                this.logger.warn(reason);
 
                 // Check if transition is needed
                 if (this.requiresGroupTransition(previousGroup, rotationState.activeGroup)) {
@@ -524,20 +596,20 @@ export class FanControlService implements IFanControlService {
                 const fanGroups = this.getFanGroups(requiredGroupSize);
                 targetGroup = fanGroups[0] || [];
             } else if (temperature >= thresholds.k3) {
-                // K3: 4 fans
+                // K3: 6 fans (corrected from 4 fans per VIIS specifications)
+                requiredGroupSize = 6;
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                targetGroup = fanGroups[0] || [];
+            } else if (temperature >= thresholds.k2) {
+                // K2: 4 fans with rotation
                 requiredGroupSize = 4;
                 const fanGroups = this.getFanGroups(requiredGroupSize);
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-            } else if (temperature >= thresholds.k2) {
-                // K2: 2 fans with rotation
+                targetGroup = this.getStableRotationTargetGroup(fanGroups, requiredGroupSize, config, deviceStatusRecord);
+            } else if (temperature >= thresholds.k1) {
+                // K1: 2 fans with rotation (corrected from 1 fan per VIIS specifications)
                 requiredGroupSize = 2;
                 const fanGroups = this.getFanGroups(requiredGroupSize);
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-            } else if (temperature >= thresholds.k1) {
-                // K1: 1 fan with rotation
-                requiredGroupSize = 1;
-                const fanGroups = this.getFanGroups(requiredGroupSize);
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                targetGroup = this.getStableRotationTargetGroup(fanGroups, requiredGroupSize, config, deviceStatusRecord);
             } else {
                 // Below K1: Turn off all fans
                 return createOptimizedFanGroupActions([], false, reason, coilMapping, deviceStatusRecord);
@@ -548,8 +620,8 @@ export class FanControlService implements IFanControlService {
                 deviceStatusRecord[key] === true && getAllFanKeys().includes(key)
             );
 
-            // Check if transition is needed
-            if (this.requiresGroupTransition(currentActiveFans, targetGroup)) {
+            // Check if transition is needed with improved logic
+            if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize)) {
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             } else {
@@ -621,6 +693,58 @@ export class FanControlService implements IFanControlService {
     }
 
     /**
+     * Check if fan group transition is needed with stability logic
+     * This prevents unnecessary transitions when the fan count requirement is already met
+     */
+    private requiresStableGroupTransition(currentGroup: string[], newGroup: string[], requiredGroupSize: number): boolean {
+        // If we're already in a transition, don't start another one
+        if (this.isTransitionInProgress()) {
+            return false;
+        }
+
+        // Check if we have a recent transition completion (cooldown period)
+        const lastTransitionKey = `${CONTEXT_KEYS.FAN_GROUP_TRANSITION_STATE}_last_completion`;
+        const lastTransitionTime = this.flowContext.get(lastTransitionKey) || 0;
+        const cooldownMs = 3000; // 3 second cooldown after transition completion
+
+        if (hasTimeElapsed(lastTransitionTime, cooldownMs) === false) {
+            this.logger.debug(`Transition cooldown active, skipping new transition (${cooldownMs - (getCurrentTimestamp() - lastTransitionTime)}ms remaining)`);
+            return false;
+        }
+
+        // If current group size matches required size and fans are valid, no transition needed
+        if (currentGroup.length === requiredGroupSize && currentGroup.length > 0) {
+            // Check if all current fans are valid fan keys
+            const allValidFans = currentGroup.every(fan => getAllFanKeys().includes(fan));
+            if (allValidFans) {
+                // Only transition if the new group is significantly different
+                // For same-size groups, only transition if it's a planned rotation
+                const isDifferentGroup = !this.arraysEqual(currentGroup.sort(), newGroup.sort());
+                if (!isDifferentGroup) {
+                    return false; // Same group, no transition needed
+                }
+
+                // For different groups of same size, check if this is a planned rotation
+                // by verifying the rotation interval has elapsed
+                const rotationInterval = minutesToMs(15); // Default rotation interval
+                const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_${requiredGroupSize}`;
+                const rotationState = this.flowContext.get(contextKey);
+
+                if (rotationState && typeof rotationState === 'object') {
+                    const timeSinceLastRotation = getCurrentTimestamp() - (rotationState.lastRotationTime || 0);
+                    if (timeSinceLastRotation < rotationInterval * 0.9) { // 90% of interval to prevent premature rotation
+                        this.logger.debug(`Rotation interval not met, skipping transition (${Math.round(timeSinceLastRotation / 1000)}s < ${Math.round(rotationInterval * 0.9 / 1000)}s)`);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // Use the standard transition check for other cases
+        return this.requiresGroupTransition(currentGroup, newGroup);
+    }
+
+    /**
      * Initiate fan group transition with delay
      */
     private initiateFanGroupTransition(
@@ -639,7 +763,7 @@ export class FanControlService implements IFanControlService {
         };
 
         this.saveFanGroupTransitionState(transitionState);
-        this.logger.log(`Initiated fan group transition: [${previousGroup.join(', ')}] → [${nextGroup.join(', ')}] - ${reason}`);
+        this.logger.warn(`Initiated fan group transition: [${previousGroup.join(', ')}] → [${nextGroup.join(', ')}] - ${reason}`);
     }
 
     /**
@@ -668,7 +792,7 @@ export class FanControlService implements IFanControlService {
                 transitionState.phase = 'delay';
                 transitionState.offDelayStartTime = now;
                 this.saveFanGroupTransitionState(transitionState);
-                this.logger.log(`Fan transition: All fans turned off, starting delay phase`);
+                this.logger.warn(`Fan transition: All fans turned off, starting delay phase`);
                 break;
 
             case 'delay':
@@ -678,7 +802,7 @@ export class FanControlService implements IFanControlService {
                     // Move to on phase
                     transitionState.phase = 'on';
                     this.saveFanGroupTransitionState(transitionState);
-                    this.logger.log(`Fan transition: Delay completed (${offDelayMs}ms), turning on new group`);
+                    this.logger.warn(`Fan transition: Delay completed (${offDelayMs}ms), turning on new group`);
                 } else {
                     // Still in delay, no actions
                     const remaining = offDelayMs - (now - transitionState.offDelayStartTime);
@@ -708,16 +832,21 @@ export class FanControlService implements IFanControlService {
                 // Move to complete phase
                 transitionState.phase = 'complete';
                 this.saveFanGroupTransitionState(transitionState);
-                this.logger.log(`Fan transition: New group activated, transition completing`);
+                this.logger.warn(`Fan transition: New group activated, transition completing`);
                 break;
 
             case 'complete':
                 // Check if overall transition delay has elapsed
                 const transitionDelayMs = this.getFanGroupTransitionDelayMs(config);
                 if (hasTimeElapsed(transitionState.transitionStartTime, transitionDelayMs)) {
-                    // Transition complete, clear state
+                    // Transition complete, clear state and set cooldown timestamp
                     this.clearFanGroupTransitionState();
-                    this.logger.log(`Fan group transition completed successfully`);
+
+                    // Set last completion time for cooldown logic
+                    const lastTransitionKey = `${CONTEXT_KEYS.FAN_GROUP_TRANSITION_STATE}_last_completion`;
+                    this.flowContext.set(lastTransitionKey, getCurrentTimestamp());
+
+                    this.logger.warn(`Fan group transition completed successfully`);
                 } else {
                     // Still in cooldown period
                     const remaining = transitionDelayMs - (now - transitionState.transitionStartTime);

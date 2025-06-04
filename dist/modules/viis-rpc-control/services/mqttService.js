@@ -51,7 +51,7 @@ class MqttService {
             await this.mqttClient.publish(this.publishTopic, JSON.stringify(mqttPayload));
             this.node.send({ payload: mqttPayload });
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.PUBLISHED(key) });
-            this.logger.log(`Published immediately: ${key}=${value}`);
+            this.logger.warn(`Published immediately: ${key}=${value}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish ${key}: ${error.message}`;
@@ -75,7 +75,7 @@ class MqttService {
             await this.mqttClient.publish(this.publishTopic, JSON.stringify(mqttPayload));
             this.node.send({ payload: mqttPayload });
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.CONFIG_UPDATED(key) });
-            this.logger.log(`Published config update: ${key}=${value}${note ? ` (${note})` : ''}`);
+            this.logger.warn(`Published config update: ${key}=${value}${note ? ` (${note})` : ''}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish config update for ${key}: ${error.message}`;
@@ -97,7 +97,7 @@ class MqttService {
             this.node.send({ payload: mqttPayload });
             const keys = Object.keys(values).join(', ');
             this.node.status({ fill: "green", shape: "dot", text: `Published: ${keys}` });
-            this.logger.log(`Published multiple values: ${JSON.stringify(values)}${note ? ` (${note})` : ''}`);
+            this.logger.warn(`Published multiple values: ${JSON.stringify(values)}${note ? ` (${note})` : ''}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish multiple values: ${error.message}`;
@@ -115,7 +115,7 @@ class MqttService {
             await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload });
             this.node.status({ fill: "green", shape: "dot", text: "Custom payload published" });
-            this.logger.log(`Published custom payload: ${payloadString}`);
+            this.logger.warn(`Published custom payload: ${payloadString}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish custom payload: ${error.message}`;
@@ -133,7 +133,7 @@ class MqttService {
             this.logger.debug(`Cleared pending timeout for ${key}`);
         });
         this.publishTimeouts.clear();
-        this.logger.log("Cleared all pending publish timeouts");
+        this.logger.warn("Cleared all pending publish timeouts");
     }
     /**
      * Get the number of pending publishes
@@ -175,7 +175,7 @@ class MqttService {
             this.logger.debug("No pending publishes to flush");
             return;
         }
-        this.logger.log(`Flushing ${pendingKeys.length} pending publishes`);
+        this.logger.warn(`Flushing ${pendingKeys.length} pending publishes`);
         // Clear all timeouts and trigger immediate publishes
         for (const key of pendingKeys) {
             const timeout = this.publishTimeouts.get(key);

@@ -113,7 +113,7 @@ class CurtainControlService {
                 const toleranceMs = (0, timeUtils_1.minutesToMs)(toleranceMinutes);
                 if ((0, timeUtils_1.hasTimeElapsed)(existingTimer.startTime, toleranceMs)) {
                     // Execute the action
-                    this.logger.log(`Tolerance timer elapsed for ${luoiKey}: executing ${desiredAction} action`);
+                    this.logger.warn(`Tolerance timer elapsed for ${luoiKey}: executing ${desiredAction} action`);
                     // Remove the timer
                     const updatedTimers = toleranceTimers.filter(timer => timer.luoiId !== luoiKey);
                     this.saveToleranceTimers(updatedTimers);
@@ -175,7 +175,7 @@ class CurtainControlService {
                     fc: constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: `${luoiKey} extend: turn on extend coil`
                 });
-                this.logger.log(`${luoiKey} extending: ${thuKey}=OFF, ${daiKey}=ON`);
+                this.logger.warn(`${luoiKey} extending: ${thuKey}=OFF, ${daiKey}=ON`);
             }
             else if (action === "thu") {
                 // Retract: turn off dai, turn on thu
@@ -193,7 +193,7 @@ class CurtainControlService {
                     fc: constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: `${luoiKey} retract: turn on retract coil`
                 });
-                this.logger.log(`${luoiKey} retracting: ${daiKey}=OFF, ${thuKey}=ON`);
+                this.logger.warn(`${luoiKey} retracting: ${daiKey}=OFF, ${thuKey}=ON`);
             }
             return actions;
         }

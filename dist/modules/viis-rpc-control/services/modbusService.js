@@ -226,7 +226,7 @@ class ModbusService {
      */
     refreshEnvironmentConfig() {
         this.environmentConfig = this.loadEnvironmentConfig();
-        this.logger.log("Environment configuration refreshed");
+        this.logger.warn("Environment configuration refreshed");
     }
     /**
      * Get all configured Modbus keys

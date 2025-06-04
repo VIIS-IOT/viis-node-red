@@ -273,7 +273,7 @@ export class ModbusService implements IModbusService {
      */
     refreshEnvironmentConfig(): void {
         this.environmentConfig = this.loadEnvironmentConfig();
-        this.logger.log("Environment configuration refreshed");
+        this.logger.warn("Environment configuration refreshed");
     }
 
     /**

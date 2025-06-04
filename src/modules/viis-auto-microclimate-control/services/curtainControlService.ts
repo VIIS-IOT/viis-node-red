@@ -180,7 +180,7 @@ export class CurtainControlService implements ICurtainControlService {
 
                 if (hasTimeElapsed(existingTimer.startTime, toleranceMs)) {
                     // Execute the action
-                    this.logger.log(`Tolerance timer elapsed for ${luoiKey}: executing ${desiredAction} action`);
+                    this.logger.warn(`Tolerance timer elapsed for ${luoiKey}: executing ${desiredAction} action`);
 
                     // Remove the timer
                     const updatedTimers = toleranceTimers.filter(timer => timer.luoiId !== luoiKey);
@@ -253,7 +253,7 @@ export class CurtainControlService implements ICurtainControlService {
                     reason: `${luoiKey} extend: turn on extend coil`
                 });
 
-                this.logger.log(`${luoiKey} extending: ${thuKey}=OFF, ${daiKey}=ON`);
+                this.logger.warn(`${luoiKey} extending: ${thuKey}=OFF, ${daiKey}=ON`);
 
             } else if (action === "thu") {
                 // Retract: turn off dai, turn on thu
@@ -273,7 +273,7 @@ export class CurtainControlService implements ICurtainControlService {
                     reason: `${luoiKey} retract: turn on retract coil`
                 });
 
-                this.logger.log(`${luoiKey} retracting: ${daiKey}=OFF, ${thuKey}=ON`);
+                this.logger.warn(`${luoiKey} retracting: ${daiKey}=OFF, ${thuKey}=ON`);
             }
 
             return actions;
