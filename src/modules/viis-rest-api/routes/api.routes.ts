@@ -7,9 +7,7 @@ import { NodeAPI, Node } from 'node-red';
 import Container from 'typedi';
 import { DatabaseService } from '../services/database.service';
 import { AuthService } from '../services/auth.service';
-import { AuthController } from '../controllers/auth.controller';
 import { UserController } from '../controllers/user.controller';
-import { HealthController } from '../controllers/health.controller';
 import { AuthMiddleware } from '../middleware/auth.middleware';
 import { ValidationMiddleware } from '../middleware/validation.middleware';
 import { logger } from '../utils/logger';
@@ -17,6 +15,7 @@ import { ApiConfig, IController, RouteDefinition } from '../types/common.types';
 import { ResponseHelper } from '../utils/response.helper';
 import { ApiConfigManager } from '../config/api.config';
 import { DevUtils } from '../utils/dev.utils';
+import { HybridRoutes } from './hybrid.routes';
 
 // Use require for body-parser
 const bodyParser = require('body-parser');
@@ -39,6 +38,7 @@ export class ApiRoutes {
     private controllers: Map<string, IController> = new Map();
     private configManager: ApiConfigManager;
     private devUtils: DevUtils;
+    private hybridRoutes: HybridRoutes;
 
     constructor(
         databaseService: DatabaseService,
@@ -54,6 +54,9 @@ export class ApiRoutes {
         this.validationMiddleware = Container.get(ValidationMiddleware);
         this.devUtils = DevUtils.getInstance(node, configManager);
 
+        // Initialize hybrid routes for routing-controllers integration
+        this.hybridRoutes = new HybridRoutes(node, configManager, authService, databaseService);
+
         // Initialize controllers using TypeDI container
         this.initializeControllers();
     }
@@ -68,9 +71,8 @@ export class ApiRoutes {
         try {
             // Get controllers from TypeDI container
             // The @Controller decorator and @Inject decorators handle dependency injection
-            this.controllers.set('auth', Container.get(AuthController));
             this.controllers.set('user', Container.get(UserController));
-            this.controllers.set('health', Container.get(HealthController));
+            // Note: HealthController and AuthController are now handled by routing-controllers in hybrid setup
 
             logger.info(this.node, `Initialized ${this.controllers.size} controllers using TypeDI container`);
         } catch (error) {
@@ -95,6 +97,9 @@ export class ApiRoutes {
 
             // Add debug route to list all registered routes
             this.addDebugRoutes(RED, config);
+
+            // Setup hybrid routing-controllers integration (Proof of Concept)
+            await this.setupHybridRoutes(RED);
 
             // Setup error handling
             this.setupErrorHandling(RED, config);
@@ -223,6 +228,32 @@ export class ApiRoutes {
         });
 
         logger.info(this.node, `✓ Added debug routes: routes, dashboard, metrics, docs`);
+    }
+
+    /**
+     * Setup hybrid routing-controllers integration (Proof of Concept)
+     */
+    private async setupHybridRoutes(RED: NodeAPI): Promise<void> {
+        try {
+            logger.info(this.node, 'Setting up hybrid routing-controllers integration...');
+
+            await this.hybridRoutes.setupRoutingControllers(RED);
+
+            // Add hybrid routes status to debug dashboard
+            if (this.configManager.isEnabled('enableDebugMode')) {
+                RED.httpNode.get(`${this.configManager.get('apiPrefix')}/debug/hybrid-status`, (_req: any, res: any) => {
+                    const status = this.hybridRoutes.getStatus();
+                    ResponseHelper.success(res, status, 200, 'Hybrid routing status');
+                });
+            }
+
+            logger.info(this.node, '✅ Hybrid routing-controllers integration completed');
+        } catch (error) {
+            logger.error(this.node, 'Failed to setup hybrid routing-controllers', {
+                error: (error as Error).message
+            });
+            // Don't throw - allow the rest of the API to work even if hybrid setup fails
+        }
     }
 
     /**

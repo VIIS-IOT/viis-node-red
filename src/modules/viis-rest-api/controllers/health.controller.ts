@@ -1,58 +1,81 @@
 /**
- * @fileoverview Health check controller
+ * @fileoverview Health check controller - Migrated to routing-controllers
  */
 
-import { Request, Response } from 'express';
-import { Inject } from 'typedi';
-import { BaseController } from './base.controller';
+import 'reflect-metadata';
+import { JsonController, Get, Authorized } from 'routing-controllers';
+import { Service, Inject } from 'typedi';
 import { DatabaseService } from '../services/database.service';
-import { Controller } from '../decorators/controller.decorator';
-import { RouteDefinition } from '../types/common.types';
 import { Node } from 'node-red';
+import { logger } from '../utils/logger';
 
 /**
- * Health check controller class
+ * Health check response interface
+ */
+interface HealthResponse {
+    status: 'ok' | 'error';
+    timestamp: string;
+    services: {
+        database: string;
+        api: string;
+    };
+}
+
+/**
+ * Detailed health check response interface
+ */
+interface DetailedHealthResponse {
+    status: 'ok' | 'error';
+    timestamp: string;
+    responseTime: string;
+    services: {
+        api: {
+            status: string;
+            uptime: number;
+            memory: NodeJS.MemoryUsage;
+            nodeVersion: string;
+        };
+        database: {
+            status: string;
+            responseTime: string;
+            error: string | null;
+            tables: Record<string, boolean>;
+        };
+    };
+    environment: {
+        nodeEnv: string;
+        platform: string;
+        arch: string;
+    };
+}
+
+/**
+ * Health check controller class - Migrated to routing-controllers
  *
  * Provides system health monitoring endpoints:
  * - Basic health status for load balancers
  * - Detailed health information for administrators
  * - Database connectivity checks
  */
-@Controller('/health')
-export class HealthController extends BaseController {
+@JsonController('/health')
+@Service()
+export class HealthController {
     constructor(
         @Inject() private databaseService: DatabaseService,
-        @Inject('node') node: Node
+        @Inject('node') private node: Node
     ) {
-        super(node);
-    }
-
-    /**
-     * Get route definitions for health endpoints
-     */
-    getRoutes(): RouteDefinition[] {
-        return [
-            {
-                method: 'GET',
-                path: '/health',
-                handler: 'getHealth'
-            },
-            {
-                method: 'GET',
-                path: '/health/detailed',
-                handler: 'getDetailedHealth',
-                middleware: ['auth', 'admin']
-            }
-        ];
+        logger.info(this.node, 'HealthController initialized with routing-controllers');
     }
 
     /**
      * Basic health check endpoint
+     * GET /api/v2/health
      */
-    getHealth = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    @Get('/')
+    async getHealth(): Promise<HealthResponse> {
         const isDbConnected = this.databaseService.isInitialized();
 
-        const healthStatus = {
+        const healthStatus: HealthResponse = {
             status: isDbConnected ? "ok" : "error",
             timestamp: new Date().toISOString(),
             services: {
@@ -61,14 +84,21 @@ export class HealthController extends BaseController {
             }
         };
 
-        const statusCode = isDbConnected ? 200 : 503;
-        this.success(res, healthStatus, statusCode, 'Health check completed');
-    });
+        logger.debug(this.node, 'Health check completed', {
+            status: healthStatus.status,
+            dbConnected: isDbConnected
+        });
+
+        return healthStatus;
+    }
 
     /**
      * Detailed health check endpoint (admin only)
+     * GET /api/v2/health/detailed
      */
-    getDetailedHealth = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    @Get('/detailed')
+    @Authorized(['admin'])
+    async getDetailedHealth(): Promise<DetailedHealthResponse> {
         const startTime = Date.now();
 
         // Check database connection
@@ -113,7 +143,7 @@ export class HealthController extends BaseController {
         const totalResponseTime = Date.now() - startTime;
         const isHealthy = dbStatus === "connected" && Object.values(tableChecks).every(check => check);
 
-        const detailedHealth = {
+        const detailedHealth: DetailedHealthResponse = {
             status: isHealthy ? "ok" : "error",
             timestamp: new Date().toISOString(),
             responseTime: `${totalResponseTime}ms`,
@@ -138,7 +168,12 @@ export class HealthController extends BaseController {
             }
         };
 
-        const statusCode = isHealthy ? 200 : 503;
-        this.success(res, detailedHealth, statusCode, 'Detailed health check completed');
-    });
+        logger.info(this.node, 'Detailed health check completed', {
+            status: detailedHealth.status,
+            responseTime: totalResponseTime,
+            requestedBy: 'admin_user'
+        });
+
+        return detailedHealth;
+    }
 }

@@ -9,14 +9,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiRoutes = void 0;
 const typedi_1 = __importDefault(require("typedi"));
-const auth_controller_1 = require("../controllers/auth.controller");
 const user_controller_1 = require("../controllers/user.controller");
-const health_controller_1 = require("../controllers/health.controller");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const validation_middleware_1 = require("../middleware/validation.middleware");
 const logger_1 = require("../utils/logger");
 const response_helper_1 = require("../utils/response.helper");
 const dev_utils_1 = require("../utils/dev.utils");
+const hybrid_routes_1 = require("./hybrid.routes");
 // Use require for body-parser
 const bodyParser = require('body-parser');
 /**
@@ -38,6 +37,8 @@ class ApiRoutes {
         this.authMiddleware = new auth_middleware_1.AuthMiddleware(authService, node);
         this.validationMiddleware = typedi_1.default.get(validation_middleware_1.ValidationMiddleware);
         this.devUtils = dev_utils_1.DevUtils.getInstance(node, configManager);
+        // Initialize hybrid routes for routing-controllers integration
+        this.hybridRoutes = new hybrid_routes_1.HybridRoutes(node, configManager, authService, databaseService);
         // Initialize controllers using TypeDI container
         this.initializeControllers();
     }
@@ -51,9 +52,8 @@ class ApiRoutes {
         try {
             // Get controllers from TypeDI container
             // The @Controller decorator and @Inject decorators handle dependency injection
-            this.controllers.set('auth', typedi_1.default.get(auth_controller_1.AuthController));
             this.controllers.set('user', typedi_1.default.get(user_controller_1.UserController));
-            this.controllers.set('health', typedi_1.default.get(health_controller_1.HealthController));
+            // Note: HealthController and AuthController are now handled by routing-controllers in hybrid setup
             logger_1.logger.info(this.node, `Initialized ${this.controllers.size} controllers using TypeDI container`);
         }
         catch (error) {
@@ -74,6 +74,8 @@ class ApiRoutes {
             this.registerControllerRoutes(RED, config);
             // Add debug route to list all registered routes
             this.addDebugRoutes(RED, config);
+            // Setup hybrid routing-controllers integration (Proof of Concept)
+            await this.setupHybridRoutes(RED);
             // Setup error handling
             this.setupErrorHandling(RED, config);
             logger_1.logger.info(this.node, `All API routes registered successfully with prefix: ${config.apiPrefix}`);
@@ -181,6 +183,29 @@ class ApiRoutes {
             response_helper_1.ResponseHelper.success(res, docs, 200, 'API documentation');
         });
         logger_1.logger.info(this.node, `✓ Added debug routes: routes, dashboard, metrics, docs`);
+    }
+    /**
+     * Setup hybrid routing-controllers integration (Proof of Concept)
+     */
+    async setupHybridRoutes(RED) {
+        try {
+            logger_1.logger.info(this.node, 'Setting up hybrid routing-controllers integration...');
+            await this.hybridRoutes.setupRoutingControllers(RED);
+            // Add hybrid routes status to debug dashboard
+            if (this.configManager.isEnabled('enableDebugMode')) {
+                RED.httpNode.get(`${this.configManager.get('apiPrefix')}/debug/hybrid-status`, (_req, res) => {
+                    const status = this.hybridRoutes.getStatus();
+                    response_helper_1.ResponseHelper.success(res, status, 200, 'Hybrid routing status');
+                });
+            }
+            logger_1.logger.info(this.node, '✅ Hybrid routing-controllers integration completed');
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Failed to setup hybrid routing-controllers', {
+                error: error.message
+            });
+            // Don't throw - allow the rest of the API to work even if hybrid setup fails
+        }
     }
     /**
      * Register a single route

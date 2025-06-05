@@ -1,34 +1,34 @@
 /**
- * @fileoverview User management controller
+ * @fileoverview User management controller - Migrated to routing-controllers
  */
 
-import { Request, Response } from 'express';
-import { Inject } from 'typedi';
-import { BaseController } from './base.controller';
+import 'reflect-metadata';
+import { JsonController, Get, Param, QueryParams, Authorized, CurrentUser } from 'routing-controllers';
+import { Service, Inject } from 'typedi';
 import { DatabaseService } from '../services/database.service';
-import { Controller } from '../decorators/controller.decorator';
-import { RouteDefinition } from '../types/common.types';
 import { UserQueryParams, UserResponse } from '../types/user.types';
 import { GetUsersQueryDto, UserParamsDto } from '../dto/user.dto';
 import { Node } from 'node-red';
 import { UserValidator } from '../validators/user.validator';
+import { logger } from '../utils/logger';
 
 /**
- * User management controller class
+ * User management controller class - Migrated to routing-controllers
  *
  * Demonstrates patterns for user management endpoints:
  * - Pagination and filtering
  * - Role-based access control
  * - Consistent validation and error handling
  */
-@Controller('/users')
-export class UserController extends BaseController {
+@JsonController('/users')
+@Service()
+export class UserController {
     constructor(
         @Inject() private databaseService: DatabaseService,
         @Inject() private userValidator: UserValidator,
-        @Inject('node') node: Node
+        @Inject('node') private node: Node
     ) {
-        super(node);
+        logger.info(this.node, 'UserController initialized with routing-controllers');
     }
 
     /**
