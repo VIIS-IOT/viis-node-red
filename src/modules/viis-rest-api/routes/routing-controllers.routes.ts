@@ -15,6 +15,7 @@ import { Action } from 'routing-controllers';
 import { HealthController } from '../controllers/health.controller';
 import { AuthController } from '../controllers/auth.controller';
 import { UserController } from '../controllers/user.controller';
+import { DeviceController } from '../controllers/device.controller';
 
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -56,7 +57,7 @@ export class RoutingControllersRoutes {
                 routePrefix: this.configManager.get('apiPrefix'),
 
                 // Controllers to register
-                controllers: [HealthController, AuthController, UserController],
+                controllers: [HealthController, AuthController, UserController, DeviceController],
 
                 // Middleware (we'll integrate our existing middleware)
                 middlewares: [], // Start empty for PoC
@@ -278,7 +279,7 @@ export class RoutingControllersRoutes {
         if (this.configManager.isEnabled('enableDebugMode')) {
             logger.info(this.node, 'routing-controllers routes registered:', {
                 prefix: this.configManager.get('apiPrefix'),
-                controllers: ['HealthController', 'AuthController', 'UserController'],
+                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
                 routes: [
                     'GET /health',
                     'GET /health/detailed',
@@ -288,7 +289,12 @@ export class RoutingControllersRoutes {
                     'GET /auth/me',
                     'GET /users',
                     'GET /users/me',
-                    'GET /users/:userId'
+                    'GET /users/:userId',
+                    'GET /devices',
+                    'GET /devices/:id',
+                    'POST /devices',
+                    'PUT /devices/:id',
+                    'DELETE /devices/:id'
                 ]
             });
         }
@@ -301,7 +307,7 @@ export class RoutingControllersRoutes {
         return {
             enabled: true,
             routePrefix: this.configManager.get('apiPrefix'),
-            controllersRegistered: ['HealthController', 'AuthController', 'UserController'],
+            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
             authorizationEnabled: true,
             validationEnabled: true,
             errorHandlingEnabled: true

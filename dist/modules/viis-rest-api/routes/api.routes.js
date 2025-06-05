@@ -108,7 +108,12 @@ class ApiRoutes {
                 { controller: 'AuthController', method: 'GET', path: `${config.apiPrefix}/auth/me`, handler: 'getCurrentUser' },
                 { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users`, handler: 'getAllUsers' },
                 { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users/me`, handler: 'getCurrentUser' },
-                { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users/:userId`, handler: 'getUserById' }
+                { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users/:userId`, handler: 'getUserById' },
+                { controller: 'DeviceController', method: 'GET', path: `${config.apiPrefix}/devices`, handler: 'listDevices' },
+                { controller: 'DeviceController', method: 'GET', path: `${config.apiPrefix}/devices/:id`, handler: 'getDevice' },
+                { controller: 'DeviceController', method: 'POST', path: `${config.apiPrefix}/devices`, handler: 'createDevice' },
+                { controller: 'DeviceController', method: 'PUT', path: `${config.apiPrefix}/devices/:id`, handler: 'updateDevice' },
+                { controller: 'DeviceController', method: 'DELETE', path: `${config.apiPrefix}/devices/:id`, handler: 'deleteDevice' }
             ];
             response_helper_1.ResponseHelper.success(res, {
                 totalRoutes: routeList.length,
@@ -142,7 +147,12 @@ class ApiRoutes {
                     { path: '/auth/me', method: 'GET', description: 'Current user info' },
                     { path: '/users', method: 'GET', description: 'Get all users (admin only)' },
                     { path: '/users/me', method: 'GET', description: 'Current user info' },
-                    { path: '/users/:userId', method: 'GET', description: 'Get user by ID' }
+                    { path: '/users/:userId', method: 'GET', description: 'Get user by ID' },
+                    { path: '/devices', method: 'GET', description: 'List devices with pagination' },
+                    { path: '/devices/:id', method: 'GET', description: 'Get device by ID' },
+                    { path: '/devices', method: 'POST', description: 'Create new device' },
+                    { path: '/devices/:id', method: 'PUT', description: 'Update device' },
+                    { path: '/devices/:id', method: 'DELETE', description: 'Delete device' }
                 ]
             };
             response_helper_1.ResponseHelper.success(res, docs, 200, 'API documentation');

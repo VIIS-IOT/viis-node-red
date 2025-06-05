@@ -14,6 +14,7 @@ const database_service_1 = require("../services/database.service");
 const health_controller_1 = require("../controllers/health.controller");
 const auth_controller_1 = require("../controllers/auth.controller");
 const user_controller_1 = require("../controllers/user.controller");
+const device_controller_1 = require("../controllers/device.controller");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
  *
@@ -40,7 +41,7 @@ class RoutingControllersRoutes {
                 // Route configuration - now using main API prefix
                 routePrefix: this.configManager.get('apiPrefix'),
                 // Controllers to register
-                controllers: [health_controller_1.HealthController, auth_controller_1.AuthController, user_controller_1.UserController],
+                controllers: [health_controller_1.HealthController, auth_controller_1.AuthController, user_controller_1.UserController, device_controller_1.DeviceController],
                 // Middleware (we'll integrate our existing middleware)
                 middlewares: [], // Start empty for PoC
                 // Validation and transformation
@@ -226,7 +227,7 @@ class RoutingControllersRoutes {
         if (this.configManager.isEnabled('enableDebugMode')) {
             logger_1.logger.info(this.node, 'routing-controllers routes registered:', {
                 prefix: this.configManager.get('apiPrefix'),
-                controllers: ['HealthController', 'AuthController', 'UserController'],
+                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
                 routes: [
                     'GET /health',
                     'GET /health/detailed',
@@ -236,7 +237,12 @@ class RoutingControllersRoutes {
                     'GET /auth/me',
                     'GET /users',
                     'GET /users/me',
-                    'GET /users/:userId'
+                    'GET /users/:userId',
+                    'GET /devices',
+                    'GET /devices/:id',
+                    'POST /devices',
+                    'PUT /devices/:id',
+                    'DELETE /devices/:id'
                 ]
             });
         }
@@ -248,7 +254,7 @@ class RoutingControllersRoutes {
         return {
             enabled: true,
             routePrefix: this.configManager.get('apiPrefix'),
-            controllersRegistered: ['HealthController', 'AuthController', 'UserController'],
+            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
             authorizationEnabled: true,
             validationEnabled: true,
             errorHandlingEnabled: true
