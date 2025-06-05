@@ -13,12 +13,15 @@ import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '../services/database.service';
 import { ThingsBoardService } from '../services/thingsboard.service';
 import { Action } from 'routing-controllers';
+import { EnhancedValidationMiddleware } from '../middleware/enhanced-validation.middleware';
+import * as path from 'path';
+
+// Fallback imports for manual registration if glob patterns fail
 import { HealthController } from '../controllers/health.controller';
 import { AuthController } from '../controllers/auth.controller';
 import { UserController } from '../controllers/user.controller';
 import { DeviceController } from '../controllers/device.controller';
 import { ThingsBoardController } from '../controllers/thingsboard.controller';
-import { EnhancedValidationMiddleware } from '../middleware/enhanced-validation.middleware';
 
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -58,13 +61,16 @@ export class RoutingControllersRoutes {
             useContainer(Container);
             logger.info(this.node, 'Configured routing-controllers to use TypeDI container');
 
+            // Get controllers using glob patterns with fallback
+            const controllers = this.getControllers();
+
             // Configure routing-controllers with Node-RED's Express server
             const app = useExpressServer(RED.httpNode, {
                 // Route configuration - now using main API prefix
                 routePrefix: this.configManager.get('apiPrefix'),
 
-                // Controllers to register
-                controllers: [HealthController, AuthController, UserController, DeviceController, ThingsBoardController],
+                // Controllers to register (auto-discovered via glob patterns)
+                controllers: controllers,
 
                 // Enhanced middleware integration
                 middlewares: [EnhancedValidationMiddleware],
@@ -113,6 +119,59 @@ export class RoutingControllersRoutes {
             });
             throw error;
         }
+    }
+
+    /**
+     * Get controllers using routing-controllers glob patterns with fallback
+     */
+    private getControllers(): any[] {
+        try {
+            // Use routing-controllers built-in glob pattern support
+            const controllersDir = path.join(__dirname, '../controllers');
+
+            logger.info(this.node, 'Using routing-controllers glob pattern for automatic controller discovery', {
+                controllersDir,
+                pattern: '*.controller.{ts,js}'
+            });
+
+            // routing-controllers will automatically discover and load controllers matching these patterns
+            const globPatterns = [
+                path.join(controllersDir, '*.controller.ts'),
+                path.join(controllersDir, '*.controller.js')
+            ];
+
+            logger.debug(this.node, 'Controller glob patterns configured', {
+                patterns: globPatterns
+            });
+
+            return globPatterns;
+
+        } catch (error) {
+            logger.error(this.node, 'Failed to setup controller glob patterns, using fallback registration', {
+                error: (error as Error).message
+            });
+            return this.getFallbackControllers();
+        }
+    }
+
+    /**
+     * Get fallback controllers for manual registration
+     */
+    private getFallbackControllers(): any[] {
+        const fallbackControllers = [
+            HealthController,
+            AuthController,
+            UserController,
+            DeviceController,
+            ThingsBoardController
+        ];
+
+        logger.info(this.node, 'Using fallback manual controller registration', {
+            controllersCount: fallbackControllers.length,
+            controllerNames: fallbackControllers.map(ctrl => ctrl.name)
+        });
+
+        return fallbackControllers;
     }
 
     /**
@@ -335,7 +394,7 @@ export class RoutingControllersRoutes {
         if (this.configManager.isEnabled('enableDebugMode')) {
             logger.info(this.node, 'routing-controllers routes registered:', {
                 prefix: this.configManager.get('apiPrefix'),
-                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
+                controllers: 'Auto-discovered via glob patterns',
                 routes: [
                     'GET /health',
                     'GET /health/detailed',
@@ -369,7 +428,7 @@ export class RoutingControllersRoutes {
         return {
             enabled: true,
             routePrefix: this.configManager.get('apiPrefix'),
-            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
+            controllersRegistered: 'Auto-discovered via glob patterns',
             authorizationEnabled: true,
             validationEnabled: true,
             errorHandlingEnabled: true

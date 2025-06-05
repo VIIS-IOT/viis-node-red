@@ -3,6 +3,39 @@
  * @fileoverview Hybrid Routes Setup - Proof of Concept
  * Integrates routing-controllers with existing Node-RED Express server
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RoutingControllersRoutes = void 0;
 require("reflect-metadata");
@@ -12,12 +45,14 @@ const logger_1 = require("../utils/logger");
 const auth_service_1 = require("../services/auth.service");
 const database_service_1 = require("../services/database.service");
 const thingsboard_service_1 = require("../services/thingsboard.service");
+const enhanced_validation_middleware_1 = require("../middleware/enhanced-validation.middleware");
+const path = __importStar(require("path"));
+// Fallback imports for manual registration if glob patterns fail
 const health_controller_1 = require("../controllers/health.controller");
 const auth_controller_1 = require("../controllers/auth.controller");
 const user_controller_1 = require("../controllers/user.controller");
 const device_controller_1 = require("../controllers/device.controller");
 const thingsboard_controller_1 = require("../controllers/thingsboard.controller");
-const enhanced_validation_middleware_1 = require("../middleware/enhanced-validation.middleware");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
  *
@@ -42,12 +77,14 @@ class RoutingControllersRoutes {
             // CRITICAL: Tell routing-controllers to use TypeDI for dependency injection
             (0, routing_controllers_1.useContainer)(typedi_1.Container);
             logger_1.logger.info(this.node, 'Configured routing-controllers to use TypeDI container');
+            // Get controllers using glob patterns with fallback
+            const controllers = this.getControllers();
             // Configure routing-controllers with Node-RED's Express server
             const app = (0, routing_controllers_1.useExpressServer)(RED.httpNode, {
                 // Route configuration - now using main API prefix
                 routePrefix: this.configManager.get('apiPrefix'),
-                // Controllers to register
-                controllers: [health_controller_1.HealthController, auth_controller_1.AuthController, user_controller_1.UserController, device_controller_1.DeviceController, thingsboard_controller_1.ThingsBoardController],
+                // Controllers to register (auto-discovered via glob patterns)
+                controllers: controllers,
                 // Enhanced middleware integration
                 middlewares: [enhanced_validation_middleware_1.EnhancedValidationMiddleware],
                 // Enhanced validation and transformation
@@ -87,6 +124,51 @@ class RoutingControllersRoutes {
             });
             throw error;
         }
+    }
+    /**
+     * Get controllers using routing-controllers glob patterns with fallback
+     */
+    getControllers() {
+        try {
+            // Use routing-controllers built-in glob pattern support
+            const controllersDir = path.join(__dirname, '../controllers');
+            logger_1.logger.info(this.node, 'Using routing-controllers glob pattern for automatic controller discovery', {
+                controllersDir,
+                pattern: '*.controller.{ts,js}'
+            });
+            // routing-controllers will automatically discover and load controllers matching these patterns
+            const globPatterns = [
+                path.join(controllersDir, '*.controller.ts'),
+                path.join(controllersDir, '*.controller.js')
+            ];
+            logger_1.logger.debug(this.node, 'Controller glob patterns configured', {
+                patterns: globPatterns
+            });
+            return globPatterns;
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Failed to setup controller glob patterns, using fallback registration', {
+                error: error.message
+            });
+            return this.getFallbackControllers();
+        }
+    }
+    /**
+     * Get fallback controllers for manual registration
+     */
+    getFallbackControllers() {
+        const fallbackControllers = [
+            health_controller_1.HealthController,
+            auth_controller_1.AuthController,
+            user_controller_1.UserController,
+            device_controller_1.DeviceController,
+            thingsboard_controller_1.ThingsBoardController
+        ];
+        logger_1.logger.info(this.node, 'Using fallback manual controller registration', {
+            controllersCount: fallbackControllers.length,
+            controllerNames: fallbackControllers.map(ctrl => ctrl.name)
+        });
+        return fallbackControllers;
     }
     /**
      * Ensure TypeDI container has all required dependencies
@@ -274,7 +356,7 @@ class RoutingControllersRoutes {
         if (this.configManager.isEnabled('enableDebugMode')) {
             logger_1.logger.info(this.node, 'routing-controllers routes registered:', {
                 prefix: this.configManager.get('apiPrefix'),
-                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
+                controllers: 'Auto-discovered via glob patterns',
                 routes: [
                     'GET /health',
                     'GET /health/detailed',
@@ -307,7 +389,7 @@ class RoutingControllersRoutes {
         return {
             enabled: true,
             routePrefix: this.configManager.get('apiPrefix'),
-            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
+            controllersRegistered: 'Auto-discovered via glob patterns',
             authorizationEnabled: true,
             validationEnabled: true,
             errorHandlingEnabled: true
