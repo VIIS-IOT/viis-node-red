@@ -3,19 +3,12 @@
  * @fileoverview API Routes Registry for VIIS REST API
  * Registers all API endpoints with Node-RED's Express server using controllers
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiRoutes = void 0;
-const typedi_1 = __importDefault(require("typedi"));
-const user_controller_1 = require("../controllers/user.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const validation_middleware_1 = require("../middleware/validation.middleware");
 const logger_1 = require("../utils/logger");
 const response_helper_1 = require("../utils/response.helper");
 const dev_utils_1 = require("../utils/dev.utils");
-const hybrid_routes_1 = require("./hybrid.routes");
+const routing_controllers_routes_1 = require("./routing-controllers.routes");
 // Use require for body-parser
 const bodyParser = require('body-parser');
 /**
@@ -29,37 +22,11 @@ const bodyParser = require('body-parser');
  */
 class ApiRoutes {
     constructor(databaseService, authService, node, configManager) {
-        this.controllers = new Map();
-        this.databaseService = databaseService;
-        this.authService = authService;
         this.node = node;
         this.configManager = configManager;
-        this.authMiddleware = new auth_middleware_1.AuthMiddleware(authService, node);
-        this.validationMiddleware = typedi_1.default.get(validation_middleware_1.ValidationMiddleware);
         this.devUtils = dev_utils_1.DevUtils.getInstance(node, configManager);
-        // Initialize hybrid routes for routing-controllers integration
-        this.hybridRoutes = new hybrid_routes_1.HybridRoutes(node, configManager, authService, databaseService);
-        // Initialize controllers using TypeDI container
-        this.initializeControllers();
-    }
-    /**
-     * Initialize all controllers using TypeDI container
-     *
-     * This method demonstrates how to resolve controllers from the DI container.
-     * Controllers are automatically instantiated with their dependencies injected.
-     */
-    initializeControllers() {
-        try {
-            // Get controllers from TypeDI container
-            // The @Controller decorator and @Inject decorators handle dependency injection
-            this.controllers.set('user', typedi_1.default.get(user_controller_1.UserController));
-            // Note: HealthController and AuthController are now handled by routing-controllers in hybrid setup
-            logger_1.logger.info(this.node, `Initialized ${this.controllers.size} controllers using TypeDI container`);
-        }
-        catch (error) {
-            logger_1.logger.error(this.node, `Failed to initialize controllers: ${error.message}`);
-            throw error;
-        }
+        // Initialize routing-controllers integration
+        this.routingControllersRoutes = new routing_controllers_routes_1.RoutingControllersRoutes(node, configManager, authService, databaseService);
     }
     /**
      * Register all API routes with Node-RED's Express server
@@ -70,9 +37,7 @@ class ApiRoutes {
             this.setupBodyParsing(RED, config);
             // Setup global middleware
             this.setupGlobalMiddleware(RED, config);
-            // Register controller routes
-            this.registerControllerRoutes(RED, config);
-            // Add debug route to list all registered routes
+            // Add debug routes for routing-controllers
             this.addDebugRoutes(RED, config);
             // Setup hybrid routing-controllers integration (Proof of Concept)
             await this.setupHybridRoutes(RED);
@@ -124,21 +89,6 @@ class ApiRoutes {
         logger_1.logger.debug(this.node, "Global middleware configured");
     }
     /**
-     * Register routes from all controllers
-     */
-    registerControllerRoutes(RED, config) {
-        logger_1.logger.info(this.node, `Starting route registration for ${this.controllers.size} controllers...`);
-        this.controllers.forEach((controller, controllerName) => {
-            const routes = controller.getRoutes();
-            logger_1.logger.info(this.node, `Controller '${controllerName}' has ${routes.length} routes`);
-            routes.forEach(route => {
-                this.registerRoute(RED, config, controller, route, controllerName);
-            });
-            logger_1.logger.info(this.node, `✓ Registered ${routes.length} routes for ${controllerName} controller`);
-        });
-        logger_1.logger.info(this.node, `Route registration completed!`);
-    }
-    /**
      * Add debug routes for troubleshooting
      */
     addDebugRoutes(RED, config) {
@@ -146,25 +96,25 @@ class ApiRoutes {
         if (!this.configManager.isEnabled('enableDebugMode')) {
             return;
         }
-        // Debug route to list all registered routes
+        // Debug route to list all registered routes (now handled by routing-controllers)
         RED.httpNode.get(`${config.apiPrefix}/debug/routes`, (_req, res) => {
-            const routeList = [];
-            this.controllers.forEach((controller, controllerName) => {
-                const routes = controller.getRoutes();
-                routes.forEach(route => {
-                    routeList.push({
-                        controller: controllerName,
-                        method: route.method,
-                        path: `${config.apiPrefix}${route.path}`,
-                        handler: route.handler,
-                        middleware: route.middleware || []
-                    });
-                });
-            });
+            const routeList = [
+                // routing-controllers routes
+                { controller: 'HealthController', method: 'GET', path: `${config.apiPrefix}/health`, handler: 'getHealth' },
+                { controller: 'HealthController', method: 'GET', path: `${config.apiPrefix}/health/detailed`, handler: 'getDetailedHealth' },
+                { controller: 'AuthController', method: 'POST', path: `${config.apiPrefix}/auth/login`, handler: 'login' },
+                { controller: 'AuthController', method: 'GET', path: `${config.apiPrefix}/auth/verify`, handler: 'verifyToken' },
+                { controller: 'AuthController', method: 'POST', path: `${config.apiPrefix}/auth/logout`, handler: 'logout' },
+                { controller: 'AuthController', method: 'GET', path: `${config.apiPrefix}/auth/me`, handler: 'getCurrentUser' },
+                { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users`, handler: 'getAllUsers' },
+                { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users/me`, handler: 'getCurrentUser' },
+                { controller: 'UserController', method: 'GET', path: `${config.apiPrefix}/users/:userId`, handler: 'getUserById' }
+            ];
             response_helper_1.ResponseHelper.success(res, {
                 totalRoutes: routeList.length,
                 apiPrefix: config.apiPrefix,
-                routes: routeList
+                routes: routeList,
+                note: 'All routes now handled by routing-controllers'
             }, 200, 'Registered routes');
         });
         // Development dashboard
@@ -179,7 +129,22 @@ class ApiRoutes {
         });
         // API documentation
         RED.httpNode.get(`${config.apiPrefix}/debug/docs`, (_req, res) => {
-            const docs = this.devUtils.generateApiDocs(this.controllers);
+            const docs = {
+                title: 'VIIS REST API Documentation',
+                version: '2.0.0',
+                description: 'Migrated to routing-controllers',
+                endpoints: [
+                    { path: '/health', method: 'GET', description: 'Basic health check' },
+                    { path: '/health/detailed', method: 'GET', description: 'Detailed health check (admin only)' },
+                    { path: '/auth/login', method: 'POST', description: 'User login' },
+                    { path: '/auth/verify', method: 'GET', description: 'Token verification' },
+                    { path: '/auth/logout', method: 'POST', description: 'User logout' },
+                    { path: '/auth/me', method: 'GET', description: 'Current user info' },
+                    { path: '/users', method: 'GET', description: 'Get all users (admin only)' },
+                    { path: '/users/me', method: 'GET', description: 'Current user info' },
+                    { path: '/users/:userId', method: 'GET', description: 'Get user by ID' }
+                ]
+            };
             response_helper_1.ResponseHelper.success(res, docs, 200, 'API documentation');
         });
         logger_1.logger.info(this.node, `✓ Added debug routes: routes, dashboard, metrics, docs`);
@@ -189,13 +154,13 @@ class ApiRoutes {
      */
     async setupHybridRoutes(RED) {
         try {
-            logger_1.logger.info(this.node, 'Setting up hybrid routing-controllers integration...');
-            await this.hybridRoutes.setupRoutingControllers(RED);
+            logger_1.logger.info(this.node, 'Setting up routing-controllers integration...');
+            await this.routingControllersRoutes.setupRoutingControllers(RED);
             // Add hybrid routes status to debug dashboard
             if (this.configManager.isEnabled('enableDebugMode')) {
-                RED.httpNode.get(`${this.configManager.get('apiPrefix')}/debug/hybrid-status`, (_req, res) => {
-                    const status = this.hybridRoutes.getStatus();
-                    response_helper_1.ResponseHelper.success(res, status, 200, 'Hybrid routing status');
+                RED.httpNode.get(`${this.configManager.get('apiPrefix')}/debug/routing-status`, (_req, res) => {
+                    const status = this.routingControllersRoutes.getStatus();
+                    response_helper_1.ResponseHelper.success(res, status, 200, 'Routing controllers status');
                 });
             }
             logger_1.logger.info(this.node, '✅ Hybrid routing-controllers integration completed');
@@ -205,64 +170,6 @@ class ApiRoutes {
                 error: error.message
             });
             // Don't throw - allow the rest of the API to work even if hybrid setup fails
-        }
-    }
-    /**
-     * Register a single route
-     */
-    registerRoute(RED, config, controller, route, controllerName) {
-        const fullPath = `${config.apiPrefix}${route.path}`;
-        const middlewares = [];
-        // Add middleware based on route configuration
-        if (route.middleware) {
-            route.middleware.forEach(middlewareName => {
-                const middleware = this.getMiddleware(middlewareName);
-                if (middleware) {
-                    middlewares.push(middleware);
-                }
-            });
-        }
-        // Get handler function from controller
-        const handler = controller[route.handler];
-        if (!handler) {
-            logger_1.logger.error(this.node, `Handler ${route.handler} not found in ${controllerName} controller`);
-            return;
-        }
-        // Register route with Express
-        const method = route.method.toLowerCase();
-        const expressMethod = RED.httpNode[method];
-        if (!expressMethod) {
-            logger_1.logger.error(this.node, `HTTP method ${route.method} not supported`);
-            return;
-        }
-        // Register the route with proper context binding
-        expressMethod.call(RED.httpNode, fullPath, ...middlewares, handler.bind(controller));
-        logger_1.logger.info(this.node, `✓ Registered ${route.method} ${fullPath} -> ${controllerName}.${route.handler}`);
-    }
-    /**
-     * Get middleware by name
-     */
-    getMiddleware(middlewareName) {
-        switch (middlewareName) {
-            case 'auth':
-                return this.authMiddleware.authenticate;
-            case 'admin':
-                return this.authMiddleware.requireAdmin;
-            case 'customer':
-                return this.authMiddleware.requireCustomerAccess;
-            case 'optionalAuth':
-                return this.authMiddleware.optionalAuth;
-            case 'pagination':
-                // For pagination, use GetUsersQueryDto or create a specific pagination DTO
-                logger_1.logger.warn(this.node, `Pagination middleware should use DTO validation instead`);
-                return null;
-            case 'dateRange':
-                // For date range, create a specific DTO with date validation
-                logger_1.logger.warn(this.node, `Date range middleware should use DTO validation instead`);
-                return null;
-            default:
-                logger_1.logger.warn(this.node, `Unknown middleware: ${middlewareName}`);
-                return null;
         }
     }
     /**
@@ -288,29 +195,6 @@ class ApiRoutes {
             response_helper_1.ResponseHelper.notFoundError(res, `API endpoint not found: ${req.method} ${req.path}`, this.node);
         });
         logger_1.logger.debug(this.node, "Error handling middleware configured");
-    }
-    /**
-     * Add a new controller
-     */
-    addController(name, controller) {
-        this.controllers.set(name, controller);
-        logger_1.logger.info(this.node, `Added controller: ${name}`);
-    }
-    /**
-     * Remove a controller
-     */
-    removeController(name) {
-        const removed = this.controllers.delete(name);
-        if (removed) {
-            logger_1.logger.info(this.node, `Removed controller: ${name}`);
-        }
-        return removed;
-    }
-    /**
-     * Get all registered controllers
-     */
-    getControllers() {
-        return new Map(this.controllers);
     }
 }
 exports.ApiRoutes = ApiRoutes;

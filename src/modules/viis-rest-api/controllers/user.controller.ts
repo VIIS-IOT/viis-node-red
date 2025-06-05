@@ -31,39 +31,24 @@ export class UserController {
         logger.info(this.node, 'UserController initialized with routing-controllers');
     }
 
-    /**
-     * Get route definitions for user endpoints
-     */
-    getRoutes(): RouteDefinition[] {
-        return [
-            {
-                method: 'GET',
-                path: '/users',
-                handler: 'getAllUsers',
-                middleware: ['auth', 'admin', 'pagination']
-            },
-            {
-                method: 'GET',
-                path: '/users/me',
-                handler: 'getCurrentUser',
-                middleware: ['auth']
-            },
-            {
-                method: 'GET',
-                path: '/users/:userId',
-                handler: 'getUserById',
-                middleware: ['auth', 'customer']
-            }
-        ];
-    }
+
 
     /**
      * Get all users (admin only)
+     * GET /api/v2/users
      */
-    getAllUsers = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    @Get('/')
+    @Authorized(['admin'])
+    async getAllUsers(@QueryParams() queryParams: GetUsersQueryDto): Promise<any> {
+        logger.info(this.node, 'Get all users request', { queryParams });
+
         // Validate query parameters
-        const queryParams: UserQueryParams = await this.userValidator.validateUserQuery(req.query);
-        const { page, limit, offset } = this.getPaginationParams(req);
+        const validatedParams: UserQueryParams = await this.userValidator.validateUserQuery(queryParams);
+
+        // Default pagination
+        const page = queryParams.page || 1;
+        const limit = Math.min(queryParams.limit || 10, 100); // Max 100 items per page
+        const offset = (page - 1) * limit;
 
         // Build query
         const userRepo = this.databaseService.getCustomerUserRepository();
@@ -84,27 +69,27 @@ export class UserController {
             ]);
 
         // Apply filters
-        if (queryParams.customer_id) {
-            queryBuilder.andWhere('user.customer_id = :customerId', { customerId: queryParams.customer_id });
+        if (validatedParams.customer_id) {
+            queryBuilder.andWhere('user.customer_id = :customerId', { customerId: validatedParams.customer_id });
         }
 
-        if (queryParams.is_admin !== undefined) {
-            queryBuilder.andWhere('user.is_admin = :isAdmin', { isAdmin: queryParams.is_admin });
+        if (validatedParams.is_admin !== undefined) {
+            queryBuilder.andWhere('user.is_admin = :isAdmin', { isAdmin: validatedParams.is_admin });
         }
 
-        if (queryParams.iot_dynamic_role) {
-            queryBuilder.andWhere('user.iot_dynamic_role = :role', { role: queryParams.iot_dynamic_role });
+        if (validatedParams.iot_dynamic_role) {
+            queryBuilder.andWhere('user.iot_dynamic_role = :role', { role: validatedParams.iot_dynamic_role });
         }
 
-        if (queryParams.search) {
+        if (validatedParams.search) {
             queryBuilder.andWhere(
                 '(user.name LIKE :search OR user.email LIKE :search OR user.first_name LIKE :search OR user.last_name LIKE :search)',
-                { search: `%${queryParams.search}%` }
+                { search: `%${validatedParams.search}%` }
             );
         }
 
-        if (queryParams.is_deactivated !== undefined) {
-            queryBuilder.andWhere('user.is_deactivated = :isDeactivated', { isDeactivated: queryParams.is_deactivated });
+        if (validatedParams.is_deactivated !== undefined) {
+            queryBuilder.andWhere('user.is_deactivated = :isDeactivated', { isDeactivated: validatedParams.is_deactivated });
         }
 
         // Get total count
@@ -131,7 +116,7 @@ export class UserController {
         }));
 
         // Return paginated response
-        this.success(res, {
+        return {
             data: userResponses,
             pagination: {
                 page,
@@ -139,18 +124,17 @@ export class UserController {
                 total,
                 totalPages: Math.ceil(total / limit)
             }
-        }, 200, 'Users retrieved successfully');
-    });
+        };
+    }
 
     /**
      * Get current user information
+     * GET /api/v2/users/me
      */
-    getCurrentUser = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
-        const user = this.getAuthenticatedUser(req);
-
-        if (!user) {
-            return this.authenticationError(res, 'User not authenticated');
-        }
+    @Get('/me')
+    @Authorized()
+    async getCurrentUser(@CurrentUser() user: any): Promise<UserResponse> {
+        logger.debug(this.node, 'Get current user request', { userId: user.user_id });
 
         // Get detailed user information from database
         const userRepo = this.databaseService.getCustomerUserRepository();
@@ -165,7 +149,7 @@ export class UserController {
         });
 
         if (!userInfo) {
-            return this.notFoundError(res, 'User not found');
+            throw new Error('User not found');
         }
 
         const response: UserResponse = {
@@ -181,25 +165,30 @@ export class UserController {
             is_deactivated: userInfo.is_deactivated
         };
 
-        this.success(res, response, 200, 'User information retrieved');
-    });
+        return response;
+    }
 
     /**
      * Get user by ID
+     * GET /api/v2/users/:userId
      */
-    getUserById = this.asyncHandler(async (req: Request, res: Response): Promise<void> => {
-        const { userId } = await this.userValidator.validateUserIdParam(req.params);
-        const currentUser = this.getAuthenticatedUser(req);
+    @Get('/:userId')
+    @Authorized()
+    async getUserById(@Param('userId') userId: string, @CurrentUser() currentUser: any): Promise<UserResponse> {
+        logger.debug(this.node, 'Get user by ID request', { userId, requestedBy: currentUser.user_id });
+
+        // Validate userId parameter
+        const { userId: validatedUserId } = await this.userValidator.validateUserIdParam({ userId });
 
         // Check if user can access this user's information
-        if (!this.isAdmin(req) && currentUser.user_id !== userId) {
-            return this.authorizationError(res, 'You can only access your own user information');
+        if (!currentUser.is_admin && currentUser.user_id !== validatedUserId) {
+            throw new Error('You can only access your own user information');
         }
 
         // Get user information
         const userRepo = this.databaseService.getCustomerUserRepository();
         const userInfo = await userRepo.findOne({
-            where: { name: userId },
+            where: { name: validatedUserId },
             relations: ['iot_customer'],
             select: [
                 'name', 'first_name', 'last_name', 'email',
@@ -209,12 +198,12 @@ export class UserController {
         });
 
         if (!userInfo) {
-            return this.notFoundError(res, 'User not found');
+            throw new Error('User not found');
         }
 
         // Check customer access for non-admin users
-        if (!this.isAdmin(req) && userInfo.customer_id !== currentUser.customer_id) {
-            return this.authorizationError(res, 'Access denied: Different customer');
+        if (!currentUser.is_admin && userInfo.customer_id !== currentUser.customer_id) {
+            throw new Error('Access denied: Different customer');
         }
 
         const response: UserResponse = {
@@ -230,6 +219,6 @@ export class UserController {
             is_deactivated: userInfo.is_deactivated
         };
 
-        this.success(res, response, 200, 'User information retrieved');
-    });
+        return response;
+    }
 }
