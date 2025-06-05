@@ -43,15 +43,19 @@ class MqttService {
      * Publish result immediately without debouncing
      */
     async publishResultImmediate(key, value) {
+        this.logger.warn(`[MQTT-RESULT] Publishing result: ${key}=${value} (type: ${typeof value})`);
         const mqttPayload = {
             ts: Date.now(),
             [key]: value,
         };
+        this.logger.warn(`[MQTT-RESULT] Payload before JSON.stringify: ${JSON.stringify(mqttPayload)}`);
         try {
-            await this.mqttClient.publish(this.publishTopic, JSON.stringify(mqttPayload));
+            const payloadString = JSON.stringify(mqttPayload);
+            this.logger.warn(`[MQTT-RESULT] Payload string: ${payloadString}`);
+            await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload: mqttPayload });
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.PUBLISHED(key) });
-            this.logger.warn(`Published immediately: ${key}=${value}`);
+            this.logger.warn(`Published immediately: ${key}=${value} (type: ${typeof value})`);
         }
         catch (error) {
             const errorMessage = `Failed to publish ${key}: ${error.message}`;
@@ -64,6 +68,7 @@ class MqttService {
      * Publish configuration update result
      */
     async publishConfigUpdate(key, value, note) {
+        this.logger.warn(`[MQTT-CONFIG] Publishing config update: ${key}=${value} (type: ${typeof value})`);
         const mqttPayload = {
             ts: Date.now(),
             [key]: value,
@@ -71,11 +76,14 @@ class MqttService {
         if (note) {
             mqttPayload.note = note;
         }
+        this.logger.warn(`[MQTT-CONFIG] Payload before JSON.stringify: ${JSON.stringify(mqttPayload)}`);
         try {
-            await this.mqttClient.publish(this.publishTopic, JSON.stringify(mqttPayload));
+            const payloadString = JSON.stringify(mqttPayload);
+            this.logger.warn(`[MQTT-CONFIG] Payload string: ${payloadString}`);
+            await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload: mqttPayload });
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.CONFIG_UPDATED(key) });
-            this.logger.warn(`Published config update: ${key}=${value}${note ? ` (${note})` : ''}`);
+            this.logger.warn(`Published config update: ${key}=${value} (type: ${typeof value})${note ? ` (${note})` : ''}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish config update for ${key}: ${error.message}`;
