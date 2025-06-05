@@ -13,6 +13,8 @@ import { MqttClientCore, MqttConfig } from '../../../core/mqtt-client';
 import ClientRegistry from '../../../core/client-registry';
 import { ApiError, ErrorType } from '../types/common.types';
 import { logger } from '../utils/logger';
+import { GlobalContextHelper } from '../../../ultils/global-context-helper';
+import { ENV_KEYS, MQTT_CONFIG, DEFAULTS } from '../constants';
 
 /**
  * Interface for notification creation parameters
@@ -48,12 +50,14 @@ export interface MqttPublishParams {
 export class NotificationService extends BaseService {
     private notificationRepository: Repository<TabiotNotification>;
     private mqttClient: MqttClientCore | null = null;
+    private globalHelper: GlobalContextHelper;
 
     constructor(
         context: ServiceContext,
         databaseService: DatabaseService
     ) {
         super(context, 'NotificationService');
+        this.globalHelper = new GlobalContextHelper(this.node.context());
     }
 
     /**
@@ -219,23 +223,24 @@ export class NotificationService extends BaseService {
     }
 
     /**
-     * Create MQTT configuration
+     * Create MQTT configuration for local EMQX broker
      */
     private createMqttConfig(): MqttConfig {
-        const host = process.env.MQTT_HOST || 'mqtt.viis.tech';
-        const port = process.env.MQTT_PORT || '1883';
-        const username = process.env.MQTT_USERNAME || '';
-        const password = process.env.MQTT_PASSWORD || '';
+        // Use local EMQX broker configuration
+        const host = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_HOST, MQTT_CONFIG.LOCAL.DEFAULT_HOST);
+        const port = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_PORT, MQTT_CONFIG.LOCAL.DEFAULT_PORT);
+        const username = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_USERNAME, '');
+        const password = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_PASSWORD, '');
 
         return {
             broker: `mqtt://${host}:${port}`,
             clientId: `viis-notification-service-${Math.random().toString(16).substring(2, 10)}`,
             username,
             password,
-            qos: 1,
-            keepalive: 60,
-            connectTimeout: 30000,
-            reconnectPeriod: 5000
+            qos: MQTT_CONFIG.LOCAL.QOS,
+            keepalive: MQTT_CONFIG.LOCAL.KEEPALIVE,
+            connectTimeout: MQTT_CONFIG.LOCAL.CONNECT_TIMEOUT,
+            reconnectPeriod: MQTT_CONFIG.LOCAL.RECONNECT_PERIOD
         };
     }
 

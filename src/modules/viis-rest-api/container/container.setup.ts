@@ -18,6 +18,7 @@ import { AuthMiddleware } from "../middleware/auth.middleware";
 import { ValidationMiddleware } from "../middleware/validation.middleware";
 import { ApiConfigManager } from "../config/api.config";
 import { BaseService, ServiceContext } from "../services/base.service";
+import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import "reflect-metadata";
 
 /**
@@ -57,10 +58,14 @@ export class ContainerSetup {
                 throw new Error('Invalid configManager provided');
             }
 
+            // Initialize GlobalContextHelper
+            const globalHelper = new GlobalContextHelper(node.context());
+
             // Register core instances
             Container.set("node", node);
             Container.set("jwtSecret", jwtSecret);
             Container.set("configManager", configManager);
+            Container.set("globalHelper", globalHelper);
 
             // Log successful registration for debugging
             console.log('[VIIS-REST-API] Container setup: Core dependencies registered successfully');

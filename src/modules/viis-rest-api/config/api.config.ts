@@ -5,6 +5,8 @@
 
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
+import { GlobalContextHelper } from '../../../ultils/global-context-helper';
+import { ENV_KEYS, DEFAULTS } from '../constants';
 
 /**
  * API Configuration interface with all possible settings
@@ -13,28 +15,28 @@ export interface ApiConfiguration {
     // Core settings
     enabled: boolean;
     apiPrefix: string;
-    
+
     // Security settings
     jwtSecret: string;
     jwtExpiresIn: string;
-    
+
     // Feature toggles
     enableLogging: boolean;
     enableCors: boolean;
     enableRateLimit: boolean;
     enableValidation: boolean;
     enableDebugMode: boolean;
-    
+
     // Performance settings
     maxRequestsPerMinute: number;
     bodyParserLimit: string;
     requestTimeout: number;
-    
+
     // Development settings
     enableHotReload: boolean;
     enableDetailedErrors: boolean;
     enableRequestTracing: boolean;
-    
+
     // Database settings
     enableDatabaseLogging: boolean;
     connectionTimeout: number;
@@ -47,28 +49,28 @@ const DEFAULT_CONFIG: ApiConfiguration = {
     // Core settings
     enabled: true,
     apiPrefix: '/api/v2',
-    
+
     // Security settings
     jwtSecret: 'viis-dev-secret-2024', // Development default
     jwtExpiresIn: '24h', // Shorter for development
-    
+
     // Feature toggles
     enableLogging: true,
     enableCors: true,
     enableRateLimit: false, // Disabled for development
     enableValidation: true,
     enableDebugMode: false,
-    
+
     // Performance settings
     maxRequestsPerMinute: 1000, // Higher for development
     bodyParserLimit: '10mb',
     requestTimeout: 30000, // 30 seconds
-    
+
     // Development settings
     enableHotReload: true,
     enableDetailedErrors: true,
     enableRequestTracing: true,
-    
+
     // Database settings
     enableDatabaseLogging: false,
     connectionTimeout: 10000
@@ -78,13 +80,13 @@ const DEFAULT_CONFIG: ApiConfiguration = {
  * Environment variable mappings
  */
 const ENV_MAPPINGS = {
-    JWT_SECRET: 'jwtSecret',
-    JWT_EXPIRES_IN: 'jwtExpiresIn',
-    API_PREFIX: 'apiPrefix',
-    ENABLE_DEBUG: 'enableDebugMode',
-    ENABLE_DB_LOGGING: 'enableDatabaseLogging',
-    REQUEST_TIMEOUT: 'requestTimeout',
-    RATE_LIMIT_MAX: 'maxRequestsPerMinute'
+    [ENV_KEYS.JWT_SECRET]: 'jwtSecret',
+    [ENV_KEYS.JWT_EXPIRES_IN]: 'jwtExpiresIn',
+    [ENV_KEYS.API_PREFIX]: 'apiPrefix',
+    [ENV_KEYS.ENABLE_DEBUG]: 'enableDebugMode',
+    [ENV_KEYS.ENABLE_DB_LOGGING]: 'enableDatabaseLogging',
+    [ENV_KEYS.REQUEST_TIMEOUT]: 'requestTimeout',
+    [ENV_KEYS.RATE_LIMIT_MAX]: 'maxRequestsPerMinute'
 } as const;
 
 /**
@@ -93,9 +95,11 @@ const ENV_MAPPINGS = {
 export class ApiConfigManager {
     private config: ApiConfiguration;
     private node: Node;
+    private globalHelper: GlobalContextHelper;
 
     constructor(nodeConfig: any, node: Node) {
         this.node = node;
+        this.globalHelper = new GlobalContextHelper(node.context());
         this.config = this.buildConfiguration(nodeConfig);
         this.validateConfiguration();
         this.logConfiguration();
@@ -137,7 +141,7 @@ export class ApiConfigManager {
      */
     private applyEnvironmentConfig(config: ApiConfiguration): void {
         Object.entries(ENV_MAPPINGS).forEach(([envKey, configKey]) => {
-            const envValue = process.env[envKey];
+            const envValue = this.globalHelper.getEnvVar(envKey);
             if (envValue !== undefined) {
                 (config as any)[configKey] = this.parseEnvironmentValue(envValue, configKey);
             }
@@ -148,18 +152,18 @@ export class ApiConfigManager {
      * Apply development-specific overrides
      */
     private applyDevelopmentOverrides(config: ApiConfiguration): void {
-        const isDevelopment = process.env.NODE_ENV !== 'production';
-        
+        const isDevelopment = this.globalHelper.getEnvVar('NODE_ENV', 'development') !== 'production';
+
         if (isDevelopment) {
             // Enable development features
             config.enableDebugMode = true;
             config.enableDetailedErrors = true;
             config.enableRequestTracing = true;
             config.enableHotReload = true;
-            
+
             // Disable rate limiting for easier development
             config.enableRateLimit = false;
-            
+
             // Shorter JWT expiration for development
             if (config.jwtExpiresIn === '1y') {
                 config.jwtExpiresIn = '24h';
@@ -175,12 +179,12 @@ export class ApiConfigManager {
         if (configKey.startsWith('enable')) {
             return value.toLowerCase() === 'true';
         }
-        
+
         // Number values
         if (configKey.includes('Timeout') || configKey.includes('Max') || configKey.includes('Minute')) {
             return parseInt(value, 10);
         }
-        
+
         // String values
         return value;
     }
@@ -248,9 +252,9 @@ export class ApiConfigManager {
     /**
      * Check if feature is enabled
      */
-    isEnabled(feature: keyof Pick<ApiConfiguration, 
-        'enableLogging' | 'enableCors' | 'enableRateLimit' | 'enableValidation' | 
-        'enableDebugMode' | 'enableHotReload' | 'enableDetailedErrors' | 
+    isEnabled(feature: keyof Pick<ApiConfiguration,
+        'enableLogging' | 'enableCors' | 'enableRateLimit' | 'enableValidation' |
+        'enableDebugMode' | 'enableHotReload' | 'enableDetailedErrors' |
         'enableRequestTracing' | 'enableDatabaseLogging'>): boolean {
         return this.config[feature];
     }
@@ -262,5 +266,12 @@ export class ApiConfigManager {
         Object.assign(this.config, updates);
         this.validateConfiguration();
         logger.info(this.node, 'Configuration updated:', updates);
+    }
+
+    /**
+     * Get GlobalContextHelper instance for services
+     */
+    getGlobalHelper(): GlobalContextHelper {
+        return this.globalHelper;
     }
 }
