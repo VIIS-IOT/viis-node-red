@@ -266,9 +266,21 @@ export class RoutingControllersRoutes {
                 error: error.message,
                 path: req.path,
                 method: req.method,
+                errorType: error.constructor.name,
                 stack: this.configManager.isEnabled('enableDebugMode') ? error.stack : undefined
             });
 
+            // Handle ApiError instances (our custom authentication/business logic errors)
+            if (error.name === 'ApiError' && error.statusCode) {
+                return res.status(error.statusCode).json({
+                    error: error.type,
+                    message: error.message,
+                    timestamp: new Date().toISOString(),
+                    ...(error.details && { details: error.details })
+                });
+            }
+
+            // Handle routing-controllers validation errors (with httpCode)
             if (error.httpCode) {
                 return res.status(error.httpCode).json({
                     success: false,
@@ -281,12 +293,17 @@ export class RoutingControllersRoutes {
                 });
             }
 
+            // Generic error handler for unexpected errors
+            logger.error(this.node, 'Unhandled error in routing-controllers', {
+                errorName: error.name,
+                errorMessage: error.message,
+                path: req.path,
+                method: req.method
+            });
+
             res.status(500).json({
-                success: false,
-                error: {
-                    type: 'InternalServerError',
-                    message: 'An unexpected error occurred'
-                },
+                error: 'INTERNAL_ERROR',
+                message: 'An unexpected error occurred',
                 timestamp: new Date().toISOString()
             });
         });

@@ -32,6 +32,7 @@ const routing_controllers_1 = require("routing-controllers");
 const class_validator_1 = require("class-validator");
 const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
+const common_types_1 = require("../types/common.types");
 /**
  * Enhanced validation middleware for routing-controllers
  *
@@ -51,6 +52,11 @@ let EnhancedValidationMiddleware = class EnhancedValidationMiddleware {
      * @param next - Express next function
      */
     error(error, request, response, next) {
+        // Check if this is an ApiError (authentication, business logic errors)
+        if (this.isApiError(error)) {
+            this.handleApiError(error, request, response);
+            return;
+        }
         // Check if this is a validation error
         if (this.isValidationError(error)) {
             this.handleValidationError(error, request, response);
@@ -63,6 +69,12 @@ let EnhancedValidationMiddleware = class EnhancedValidationMiddleware {
         }
         // Pass other errors to the next middleware
         next(error);
+    }
+    /**
+     * Check if error is an ApiError (our custom business logic errors)
+     */
+    isApiError(error) {
+        return error instanceof common_types_1.ApiError || error.name === 'ApiError';
     }
     /**
      * Check if error is a class-validator ValidationError
@@ -78,6 +90,22 @@ let EnhancedValidationMiddleware = class EnhancedValidationMiddleware {
         return error.httpCode === 400 &&
             error.name === 'BadRequestError' &&
             (error.message.includes('validation') || error.errors);
+    }
+    /**
+     * Handle ApiError instances (authentication, business logic errors)
+     */
+    handleApiError(error, request, response) {
+        logger_1.logger.warn(this.node, 'API error occurred', {
+            path: request.path,
+            method: request.method,
+            errorType: error.type,
+            errorMessage: error.message,
+            statusCode: error.statusCode,
+            userAgent: request.get('User-Agent'),
+            ip: request.ip
+        });
+        // Use the standard API error response format
+        response.status(error.statusCode).json(Object.assign({ error: error.type, message: error.message, timestamp: new Date().toISOString() }, (error.details && { details: error.details })));
     }
     /**
      * Handle class-validator ValidationError

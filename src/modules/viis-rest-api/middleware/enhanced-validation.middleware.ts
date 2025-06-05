@@ -20,6 +20,7 @@ import { Service, Inject } from 'typedi';
 import { Request, Response, NextFunction } from 'express';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
+import { ApiError } from '../types/common.types';
 
 /**
  * Enhanced validation error interface
@@ -55,7 +56,7 @@ interface ValidationResponse {
 @Middleware({ type: 'after' })
 @Service()
 export class EnhancedValidationMiddleware implements ExpressErrorMiddlewareInterface {
-    constructor(@Inject('node') private node: Node) {}
+    constructor(@Inject('node') private node: Node) { }
 
     /**
      * Handle validation errors from routing-controllers
@@ -66,6 +67,12 @@ export class EnhancedValidationMiddleware implements ExpressErrorMiddlewareInter
      * @param next - Express next function
      */
     error(error: any, request: Request, response: Response, next: NextFunction): void {
+        // Check if this is an ApiError (authentication, business logic errors)
+        if (this.isApiError(error)) {
+            this.handleApiError(error, request, response);
+            return;
+        }
+
         // Check if this is a validation error
         if (this.isValidationError(error)) {
             this.handleValidationError(error, request, response);
@@ -83,20 +90,50 @@ export class EnhancedValidationMiddleware implements ExpressErrorMiddlewareInter
     }
 
     /**
+     * Check if error is an ApiError (our custom business logic errors)
+     */
+    private isApiError(error: any): boolean {
+        return error instanceof ApiError || error.name === 'ApiError';
+    }
+
+    /**
      * Check if error is a class-validator ValidationError
      */
     private isValidationError(error: any): boolean {
-        return error instanceof ValidationError || 
-               (Array.isArray(error) && error.length > 0 && error[0] instanceof ValidationError);
+        return error instanceof ValidationError ||
+            (Array.isArray(error) && error.length > 0 && error[0] instanceof ValidationError);
     }
 
     /**
      * Check if error is a routing-controllers validation error
      */
     private isRoutingControllersValidationError(error: any): boolean {
-        return error.httpCode === 400 && 
-               error.name === 'BadRequestError' &&
-               (error.message.includes('validation') || error.errors);
+        return error.httpCode === 400 &&
+            error.name === 'BadRequestError' &&
+            (error.message.includes('validation') || error.errors);
+    }
+
+    /**
+     * Handle ApiError instances (authentication, business logic errors)
+     */
+    private handleApiError(error: ApiError, request: Request, response: Response): void {
+        logger.warn(this.node, 'API error occurred', {
+            path: request.path,
+            method: request.method,
+            errorType: error.type,
+            errorMessage: error.message,
+            statusCode: error.statusCode,
+            userAgent: request.get('User-Agent'),
+            ip: request.ip
+        });
+
+        // Use the standard API error response format
+        response.status(error.statusCode).json({
+            error: error.type,
+            message: error.message,
+            timestamp: new Date().toISOString(),
+            ...(error.details && { details: error.details })
+        });
     }
 
     /**
@@ -208,7 +245,7 @@ export class EnhancedValidationMiddleware implements ExpressErrorMiddlewareInter
  */
 @Service()
 export class BusinessRuleValidationInterceptor {
-    constructor(@Inject('node') private node: Node) {}
+    constructor(@Inject('node') private node: Node) { }
 
     /**
      * Validate business rules for user creation
