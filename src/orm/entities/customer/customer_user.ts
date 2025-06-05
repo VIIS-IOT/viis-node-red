@@ -6,6 +6,7 @@ import { IotDynamicRole } from '../dynamicRole/dynamicRole';
 import { TabiotCustomer } from './customer';
 import { CustomerLoginSessions } from './customer_login_sessions';
 import { IotCustomerUserCredentials } from './customer_user_credentials';
+import { TabiotNotification } from '../notification/TabiotNotification';
 
 @Entity('tabiot_customer_user')
 export class IotCustomerUser extends CustomBaseEntity {
@@ -105,4 +106,7 @@ export class IotCustomerUser extends CustomBaseEntity {
     @OneToOne(() => IotCustomerUserCredentials, credential => credential.user)
     // @JoinColumn({ name: 'name', referencedColumnName: 'user_id' })
     credential?: IotCustomerUserCredentials;
+
+    @OneToMany(() => TabiotNotification, notification => notification.customerUser)
+    notifications: TabiotNotification[];
 }

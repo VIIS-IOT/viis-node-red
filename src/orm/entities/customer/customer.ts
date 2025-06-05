@@ -3,6 +3,7 @@ import { CustomBaseEntity } from '../base/Base';
 import { IotCustomerUser } from './customer_user';
 import { TabiotDevice } from '../device/TabiotDevice';
 import { IotDynamicRole } from '../dynamicRole/dynamicRole';
+import { TabiotNotification } from '../notification/TabiotNotification';
 
 @Entity('tabiot_customer', { schema: 'public' })
 export class TabiotCustomer extends CustomBaseEntity {
@@ -89,4 +90,7 @@ export class TabiotCustomer extends CustomBaseEntity {
 
     @OneToMany(() => IotCustomerUser, user => user.iot_customer)
     users: IotCustomerUser[];
+
+    @OneToMany(() => TabiotNotification, notification => notification.customer)
+    notifications: TabiotNotification[];
 }

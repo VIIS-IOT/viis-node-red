@@ -15,6 +15,7 @@ const Base_1 = require("../base/Base");
 const customer_user_1 = require("./customer_user");
 const TabiotDevice_1 = require("../device/TabiotDevice");
 const dynamicRole_1 = require("../dynamicRole/dynamicRole");
+const TabiotNotification_1 = require("../notification/TabiotNotification");
 let TabiotCustomer = class TabiotCustomer extends Base_1.CustomBaseEntity {
 };
 exports.TabiotCustomer = TabiotCustomer;
@@ -130,6 +131,10 @@ __decorate([
     (0, typeorm_1.OneToMany)(() => customer_user_1.IotCustomerUser, user => user.iot_customer),
     __metadata("design:type", Array)
 ], TabiotCustomer.prototype, "users", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => TabiotNotification_1.TabiotNotification, notification => notification.customer),
+    __metadata("design:type", Array)
+], TabiotCustomer.prototype, "notifications", void 0);
 exports.TabiotCustomer = TabiotCustomer = __decorate([
     (0, typeorm_1.Entity)('tabiot_customer', { schema: 'public' })
 ], TabiotCustomer);
