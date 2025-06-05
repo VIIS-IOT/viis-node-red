@@ -51,7 +51,9 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         }
         catch (error) {
             this.logError("Failed to initialize ThingsBoard service", error);
-            throw error;
+            // Don't throw error to prevent Node-RED crash
+            // Service will operate in degraded mode without MQTT
+            this.logWarn("ThingsBoard service will operate in degraded mode without MQTT connectivity");
         }
     }
     /**
@@ -295,8 +297,19 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
      */
     async publishToMqtt(topic, records, context) {
         try {
-            if (!this.mqttClient || !this.mqttClient.isConnected()) {
-                throw new common_types_1.ApiError(common_types_1.ErrorType.INTERNAL_ERROR, 'MQTT client is not connected', 500);
+            if (!this.mqttClient) {
+                this.logWarn('MQTT client not available, skipping MQTT publish', {
+                    topic,
+                    deviceId: context.deviceId
+                });
+                return false;
+            }
+            if (!this.mqttClient.isConnected()) {
+                this.logWarn('MQTT client not connected, skipping MQTT publish', {
+                    topic,
+                    deviceId: context.deviceId
+                });
+                return false;
             }
             // Prepare payload in ThingsBoard format
             const payload = this.buildMqttPayload(records, context);
@@ -377,6 +390,11 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
     async initializeMqttClient() {
         try {
             const config = this.createThingsBoardMqttConfig();
+            this.logInfo("Attempting to initialize MQTT client", {
+                broker: config.broker,
+                clientId: config.clientId,
+                username: config.username ? 'configured' : 'not configured'
+            });
             this.mqttClient = await client_registry_1.default.getThingsboardMqttClient(config, this.node);
             this.logInfo("MQTT client initialized successfully", {
                 broker: config.broker,
@@ -385,7 +403,9 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         }
         catch (error) {
             this.logError("Failed to initialize MQTT client", error);
-            throw new common_types_1.ApiError(common_types_1.ErrorType.INTERNAL_ERROR, `Failed to initialize MQTT client: ${error.message}`, 500);
+            this.mqttClient = null;
+            // Don't throw error - let service continue without MQTT
+            throw error;
         }
     }
     /**
