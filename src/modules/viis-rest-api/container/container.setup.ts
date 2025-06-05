@@ -107,6 +107,10 @@ export class ContainerSetup {
             await scheduleActivationService.initialize();
             Container.set(ScheduleActivationService, scheduleActivationService);
 
+            // Initialize and register ThingsBoardService
+            // Note: ThingsBoardService will be auto-created by TypeDI when needed
+            // since it's decorated with @Service() and can inject serviceContext
+
             // Register validators
             Container.set(AuthValidator, new AuthValidator());
             Container.set(UserValidator, new UserValidator());

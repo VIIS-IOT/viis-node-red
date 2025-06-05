@@ -78,6 +78,9 @@ class ContainerSetup {
             const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService);
             await scheduleActivationService.initialize();
             typedi_1.default.set(schedule_activation_service_1.ScheduleActivationService, scheduleActivationService);
+            // Initialize and register ThingsBoardService
+            // Note: ThingsBoardService will be auto-created by TypeDI when needed
+            // since it's decorated with @Service() and can inject serviceContext
             // Register validators
             typedi_1.default.set(auth_validator_1.AuthValidator, new auth_validator_1.AuthValidator());
             typedi_1.default.set(user_validator_1.UserValidator, new user_validator_1.UserValidator());

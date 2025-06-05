@@ -3,7 +3,7 @@
  * Handles ThingsBoard RPC message processing and MQTT integration
  */
 
-import { Service } from 'typedi';
+import { Service, Inject } from 'typedi';
 import { Node } from 'node-red';
 import { BaseService, ServiceContext } from './base.service';
 import { ApiError, ErrorType } from '../types/common.types';
@@ -45,7 +45,7 @@ export class ThingsBoardService extends BaseService {
         mqttPublishFailures: 0
     };
 
-    constructor(context: ServiceContext) {
+    constructor(@Inject('serviceContext') context: ServiceContext) {
         super(context, 'ThingsBoardService');
         this.globalHelper = new GlobalContextHelper(this.node.context());
     }
