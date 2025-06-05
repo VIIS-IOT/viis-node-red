@@ -11,11 +11,13 @@ import { logger } from '../utils/logger';
 import { ApiConfigManager } from '../config/api.config';
 import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '../services/database.service';
+import { ThingsBoardService } from '../services/thingsboard.service';
 import { Action } from 'routing-controllers';
 import { HealthController } from '../controllers/health.controller';
 import { AuthController } from '../controllers/auth.controller';
 import { UserController } from '../controllers/user.controller';
 import { DeviceController } from '../controllers/device.controller';
+import { ThingsBoardController } from '../controllers/thingsboard.controller';
 import { EnhancedValidationMiddleware } from '../middleware/enhanced-validation.middleware';
 
 /**
@@ -62,7 +64,7 @@ export class RoutingControllersRoutes {
                 routePrefix: this.configManager.get('apiPrefix'),
 
                 // Controllers to register
-                controllers: [HealthController, AuthController, UserController, DeviceController],
+                controllers: [HealthController, AuthController, UserController, DeviceController, ThingsBoardController],
 
                 // Enhanced middleware integration
                 middlewares: [EnhancedValidationMiddleware],
@@ -143,6 +145,21 @@ export class RoutingControllersRoutes {
         if (!Container.has(DatabaseService)) {
             Container.set(DatabaseService, this.databaseService);
             logger.debug(this.node, 'DatabaseService registered in TypeDI container');
+        }
+
+        // ThingsBoard service will be auto-created by TypeDI since it's decorated with @Service()
+        // We just need to ensure its dependencies are available
+        if (!Container.has(ThingsBoardService)) {
+            // Create service context for ThingsBoard service
+            const serviceContext = {
+                node: this.node,
+                databaseService: this.databaseService,
+                configManager: this.configManager
+            };
+
+            const thingsBoardService = new ThingsBoardService(serviceContext);
+            Container.set(ThingsBoardService, thingsBoardService);
+            logger.debug(this.node, 'ThingsBoardService registered in TypeDI container');
         }
 
         logger.debug(this.node, 'TypeDI container setup verified and all dependencies registered');
@@ -318,7 +335,7 @@ export class RoutingControllersRoutes {
         if (this.configManager.isEnabled('enableDebugMode')) {
             logger.info(this.node, 'routing-controllers routes registered:', {
                 prefix: this.configManager.get('apiPrefix'),
-                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
+                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
                 routes: [
                     'GET /health',
                     'GET /health/detailed',
@@ -333,7 +350,13 @@ export class RoutingControllersRoutes {
                     'GET /devices/:id',
                     'POST /devices',
                     'PUT /devices/:id',
-                    'DELETE /devices/:id'
+                    'DELETE /devices/:id',
+                    'POST /thingsboard/rpc/oneway/:id',
+                    'POST /thingsboard/rpc/telemetry/:id',
+                    'POST /thingsboard/rpc/control/:id',
+                    'POST /thingsboard/rpc/custom/:id',
+                    'GET /thingsboard/health',
+                    'GET /thingsboard/stats'
                 ]
             });
         }
@@ -346,7 +369,7 @@ export class RoutingControllersRoutes {
         return {
             enabled: true,
             routePrefix: this.configManager.get('apiPrefix'),
-            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
+            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
             authorizationEnabled: true,
             validationEnabled: true,
             errorHandlingEnabled: true

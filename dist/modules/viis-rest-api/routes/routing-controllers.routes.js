@@ -11,10 +11,12 @@ const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
 const auth_service_1 = require("../services/auth.service");
 const database_service_1 = require("../services/database.service");
+const thingsboard_service_1 = require("../services/thingsboard.service");
 const health_controller_1 = require("../controllers/health.controller");
 const auth_controller_1 = require("../controllers/auth.controller");
 const user_controller_1 = require("../controllers/user.controller");
 const device_controller_1 = require("../controllers/device.controller");
+const thingsboard_controller_1 = require("../controllers/thingsboard.controller");
 const enhanced_validation_middleware_1 = require("../middleware/enhanced-validation.middleware");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -45,7 +47,7 @@ class RoutingControllersRoutes {
                 // Route configuration - now using main API prefix
                 routePrefix: this.configManager.get('apiPrefix'),
                 // Controllers to register
-                controllers: [health_controller_1.HealthController, auth_controller_1.AuthController, user_controller_1.UserController, device_controller_1.DeviceController],
+                controllers: [health_controller_1.HealthController, auth_controller_1.AuthController, user_controller_1.UserController, device_controller_1.DeviceController, thingsboard_controller_1.ThingsBoardController],
                 // Enhanced middleware integration
                 middlewares: [enhanced_validation_middleware_1.EnhancedValidationMiddleware],
                 // Enhanced validation and transformation
@@ -114,6 +116,19 @@ class RoutingControllersRoutes {
         if (!typedi_1.Container.has(database_service_1.DatabaseService)) {
             typedi_1.Container.set(database_service_1.DatabaseService, this.databaseService);
             logger_1.logger.debug(this.node, 'DatabaseService registered in TypeDI container');
+        }
+        // ThingsBoard service will be auto-created by TypeDI since it's decorated with @Service()
+        // We just need to ensure its dependencies are available
+        if (!typedi_1.Container.has(thingsboard_service_1.ThingsBoardService)) {
+            // Create service context for ThingsBoard service
+            const serviceContext = {
+                node: this.node,
+                databaseService: this.databaseService,
+                configManager: this.configManager
+            };
+            const thingsBoardService = new thingsboard_service_1.ThingsBoardService(serviceContext);
+            typedi_1.Container.set(thingsboard_service_1.ThingsBoardService, thingsBoardService);
+            logger_1.logger.debug(this.node, 'ThingsBoardService registered in TypeDI container');
         }
         logger_1.logger.debug(this.node, 'TypeDI container setup verified and all dependencies registered');
     }
@@ -259,7 +274,7 @@ class RoutingControllersRoutes {
         if (this.configManager.isEnabled('enableDebugMode')) {
             logger_1.logger.info(this.node, 'routing-controllers routes registered:', {
                 prefix: this.configManager.get('apiPrefix'),
-                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
+                controllers: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
                 routes: [
                     'GET /health',
                     'GET /health/detailed',
@@ -274,7 +289,13 @@ class RoutingControllersRoutes {
                     'GET /devices/:id',
                     'POST /devices',
                     'PUT /devices/:id',
-                    'DELETE /devices/:id'
+                    'DELETE /devices/:id',
+                    'POST /thingsboard/rpc/oneway/:id',
+                    'POST /thingsboard/rpc/telemetry/:id',
+                    'POST /thingsboard/rpc/control/:id',
+                    'POST /thingsboard/rpc/custom/:id',
+                    'GET /thingsboard/health',
+                    'GET /thingsboard/stats'
                 ]
             });
         }
@@ -286,7 +307,7 @@ class RoutingControllersRoutes {
         return {
             enabled: true,
             routePrefix: this.configManager.get('apiPrefix'),
-            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController'],
+            controllersRegistered: ['HealthController', 'AuthController', 'UserController', 'DeviceController', 'ThingsBoardController'],
             authorizationEnabled: true,
             validationEnabled: true,
             errorHandlingEnabled: true
