@@ -12,7 +12,8 @@ import {
     ServiceOptions,
     ILogger,
     FanRotationState,
-    FanGroupTransitionState
+    FanGroupTransitionState,
+    TransitionPhase
 } from "../interfaces/types";
 import {
     CONTEXT_KEYS,
@@ -757,12 +758,14 @@ export class FanControlService implements IFanControlService {
     ): void {
         const transitionState: FanGroupTransitionState = {
             isTransitioning: true,
-            phase: 'off',
+            phase: TransitionPhase.OFF,
             previousGroup: [...previousGroup],
             nextGroup: [...nextGroup],
             transitionStartTime: getCurrentTimestamp(),
             offDelayStartTime: 0,
-            reason: reason
+            reason: reason,
+            retryCount: 0,
+            maxRetries: 3
         };
 
         this.saveFanGroupTransitionState(transitionState);
@@ -783,7 +786,7 @@ export class FanControlService implements IFanControlService {
         const actions: ControlAction[] = [];
 
         switch (transitionState.phase) {
-            case 'off':
+            case TransitionPhase.OFF:
                 // Turn off ALL fans to ensure clean slate for transition
                 // This prevents accumulation of active fans from previous transitions
                 const offActions = this.createTurnOffAllFansActions(
@@ -792,18 +795,18 @@ export class FanControlService implements IFanControlService {
                 actions.push(...offActions);
 
                 // Move to delay phase
-                transitionState.phase = 'delay';
+                transitionState.phase = TransitionPhase.DELAY;
                 transitionState.offDelayStartTime = now;
                 this.saveFanGroupTransitionState(transitionState);
                 this.logger.warn(`Fan transition: All fans turned off, starting delay phase`);
                 break;
 
-            case 'delay':
+            case TransitionPhase.DELAY:
                 // Check if delay period has elapsed
                 const offDelayMs = this.getFanGroupOffDelayMs(config);
                 if (hasTimeElapsed(transitionState.offDelayStartTime, offDelayMs)) {
                     // Move to on phase
-                    transitionState.phase = 'on';
+                    transitionState.phase = TransitionPhase.ON;
                     this.saveFanGroupTransitionState(transitionState);
                     this.logger.warn(`Fan transition: Delay completed (${offDelayMs}ms), turning on new group`);
                 } else {
@@ -813,7 +816,7 @@ export class FanControlService implements IFanControlService {
                 }
                 break;
 
-            case 'on':
+            case TransitionPhase.ON:
                 // Turn on new group using non-optimized function to ensure proper fan control
                 // This ensures that only the target group is on and all others are explicitly off
                 if (transitionState.nextGroup.length > 0) {
@@ -833,12 +836,12 @@ export class FanControlService implements IFanControlService {
                 }
 
                 // Move to complete phase
-                transitionState.phase = 'complete';
+                transitionState.phase = TransitionPhase.COMPLETE;
                 this.saveFanGroupTransitionState(transitionState);
                 this.logger.warn(`Fan transition: New group activated, transition completing`);
                 break;
 
-            case 'complete':
+            case TransitionPhase.COMPLETE:
                 // Check if overall transition delay has elapsed
                 const transitionDelayMs = this.getFanGroupTransitionDelayMs(config);
                 if (hasTimeElapsed(transitionState.transitionStartTime, transitionDelayMs)) {

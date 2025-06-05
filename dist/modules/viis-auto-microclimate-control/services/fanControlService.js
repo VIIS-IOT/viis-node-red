@@ -5,6 +5,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FanControlService = void 0;
+const types_1 = require("../interfaces/types");
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 const groupUtils_1 = require("../utils/groupUtils");
@@ -594,12 +595,14 @@ class FanControlService {
     initiateFanGroupTransition(previousGroup, nextGroup, reason) {
         const transitionState = {
             isTransitioning: true,
-            phase: 'off',
+            phase: types_1.TransitionPhase.OFF,
             previousGroup: [...previousGroup],
             nextGroup: [...nextGroup],
             transitionStartTime: (0, timeUtils_1.getCurrentTimestamp)(),
             offDelayStartTime: 0,
-            reason: reason
+            reason: reason,
+            retryCount: 0,
+            maxRetries: 3
         };
         this.saveFanGroupTransitionState(transitionState);
         this.logger.warn(`Initiated fan group transition: [${previousGroup.join(', ')}] → [${nextGroup.join(', ')}] - ${reason}`);
@@ -616,23 +619,23 @@ class FanControlService {
         const coilMapping = this.getCoilMapping();
         const actions = [];
         switch (transitionState.phase) {
-            case 'off':
+            case types_1.TransitionPhase.OFF:
                 // Turn off ALL fans to ensure clean slate for transition
                 // This prevents accumulation of active fans from previous transitions
                 const offActions = this.createTurnOffAllFansActions(`Transition phase 1: Turn off all fans for clean transition - ${transitionState.reason}`);
                 actions.push(...offActions);
                 // Move to delay phase
-                transitionState.phase = 'delay';
+                transitionState.phase = types_1.TransitionPhase.DELAY;
                 transitionState.offDelayStartTime = now;
                 this.saveFanGroupTransitionState(transitionState);
                 this.logger.warn(`Fan transition: All fans turned off, starting delay phase`);
                 break;
-            case 'delay':
+            case types_1.TransitionPhase.DELAY:
                 // Check if delay period has elapsed
                 const offDelayMs = this.getFanGroupOffDelayMs(config);
                 if ((0, timeUtils_1.hasTimeElapsed)(transitionState.offDelayStartTime, offDelayMs)) {
                     // Move to on phase
-                    transitionState.phase = 'on';
+                    transitionState.phase = types_1.TransitionPhase.ON;
                     this.saveFanGroupTransitionState(transitionState);
                     this.logger.warn(`Fan transition: Delay completed (${offDelayMs}ms), turning on new group`);
                 }
@@ -642,7 +645,7 @@ class FanControlService {
                     this.logger.debug(`Fan transition: Delay in progress, ${remaining}ms remaining`);
                 }
                 break;
-            case 'on':
+            case types_1.TransitionPhase.ON:
                 // Turn on new group using non-optimized function to ensure proper fan control
                 // This ensures that only the target group is on and all others are explicitly off
                 if (transitionState.nextGroup.length > 0) {
@@ -655,11 +658,11 @@ class FanControlService {
                     actions.push(...offActions);
                 }
                 // Move to complete phase
-                transitionState.phase = 'complete';
+                transitionState.phase = types_1.TransitionPhase.COMPLETE;
                 this.saveFanGroupTransitionState(transitionState);
                 this.logger.warn(`Fan transition: New group activated, transition completing`);
                 break;
-            case 'complete':
+            case types_1.TransitionPhase.COMPLETE:
                 // Check if overall transition delay has elapsed
                 const transitionDelayMs = this.getFanGroupTransitionDelayMs(config);
                 if ((0, timeUtils_1.hasTimeElapsed)(transitionState.transitionStartTime, transitionDelayMs)) {

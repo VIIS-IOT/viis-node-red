@@ -18,6 +18,7 @@ import {
 import { FanControlStateManager } from "./stateManager";
 import { FanControlStateMachine } from "./fanStateMachine";
 import { SynchronizationService } from "./synchronizationService";
+import { FanControlCore, FanControlContext } from "./fanControlCore";
 import { Logger } from "../utils/logger";
 import {
     getFanGroups,
@@ -100,59 +101,38 @@ export class EnhancedFanControlService implements IFanControlService {
                     return [];
                 }
 
-                const groupSize = config.set_gr_alternate_fan || 2;
-                const rotationInterval = minutesToMs(config.set_time_alternate_fan || 15);
+                // Use core logic for rotation
+                const coreContext: FanControlContext = {
+                    config,
+                    sensorData: { temp_indoor: 0, humi_indoor: 0, light_indoor: 0, ts: Date.now() }, // Not used in rotation
+                    deviceStatus: { ts: Date.now() }, // Not used in rotation
+                    currentRotationState: state.rotationState,
+                    coilMapping: this.getCoilMapping(),
+                    logger: this.logger
+                };
 
-                // Get fan groups
-                const fanGroups = getFanGroups(groupSize);
-                if (fanGroups.length === 0) {
-                    this.logger.warn("No fan groups available for rotation");
-                    return [];
-                }
+                const result = FanControlCore.executeRotationMode(coreContext);
 
-                // Check if rotation is needed
-                if (hasTimeElapsed(state.rotationState.lastRotationTime, rotationInterval)) {
-                    const previousGroup = [...state.rotationState.activeGroup];
-                    const nextGroupIndex = getNextGroupIndex(
-                        state.rotationState.currentGroupIndex,
-                        fanGroups.length
-                    );
-                    const nextGroup = fanGroups[nextGroupIndex];
-
-                    // Update rotation state
-                    const updateResult = await this.stateManager.updateRotationState({
-                        currentGroupIndex: nextGroupIndex,
-                        lastRotationTime: getCurrentTimestamp(),
-                        activeGroup: nextGroup
-                    });
-
+                // Update rotation state if changed
+                if (result.newRotationState) {
+                    const updateResult = await this.stateManager.updateRotationState(result.newRotationState);
                     if (!updateResult.success) {
                         this.logger.error(`Failed to update rotation state: ${updateResult.error}`);
                         return [];
                     }
-
-                    const reason = `Fan rotation: switching to group ${nextGroupIndex + 1}/${fanGroups.length} (${nextGroup.join(', ')})`;
-                    this.logger.warn(reason);
-
-                    // Check if transition is needed
-                    if (this.requiresGroupTransition(previousGroup, nextGroup) && this.areTransitionsEnabled(config)) {
-                        await this.stateManager.startTransition(previousGroup, nextGroup, reason);
-                        return []; // Transition will be handled by state machine
-                    } else {
-                        // Direct switch
-                        const coilMapping = this.getCoilMapping();
-                        return createFanGroupActions(nextGroup, true, reason, coilMapping);
-                    }
                 }
 
-                // No rotation needed, maintain current group
-                const coilMapping = this.getCoilMapping();
-                return createFanGroupActions(
-                    state.rotationState.activeGroup,
-                    true,
-                    `Rotation mode: maintaining group ${state.rotationState.currentGroupIndex + 1}/${fanGroups.length}`,
-                    coilMapping
-                );
+                // Handle transition requirement
+                if (result.requiresTransition && result.transitionInfo && this.areTransitionsEnabled(config)) {
+                    await this.stateManager.startTransition(
+                        result.transitionInfo.previousGroup,
+                        result.transitionInfo.nextGroup,
+                        result.transitionInfo.reason
+                    );
+                    return []; // Transition will be handled by state machine
+                }
+
+                return result.actions;
             }
         );
     }
@@ -175,61 +155,34 @@ export class EnhancedFanControlService implements IFanControlService {
                     return [];
                 }
 
-                const tempIndoor = sensorData.temp_indoor;
-                const humiIndoor = sensorData.humi_indoor;
-
-                if (tempIndoor === undefined || humiIndoor === undefined) {
-                    this.logger.warn("Missing temperature or humidity data for threshold mode");
+                if (!deviceStatus) {
+                    this.logger.warn("Device status required for threshold mode");
                     return [];
                 }
 
-                // Get temperature thresholds
-                const thresholds = {
-                    k1: config.set_k1_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K1,
-                    k2: config.set_k2_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K2,
-                    k3: config.set_k3_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K3,
-                    k4: config.set_k4_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
+                // Use core logic for threshold mode
+                const coreContext: FanControlContext = {
+                    config,
+                    sensorData,
+                    deviceStatus,
+                    currentRotationState: { currentGroupIndex: 0, lastRotationTime: 0, activeGroup: [] }, // Not used
+                    coilMapping: this.getCoilMapping(),
+                    logger: this.logger
                 };
 
-                // Determine required group size
-                const requiredGroupSize = getRecommendedGroupSize(tempIndoor, humiIndoor, thresholds);
-                const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
+                const result = FanControlCore.executeThresholdMode(coreContext);
 
-                this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, required group size=${requiredGroupSize}`);
-
-                if (requiredGroupSize === 0) {
-                    // No fans needed
-                    const coilMapping = this.getCoilMapping();
-                    if (deviceStatus) {
-                        const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
-                        return createOptimizedFanGroupActions([], false, reason, coilMapping, deviceStatusRecord);
-                    }
-                    return this.createTurnOffAllFansActions(reason);
-                }
-
-                // Get target group for required size
-                const targetGroup = await this.getThresholdTargetGroup(requiredGroupSize, config);
-                const coilMapping = this.getCoilMapping();
-
-                // Check if transition is needed
-                if (deviceStatus && this.areTransitionsEnabled(config)) {
+                // Handle transition requirement
+                if (result.requiresTransition && this.areTransitionsEnabled(config)) {
                     const currentActiveFans = Object.keys(deviceStatus).filter(key =>
                         deviceStatus[key] === true && getAllFanKeys().includes(key)
                     );
 
-                    if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize, config)) {
-                        await this.stateManager.startTransition(currentActiveFans, targetGroup, reason);
-                        return []; // Transition will be handled by state machine
-                    }
+                    await this.stateManager.startTransition(currentActiveFans, result.targetGroup, result.reason);
+                    return []; // Transition will be handled by state machine
                 }
 
-                // Direct control
-                if (deviceStatus) {
-                    const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
-                    return createOptimizedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord);
-                }
-
-                return createFanGroupActions(targetGroup, true, reason, coilMapping);
+                return result.actions;
             }
         );
     }
@@ -249,35 +202,27 @@ export class EnhancedFanControlService implements IFanControlService {
             'fan_dao_control',
             async () => {
                 try {
-                    // Check if fan dao control is enabled
-                    if (config.set_mode_fan_dao !== 1) {
-                        this.logger.debug("Fan dao control is disabled");
-                        const coilMapping = this.getCoilMapping();
-                        return createFanDaoActions(false, "Fan dao control disabled", coilMapping);
-                    }
-
-                    const alternateInterval = minutesToMs(config.set_time_alternate_fan_dao || 5);
-
-                    // Get last fan dao state change time
+                    // Get current fan dao state
                     const lastFanDaoTime = this.flowContext.get('fan_dao_last_time') || 0;
                     const currentFanDaoState = this.flowContext.get('fan_dao_current_state') || false;
+                    const coilMapping = this.getCoilMapping();
 
-                    // Check if it's time to toggle fan dao state
-                    if (hasTimeElapsed(lastFanDaoTime, alternateInterval)) {
-                        const newState = !currentFanDaoState;
+                    // Use core logic for fan dao control
+                    const result = FanControlCore.executeFanDaoControl(
+                        config,
+                        lastFanDaoTime,
+                        currentFanDaoState,
+                        coilMapping,
+                        this.logger
+                    );
 
-                        // Save new state
-                        this.flowContext.set('fan_dao_last_time', getCurrentTimestamp());
-                        this.flowContext.set('fan_dao_current_state', newState);
-
-                        this.logger.warn(`Fan dao alternating: switching to ${newState ? 'ON' : 'OFF'}`);
-
-                        const coilMapping = this.getCoilMapping();
-                        return createFanDaoActions(newState, `Fan dao alternating mode: ${newState ? 'ON' : 'OFF'}`, coilMapping);
+                    // Update state if changed
+                    if (result.newState) {
+                        this.flowContext.set('fan_dao_last_time', result.newState.time);
+                        this.flowContext.set('fan_dao_current_state', result.newState.state);
                     }
 
-                    // No change needed
-                    return [];
+                    return result.actions;
 
                 } catch (error) {
                     this.logger.error(`Fan dao control processing error: ${(error as Error).message}`);
