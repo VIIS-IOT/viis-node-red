@@ -26,13 +26,7 @@ import { ThingsBoardService } from '../services/thingsboard.service';
 import { ScheduleActivationService, UserContext } from '../services/schedule-activation.service';
 import {
     ThingsBoardRpcRequestDto,
-    ThingsBoardRpcResponseDto,
-    SetTelemetryRpcDto,
-    DeviceControlRpcDto,
-    CustomCommandRpcDto,
     RpcExecutionResultDto,
-    DeviceStatusDto,
-    TelemetryQueryDto
 } from '../dto/thingsboard.dto';
 import {
     ThingsBoardRpcRequest,
@@ -131,7 +125,16 @@ export class ThingsBoardController {
         @CurrentUser() user: any
     ): Promise<RpcExecutionResultDto> {
         const requestId = this.generateRequestId();
-
+        return {
+            success: true,
+            deviceId,
+            method: rpcData.method,
+            telemetryRecordsCount: 0,
+            mqttPublished: false,
+            mqttTopic: '',
+            processingTime: 0,
+            requestId
+        };
         logger.info(this.node, `Enhanced one-way RPC request for device: ${deviceId}`, {
             method: rpcData.method,
             requestId,

@@ -242,6 +242,12 @@ export class ApiRoutes {
 
         // Global error handler (should be last middleware)
         RED.httpNode.use(config.apiPrefix, (error: any, req: any, res: any, next: any) => {
+            // Check if response has already been sent
+            if (res.headersSent) {
+                logger.debug(this.node, `Response already sent for ${req.method} ${req.path}, skipping global error handler`);
+                return next(error);
+            }
+
             logger.error(this.node, `Unhandled error in API: ${error.message}`, {
                 path: req.path,
                 method: req.method,
@@ -252,8 +258,15 @@ export class ApiRoutes {
             ResponseHelper.error(res, error, undefined, undefined, this.node);
         });
 
-        // 404 handler for API routes
-        RED.httpNode.use(config.apiPrefix, (req: any, res: any) => {
+        // 404 handler for API routes - only trigger if response hasn't been sent
+        RED.httpNode.use(config.apiPrefix, (req: any, res: any, next: any) => {
+            // Check if response has already been sent (by routing-controllers or other middleware)
+            if (res.headersSent) {
+                logger.debug(this.node, `Response already sent for ${req.method} ${req.path}, skipping 404 handler`);
+                return;
+            }
+
+            // Only send 404 if no previous middleware handled the request
             ResponseHelper.notFoundError(res, `API endpoint not found: ${req.method} ${req.path}`, this.node);
         });
 

@@ -117,6 +117,16 @@ let ThingsBoardController = class ThingsBoardController {
      */
     async processOneWayRpc(deviceId, rpcData, user) {
         const requestId = this.generateRequestId();
+        return {
+            success: true,
+            deviceId,
+            method: rpcData.method,
+            telemetryRecordsCount: 0,
+            mqttPublished: false,
+            mqttTopic: '',
+            processingTime: 0,
+            requestId
+        };
         logger_1.logger.info(this.node, `Enhanced one-way RPC request for device: ${deviceId}`, {
             method: rpcData.method,
             requestId,

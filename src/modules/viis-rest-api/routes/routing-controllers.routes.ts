@@ -338,6 +338,12 @@ export class RoutingControllersRoutes {
      */
     private setupCustomErrorHandling(RED: NodeAPI): void {
         RED.httpNode.use(this.configManager.get('apiPrefix'), (error: any, req: any, res: any, next: any) => {
+            // Check if response has already been sent
+            if (res.headersSent) {
+                logger.debug(this.node, `Response already sent for ${req.method} ${req.path}, skipping error handler`);
+                return next(error);
+            }
+
             logger.error(this.node, 'routing-controllers error', {
                 error: error.message,
                 path: req.path,
