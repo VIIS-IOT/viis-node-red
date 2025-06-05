@@ -8,13 +8,15 @@ A comprehensive REST API server node for Node-RED with **NestJS-like architectur
 - ✅ **Real User Authentication** - JWT-based authentication with database validation
 - ✅ **TypeORM Integration** - Reuses existing database entities and connections
 - ✅ **Built-in Express Server** - Uses Node-RED's Express server (no separate server needed)
-- ✅ **Input Validation** - Comprehensive validation with Joi schemas
+- ✅ **Input Validation** - Comprehensive validation with class-validator DTOs
 - ✅ **Type Safety** - Full TypeScript support with interfaces and types
 - ✅ **Security Middleware** - CORS, authentication, authorization, and rate limiting
-- ✅ **Comprehensive Logging** - Detailed API request/response logging
+- ✅ **Comprehensive Logging** - Detailed API request/response logging with tracing
 - ✅ **Role-based Access** - Admin and customer-level access controls
 - ✅ **Error Handling** - Standardized error responses and HTTP status codes
-- ✅ **Hot-reload Support** - Environment variable changes without restart
+- ✅ **Development Tools** - Debug dashboard, performance metrics, auto-generation
+- ✅ **Configuration Management** - Centralized, type-safe configuration system
+- ✅ **Extensibility Framework** - Easy-to-use patterns for adding new endpoints
 
 ## Architecture
 
@@ -78,11 +80,18 @@ Node-RED Server (port 1880)
 ### Environment Variables
 
 ```bash
-# JWT Secret (optional, has default)
+# JWT Configuration
 JWT_SECRET=your-secret-key-here
+JWT_EXPIRES_IN=24h
 
-# Log level for API module
-VIIS_API_LOG_LEVEL=INFO  # ERROR, WARN, INFO, DEBUG
+# Development Features
+ENABLE_DEBUG=true
+ENABLE_DB_LOGGING=false
+REQUEST_TIMEOUT=30000
+RATE_LIMIT_MAX=1000
+
+# API Configuration
+API_PREFIX=/api/v2
 
 # Database connection (inherited from existing setup)
 DB_HOST=localhost
@@ -91,6 +100,45 @@ DB_USERNAME=root
 DB_PASSWORD=password
 DB_DATABASE=viis_local
 ```
+
+## Development Features
+
+### Debug Mode
+
+Enable comprehensive debugging features:
+
+```javascript
+// In Node-RED node configuration
+{
+  "enableDebugMode": true,
+  "enableRequestTracing": true,
+  "enableDetailedErrors": true
+}
+```
+
+**Debug Endpoints** (available when debug mode is enabled):
+- `GET /api/v2/debug/routes` - List all registered routes
+- `GET /api/v2/debug/dashboard` - Development dashboard with system info
+- `GET /api/v2/debug/metrics` - Performance metrics and statistics
+- `GET /api/v2/debug/docs` - Auto-generated API documentation
+
+### Endpoint Generator
+
+Quickly generate new API endpoints:
+
+```bash
+cd src/modules/viis-rest-api
+node scripts/generate-endpoint.js Device --crud
+node scripts/generate-endpoint.js Report --readonly
+node scripts/generate-endpoint.js CustomAPI --custom
+```
+
+This generates:
+- Controller with route definitions
+- Service with business logic
+- Types and DTOs
+- Validator with input validation
+- Complete CRUD operations (if requested)
 
 ## API Endpoints
 

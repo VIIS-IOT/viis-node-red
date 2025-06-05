@@ -16,6 +16,7 @@ const auth_middleware_1 = require("../middleware/auth.middleware");
 const validation_middleware_1 = require("../middleware/validation.middleware");
 const logger_1 = require("../utils/logger");
 const response_helper_1 = require("../utils/response.helper");
+const dev_utils_1 = require("../utils/dev.utils");
 // Use require for body-parser
 const bodyParser = require('body-parser');
 /**
@@ -28,13 +29,15 @@ const bodyParser = require('body-parser');
  * - Serves as a template for other API modules
  */
 class ApiRoutes {
-    constructor(databaseService, authService, node) {
+    constructor(databaseService, authService, node, configManager) {
         this.controllers = new Map();
         this.databaseService = databaseService;
         this.authService = authService;
         this.node = node;
+        this.configManager = configManager;
         this.authMiddleware = new auth_middleware_1.AuthMiddleware(authService, node);
         this.validationMiddleware = typedi_1.default.get(validation_middleware_1.ValidationMiddleware);
+        this.devUtils = dev_utils_1.DevUtils.getInstance(node, configManager);
         // Initialize controllers using TypeDI container
         this.initializeControllers();
     }
@@ -98,18 +101,20 @@ class ApiRoutes {
      * Setup global middleware
      */
     setupGlobalMiddleware(RED, config) {
-        // Request logging middleware
+        // Development utilities middleware
+        if (this.configManager.isEnabled('enableRequestTracing')) {
+            RED.httpNode.use(config.apiPrefix, this.devUtils.createRequestTracingMiddleware());
+        }
+        if (this.configManager.isEnabled('enableDebugMode')) {
+            RED.httpNode.use(config.apiPrefix, this.devUtils.createPerformanceMiddleware());
+        }
+        // Request logging middleware (simplified since tracing handles detailed logging)
         if (config.enableLogging) {
             RED.httpNode.use(config.apiPrefix, (req, res, next) => {
-                const startTime = Date.now();
+                var _a;
                 logger_1.logger.info(this.node, `${req.method} ${req.path}`, {
                     ip: req.ip,
-                    userAgent: req.get('User-Agent')
-                });
-                // Log response when finished
-                res.on('finish', () => {
-                    const duration = Date.now() - startTime;
-                    logger_1.logger.info(this.node, `${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
+                    userAgent: (_a = req.get('User-Agent')) === null || _a === void 0 ? void 0 : _a.substring(0, 100) // Truncate long user agents
                 });
                 next();
             });
@@ -135,6 +140,10 @@ class ApiRoutes {
      * Add debug routes for troubleshooting
      */
     addDebugRoutes(RED, config) {
+        // Only add debug routes in development mode
+        if (!this.configManager.isEnabled('enableDebugMode')) {
+            return;
+        }
         // Debug route to list all registered routes
         RED.httpNode.get(`${config.apiPrefix}/debug/routes`, (_req, res) => {
             const routeList = [];
@@ -156,7 +165,22 @@ class ApiRoutes {
                 routes: routeList
             }, 200, 'Registered routes');
         });
-        logger_1.logger.info(this.node, `✓ Added debug route: GET ${config.apiPrefix}/debug/routes`);
+        // Development dashboard
+        RED.httpNode.get(`${config.apiPrefix}/debug/dashboard`, (_req, res) => {
+            const dashboardData = this.devUtils.getDashboardData();
+            response_helper_1.ResponseHelper.success(res, dashboardData, 200, 'Development dashboard');
+        });
+        // Performance metrics
+        RED.httpNode.get(`${config.apiPrefix}/debug/metrics`, (_req, res) => {
+            const metrics = this.devUtils.getMetrics();
+            response_helper_1.ResponseHelper.success(res, metrics, 200, 'Performance metrics');
+        });
+        // API documentation
+        RED.httpNode.get(`${config.apiPrefix}/debug/docs`, (_req, res) => {
+            const docs = this.devUtils.generateApiDocs(this.controllers);
+            response_helper_1.ResponseHelper.success(res, docs, 200, 'API documentation');
+        });
+        logger_1.logger.info(this.node, `✓ Added debug routes: routes, dashboard, metrics, docs`);
     }
     /**
      * Register a single route
@@ -220,12 +244,17 @@ class ApiRoutes {
      * Setup error handling middleware
      */
     setupErrorHandling(RED, config) {
+        // Development error details middleware
+        if (this.configManager.isEnabled('enableDetailedErrors')) {
+            RED.httpNode.use(config.apiPrefix, this.devUtils.createErrorDetailsMiddleware());
+        }
         // Global error handler (should be last middleware)
         RED.httpNode.use(config.apiPrefix, (error, req, res, next) => {
             logger_1.logger.error(this.node, `Unhandled error in API: ${error.message}`, {
                 path: req.path,
                 method: req.method,
-                stack: error.stack
+                traceId: req.traceId,
+                stack: this.configManager.isEnabled('enableDebugMode') ? error.stack : undefined
             });
             response_helper_1.ResponseHelper.error(res, error, undefined, undefined, this.node);
         });

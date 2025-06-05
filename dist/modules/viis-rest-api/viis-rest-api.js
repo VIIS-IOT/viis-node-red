@@ -12,6 +12,7 @@ const auth_service_1 = require("./services/auth.service");
 const api_routes_1 = require("./routes/api.routes");
 const database_service_1 = require("./services/database.service");
 const container_setup_1 = require("./container/container.setup");
+const api_config_1 = require("./config/api.config");
 const typedi_1 = __importDefault(require("typedi"));
 require("reflect-metadata");
 module.exports = function (RED) {
@@ -21,24 +22,25 @@ module.exports = function (RED) {
     function ViisRestApiNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
-        // Configuration with defaults
-        const apiConfig = {
-            enabled: config.enabled !== false,
-            apiPrefix: config.apiPrefix || '/api/v2',
-            enableLogging: config.enableLogging !== false,
-            enableCors: config.enableCors !== false,
-            jwtSecret: config.jwtSecret || process.env.JWT_SECRET || 'viis-iot-secret-key-2024',
-            enableRateLimit: config.enableRateLimit !== false,
-            maxRequestsPerMinute: config.maxRequestsPerMinute || 100
-        };
-        // Initialize services
+        // Initialize configuration manager
+        let configManager;
         let databaseService;
         let authService;
         let apiRoutes;
+        try {
+            configManager = new api_config_1.ApiConfigManager(config, node);
+        }
+        catch (error) {
+            const errorMessage = `Configuration validation failed: ${error.message}`;
+            node.error(errorMessage);
+            node.status({ fill: "red", shape: "ring", text: "Config error" });
+            logger_1.logger.error(node, errorMessage);
+            return;
+        }
         // Async initialization
         (async () => {
             try {
-                if (!apiConfig.enabled) {
+                if (!configManager.get('enabled')) {
                     node.status({ fill: "yellow", shape: "ring", text: "API disabled" });
                     logger_1.logger.info(node, "VIIS REST API is disabled");
                     return;
@@ -48,7 +50,8 @@ module.exports = function (RED) {
                 // Initialize TypeDI container with all dependencies
                 await container_setup_1.ContainerSetup.initialize({
                     node,
-                    jwtSecret: apiConfig.jwtSecret
+                    jwtSecret: configManager.get('jwtSecret'),
+                    configManager
                 });
                 logger_1.logger.info(node, "TypeDI container initialized");
                 // Get services from container
@@ -56,17 +59,21 @@ module.exports = function (RED) {
                 authService = typedi_1.default.get(auth_service_1.AuthService);
                 logger_1.logger.info(node, "Services resolved from container");
                 // Initialize and register API routes
-                apiRoutes = new api_routes_1.ApiRoutes(databaseService, authService, node);
-                await apiRoutes.registerRoutes(RED, apiConfig);
-                logger_1.logger.info(node, `API routes registered with prefix: ${apiConfig.apiPrefix}`);
+                apiRoutes = new api_routes_1.ApiRoutes(databaseService, authService, node, configManager);
+                await apiRoutes.registerRoutes(RED, configManager.getAll());
+                logger_1.logger.info(node, `API routes registered with prefix: ${configManager.get('apiPrefix')}`);
                 node.status({ fill: "green", shape: "dot", text: "API server running" });
-                logger_1.logger.info(node, `✅ VIIS REST API server is running on ${apiConfig.apiPrefix}`);
+                logger_1.logger.info(node, `✅ VIIS REST API server is running on ${configManager.get('apiPrefix')}`);
+                // Log development features if enabled
+                if (configManager.isEnabled('enableDebugMode')) {
+                    logger_1.logger.info(node, `🔧 Development mode enabled - Debug routes available at ${configManager.get('apiPrefix')}/debug/*`);
+                }
             }
             catch (error) {
                 const errorMessage = `Failed to initialize VIIS REST API: ${error.message}`;
                 node.error(errorMessage);
                 node.status({ fill: "red", shape: "ring", text: "Initialization failed" });
-                logger_1.logger.error(node, errorMessage);
+                logger_1.logger.error(node, errorMessage, { stack: error.stack });
             }
         })();
         // Cleanup on node removal

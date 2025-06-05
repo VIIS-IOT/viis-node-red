@@ -24,82 +24,65 @@ const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
 const common_types_1 = require("../types/common.types");
 const database_service_1 = require("./database.service");
+const base_service_1 = require("./base.service");
 /**
  * Authentication service class
  */
-let AuthService = class AuthService {
+let AuthService = class AuthService extends base_service_1.BaseService {
     constructor(databaseService, jwtSecret, node) {
-        if (!databaseService) {
-            throw new Error("DatabaseService is required for AuthService");
-        }
+        // Create service context for BaseService
+        const context = {
+            node,
+            databaseService,
+            configManager: null // Will be set later via container
+        };
+        super(context, 'AuthService');
         if (!jwtSecret) {
             throw new Error("JWT secret is required for AuthService");
         }
-        if (!node) {
-            throw new Error("Node instance is required for AuthService");
-        }
-        this.databaseService = databaseService;
         this.jwtSecret = jwtSecret;
-        this.node = node;
     }
     /**
      * Initialize the authentication service
      */
-    async initialize() {
-        logger_1.logger.info(this.node, "Authentication service initialized");
+    async onInitialize() {
+        this.logInfo("Authentication service initialized");
     }
     /**
      * Cleanup resources
      */
-    async cleanup() {
-        logger_1.logger.info(this.node, "Authentication service cleanup completed");
-    }
-    /**
-     * Ensure database service is available and initialized
-     */
-    ensureDatabaseService() {
-        if (!this.databaseService) {
-            logger_1.logger.error(this.node, "DatabaseService is not initialized in AuthService");
-            throw new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, "Database service not available", 500);
-        }
-        if (!this.databaseService.isInitialized()) {
-            logger_1.logger.error(this.node, "DatabaseService is not initialized");
-            throw new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, "Database service not initialized", 500);
-        }
+    async onCleanup() {
+        this.logInfo("Authentication service cleanup completed");
     }
     /**
      * Authenticate user with username/email and password
      */
     async login(loginData) {
-        try {
-            const username = loginData.usr.toString().trim();
-            const password = loginData.pwd.toString();
-            console.log("add debug");
-            logger_1.logger.info(this.node, `Login attempt for user 2: ${username}`);
-            logger_1.logger.info(this.node, `fuck`);
-            // logger.info(this.node, `AuthService.login - this exists: ${!!this}`);
-            // logger.info(this.node, `AuthService.login - this.databaseService exists: ${!!this.databaseService}`);
+        const username = loginData.usr.toString().trim();
+        const password = loginData.pwd.toString();
+        return this.executeOperation('login', async () => {
+            this.logInfo(`Login attempt for user: ${username}`);
             // Find user by username, email, or user_name
             const user = await this.findUser(username);
             if (!user) {
-                logger_1.logger.warn(this.node, `User not found: ${username}`);
+                this.logWarn(`User not found: ${username}`);
                 throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid username or password", 401);
             }
             // Check if user is deactivated
             if (user.is_deactivated === 1) {
-                logger_1.logger.warn(this.node, `Deactivated user login attempt: ${username}`);
+                this.logWarn(`Deactivated user login attempt: ${username}`);
                 throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Account is deactivated", 401);
             }
             // Find and validate credentials
             const credentials = await this.findUserCredentials(user.name);
             if (!credentials || credentials.enable !== 1) {
-                logger_1.logger.warn(this.node, `Invalid or disabled credentials for user: ${username}`);
+                this.logWarn(`Invalid or disabled credentials for user: ${username}`);
                 throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid username or password", 401);
             }
             // Verify password
             const isPasswordValid = await this.verifyPassword(password, credentials.password);
             if (!isPasswordValid) {
-                logger_1.logger.warn(this.node, `Invalid password for user: ${username}`);
+                this.logWarn(`Invalid password for user: ${username}`);
                 throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid username or password", 401);
             }
             // Generate session ID
@@ -121,34 +104,30 @@ let AuthService = class AuthService {
                 credential_id: credentials.id || '',
                 enable: credentials.enable || 1
             };
-            logger_1.logger.info(this.node, `✅ Login successful for user: ${username}`);
+            this.logInfo(`✅ Login successful for user: ${username}`);
             return {
                 result: {
                     token,
                     user: userInfo
                 }
             };
-        }
-        catch (error) {
-            if (error instanceof common_types_1.ApiError) {
-                throw error;
-            }
-            logger_1.logger.error(this.node, `Authentication error: ${error.message}`);
-            throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Authentication failed", 401);
-        }
+        }, { username });
     }
     /**
      * Verify JWT token
      */
     async verifyToken(token) {
-        try {
-            const decoded = jsonwebtoken_1.default.verify(token, this.jwtSecret);
-            return decoded;
-        }
-        catch (error) {
-            logger_1.logger.warn(this.node, `Invalid JWT token: ${error.message}`);
-            throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid or expired token", 401);
-        }
+        return this.executeOperation('verifyToken', async () => {
+            try {
+                const decoded = jsonwebtoken_1.default.verify(token, this.jwtSecret);
+                this.logDebug('Token verified successfully', { userId: decoded.user_id });
+                return decoded;
+            }
+            catch (error) {
+                this.logWarn(`Invalid JWT token: ${error.message}`);
+                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid or expired token", 401);
+            }
+        });
     }
     /**
      * Get user information by user ID
@@ -191,8 +170,7 @@ let AuthService = class AuthService {
      * Find user by username, email, or user_name
      */
     async findUser(username) {
-        logger_1.logger.warn(this.node, `findUser called with username: ${username}`);
-        logger_1.logger.warn(this.node, `this.databaseService exists: ${!!this.databaseService}`);
+        this.logDebug(`Finding user with identifier: ${username}`);
         this.ensureDatabaseService();
         const userRepo = this.databaseService.getCustomerUserRepository();
         return await userRepo.findOne({

@@ -26,15 +26,23 @@ class ContainerSetup {
         if (this.isInitialized) {
             return;
         }
-        const { node, jwtSecret } = config;
+        const { node, jwtSecret, configManager } = config;
         try {
-            // Register Node instance
+            // Register core instances
             typedi_1.default.set("node", node);
             typedi_1.default.set("jwtSecret", jwtSecret);
+            typedi_1.default.set("configManager", configManager);
             // Initialize and register DatabaseService
             const databaseService = new database_service_1.DatabaseService(node);
             await databaseService.initialize();
             typedi_1.default.set(database_service_1.DatabaseService, databaseService);
+            // Create service context for base services
+            const serviceContext = {
+                node,
+                databaseService,
+                configManager
+            };
+            typedi_1.default.set("serviceContext", serviceContext);
             // Initialize and register AuthService
             const authService = new auth_service_1.AuthService(databaseService, jwtSecret, node);
             await authService.initialize();

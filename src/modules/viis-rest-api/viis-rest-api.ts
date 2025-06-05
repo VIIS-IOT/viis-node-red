@@ -10,6 +10,7 @@ import { AuthService } from "./services/auth.service";
 import { ApiRoutes } from "./routes/api.routes";
 import { DatabaseService } from "./services/database.service";
 import { ContainerSetup } from "./container/container.setup";
+import { ApiConfigManager } from "./config/api.config";
 import Container from "typedi";
 import "reflect-metadata";
 
@@ -44,26 +45,26 @@ export = function (RED: NodeAPI) {
         RED.nodes.createNode(this, config);
         const node = this;
 
-        // Configuration with defaults
-        const apiConfig = {
-            enabled: config.enabled !== false,
-            apiPrefix: config.apiPrefix || '/api/v2',
-            enableLogging: config.enableLogging !== false,
-            enableCors: config.enableCors !== false,
-            jwtSecret: config.jwtSecret || process.env.JWT_SECRET || 'viis-iot-secret-key-2024',
-            enableRateLimit: config.enableRateLimit !== false,
-            maxRequestsPerMinute: config.maxRequestsPerMinute || 100
-        };
-
-        // Initialize services
+        // Initialize configuration manager
+        let configManager: ApiConfigManager;
         let databaseService: DatabaseService;
         let authService: AuthService;
         let apiRoutes: ApiRoutes;
 
+        try {
+            configManager = new ApiConfigManager(config, node);
+        } catch (error) {
+            const errorMessage = `Configuration validation failed: ${(error as Error).message}`;
+            node.error(errorMessage);
+            node.status({ fill: "red", shape: "ring", text: "Config error" });
+            logger.error(node, errorMessage);
+            return;
+        }
+
         // Async initialization
         (async () => {
             try {
-                if (!apiConfig.enabled) {
+                if (!configManager.get('enabled')) {
                     node.status({ fill: "yellow", shape: "ring", text: "API disabled" });
                     logger.info(node, "VIIS REST API is disabled");
                     return;
@@ -75,7 +76,8 @@ export = function (RED: NodeAPI) {
                 // Initialize TypeDI container with all dependencies
                 await ContainerSetup.initialize({
                     node,
-                    jwtSecret: apiConfig.jwtSecret
+                    jwtSecret: configManager.get('jwtSecret'),
+                    configManager
                 });
                 logger.info(node, "TypeDI container initialized");
 
@@ -85,18 +87,23 @@ export = function (RED: NodeAPI) {
                 logger.info(node, "Services resolved from container");
 
                 // Initialize and register API routes
-                apiRoutes = new ApiRoutes(databaseService, authService, node);
-                await apiRoutes.registerRoutes(RED, apiConfig);
-                logger.info(node, `API routes registered with prefix: ${apiConfig.apiPrefix}`);
+                apiRoutes = new ApiRoutes(databaseService, authService, node, configManager);
+                await apiRoutes.registerRoutes(RED, configManager.getAll());
+                logger.info(node, `API routes registered with prefix: ${configManager.get('apiPrefix')}`);
 
                 node.status({ fill: "green", shape: "dot", text: "API server running" });
-                logger.info(node, `✅ VIIS REST API server is running on ${apiConfig.apiPrefix}`);
+                logger.info(node, `✅ VIIS REST API server is running on ${configManager.get('apiPrefix')}`);
+
+                // Log development features if enabled
+                if (configManager.isEnabled('enableDebugMode')) {
+                    logger.info(node, `🔧 Development mode enabled - Debug routes available at ${configManager.get('apiPrefix')}/debug/*`);
+                }
 
             } catch (error) {
                 const errorMessage = `Failed to initialize VIIS REST API: ${(error as Error).message}`;
                 node.error(errorMessage);
                 node.status({ fill: "red", shape: "ring", text: "Initialization failed" });
-                logger.error(node, errorMessage);
+                logger.error(node, errorMessage, { stack: (error as Error).stack });
             }
         })();
 

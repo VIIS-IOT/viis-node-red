@@ -7,6 +7,7 @@ import { Node } from 'node-red';
 import { IController, RouteDefinition, RequestContext, ApiError } from '../types/common.types';
 import { ResponseHelper } from '../utils/response.helper';
 import { logger } from '../utils/logger';
+import { ApiConfigManager } from '../config/api.config';
 
 /**
  * Base controller class that all controllers should extend
@@ -14,10 +15,14 @@ import { logger } from '../utils/logger';
 export abstract class BaseController implements IController {
     protected node: Node;
     protected context: RequestContext;
+    protected configManager?: ApiConfigManager;
+    protected controllerName: string;
 
-    constructor(node: Node) {
+    constructor(node: Node, configManager?: ApiConfigManager) {
         this.node = node;
+        this.configManager = configManager;
         this.context = { node };
+        this.controllerName = this.constructor.name;
     }
 
     /**
@@ -45,34 +50,49 @@ export abstract class BaseController implements IController {
     }
 
     /**
-     * Async handler wrapper for error handling
+     * Async handler wrapper for error handling with improved logging
      */
     protected asyncHandler(
-        fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
+        fn: (req: Request, res: Response, next: NextFunction) => Promise<void>,
+        operationName?: string
     ) {
         return (req: Request, res: Response, next: NextFunction) => {
             const context = this.createContext(req);
+            const operation = operationName || `${req.method} ${req.path}`;
 
-            // Log request
-            logger.info(this.node, `${req.method} ${req.path}`, {
-                requestId: context.requestId,
-                ip: req.ip,
-                userAgent: req.get('User-Agent')
-            });
+            // Enhanced logging for development
+            if (this.configManager?.isEnabled('enableDebugMode')) {
+                this.logDebug(`Starting operation: ${operation}`, {
+                    requestId: context.requestId,
+                    ip: req.ip,
+                    userAgent: req.get('User-Agent')?.substring(0, 100),
+                    body: this.sanitizeLogData(req.body),
+                    query: req.query,
+                    params: req.params
+                });
+            } else {
+                this.logInfo(`${operation}`, {
+                    requestId: context.requestId,
+                    ip: req.ip
+                });
+            }
 
             Promise.resolve(fn(req, res, next))
                 .then(() => {
-                    // Log response time
                     const duration = Date.now() - (context.startTime || 0);
-                    logger.info(this.node, `Request completed in ${duration}ms`, {
+                    this.logInfo(`Operation completed: ${operation} (${duration}ms)`, {
                         requestId: context.requestId,
-                        statusCode: res.statusCode
+                        statusCode: res.statusCode,
+                        duration
                     });
                 })
                 .catch((error) => {
-                    logger.error(this.node, `Request failed: ${error.message}`, {
+                    const duration = Date.now() - (context.startTime || 0);
+                    this.logError(`Operation failed: ${operation} (${duration}ms)`, {
                         requestId: context.requestId,
-                        error: error.stack
+                        error: error.message,
+                        stack: this.configManager?.isEnabled('enableDebugMode') ? error.stack : undefined,
+                        duration
                     });
 
                     ResponseHelper.error(res, error, undefined, undefined, this.node);
@@ -177,5 +197,124 @@ export abstract class BaseController implements IController {
     protected getUserCustomerId(req: Request): string | null {
         const user = this.getAuthenticatedUser(req);
         return user ? user.customer_id : null;
+    }
+
+    /**
+     * Validate required parameters
+     */
+    protected validateRequired(value: any, fieldName: string): void {
+        if (value === null || value === undefined || value === '') {
+            throw new ApiError(
+                'VALIDATION_ERROR' as any,
+                `${fieldName} is required`,
+                400
+            );
+        }
+    }
+
+    /**
+     * Validate string parameter
+     */
+    protected validateString(value: string, fieldName: string, minLength = 1): void {
+        this.validateRequired(value, fieldName);
+        if (typeof value !== 'string' || value.trim().length < minLength) {
+            throw new ApiError(
+                'VALIDATION_ERROR' as any,
+                `${fieldName} must be a non-empty string`,
+                400
+            );
+        }
+    }
+
+    /**
+     * Validate numeric parameter
+     */
+    protected validateNumber(value: number, fieldName: string, min?: number, max?: number): void {
+        this.validateRequired(value, fieldName);
+        if (typeof value !== 'number' || isNaN(value)) {
+            throw new ApiError(
+                'VALIDATION_ERROR' as any,
+                `${fieldName} must be a valid number`,
+                400
+            );
+        }
+        if (min !== undefined && value < min) {
+            throw new ApiError(
+                'VALIDATION_ERROR' as any,
+                `${fieldName} must be at least ${min}`,
+                400
+            );
+        }
+        if (max !== undefined && value > max) {
+            throw new ApiError(
+                'VALIDATION_ERROR' as any,
+                `${fieldName} must be at most ${max}`,
+                400
+            );
+        }
+    }
+
+    // Enhanced logging methods with controller context
+    protected logInfo(message: string, data?: any): void {
+        logger.info(this.node, `[${this.controllerName}] ${message}`, data);
+    }
+
+    protected logError(message: string, data?: any): void {
+        logger.error(this.node, `[${this.controllerName}] ${message}`, data);
+    }
+
+    protected logWarn(message: string, data?: any): void {
+        logger.warn(this.node, `[${this.controllerName}] ${message}`, data);
+    }
+
+    protected logDebug(message: string, data?: any): void {
+        if (this.configManager?.isEnabled('enableDebugMode')) {
+            logger.debug(this.node, `[${this.controllerName}] ${message}`, data);
+        }
+    }
+
+    /**
+     * Sanitize data for logging (remove sensitive information)
+     */
+    private sanitizeLogData(data: any): any {
+        if (!data || typeof data !== 'object') return data;
+
+        const sanitized = { ...data };
+        const sensitiveFields = ['password', 'pwd', 'token', 'secret', 'key', 'authorization'];
+
+        sensitiveFields.forEach(field => {
+            if (sanitized[field]) {
+                sanitized[field] = '[REDACTED]';
+            }
+        });
+
+        return sanitized;
+    }
+
+    /**
+     * Execute operation with standardized error handling and logging
+     */
+    protected async executeOperation<T>(
+        operationName: string,
+        operation: () => Promise<T>,
+        context?: any
+    ): Promise<T> {
+        const startTime = Date.now();
+        this.logDebug(`Starting operation: ${operationName}`, context);
+
+        try {
+            const result = await operation();
+            const duration = Date.now() - startTime;
+            this.logDebug(`Operation completed: ${operationName} (${duration}ms)`, { context, duration });
+            return result;
+        } catch (error) {
+            const duration = Date.now() - startTime;
+            this.logError(`Operation failed: ${operationName} (${duration}ms)`, {
+                error: (error as Error).message,
+                context,
+                duration
+            });
+            throw error;
+        }
     }
 }

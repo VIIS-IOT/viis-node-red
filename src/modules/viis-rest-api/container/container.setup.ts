@@ -13,6 +13,8 @@ import { AuthValidator } from "../validators/auth.validator";
 import { UserValidator } from "../validators/user.validator";
 import { AuthMiddleware } from "../middleware/auth.middleware";
 import { ValidationMiddleware } from "../middleware/validation.middleware";
+import { ApiConfigManager } from "../config/api.config";
+import { BaseService, ServiceContext } from "../services/base.service";
 import "reflect-metadata";
 
 /**
@@ -21,6 +23,7 @@ import "reflect-metadata";
 export interface ContainerConfig {
     node: Node;
     jwtSecret: string;
+    configManager: ApiConfigManager;
 }
 
 /**
@@ -37,17 +40,26 @@ export class ContainerSetup {
             return;
         }
 
-        const { node, jwtSecret } = config;
+        const { node, jwtSecret, configManager } = config;
 
         try {
-            // Register Node instance
+            // Register core instances
             Container.set("node", node);
             Container.set("jwtSecret", jwtSecret);
+            Container.set("configManager", configManager);
 
             // Initialize and register DatabaseService
             const databaseService = new DatabaseService(node);
             await databaseService.initialize();
             Container.set(DatabaseService, databaseService);
+
+            // Create service context for base services
+            const serviceContext: ServiceContext = {
+                node,
+                databaseService,
+                configManager
+            };
+            Container.set("serviceContext", serviceContext);
 
             // Initialize and register AuthService
             const authService = new AuthService(databaseService, jwtSecret, node);
@@ -68,7 +80,7 @@ export class ContainerSetup {
 
             this.isInitialized = true;
         } catch (error) {
-            throw new Error(`Failed to initialize container: ${error.message}`);
+            throw new Error(`Failed to initialize container: ${(error as Error).message}`);
         }
     }
 

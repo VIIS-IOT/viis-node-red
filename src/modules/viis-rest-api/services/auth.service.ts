@@ -17,86 +17,60 @@ import {
 } from '../types/auth.types';
 import { IService, ApiError, ErrorType } from '../types/common.types';
 import { DatabaseService } from './database.service';
+import { BaseService, ServiceContext } from './base.service';
 
 /**
  * Authentication service class
  */
 @Service()
-export class AuthService implements IService {
-    private databaseService: DatabaseService;
+export class AuthService extends BaseService {
     private jwtSecret: string;
-    private node: Node;
 
     constructor(databaseService: DatabaseService, jwtSecret: string, node: Node) {
-        if (!databaseService) {
-            throw new Error("DatabaseService is required for AuthService");
-        }
+        // Create service context for BaseService
+        const context: ServiceContext = {
+            node,
+            databaseService,
+            configManager: null as any // Will be set later via container
+        };
+
+        super(context, 'AuthService');
+
         if (!jwtSecret) {
             throw new Error("JWT secret is required for AuthService");
         }
-        if (!node) {
-            throw new Error("Node instance is required for AuthService");
-        }
 
-        this.databaseService = databaseService;
         this.jwtSecret = jwtSecret;
-        this.node = node;
     }
 
     /**
      * Initialize the authentication service
      */
-    async initialize(): Promise<void> {
-        logger.info(this.node, "Authentication service initialized");
+    protected async onInitialize(): Promise<void> {
+        this.logInfo("Authentication service initialized");
     }
 
     /**
      * Cleanup resources
      */
-    async cleanup(): Promise<void> {
-        logger.info(this.node, "Authentication service cleanup completed");
-    }
-
-    /**
-     * Ensure database service is available and initialized
-     */
-    private ensureDatabaseService(): void {
-        if (!this.databaseService) {
-            logger.error(this.node, "DatabaseService is not initialized in AuthService");
-            throw new ApiError(
-                ErrorType.DATABASE_ERROR,
-                "Database service not available",
-                500
-            );
-        }
-
-        if (!this.databaseService.isInitialized()) {
-            logger.error(this.node, "DatabaseService is not initialized");
-            throw new ApiError(
-                ErrorType.DATABASE_ERROR,
-                "Database service not initialized",
-                500
-            );
-        }
+    protected async onCleanup(): Promise<void> {
+        this.logInfo("Authentication service cleanup completed");
     }
 
     /**
      * Authenticate user with username/email and password
      */
     async login(loginData: LoginRequest): Promise<LoginResponse> {
-        try {
-            const username = loginData.usr.toString().trim();
-            const password = loginData.pwd.toString();
-            console.log("add debug")
-            logger.info(this.node, `Login attempt for user 2: ${username}`);
-            logger.info(this.node, `fuck`)
-            // logger.info(this.node, `AuthService.login - this exists: ${!!this}`);
-            // logger.info(this.node, `AuthService.login - this.databaseService exists: ${!!this.databaseService}`);
+        const username = loginData.usr.toString().trim();
+        const password = loginData.pwd.toString();
+
+        return this.executeOperation('login', async () => {
+            this.logInfo(`Login attempt for user: ${username}`);
 
             // Find user by username, email, or user_name
             const user = await this.findUser(username);
             if (!user) {
-                logger.warn(this.node, `User not found: ${username}`);
+                this.logWarn(`User not found: ${username}`);
                 throw new ApiError(
                     ErrorType.AUTHENTICATION_ERROR,
                     "Invalid username or password",
@@ -106,7 +80,7 @@ export class AuthService implements IService {
 
             // Check if user is deactivated
             if (user.is_deactivated === 1) {
-                logger.warn(this.node, `Deactivated user login attempt: ${username}`);
+                this.logWarn(`Deactivated user login attempt: ${username}`);
                 throw new ApiError(
                     ErrorType.AUTHENTICATION_ERROR,
                     "Account is deactivated",
@@ -117,7 +91,7 @@ export class AuthService implements IService {
             // Find and validate credentials
             const credentials = await this.findUserCredentials(user.name);
             if (!credentials || credentials.enable !== 1) {
-                logger.warn(this.node, `Invalid or disabled credentials for user: ${username}`);
+                this.logWarn(`Invalid or disabled credentials for user: ${username}`);
                 throw new ApiError(
                     ErrorType.AUTHENTICATION_ERROR,
                     "Invalid username or password",
@@ -128,7 +102,7 @@ export class AuthService implements IService {
             // Verify password
             const isPasswordValid = await this.verifyPassword(password, credentials.password);
             if (!isPasswordValid) {
-                logger.warn(this.node, `Invalid password for user: ${username}`);
+                this.logWarn(`Invalid password for user: ${username}`);
                 throw new ApiError(
                     ErrorType.AUTHENTICATION_ERROR,
                     "Invalid username or password",
@@ -159,7 +133,7 @@ export class AuthService implements IService {
                 enable: credentials.enable || 1
             };
 
-            logger.info(this.node, `✅ Login successful for user: ${username}`);
+            this.logInfo(`✅ Login successful for user: ${username}`);
 
             return {
                 result: {
@@ -167,35 +141,27 @@ export class AuthService implements IService {
                     user: userInfo
                 }
             };
-
-        } catch (error) {
-            if (error instanceof ApiError) {
-                throw error;
-            }
-            logger.error(this.node, `Authentication error: ${(error as Error).message}`);
-            throw new ApiError(
-                ErrorType.AUTHENTICATION_ERROR,
-                "Authentication failed",
-                401
-            );
-        }
+        }, { username });
     }
 
     /**
      * Verify JWT token
      */
     async verifyToken(token: string): Promise<JwtPayload> {
-        try {
-            const decoded = jwt.verify(token, this.jwtSecret) as JwtPayload;
-            return decoded;
-        } catch (error) {
-            logger.warn(this.node, `Invalid JWT token: ${(error as Error).message}`);
-            throw new ApiError(
-                ErrorType.AUTHENTICATION_ERROR,
-                "Invalid or expired token",
-                401
-            );
-        }
+        return this.executeOperation('verifyToken', async () => {
+            try {
+                const decoded = jwt.verify(token, this.jwtSecret) as JwtPayload;
+                this.logDebug('Token verified successfully', { userId: decoded.user_id });
+                return decoded;
+            } catch (error) {
+                this.logWarn(`Invalid JWT token: ${(error as Error).message}`);
+                throw new ApiError(
+                    ErrorType.AUTHENTICATION_ERROR,
+                    "Invalid or expired token",
+                    401
+                );
+            }
+        });
     }
 
     /**
@@ -246,8 +212,7 @@ export class AuthService implements IService {
      * Find user by username, email, or user_name
      */
     private async findUser(username: string): Promise<any> {
-        logger.warn(this.node, `findUser called with username: ${username}`);
-        logger.warn(this.node, `this.databaseService exists: ${!!this.databaseService}`);
+        this.logDebug(`Finding user with identifier: ${username}`);
 
         this.ensureDatabaseService();
         const userRepo = this.databaseService.getCustomerUserRepository();
