@@ -17,6 +17,7 @@ const dynamicRole_1 = require("../dynamicRole/dynamicRole");
 const customer_1 = require("./customer");
 const customer_login_sessions_1 = require("./customer_login_sessions");
 const customer_user_credentials_1 = require("./customer_user_credentials");
+const TabiotNotification_1 = require("../notification/TabiotNotification");
 let IotCustomerUser = class IotCustomerUser extends Base_1.CustomBaseEntity {
 };
 exports.IotCustomerUser = IotCustomerUser;
@@ -145,6 +146,10 @@ __decorate([
     ,
     __metadata("design:type", customer_user_credentials_1.IotCustomerUserCredentials)
 ], IotCustomerUser.prototype, "credential", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => TabiotNotification_1.TabiotNotification, notification => notification.customerUser),
+    __metadata("design:type", Array)
+], IotCustomerUser.prototype, "notifications", void 0);
 exports.IotCustomerUser = IotCustomerUser = __decorate([
     (0, typeorm_1.Entity)('tabiot_customer_user')
 ], IotCustomerUser);

@@ -14,8 +14,9 @@ import { IotDynamicRole } from '../../../orm/entities/dynamicRole/dynamicRole';
 import { TabiotDevice } from '../../../orm/entities/device/TabiotDevice';
 import { TabiotDeviceTelemetry } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetry';
 import { TabiotDeviceTelemetryLatest } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetryLatest';
-import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
+import { TabiotSchedule, TabiotScheduleLog } from '../../../orm/entities/schedule/TabiotSchedule';
 import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSchedulePlan';
+import { TabiotNotification } from '../../../orm/entities/notification/TabiotNotification';
 import { logger } from '../utils/logger';
 import { IService, ApiError, ErrorType } from '../types/common.types';
 
@@ -174,6 +175,22 @@ export class DatabaseService implements IService {
     getSchedulePlanRepository(): Repository<TabiotSchedulePlan> {
         this.ensureInitialized();
         return this.dataSource.getRepository(TabiotSchedulePlan);
+    }
+
+    /**
+     * Get schedule log repository
+     */
+    getScheduleLogRepository(): Repository<TabiotScheduleLog> {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotScheduleLog);
+    }
+
+    /**
+     * Get notification repository
+     */
+    getNotificationRepository(): Repository<TabiotNotification> {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotNotification);
     }
 
     /**

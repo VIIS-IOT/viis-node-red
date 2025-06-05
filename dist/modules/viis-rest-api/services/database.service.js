@@ -25,6 +25,7 @@ const TabiotDeviceTelemetry_1 = require("../../../orm/entities/device-telemetry/
 const TabiotDeviceTelemetryLatest_1 = require("../../../orm/entities/device-telemetry/TabiotDeviceTelemetryLatest");
 const TabiotSchedule_1 = require("../../../orm/entities/schedule/TabiotSchedule");
 const TabiotSchedulePlan_1 = require("../../../orm/entities/schedulePlan/TabiotSchedulePlan");
+const TabiotNotification_1 = require("../../../orm/entities/notification/TabiotNotification");
 const logger_1 = require("../utils/logger");
 const common_types_1 = require("../types/common.types");
 /**
@@ -155,6 +156,20 @@ let DatabaseService = class DatabaseService {
     getSchedulePlanRepository() {
         this.ensureInitialized();
         return this.dataSource.getRepository(TabiotSchedulePlan_1.TabiotSchedulePlan);
+    }
+    /**
+     * Get schedule log repository
+     */
+    getScheduleLogRepository() {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotSchedule_1.TabiotScheduleLog);
+    }
+    /**
+     * Get notification repository
+     */
+    getNotificationRepository() {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotNotification_1.TabiotNotification);
     }
     /**
      * Execute raw SQL query

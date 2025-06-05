@@ -36,6 +36,7 @@ const routing_controllers_1 = require("routing-controllers");
 const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
 const thingsboard_service_1 = require("../services/thingsboard.service");
+const schedule_activation_service_1 = require("../services/schedule-activation.service");
 const thingsboard_dto_1 = require("../dto/thingsboard.dto");
 const common_types_1 = require("../types/common.types");
 /**
@@ -57,8 +58,9 @@ const common_types_1 = require("../types/common.types");
  * - Real-time device communication capabilities
  */
 let ThingsBoardController = class ThingsBoardController {
-    constructor(thingsBoardService, node) {
+    constructor(thingsBoardService, scheduleActivationService, node) {
         this.thingsBoardService = thingsBoardService;
+        this.scheduleActivationService = scheduleActivationService;
         this.node = node;
         // Validate that node is properly injected
         if (!this.node) {
@@ -113,7 +115,7 @@ let ThingsBoardController = class ThingsBoardController {
      * }
      * ```
      */
-    async processOneWayRpc(deviceId, rpcData) {
+    async processOneWayRpc(deviceId, rpcData, user) {
         const requestId = this.generateRequestId();
         logger_1.logger.info(this.node, `Enhanced one-way RPC request for device: ${deviceId}`, {
             method: rpcData.method,
@@ -148,6 +150,8 @@ let ThingsBoardController = class ThingsBoardController {
                 recordsCount: executionResult.telemetryRecords.length,
                 mqttPublished: executionResult.mqttPublished
             });
+            // Process schedule activation logic if conditions are met
+            await this.processScheduleActivationIfNeeded(deviceId, rpcData.params || {}, user, requestId);
             // Convert to response DTO
             const responseDto = {
                 success: executionResult.success,
@@ -435,6 +439,75 @@ let ThingsBoardController = class ThingsBoardController {
         }
     }
     /**
+     * Process schedule activation logic if conditions are met
+     * This method implements the specialized conditional logic for schedule activation
+     */
+    async processScheduleActivationIfNeeded(deviceId, rpcParams, user, requestId) {
+        try {
+            // Check if schedule activation conditions are met
+            if (!this.scheduleActivationService.isScheduleActivationTrigger(rpcParams)) {
+                logger_1.logger.debug(this.node, 'Schedule activation conditions not met', {
+                    deviceId,
+                    requestId,
+                    hasCoilAutoTron: rpcParams.COIL_AUTO_TRON,
+                    hasScheduleId: !!rpcParams.schedule_id
+                });
+                return;
+            }
+            // Validate user context
+            const userContext = {
+                user_id: (user === null || user === void 0 ? void 0 : user.user_id) || (user === null || user === void 0 ? void 0 : user.name),
+                customer_id: user === null || user === void 0 ? void 0 : user.customer_id,
+                first_name: user === null || user === void 0 ? void 0 : user.first_name,
+                last_name: user === null || user === void 0 ? void 0 : user.last_name,
+                email: user === null || user === void 0 ? void 0 : user.email
+            };
+            if (!this.scheduleActivationService.validateUserContext(userContext)) {
+                logger_1.logger.warn(this.node, 'Invalid user context for schedule activation', {
+                    deviceId,
+                    requestId,
+                    userId: userContext.user_id
+                });
+                return;
+            }
+            // Extract schedule activation parameters
+            const activationParams = this.scheduleActivationService.extractScheduleActivationParams(deviceId, rpcParams, userContext);
+            if (!activationParams) {
+                logger_1.logger.warn(this.node, 'Failed to extract schedule activation parameters', {
+                    deviceId,
+                    requestId
+                });
+                return;
+            }
+            logger_1.logger.info(this.node, 'Processing schedule activation', {
+                deviceId,
+                scheduleId: activationParams.scheduleId,
+                userId: userContext.user_id,
+                requestId
+            });
+            // Process schedule activation
+            const activationResult = await this.scheduleActivationService.processScheduleActivation(activationParams);
+            logger_1.logger.info(this.node, 'Schedule activation processing completed', {
+                deviceId,
+                scheduleId: activationParams.scheduleId,
+                scheduleLogCreated: activationResult.scheduleLogCreated,
+                notificationCreated: activationResult.notificationCreated,
+                mqttPublished: activationResult.mqttPublished,
+                errors: activationResult.errors,
+                requestId
+            });
+        }
+        catch (error) {
+            // Log error but don't throw - schedule activation is additional functionality
+            logger_1.logger.error(this.node, 'Schedule activation processing failed', {
+                error: error.message,
+                deviceId,
+                requestId,
+                stack: error.stack
+            });
+        }
+    }
+    /**
      * Validate device ID format and constraints
      */
     validateDeviceId(deviceId) {
@@ -462,10 +535,12 @@ let ThingsBoardController = class ThingsBoardController {
 exports.ThingsBoardController = ThingsBoardController;
 __decorate([
     (0, routing_controllers_1.Post)('/rpc/oneway/:id'),
+    (0, routing_controllers_1.Authorized)(),
     __param(0, (0, routing_controllers_1.Param)('id')),
     __param(1, (0, routing_controllers_1.Body)()),
+    __param(2, (0, routing_controllers_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, thingsboard_dto_1.ThingsBoardRpcRequestDto]),
+    __metadata("design:paramtypes", [String, thingsboard_dto_1.ThingsBoardRpcRequestDto, Object]),
     __metadata("design:returntype", Promise)
 ], ThingsBoardController.prototype, "processOneWayRpc", null);
 __decorate([
@@ -508,6 +583,8 @@ exports.ThingsBoardController = ThingsBoardController = __decorate([
     (0, routing_controllers_1.JsonController)('/thingsboard'),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
-    __param(1, (0, typedi_1.Inject)('node')),
-    __metadata("design:paramtypes", [thingsboard_service_1.ThingsBoardService, Object])
+    __param(1, (0, typedi_1.Inject)()),
+    __param(2, (0, typedi_1.Inject)('node')),
+    __metadata("design:paramtypes", [thingsboard_service_1.ThingsBoardService,
+        schedule_activation_service_1.ScheduleActivationService, Object])
 ], ThingsBoardController);

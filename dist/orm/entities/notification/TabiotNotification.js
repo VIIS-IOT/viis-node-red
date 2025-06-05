@@ -13,6 +13,7 @@ exports.TabiotNotification = void 0;
 const typeorm_1 = require("typeorm");
 const Base_1 = require("../base/Base");
 const customer_1 = require("../customer/customer");
+const customer_user_1 = require("../customer/customer_user");
 let TabiotNotification = class TabiotNotification extends Base_1.CustomBaseEntity {
     constructor() {
         super(...arguments);
@@ -72,11 +73,19 @@ __decorate([
 __decorate([
     (0, typeorm_1.ManyToOne)(() => customer_1.TabiotCustomer, customer => customer.notifications, {
         nullable: true,
-        onDelete: 'SET NULL'
+        onDelete: 'CASCADE'
     }),
     (0, typeorm_1.JoinColumn)({ name: 'customer_id', referencedColumnName: 'name' }),
     __metadata("design:type", customer_1.TabiotCustomer)
 ], TabiotNotification.prototype, "customer", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => customer_user_1.IotCustomerUser, customerUser => customerUser.notifications, {
+        nullable: true,
+        onDelete: 'CASCADE'
+    }),
+    (0, typeorm_1.JoinColumn)({ name: 'customer_user', referencedColumnName: 'name' }),
+    __metadata("design:type", customer_user_1.IotCustomerUser)
+], TabiotNotification.prototype, "customerUser", void 0);
 exports.TabiotNotification = TabiotNotification = __decorate([
     (0, typeorm_1.Entity)('tabiot_notification', { schema: 'public' })
 ], TabiotNotification);

@@ -10,6 +10,9 @@ exports.ContainerSetup = void 0;
 const typedi_1 = __importDefault(require("typedi"));
 const database_service_1 = require("../services/database.service");
 const auth_service_1 = require("../services/auth.service");
+const schedule_log_service_1 = require("../services/schedule-log.service");
+const notification_service_1 = require("../services/notification.service");
+const schedule_activation_service_1 = require("../services/schedule-activation.service");
 const auth_validator_1 = require("../validators/auth.validator");
 const user_validator_1 = require("../validators/user.validator");
 const auth_middleware_1 = require("../middleware/auth.middleware");
@@ -59,6 +62,18 @@ class ContainerSetup {
             const authService = new auth_service_1.AuthService(databaseService, jwtSecret, node, configManager);
             await authService.initialize();
             typedi_1.default.set(auth_service_1.AuthService, authService);
+            // Initialize and register ScheduleLogService
+            const scheduleLogService = new schedule_log_service_1.ScheduleLogService(serviceContext, databaseService);
+            await scheduleLogService.initialize();
+            typedi_1.default.set(schedule_log_service_1.ScheduleLogService, scheduleLogService);
+            // Initialize and register NotificationService
+            const notificationService = new notification_service_1.NotificationService(serviceContext, databaseService);
+            await notificationService.initialize();
+            typedi_1.default.set(notification_service_1.NotificationService, notificationService);
+            // Initialize and register ScheduleActivationService
+            const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService);
+            await scheduleActivationService.initialize();
+            typedi_1.default.set(schedule_activation_service_1.ScheduleActivationService, scheduleActivationService);
             // Register validators
             typedi_1.default.set(auth_validator_1.AuthValidator, new auth_validator_1.AuthValidator());
             typedi_1.default.set(user_validator_1.UserValidator, new user_validator_1.UserValidator());

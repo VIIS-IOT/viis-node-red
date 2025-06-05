@@ -23,6 +23,7 @@ import { Service, Inject } from 'typedi';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
 import { ThingsBoardService } from '../services/thingsboard.service';
+import { ScheduleActivationService, UserContext } from '../services/schedule-activation.service';
 import {
     ThingsBoardRpcRequestDto,
     ThingsBoardRpcResponseDto,
@@ -64,6 +65,7 @@ import { ApiError, ErrorType } from '../types/common.types';
 export class ThingsBoardController {
     constructor(
         @Inject() private thingsBoardService: ThingsBoardService,
+        @Inject() private scheduleActivationService: ScheduleActivationService,
         @Inject('node') private node: Node
     ) {
         // Validate that node is properly injected
@@ -122,9 +124,11 @@ export class ThingsBoardController {
      * ```
      */
     @Post('/rpc/oneway/:id')
+    @Authorized()
     async processOneWayRpc(
         @Param('id') deviceId: string,
-        @Body() rpcData: ThingsBoardRpcRequestDto
+        @Body() rpcData: ThingsBoardRpcRequestDto,
+        @CurrentUser() user: any
     ): Promise<RpcExecutionResultDto> {
         const requestId = this.generateRequestId();
 
@@ -170,6 +174,9 @@ export class ThingsBoardController {
                 recordsCount: executionResult.telemetryRecords.length,
                 mqttPublished: executionResult.mqttPublished
             });
+
+            // Process schedule activation logic if conditions are met
+            await this.processScheduleActivationIfNeeded(deviceId, rpcData.params || {}, user, requestId);
 
             // Convert to response DTO
             const responseDto: RpcExecutionResultDto = {
@@ -516,6 +523,92 @@ export class ThingsBoardController {
                 error: (error as Error).message
             });
             throw error;
+        }
+    }
+
+    /**
+     * Process schedule activation logic if conditions are met
+     * This method implements the specialized conditional logic for schedule activation
+     */
+    private async processScheduleActivationIfNeeded(
+        deviceId: string,
+        rpcParams: Record<string, any>,
+        user: any,
+        requestId: string
+    ): Promise<void> {
+        try {
+            // Check if schedule activation conditions are met
+            if (!this.scheduleActivationService.isScheduleActivationTrigger(rpcParams)) {
+                logger.debug(this.node, 'Schedule activation conditions not met', {
+                    deviceId,
+                    requestId,
+                    hasCoilAutoTron: rpcParams.COIL_AUTO_TRON,
+                    hasScheduleId: !!rpcParams.schedule_id
+                });
+                return;
+            }
+
+            // Validate user context
+            const userContext: UserContext = {
+                user_id: user?.user_id || user?.name,
+                customer_id: user?.customer_id,
+                first_name: user?.first_name,
+                last_name: user?.last_name,
+                email: user?.email
+            };
+
+            if (!this.scheduleActivationService.validateUserContext(userContext)) {
+                logger.warn(this.node, 'Invalid user context for schedule activation', {
+                    deviceId,
+                    requestId,
+                    userId: userContext.user_id
+                });
+                return;
+            }
+
+            // Extract schedule activation parameters
+            const activationParams = this.scheduleActivationService.extractScheduleActivationParams(
+                deviceId,
+                rpcParams,
+                userContext
+            );
+
+            if (!activationParams) {
+                logger.warn(this.node, 'Failed to extract schedule activation parameters', {
+                    deviceId,
+                    requestId
+                });
+                return;
+            }
+
+            logger.info(this.node, 'Processing schedule activation', {
+                deviceId,
+                scheduleId: activationParams.scheduleId,
+                userId: userContext.user_id,
+                requestId
+            });
+
+            // Process schedule activation
+            const activationResult = await this.scheduleActivationService.processScheduleActivation(activationParams);
+
+            logger.info(this.node, 'Schedule activation processing completed', {
+                deviceId,
+                scheduleId: activationParams.scheduleId,
+                scheduleLogCreated: activationResult.scheduleLogCreated,
+                notificationCreated: activationResult.notificationCreated,
+                mqttPublished: activationResult.mqttPublished,
+                errors: activationResult.errors,
+                requestId
+            });
+
+        } catch (error) {
+            // Log error but don't throw - schedule activation is additional functionality
+            logger.error(this.node, 'Schedule activation processing failed', {
+                error: (error as Error).message,
+                deviceId,
+                requestId,
+                stack: (error as Error).stack
+            });
         }
     }
 

@@ -6,6 +6,9 @@ import Container from "typedi";
 import { Node } from "node-red";
 import { DatabaseService } from "../services/database.service";
 import { AuthService } from "../services/auth.service";
+import { ScheduleLogService } from "../services/schedule-log.service";
+import { NotificationService } from "../services/notification.service";
+import { ScheduleActivationService } from "../services/schedule-activation.service";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
 import { HealthController } from "../controllers/health.controller";
@@ -79,6 +82,25 @@ export class ContainerSetup {
             const authService = new AuthService(databaseService, jwtSecret, node, configManager);
             await authService.initialize();
             Container.set(AuthService, authService);
+
+            // Initialize and register ScheduleLogService
+            const scheduleLogService = new ScheduleLogService(serviceContext, databaseService);
+            await scheduleLogService.initialize();
+            Container.set(ScheduleLogService, scheduleLogService);
+
+            // Initialize and register NotificationService
+            const notificationService = new NotificationService(serviceContext, databaseService);
+            await notificationService.initialize();
+            Container.set(NotificationService, notificationService);
+
+            // Initialize and register ScheduleActivationService
+            const scheduleActivationService = new ScheduleActivationService(
+                serviceContext,
+                scheduleLogService,
+                notificationService
+            );
+            await scheduleActivationService.initialize();
+            Container.set(ScheduleActivationService, scheduleActivationService);
 
             // Register validators
             Container.set(AuthValidator, new AuthValidator());

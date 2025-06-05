@@ -13,6 +13,7 @@ exports.TabiotScheduleLog = exports.TabiotSchedule = void 0;
 const typeorm_1 = require("typeorm");
 const Base_1 = require("../base/Base");
 const TabiotSchedulePlan_1 = require("../schedulePlan/TabiotSchedulePlan");
+const customer_user_1 = require("../customer/customer_user");
 let TabiotSchedule = class TabiotSchedule extends Base_1.CustomBaseEntity {
 };
 exports.TabiotSchedule = TabiotSchedule;
@@ -120,10 +121,19 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotScheduleLog.prototype, "schedule_id", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 255, nullable: true }),
+    __metadata("design:type", String)
+], TabiotScheduleLog.prototype, "customer_user", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => TabiotSchedule, { onDelete: 'SET NULL' }),
     (0, typeorm_1.JoinColumn)({ name: 'schedule_id' }),
     __metadata("design:type", TabiotSchedule)
 ], TabiotScheduleLog.prototype, "schedule", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => customer_user_1.IotCustomerUser, { onDelete: 'CASCADE' }),
+    (0, typeorm_1.JoinColumn)({ name: 'customer_user', referencedColumnName: 'name' }),
+    __metadata("design:type", customer_user_1.IotCustomerUser)
+], TabiotScheduleLog.prototype, "customerUser", void 0);
 exports.TabiotScheduleLog = TabiotScheduleLog = __decorate([
     (0, typeorm_1.Entity)('tabiot_schedule_log')
 ], TabiotScheduleLog);

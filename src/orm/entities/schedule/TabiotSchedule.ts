@@ -1,6 +1,7 @@
 import { Entity, PrimaryColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { CustomBaseEntity } from '../base/Base';
 import { TabiotSchedulePlan } from '../schedulePlan/TabiotSchedulePlan';
+import { IotCustomerUser } from '../customer/customer_user';
 
 @Entity('tabiot_schedule')
 export class TabiotSchedule extends CustomBaseEntity {
@@ -87,7 +88,15 @@ export class TabiotScheduleLog extends CustomBaseEntity {
     @Column({ type: 'varchar', length: 255, nullable: true })
     schedule_id?: string;
 
+    @Column({ type: 'varchar', length: 255, nullable: true })
+    customer_user?: string;
+
     @ManyToOne(() => TabiotSchedule, { onDelete: 'SET NULL' })
     @JoinColumn({ name: 'schedule_id' })
     schedule?: TabiotSchedule;
+
+    //customer_user
+    @ManyToOne(() => IotCustomerUser, { onDelete: 'CASCADE' })
+    @JoinColumn({ name: 'customer_user', referencedColumnName: 'name' })
+    customerUser?: IotCustomerUser;
 }
