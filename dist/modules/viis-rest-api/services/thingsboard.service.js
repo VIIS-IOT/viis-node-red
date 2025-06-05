@@ -21,6 +21,8 @@ const typedi_1 = require("typedi");
 const base_service_1 = require("./base.service");
 const common_types_1 = require("../types/common.types");
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
+const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const constants_1 = require("../constants");
 const thingsboard_types_1 = require("../types/thingsboard.types");
 /**
  * ThingsBoard RPC service class
@@ -38,6 +40,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
             mqttPublishSuccesses: 0,
             mqttPublishFailures: 0
         };
+        this.globalHelper = new global_context_helper_1.GlobalContextHelper(this.node.context());
     }
     /**
      * Initialize the ThingsBoard service
@@ -63,7 +66,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         this.logInfo("ThingsBoard RPC service cleanup starting...");
         try {
             if (this.mqttClient) {
-                client_registry_1.default.releaseClient('thingsboard', this.node);
+                client_registry_1.default.releaseClient('local', this.node);
                 this.mqttClient = null;
             }
             this.logInfo("ThingsBoard RPC service cleanup completed");
@@ -385,17 +388,12 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         throw lastError || new Error('MQTT publish failed after all retries');
     }
     /**
-     * Initialize MQTT client using existing core infrastructure
+     * Initialize MQTT client using local EMQX broker
      */
     async initializeMqttClient() {
         try {
-            const config = this.createThingsBoardMqttConfig();
-            this.logInfo("Attempting to initialize MQTT client", {
-                broker: config.broker,
-                clientId: config.clientId,
-                username: config.username ? 'configured' : 'not configured'
-            });
-            this.mqttClient = await client_registry_1.default.getThingsboardMqttClient(config, this.node);
+            const config = this.createLocalMqttConfig();
+            this.mqttClient = await client_registry_1.default.getLocalMqttClient(config, this.node);
             this.logInfo("MQTT client initialized successfully", {
                 broker: config.broker,
                 clientId: config.clientId
@@ -409,23 +407,23 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         }
     }
     /**
-     * Create ThingsBoard MQTT configuration
+     * Create local EMQX MQTT configuration
      */
-    createThingsBoardMqttConfig() {
-        // Use environment variables or defaults
-        const host = process.env.THINGSBOARD_HOST || 'mqtt.viis.tech';
-        const port = process.env.THINGSBOARD_PORT || '1883';
-        const deviceToken = process.env.DEVICE_ACCESS_TOKEN || '';
-        const password = process.env.THINGSBOARD_PASSWORD || '';
+    createLocalMqttConfig() {
+        // Use local EMQX broker configuration
+        const host = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_HOST, constants_1.MQTT_CONFIG.LOCAL.DEFAULT_HOST);
+        const port = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PORT, constants_1.MQTT_CONFIG.LOCAL.DEFAULT_PORT);
+        const username = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_USERNAME, '');
+        const password = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PASSWORD, '');
         return {
             broker: `mqtt://${host}:${port}`,
-            clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
-            username: deviceToken,
-            password: password,
-            qos: 1,
-            keepalive: 60,
-            connectTimeout: 30000,
-            reconnectPeriod: 5000
+            clientId: `viis-thingsboard-service-${Math.random().toString(16).substring(2, 10)}`,
+            username,
+            password,
+            qos: constants_1.MQTT_CONFIG.LOCAL.QOS,
+            keepalive: constants_1.MQTT_CONFIG.LOCAL.KEEPALIVE,
+            connectTimeout: constants_1.MQTT_CONFIG.LOCAL.CONNECT_TIMEOUT,
+            reconnectPeriod: constants_1.MQTT_CONFIG.LOCAL.RECONNECT_PERIOD
         };
     }
     /**

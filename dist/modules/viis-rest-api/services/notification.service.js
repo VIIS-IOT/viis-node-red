@@ -23,6 +23,8 @@ const database_service_1 = require("./database.service");
 const TabiotNotification_1 = require("../../../orm/entities/notification/TabiotNotification");
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
 const common_types_1 = require("../types/common.types");
+const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const constants_1 = require("../constants");
 /**
  * Notification service class
  * Handles notification creation and MQTT publishing operations
@@ -31,6 +33,7 @@ let NotificationService = class NotificationService extends base_service_1.BaseS
     constructor(context, databaseService) {
         super(context, 'NotificationService');
         this.mqttClient = null;
+        this.globalHelper = new global_context_helper_1.GlobalContextHelper(this.node.context());
     }
     /**
      * Initialize the notification service
@@ -164,22 +167,23 @@ let NotificationService = class NotificationService extends base_service_1.BaseS
         }
     }
     /**
-     * Create MQTT configuration
+     * Create MQTT configuration for local EMQX broker
      */
     createMqttConfig() {
-        const host = process.env.MQTT_HOST || 'mqtt.viis.tech';
-        const port = process.env.MQTT_PORT || '1883';
-        const username = process.env.MQTT_USERNAME || '';
-        const password = process.env.MQTT_PASSWORD || '';
+        // Use local EMQX broker configuration
+        const host = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_HOST, constants_1.MQTT_CONFIG.LOCAL.DEFAULT_HOST);
+        const port = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PORT, constants_1.MQTT_CONFIG.LOCAL.DEFAULT_PORT);
+        const username = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_USERNAME, '');
+        const password = this.globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PASSWORD, '');
         return {
             broker: `mqtt://${host}:${port}`,
             clientId: `viis-notification-service-${Math.random().toString(16).substring(2, 10)}`,
             username,
             password,
-            qos: 1,
-            keepalive: 60,
-            connectTimeout: 30000,
-            reconnectPeriod: 5000
+            qos: constants_1.MQTT_CONFIG.LOCAL.QOS,
+            keepalive: constants_1.MQTT_CONFIG.LOCAL.KEEPALIVE,
+            connectTimeout: constants_1.MQTT_CONFIG.LOCAL.CONNECT_TIMEOUT,
+            reconnectPeriod: constants_1.MQTT_CONFIG.LOCAL.RECONNECT_PERIOD
         };
     }
     /**

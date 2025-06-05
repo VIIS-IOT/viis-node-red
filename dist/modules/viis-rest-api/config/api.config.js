@@ -6,6 +6,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiConfigManager = void 0;
 const logger_1 = require("../utils/logger");
+const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const constants_1 = require("../constants");
 /**
  * Default configuration values
  */
@@ -38,13 +40,13 @@ const DEFAULT_CONFIG = {
  * Environment variable mappings
  */
 const ENV_MAPPINGS = {
-    JWT_SECRET: 'jwtSecret',
-    JWT_EXPIRES_IN: 'jwtExpiresIn',
-    API_PREFIX: 'apiPrefix',
-    ENABLE_DEBUG: 'enableDebugMode',
-    ENABLE_DB_LOGGING: 'enableDatabaseLogging',
-    REQUEST_TIMEOUT: 'requestTimeout',
-    RATE_LIMIT_MAX: 'maxRequestsPerMinute'
+    [constants_1.ENV_KEYS.JWT_SECRET]: 'jwtSecret',
+    [constants_1.ENV_KEYS.JWT_EXPIRES_IN]: 'jwtExpiresIn',
+    [constants_1.ENV_KEYS.API_PREFIX]: 'apiPrefix',
+    [constants_1.ENV_KEYS.ENABLE_DEBUG]: 'enableDebugMode',
+    [constants_1.ENV_KEYS.ENABLE_DB_LOGGING]: 'enableDatabaseLogging',
+    [constants_1.ENV_KEYS.REQUEST_TIMEOUT]: 'requestTimeout',
+    [constants_1.ENV_KEYS.RATE_LIMIT_MAX]: 'maxRequestsPerMinute'
 };
 /**
  * Configuration manager class
@@ -52,6 +54,7 @@ const ENV_MAPPINGS = {
 class ApiConfigManager {
     constructor(nodeConfig, node) {
         this.node = node;
+        this.globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
         this.config = this.buildConfiguration(nodeConfig);
         this.validateConfiguration();
         this.logConfiguration();
@@ -93,7 +96,7 @@ class ApiConfigManager {
      */
     applyEnvironmentConfig(config) {
         Object.entries(ENV_MAPPINGS).forEach(([envKey, configKey]) => {
-            const envValue = process.env[envKey];
+            const envValue = this.globalHelper.getEnvVar(envKey);
             if (envValue !== undefined) {
                 config[configKey] = this.parseEnvironmentValue(envValue, configKey);
             }
@@ -103,7 +106,7 @@ class ApiConfigManager {
      * Apply development-specific overrides
      */
     applyDevelopmentOverrides(config) {
-        const isDevelopment = process.env.NODE_ENV !== 'production';
+        const isDevelopment = this.globalHelper.getEnvVar('NODE_ENV', 'development') !== 'production';
         if (isDevelopment) {
             // Enable development features
             config.enableDebugMode = true;
@@ -197,6 +200,12 @@ class ApiConfigManager {
         Object.assign(this.config, updates);
         this.validateConfiguration();
         logger_1.logger.info(this.node, 'Configuration updated:', updates);
+    }
+    /**
+     * Get GlobalContextHelper instance for services
+     */
+    getGlobalHelper() {
+        return this.globalHelper;
     }
 }
 exports.ApiConfigManager = ApiConfigManager;

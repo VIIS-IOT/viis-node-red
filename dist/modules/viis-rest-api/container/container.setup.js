@@ -17,6 +17,7 @@ const auth_validator_1 = require("../validators/auth.validator");
 const user_validator_1 = require("../validators/user.validator");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const validation_middleware_1 = require("../middleware/validation.middleware");
+const global_context_helper_1 = require("../../../ultils/global-context-helper");
 require("reflect-metadata");
 /**
  * Setup TypeDI container with all services and dependencies
@@ -41,10 +42,13 @@ class ContainerSetup {
             if (!configManager) {
                 throw new Error('Invalid configManager provided');
             }
+            // Initialize GlobalContextHelper
+            const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
             // Register core instances
             typedi_1.default.set("node", node);
             typedi_1.default.set("jwtSecret", jwtSecret);
             typedi_1.default.set("configManager", configManager);
+            typedi_1.default.set("globalHelper", globalHelper);
             // Log successful registration for debugging
             console.log('[VIIS-REST-API] Container setup: Core dependencies registered successfully');
             // Initialize and register DatabaseService

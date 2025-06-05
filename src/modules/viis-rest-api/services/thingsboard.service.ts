@@ -11,6 +11,8 @@ import { MqttClientCore, MqttConfig } from '../../../core/mqtt-client';
 import ClientRegistry from '../../../core/client-registry';
 import { DatabaseService } from './database.service';
 import { ApiConfigManager } from '../config/api.config';
+import { GlobalContextHelper } from '../../../ultils/global-context-helper';
+import { ENV_KEYS, MQTT_CONFIG, DEFAULTS } from '../constants';
 import {
     ThingsBoardRpcRequest,
     ThingsBoardRpcResponse,
@@ -33,6 +35,7 @@ import {
 @Service()
 export class ThingsBoardService extends BaseService {
     private mqttClient: MqttClientCore | null = null;
+    private globalHelper: GlobalContextHelper;
     private processingStats = {
         totalRequests: 0,
         successfulRequests: 0,
@@ -44,6 +47,7 @@ export class ThingsBoardService extends BaseService {
 
     constructor(context: ServiceContext) {
         super(context, 'ThingsBoardService');
+        this.globalHelper = new GlobalContextHelper(this.node.context());
     }
 
     /**
@@ -72,7 +76,7 @@ export class ThingsBoardService extends BaseService {
 
         try {
             if (this.mqttClient) {
-                ClientRegistry.releaseClient('thingsboard', this.node);
+                ClientRegistry.releaseClient('local', this.node);
                 this.mqttClient = null;
             }
             this.logInfo("ThingsBoard RPC service cleanup completed");
@@ -464,19 +468,12 @@ export class ThingsBoardService extends BaseService {
     }
 
     /**
-     * Initialize MQTT client using existing core infrastructure
+     * Initialize MQTT client using local EMQX broker
      */
     private async initializeMqttClient(): Promise<void> {
         try {
-            const config = this.createThingsBoardMqttConfig();
-
-            this.logInfo("Attempting to initialize MQTT client", {
-                broker: config.broker,
-                clientId: config.clientId,
-                username: config.username ? 'configured' : 'not configured'
-            });
-
-            this.mqttClient = await ClientRegistry.getThingsboardMqttClient(config, this.node);
+            const config = this.createLocalMqttConfig();
+            this.mqttClient = await ClientRegistry.getLocalMqttClient(config, this.node);
 
             this.logInfo("MQTT client initialized successfully", {
                 broker: config.broker,
@@ -491,24 +488,24 @@ export class ThingsBoardService extends BaseService {
     }
 
     /**
-     * Create ThingsBoard MQTT configuration
+     * Create local EMQX MQTT configuration
      */
-    private createThingsBoardMqttConfig(): MqttConfig {
-        // Use environment variables or defaults
-        const host = process.env.THINGSBOARD_HOST || 'mqtt.viis.tech';
-        const port = process.env.THINGSBOARD_PORT || '1883';
-        const deviceToken = process.env.DEVICE_ACCESS_TOKEN || '';
-        const password = process.env.THINGSBOARD_PASSWORD || '';
+    private createLocalMqttConfig(): MqttConfig {
+        // Use local EMQX broker configuration
+        const host = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_HOST, MQTT_CONFIG.LOCAL.DEFAULT_HOST);
+        const port = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_PORT, MQTT_CONFIG.LOCAL.DEFAULT_PORT);
+        const username = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_USERNAME, '');
+        const password = this.globalHelper.getEnvVar(ENV_KEYS.EMQX_PASSWORD, '');
 
         return {
             broker: `mqtt://${host}:${port}`,
-            clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
-            username: deviceToken,
-            password: password,
-            qos: 1,
-            keepalive: 60,
-            connectTimeout: 30000,
-            reconnectPeriod: 5000
+            clientId: `viis-thingsboard-service-${Math.random().toString(16).substring(2, 10)}`,
+            username,
+            password,
+            qos: MQTT_CONFIG.LOCAL.QOS,
+            keepalive: MQTT_CONFIG.LOCAL.KEEPALIVE,
+            connectTimeout: MQTT_CONFIG.LOCAL.CONNECT_TIMEOUT,
+            reconnectPeriod: MQTT_CONFIG.LOCAL.RECONNECT_PERIOD
         };
     }
 
