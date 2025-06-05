@@ -5,7 +5,7 @@
 
 import 'reflect-metadata';
 import { NodeAPI, Node } from 'node-red';
-import { useExpressServer } from 'routing-controllers';
+import { useExpressServer, useContainer } from 'routing-controllers';
 import { Container } from 'typedi';
 import { logger } from '../utils/logger';
 import { ApiConfigManager } from '../config/api.config';
@@ -51,6 +51,10 @@ export class RoutingControllersRoutes {
 
             // Ensure TypeDI container has all required dependencies
             this.ensureContainerSetup();
+
+            // CRITICAL: Tell routing-controllers to use TypeDI for dependency injection
+            useContainer(Container);
+            logger.info(this.node, 'Configured routing-controllers to use TypeDI container');
 
             // Configure routing-controllers with Node-RED's Express server
             const app = useExpressServer(RED.httpNode, {
@@ -116,21 +120,32 @@ export class RoutingControllersRoutes {
         // Verify all required services are in the container
         if (!Container.has('node')) {
             Container.set('node', this.node);
+            logger.debug(this.node, 'Node registered in TypeDI container');
+        } else {
+            // Verify the existing node is valid
+            const existingNode = Container.get('node') as Node;
+            if (!existingNode || typeof existingNode.log !== 'function') {
+                Container.set('node', this.node);
+                logger.debug(this.node, 'Node re-registered in TypeDI container (previous was invalid)');
+            }
         }
 
         if (!Container.has('configManager')) {
             Container.set('configManager', this.configManager);
+            logger.debug(this.node, 'ConfigManager registered in TypeDI container');
         }
 
         if (!Container.has(AuthService)) {
             Container.set(AuthService, this.authService);
+            logger.debug(this.node, 'AuthService registered in TypeDI container');
         }
 
         if (!Container.has(DatabaseService)) {
             Container.set(DatabaseService, this.databaseService);
+            logger.debug(this.node, 'DatabaseService registered in TypeDI container');
         }
 
-        logger.debug(this.node, 'TypeDI container setup verified');
+        logger.debug(this.node, 'TypeDI container setup verified and all dependencies registered');
     }
 
     /**

@@ -153,7 +153,7 @@ class BaseService {
         logger_1.logger.warn(this.node, `[${this.serviceName}] ${message}`, data);
     }
     logDebug(message, data) {
-        if (this.configManager.isEnabled('enableDebugMode')) {
+        if (this.configManager && this.configManager.isEnabled('enableDebugMode')) {
             logger_1.logger.debug(this.node, `[${this.serviceName}] ${message}`, data);
         }
     }

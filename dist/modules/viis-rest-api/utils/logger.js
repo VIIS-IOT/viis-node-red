@@ -44,7 +44,12 @@ class Logger {
     error(node, message, data) {
         if (this.logLevel >= LogLevel.ERROR) {
             const logMessage = this.formatMessage('ERROR', message, data);
-            node.error(logMessage);
+            if (node && typeof node.error === 'function') {
+                node.error(logMessage);
+            }
+            else {
+                console.error(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.error(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -54,7 +59,12 @@ class Logger {
     warn(node, message, data) {
         if (this.logLevel >= LogLevel.WARN) {
             const logMessage = this.formatMessage('WARN', message, data);
-            node.warn(logMessage);
+            if (node && typeof node.warn === 'function') {
+                node.warn(logMessage);
+            }
+            else {
+                console.warn(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.warn(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -64,7 +74,12 @@ class Logger {
     info(node, message, data) {
         if (this.logLevel >= LogLevel.INFO) {
             const logMessage = this.formatMessage('INFO', message, data);
-            node.log(logMessage);
+            if (node && typeof node.log === 'function') {
+                node.log(logMessage);
+            }
+            else {
+                console.log(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.log(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -74,7 +89,12 @@ class Logger {
     debug(node, message, data) {
         if (this.logLevel >= LogLevel.DEBUG) {
             const logMessage = this.formatMessage('DEBUG', message, data);
-            node.debug(logMessage);
+            if (node && typeof node.debug === 'function') {
+                node.debug(logMessage);
+            }
+            else {
+                console.debug(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.debug(`[VIIS-REST-API] ${logMessage}`);
         }
     }

@@ -28,10 +28,22 @@ class ContainerSetup {
         }
         const { node, jwtSecret, configManager } = config;
         try {
+            // Validate inputs before registration
+            if (!node || typeof node.log !== 'function') {
+                throw new Error('Invalid node provided - must be a valid Node-RED node instance');
+            }
+            if (!jwtSecret || typeof jwtSecret !== 'string') {
+                throw new Error('Invalid jwtSecret provided - must be a non-empty string');
+            }
+            if (!configManager) {
+                throw new Error('Invalid configManager provided');
+            }
             // Register core instances
             typedi_1.default.set("node", node);
             typedi_1.default.set("jwtSecret", jwtSecret);
             typedi_1.default.set("configManager", configManager);
+            // Log successful registration for debugging
+            console.log('[VIIS-REST-API] Container setup: Core dependencies registered successfully');
             // Initialize and register DatabaseService
             const databaseService = new database_service_1.DatabaseService(node);
             await databaseService.initialize();
@@ -44,7 +56,7 @@ class ContainerSetup {
             };
             typedi_1.default.set("serviceContext", serviceContext);
             // Initialize and register AuthService
-            const authService = new auth_service_1.AuthService(databaseService, jwtSecret, node);
+            const authService = new auth_service_1.AuthService(databaseService, jwtSecret, node, configManager);
             await authService.initialize();
             typedi_1.default.set(auth_service_1.AuthService, authService);
             // Register validators

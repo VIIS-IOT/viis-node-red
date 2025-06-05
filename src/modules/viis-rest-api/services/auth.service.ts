@@ -18,6 +18,7 @@ import {
 import { IService, ApiError, ErrorType } from '../types/common.types';
 import { DatabaseService } from './database.service';
 import { BaseService, ServiceContext } from './base.service';
+import { ApiConfigManager } from '../config/api.config';
 
 /**
  * Authentication service class
@@ -26,12 +27,12 @@ import { BaseService, ServiceContext } from './base.service';
 export class AuthService extends BaseService {
     private jwtSecret: string;
 
-    constructor(databaseService: DatabaseService, jwtSecret: string, node: Node) {
+    constructor(databaseService: DatabaseService, jwtSecret: string, node: Node, configManager: ApiConfigManager) {
         // Create service context for BaseService
         const context: ServiceContext = {
             node,
             databaseService,
-            configManager: null as any // Will be set later via container
+            configManager
         };
 
         super(context, 'AuthService');
@@ -212,29 +213,29 @@ export class AuthService extends BaseService {
      * Find user by username, email, or user_name
      */
     private async findUser(username: string): Promise<any> {
-        this.logDebug(`Finding user with identifier: ${username}`);
+        this.logWarn(`Finding user with identifier: ${username}`);
 
         this.ensureDatabaseService();
         const userRepo = this.databaseService.getCustomerUserRepository();
 
-        return await userRepo.findOne({
+        const res = await userRepo.findOne({
             where: [
-                { name: username },
                 { email: username },
-                { user_name: username }
             ]
         });
+
+        return res;
     }
 
     /**
      * Find user credentials
      */
-    private async findUserCredentials(username: string): Promise<any> {
+    private async findUserCredentials(user_id: string): Promise<any> {
         this.ensureDatabaseService();
         const credRepo = this.databaseService.getCustomerUserCredentialRepository();
 
         return await credRepo.findOne({
-            where: { name: username }
+            where: { user_id: user_id }
         });
     }
 

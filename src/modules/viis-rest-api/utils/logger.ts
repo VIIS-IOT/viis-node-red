@@ -45,7 +45,11 @@ export class Logger {
     error(node: Node, message: string, data?: any): void {
         if (this.logLevel >= LogLevel.ERROR) {
             const logMessage = this.formatMessage('ERROR', message, data);
-            node.error(logMessage);
+            if (node && typeof node.error === 'function') {
+                node.error(logMessage);
+            } else {
+                console.error(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.error(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -56,7 +60,11 @@ export class Logger {
     warn(node: Node, message: string, data?: any): void {
         if (this.logLevel >= LogLevel.WARN) {
             const logMessage = this.formatMessage('WARN', message, data);
-            node.warn(logMessage);
+            if (node && typeof node.warn === 'function') {
+                node.warn(logMessage);
+            } else {
+                console.warn(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.warn(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -67,7 +75,11 @@ export class Logger {
     info(node: Node, message: string, data?: any): void {
         if (this.logLevel >= LogLevel.INFO) {
             const logMessage = this.formatMessage('INFO', message, data);
-            node.log(logMessage);
+            if (node && typeof node.log === 'function') {
+                node.log(logMessage);
+            } else {
+                console.log(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.log(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -78,7 +90,11 @@ export class Logger {
     debug(node: Node, message: string, data?: any): void {
         if (this.logLevel >= LogLevel.DEBUG) {
             const logMessage = this.formatMessage('DEBUG', message, data);
-            node.debug(logMessage);
+            if (node && typeof node.debug === 'function') {
+                node.debug(logMessage);
+            } else {
+                console.debug(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
+            }
             console.debug(`[VIIS-REST-API] ${logMessage}`);
         }
     }
@@ -126,7 +142,7 @@ export class Logger {
     private formatMessage(level: string, message: string, data?: any): string {
         const timestamp = new Date().toISOString();
         let formattedMessage = `[${timestamp}] [${level}] ${message}`;
-        
+
         if (data) {
             if (typeof data === 'object') {
                 try {
@@ -138,7 +154,7 @@ export class Logger {
                 formattedMessage += ` | Data: ${data}`;
             }
         }
-        
+
         return formattedMessage;
     }
 }

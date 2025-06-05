@@ -25,16 +25,17 @@ const logger_1 = require("../utils/logger");
 const common_types_1 = require("../types/common.types");
 const database_service_1 = require("./database.service");
 const base_service_1 = require("./base.service");
+const api_config_1 = require("../config/api.config");
 /**
  * Authentication service class
  */
 let AuthService = class AuthService extends base_service_1.BaseService {
-    constructor(databaseService, jwtSecret, node) {
+    constructor(databaseService, jwtSecret, node, configManager) {
         // Create service context for BaseService
         const context = {
             node,
             databaseService,
-            configManager: null // Will be set later via container
+            configManager
         };
         super(context, 'AuthService');
         if (!jwtSecret) {
@@ -170,25 +171,24 @@ let AuthService = class AuthService extends base_service_1.BaseService {
      * Find user by username, email, or user_name
      */
     async findUser(username) {
-        this.logDebug(`Finding user with identifier: ${username}`);
+        this.logWarn(`Finding user with identifier: ${username}`);
         this.ensureDatabaseService();
         const userRepo = this.databaseService.getCustomerUserRepository();
-        return await userRepo.findOne({
+        const res = await userRepo.findOne({
             where: [
-                { name: username },
                 { email: username },
-                { user_name: username }
             ]
         });
+        return res;
     }
     /**
      * Find user credentials
      */
-    async findUserCredentials(username) {
+    async findUserCredentials(user_id) {
         this.ensureDatabaseService();
         const credRepo = this.databaseService.getCustomerUserCredentialRepository();
         return await credRepo.findOne({
-            where: { name: username }
+            where: { user_id: user_id }
         });
     }
     /**
@@ -268,5 +268,5 @@ let AuthService = class AuthService extends base_service_1.BaseService {
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [database_service_1.DatabaseService, String, Object])
+    __metadata("design:paramtypes", [database_service_1.DatabaseService, String, Object, api_config_1.ApiConfigManager])
 ], AuthService);

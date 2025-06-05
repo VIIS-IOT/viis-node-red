@@ -44,6 +44,11 @@ let AuthController = class AuthController {
     constructor(authService, node) {
         this.authService = authService;
         this.node = node;
+        // Validate that node is properly injected
+        if (!this.node) {
+            console.error('[VIIS-REST-API] AuthController: Node injection failed - node is undefined');
+            throw new Error('AuthController initialization failed: Node dependency not properly injected');
+        }
         logger_1.logger.info(this.node, 'Enhanced AuthController initialized with routing-controllers and automatic validation');
     }
     /**

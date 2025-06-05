@@ -134,12 +134,12 @@ export abstract class BaseService implements IService {
         } catch (error) {
             const duration = Date.now() - startTime;
             this.logError(`Operation failed: ${operationName} (${duration}ms)`, error, { context, duration });
-            
+
             // Re-throw ApiErrors as-is, wrap others
             if (error instanceof ApiError) {
                 throw error;
             }
-            
+
             throw new ApiError(
                 ErrorType.INTERNAL_ERROR,
                 `${operationName} failed: ${(error as Error).message}`,
@@ -157,7 +157,7 @@ export abstract class BaseService implements IService {
         operationName?: string
     ): Promise<T> {
         this.ensureDatabaseService();
-        
+
         return this.executeOperation(
             operationName || 'database transaction',
             () => this.databaseService.transaction(operation)
@@ -182,7 +182,7 @@ export abstract class BaseService implements IService {
      */
     protected validateStringInput(data: string, fieldName: string, minLength = 1): void {
         this.validateInput(data, fieldName);
-        
+
         if (typeof data !== 'string' || data.trim().length < minLength) {
             throw new ApiError(
                 ErrorType.VALIDATION_ERROR,
@@ -197,7 +197,7 @@ export abstract class BaseService implements IService {
      */
     protected validateNumericInput(data: number, fieldName: string, min?: number, max?: number): void {
         this.validateInput(data, fieldName);
-        
+
         if (typeof data !== 'number' || isNaN(data)) {
             throw new ApiError(
                 ErrorType.VALIDATION_ERROR,
@@ -205,7 +205,7 @@ export abstract class BaseService implements IService {
                 400
             );
         }
-        
+
         if (min !== undefined && data < min) {
             throw new ApiError(
                 ErrorType.VALIDATION_ERROR,
@@ -213,7 +213,7 @@ export abstract class BaseService implements IService {
                 400
             );
         }
-        
+
         if (max !== undefined && data > max) {
             throw new ApiError(
                 ErrorType.VALIDATION_ERROR,
@@ -237,7 +237,7 @@ export abstract class BaseService implements IService {
     }
 
     protected logDebug(message: string, data?: any): void {
-        if (this.configManager.isEnabled('enableDebugMode')) {
+        if (this.configManager && this.configManager.isEnabled('enableDebugMode')) {
             logger.debug(this.node, `[${this.serviceName}] ${message}`, data);
         }
     }
@@ -280,9 +280,9 @@ export abstract class BaseService implements IService {
             const customHealth = await this.onHealthCheck();
             return { status: 'up', details: customHealth };
         } catch (error) {
-            return { 
-                status: 'down', 
-                details: { error: (error as Error).message } 
+            return {
+                status: 'down',
+                details: { error: (error as Error).message }
             };
         }
     }

@@ -44,6 +44,12 @@ export class AuthController {
         @Inject() private authService: AuthService,
         @Inject('node') private node: Node
     ) {
+        // Validate that node is properly injected
+        if (!this.node) {
+            console.error('[VIIS-REST-API] AuthController: Node injection failed - node is undefined');
+            throw new Error('AuthController initialization failed: Node dependency not properly injected');
+        }
+
         logger.info(this.node, 'Enhanced AuthController initialized with routing-controllers and automatic validation');
     }
 
