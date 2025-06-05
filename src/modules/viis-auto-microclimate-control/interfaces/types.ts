@@ -116,15 +116,85 @@ export interface FanRotationState {
     activeGroup: string[];
 }
 
-// Fan group transition state for managing delayed switching
+// Fan control state machine states
+export enum FanControlState {
+    IDLE = 'idle',
+    ROTATION_ACTIVE = 'rotation_active',
+    THRESHOLD_ACTIVE = 'threshold_active',
+    TRANSITIONING = 'transitioning',
+    ERROR = 'error',
+    EMERGENCY_STOP = 'emergency_stop'
+}
+
+// Fan control mode types
+export enum FanControlMode {
+    ROTATION = 'rotation',
+    THRESHOLD = 'threshold',
+    DISABLED = 'disabled'
+}
+
+// Transition phase types
+export enum TransitionPhase {
+    OFF = 'off',
+    DELAY = 'delay',
+    ON = 'on',
+    COMPLETE = 'complete'
+}
+
+// Enhanced fan group transition state
 export interface FanGroupTransitionState {
     isTransitioning: boolean;
-    phase: 'off' | 'delay' | 'on' | 'complete';
+    phase: TransitionPhase;
     previousGroup: string[];
     nextGroup: string[];
     transitionStartTime: number;
     offDelayStartTime: number;
     reason: string;
+    retryCount: number;
+    maxRetries: number;
+}
+
+// Centralized fan control state
+export interface CentralizedFanState {
+    // Core state
+    currentState: FanControlState;
+    previousState: FanControlState;
+    controlMode: FanControlMode;
+    lastStateChange: number;
+
+    // Rotation state management
+    rotationState: FanRotationState;
+
+    // Threshold-specific rotation states (per group size)
+    thresholdRotationStates: Map<number, FanRotationState>;
+
+    // Transition management
+    transitionState: FanGroupTransitionState | null;
+
+    // Error tracking
+    errorCount: number;
+    lastError: string | null;
+    lastErrorTime: number;
+
+    // Resource management
+    createdAt: number;
+    lastCleanup: number;
+    version: number;
+}
+
+// State operation result
+export interface StateOperationResult<T = any> {
+    success: boolean;
+    data?: T;
+    error?: string;
+    rollbackData?: any;
+}
+
+// State validation result
+export interface StateValidationResult {
+    isValid: boolean;
+    errors: string[];
+    warnings: string[];
 }
 
 // Curtain tolerance timer state
