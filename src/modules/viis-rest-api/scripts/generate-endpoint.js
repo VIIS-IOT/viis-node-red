@@ -65,7 +65,7 @@ const validatorPath = path.join(basePath, 'validators', `${entityName.toLowerCas
 // Templates
 function generateControllerTemplate() {
     const routes = [];
-    
+
     if (options.crud || options.readonly) {
         routes.push(`            {
                 method: 'GET',
@@ -73,7 +73,7 @@ function generateControllerTemplate() {
                 handler: 'list${entityName}s',
                 middleware: ['auth']
             }`);
-        
+
         routes.push(`            {
                 method: 'GET',
                 path: '${options.path}/:id',
@@ -81,7 +81,7 @@ function generateControllerTemplate() {
                 middleware: ['auth']
             }`);
     }
-    
+
     if (options.crud) {
         routes.push(`            {
                 method: 'POST',
@@ -89,14 +89,14 @@ function generateControllerTemplate() {
                 handler: 'create${entityName}',
                 middleware: ['auth']
             }`);
-        
+
         routes.push(`            {
                 method: 'PUT',
                 path: '${options.path}/:id',
                 handler: 'update${entityName}',
                 middleware: ['auth']
             }`);
-        
+
         routes.push(`            {
                 method: 'DELETE',
                 path: '${options.path}/:id',
@@ -142,7 +142,7 @@ ${generateHandlerMethods()}
 
 function generateHandlerMethods() {
     let methods = '';
-    
+
     if (options.crud || options.readonly) {
         methods += `
     /**
@@ -178,7 +178,7 @@ function generateHandlerMethods() {
         this.success(res, result, 200, '${entityName} retrieved successfully');
     }, 'get${entityName}');`;
     }
-    
+
     if (options.crud) {
         methods += `
 
@@ -228,7 +228,7 @@ function generateHandlerMethods() {
         this.success(res, { message: '${entityName} deleted successfully' }, 200);
     }, 'delete${entityName}');`;
     }
-    
+
     if (options.custom) {
         methods += `
     /**
@@ -240,7 +240,7 @@ function generateHandlerMethods() {
         this.success(res, { message: 'Custom endpoint for ${entityName}' });
     }, 'customEndpoint');`;
     }
-    
+
     return methods;
 }
 
@@ -251,7 +251,8 @@ function generateServiceTemplate() {
 
 import { Service } from 'typedi';
 import { BaseService, ServiceContext } from './base.service';
-import { ${entityName} } from '../types/${entityName.toLowerCase()}.types';
+import { ${entityName}, Create${entityName}Request, Update${entityName}Request } from '../types/${entityName.toLowerCase()}.types';
+import { Create${entityName}Dto, Update${entityName}Dto } from '../dto/${entityName.toLowerCase()}.dto';
 
 @Service()
 export class ${entityName}Service extends BaseService {
@@ -273,7 +274,7 @@ ${generateServiceMethods()}
 
 function generateServiceMethods() {
     let methods = '';
-    
+
     if (options.crud || options.readonly) {
         methods += `
     /**
@@ -331,46 +332,63 @@ function generateServiceMethods() {
         });
     }`;
     }
-    
+
     if (options.crud) {
         methods += `
 
     /**
      * Create new ${entityName.toLowerCase()}
      */
-    async create(data: Partial<${entityName}>): Promise<${entityName}> {
+    async create(data: Create${entityName}Dto): Promise<${entityName}> {
         this.validateInput(data, 'data');
-        
+
         return this.executeOperation('create${entityName}', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your create logic here
             // Example:
             // const repository = this.databaseService.get${entityName}Repository();
             // const entity = repository.create(data);
             // return await repository.save(entity);
-            
-            return data as ${entityName};
+
+            // Convert DTO to entity
+            const entity: ${entityName} = {
+                id: \`${entityName.toLowerCase()}_\${Date.now()}\`, // Generate temporary ID
+                name: data.name,
+                // TODO: Map other properties from DTO
+                createdAt: new Date(),
+                updatedAt: new Date()
+            };
+
+            return entity;
         });
     }
 
     /**
      * Update ${entityName.toLowerCase()}
      */
-    async update(id: string, data: Partial<${entityName}>): Promise<${entityName}> {
+    async update(id: string, data: Update${entityName}Dto): Promise<${entityName}> {
         this.validateStringInput(id, 'id');
         this.validateInput(data, 'data');
-        
+
         return this.executeOperation('update${entityName}', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your update logic here
             // Example:
             // const repository = this.databaseService.get${entityName}Repository();
             // await repository.update(id, data);
             // return await repository.findOne({ where: { id } });
-            
-            return { ...data, id } as ${entityName};
+
+            // Convert DTO to entity
+            const entity: ${entityName} = {
+                id,
+                name: data.name || 'Updated ${entityName}',
+                // TODO: Map other properties from DTO
+                updatedAt: new Date()
+            };
+
+            return entity;
         });
     }
 
@@ -390,7 +408,7 @@ function generateServiceMethods() {
         });
     }`;
     }
-    
+
     return methods;
 }
 
@@ -421,16 +439,25 @@ function generateFiles() {
 
 export interface ${entityName} {
     id: string;
+    name: string;
+    description?: string;
+    status?: string;
     // TODO: Add your entity properties here
     createdAt?: Date;
     updatedAt?: Date;
 }
 
 export interface Create${entityName}Request {
+    name: string;
+    description?: string;
+    status?: string;
     // TODO: Add properties required for creation
 }
 
 export interface Update${entityName}Request {
+    name?: string;
+    description?: string;
+    status?: string;
     // TODO: Add properties that can be updated
 }
 
@@ -458,6 +485,14 @@ export class Create${entityName}Dto {
     @IsNotEmpty({ message: 'Name is required' })
     name: string;
 
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    status?: string;
+
     // TODO: Add validation decorators for your properties
 }
 
@@ -466,6 +501,14 @@ export class Update${entityName}Dto {
     @IsOptional()
     name?: string;
 
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    status?: string;
+
     // TODO: Add validation decorators for your properties
 }
 
@@ -473,6 +516,10 @@ export class ${entityName}QueryDto {
     @IsOptional()
     @IsString()
     search?: string;
+
+    @IsOptional()
+    @IsString()
+    status?: string;
 
     // TODO: Add query parameters for filtering
 }`;
@@ -507,7 +554,7 @@ export class ${entityName}Validator extends BaseValidator {
     /**
      * Validate query parameters
      */
-    async validateQuery(data: any): Promise<${entityName}QueryDto> {
+    async validate${entityName}Query(data: any): Promise<${entityName}QueryDto> {
         return this.validate(${entityName}QueryDto, data);
     }
 }`;

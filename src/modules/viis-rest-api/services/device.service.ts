@@ -4,7 +4,8 @@
 
 import { Service } from 'typedi';
 import { BaseService, ServiceContext } from './base.service';
-import { Device } from '../types/device.types';
+import { Device, CreateDeviceRequest, UpdateDeviceRequest } from '../types/device.types';
+import { CreateDeviceDto, UpdateDeviceDto } from '../dto/device.dto';
 
 @Service()
 export class DeviceService extends BaseService {
@@ -27,7 +28,7 @@ export class DeviceService extends BaseService {
     async list(options: { page: number; limit: number; offset: number }): Promise<any> {
         return this.executeOperation('listDevices', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your list logic here
             // Example:
             // const repository = this.databaseService.getDeviceRepository();
@@ -45,7 +46,7 @@ export class DeviceService extends BaseService {
             //         totalPages: Math.ceil(total / options.limit)
             //     }
             // };
-            
+
             return {
                 data: [],
                 pagination: {
@@ -63,15 +64,15 @@ export class DeviceService extends BaseService {
      */
     async getById(id: string): Promise<Device | null> {
         this.validateStringInput(id, 'id');
-        
+
         return this.executeOperation('getDeviceById', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your get by ID logic here
             // Example:
             // const repository = this.databaseService.getDeviceRepository();
             // return await repository.findOne({ where: { id } });
-            
+
             return null;
         });
     }
@@ -79,39 +80,59 @@ export class DeviceService extends BaseService {
     /**
      * Create new device
      */
-    async create(data: Partial<Device>): Promise<Device> {
+    async create(data: CreateDeviceDto): Promise<Device> {
         this.validateInput(data, 'data');
-        
+
         return this.executeOperation('createDevice', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your create logic here
             // Example:
             // const repository = this.databaseService.getDeviceRepository();
             // const entity = repository.create(data);
             // return await repository.save(entity);
-            
-            return data as Device;
+
+            // Convert DTO to Device entity
+            const device: Device = {
+                id: `device_${Date.now()}`, // Generate temporary ID
+                name: data.name,
+                description: data.description,
+                status: data.status || 'active',
+                customerId: data.customerId,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            };
+
+            return device;
         });
     }
 
     /**
      * Update device
      */
-    async update(id: string, data: Partial<Device>): Promise<Device> {
+    async update(id: string, data: UpdateDeviceDto): Promise<Device> {
         this.validateStringInput(id, 'id');
         this.validateInput(data, 'data');
-        
+
         return this.executeOperation('updateDevice', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your update logic here
             // Example:
             // const repository = this.databaseService.getDeviceRepository();
             // await repository.update(id, data);
             // return await repository.findOne({ where: { id } });
-            
-            return { ...data, id } as Device;
+
+            // Convert DTO to Device entity
+            const device: Device = {
+                id,
+                name: data.name || 'Updated Device',
+                description: data.description,
+                status: data.status,
+                updatedAt: new Date()
+            };
+
+            return device;
         });
     }
 
@@ -120,10 +141,10 @@ export class DeviceService extends BaseService {
      */
     async delete(id: string): Promise<void> {
         this.validateStringInput(id, 'id');
-        
+
         return this.executeOperation('deleteDevice', async () => {
             this.ensureDatabaseService();
-            
+
             // TODO: Implement your delete logic here
             // Example:
             // const repository = this.databaseService.getDeviceRepository();

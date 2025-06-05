@@ -85,7 +85,17 @@ let DeviceService = class DeviceService extends base_service_1.BaseService {
             // const repository = this.databaseService.getDeviceRepository();
             // const entity = repository.create(data);
             // return await repository.save(entity);
-            return data;
+            // Convert DTO to Device entity
+            const device = {
+                id: `device_${Date.now()}`, // Generate temporary ID
+                name: data.name,
+                description: data.description,
+                status: data.status || 'active',
+                customerId: data.customerId,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            };
+            return device;
         });
     }
     /**
@@ -101,7 +111,15 @@ let DeviceService = class DeviceService extends base_service_1.BaseService {
             // const repository = this.databaseService.getDeviceRepository();
             // await repository.update(id, data);
             // return await repository.findOne({ where: { id } });
-            return Object.assign(Object.assign({}, data), { id });
+            // Convert DTO to Device entity
+            const device = {
+                id,
+                name: data.name || 'Updated Device',
+                description: data.description,
+                status: data.status,
+                updatedAt: new Date()
+            };
+            return device;
         });
     }
     /**

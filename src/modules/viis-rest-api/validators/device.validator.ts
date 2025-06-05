@@ -25,7 +25,7 @@ export class DeviceValidator extends BaseValidator {
     /**
      * Validate query parameters
      */
-    async validateQuery(data: any): Promise<DeviceQueryDto> {
+    async validateDeviceQuery(data: any): Promise<DeviceQueryDto> {
         return this.validate(DeviceQueryDto, data);
     }
 }

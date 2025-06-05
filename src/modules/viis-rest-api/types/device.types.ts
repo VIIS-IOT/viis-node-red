@@ -4,17 +4,25 @@
 
 export interface Device {
     id: string;
-    // TODO: Add your entity properties here
+    name: string;
+    description?: string;
+    status?: string;
+    customerId?: string;
     createdAt?: Date;
     updatedAt?: Date;
 }
 
 export interface CreateDeviceRequest {
-    // TODO: Add properties required for creation
+    name: string;
+    description?: string;
+    status?: string;
+    customerId?: string;
 }
 
 export interface UpdateDeviceRequest {
-    // TODO: Add properties that can be updated
+    name?: string;
+    description?: string;
+    status?: string;
 }
 
 export interface DeviceListResponse {

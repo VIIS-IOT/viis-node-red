@@ -29,7 +29,7 @@ let DeviceValidator = class DeviceValidator extends base_validator_1.BaseValidat
     /**
      * Validate query parameters
      */
-    async validateQuery(data) {
+    async validateDeviceQuery(data) {
         return this.validate(device_dto_1.DeviceQueryDto, data);
     }
 };

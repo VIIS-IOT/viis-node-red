@@ -9,7 +9,17 @@ export class CreateDeviceDto {
     @IsNotEmpty({ message: 'Name is required' })
     name: string;
 
-    // TODO: Add validation decorators for your properties
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    status?: string;
+
+    @IsString()
+    @IsOptional()
+    customerId?: string;
 }
 
 export class UpdateDeviceDto {
@@ -17,7 +27,13 @@ export class UpdateDeviceDto {
     @IsOptional()
     name?: string;
 
-    // TODO: Add validation decorators for your properties
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    status?: string;
 }
 
 export class DeviceQueryDto {
@@ -25,5 +41,11 @@ export class DeviceQueryDto {
     @IsString()
     search?: string;
 
-    // TODO: Add query parameters for filtering
+    @IsOptional()
+    @IsString()
+    status?: string;
+
+    @IsOptional()
+    @IsString()
+    customerId?: string;
 }
