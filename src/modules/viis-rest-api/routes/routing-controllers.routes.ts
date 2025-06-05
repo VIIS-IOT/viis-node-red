@@ -16,6 +16,7 @@ import { HealthController } from '../controllers/health.controller';
 import { AuthController } from '../controllers/auth.controller';
 import { UserController } from '../controllers/user.controller';
 import { DeviceController } from '../controllers/device.controller';
+import { EnhancedValidationMiddleware } from '../middleware/enhanced-validation.middleware';
 
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -59,15 +60,21 @@ export class RoutingControllersRoutes {
                 // Controllers to register
                 controllers: [HealthController, AuthController, UserController, DeviceController],
 
-                // Middleware (we'll integrate our existing middleware)
-                middlewares: [], // Start empty for PoC
+                // Enhanced middleware integration
+                middlewares: [EnhancedValidationMiddleware],
 
-                // Validation and transformation
+                // Enhanced validation and transformation
                 validation: {
                     enableDebugMessages: this.configManager.isEnabled('enableDebugMode'),
                     skipMissingProperties: false,
                     whitelist: true,
-                    forbidNonWhitelisted: true
+                    forbidNonWhitelisted: true,
+                    stopAtFirstError: false, // Show all validation errors
+                    dismissDefaultMessages: false,
+                    validationError: {
+                        target: false,
+                        value: true
+                    }
                 },
                 classTransformer: true,
 

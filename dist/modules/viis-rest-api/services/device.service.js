@@ -85,17 +85,15 @@ let DeviceService = class DeviceService extends base_service_1.BaseService {
             // const repository = this.databaseService.getDeviceRepository();
             // const entity = repository.create(data);
             // return await repository.save(entity);
-            // Convert DTO to Device entity
-            const device = {
+            // Convert DTO to entity
+            const entity = {
                 id: `device_${Date.now()}`, // Generate temporary ID
                 name: data.name,
-                description: data.description,
-                status: data.status || 'active',
-                customerId: data.customerId,
+                // TODO: Map other properties from DTO
                 createdAt: new Date(),
                 updatedAt: new Date()
             };
-            return device;
+            return entity;
         });
     }
     /**
@@ -111,15 +109,14 @@ let DeviceService = class DeviceService extends base_service_1.BaseService {
             // const repository = this.databaseService.getDeviceRepository();
             // await repository.update(id, data);
             // return await repository.findOne({ where: { id } });
-            // Convert DTO to Device entity
-            const device = {
+            // Convert DTO to entity
+            const entity = {
                 id,
                 name: data.name || 'Updated Device',
-                description: data.description,
-                status: data.status,
+                // TODO: Map other properties from DTO
                 updatedAt: new Date()
             };
-            return device;
+            return entity;
         });
     }
     /**

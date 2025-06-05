@@ -15,6 +15,7 @@ const health_controller_1 = require("../controllers/health.controller");
 const auth_controller_1 = require("../controllers/auth.controller");
 const user_controller_1 = require("../controllers/user.controller");
 const device_controller_1 = require("../controllers/device.controller");
+const enhanced_validation_middleware_1 = require("../middleware/enhanced-validation.middleware");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
  *
@@ -42,14 +43,20 @@ class RoutingControllersRoutes {
                 routePrefix: this.configManager.get('apiPrefix'),
                 // Controllers to register
                 controllers: [health_controller_1.HealthController, auth_controller_1.AuthController, user_controller_1.UserController, device_controller_1.DeviceController],
-                // Middleware (we'll integrate our existing middleware)
-                middlewares: [], // Start empty for PoC
-                // Validation and transformation
+                // Enhanced middleware integration
+                middlewares: [enhanced_validation_middleware_1.EnhancedValidationMiddleware],
+                // Enhanced validation and transformation
                 validation: {
                     enableDebugMessages: this.configManager.isEnabled('enableDebugMode'),
                     skipMissingProperties: false,
                     whitelist: true,
-                    forbidNonWhitelisted: true
+                    forbidNonWhitelisted: true,
+                    stopAtFirstError: false, // Show all validation errors
+                    dismissDefaultMessages: false,
+                    validationError: {
+                        target: false,
+                        value: true
+                    }
                 },
                 classTransformer: true,
                 // Error handling - disable default to use our custom handling
