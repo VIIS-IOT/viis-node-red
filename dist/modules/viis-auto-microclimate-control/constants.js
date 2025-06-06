@@ -29,11 +29,11 @@ exports.CONTROL_CONFIG = {
     RETRY_ATTEMPTS: 3,
     RETRY_DELAY_MS: 1000,
     // Fan group transition delays
-    FAN_GROUP_TRANSITION_DELAY_MS: 2000, // 2 seconds default delay between fan group switches
-    FAN_GROUP_OFF_DELAY_MS: 1000, // 1 second delay after turning off fans before turning on new group
+    FAN_GROUP_TRANSITION_DELAY_MS: 3000, // 2 seconds default delay between fan group switches
+    FAN_GROUP_OFF_DELAY_MS: 3000, // 1 second delay after turning off fans before turning on new group
     // Anti-oscillation safety mechanisms
     MIN_ACTION_INTERVAL_MS: 30000, // 30 seconds minimum between actions on same device
-    THRESHOLD_HYSTERESIS_CELSIUS: 1.0, // 1°C hysteresis to prevent oscillation
+    THRESHOLD_HYSTERESIS_CELSIUS: 0.5, // 1°C hysteresis to prevent oscillation
     MAX_ACTIONS_PER_DEVICE_PER_HOUR: 10, // Rate limiting
 };
 // Fan control constants
@@ -50,7 +50,9 @@ exports.FAN_CONFIG = {
         ],
         TWO_FANS: [
             ["quat_1", "quat_2"],
+            ["quat_2", "quat_3"],
             ["quat_3", "quat_4"],
+            ["quat_4", "quat_5"],
             ["quat_5", "quat_6"]
         ],
         FOUR_FANS: [
