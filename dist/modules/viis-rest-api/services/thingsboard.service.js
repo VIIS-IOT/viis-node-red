@@ -397,10 +397,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         try {
             const config = this.createLocalMqttConfig();
             this.mqttClient = await client_registry_1.default.getLocalMqttClient(config, this.node);
-            this.logInfo("MQTT client initialized successfully", {
-                broker: config.broker,
-                clientId: config.clientId
-            });
+            this.logInfo(`MQTT client initialized successfully ${JSON.stringify(config)}`);
         }
         catch (error) {
             this.logError("Failed to initialize MQTT client", error);

@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { Node } from 'node-red';
-import { Service } from 'typedi';
+import { Service, Inject } from 'typedi';
 import { logger } from '../utils/logger';
 import {
     LoginRequest,
@@ -19,6 +19,12 @@ import { IService, ApiError, ErrorType } from '../types/common.types';
 import { DatabaseService } from './database.service';
 import { BaseService, ServiceContext } from './base.service';
 import { ApiConfigManager } from '../config/api.config';
+import {
+    NODE_TOKEN,
+    JWT_SECRET_TOKEN,
+    CONFIG_MANAGER_TOKEN,
+    SERVICE_CONTEXT_TOKEN
+} from '../container/container.setup';
 
 /**
  * Authentication service class

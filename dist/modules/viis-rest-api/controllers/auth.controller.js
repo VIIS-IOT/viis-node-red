@@ -22,6 +22,7 @@ const typedi_1 = require("typedi");
 const auth_dto_1 = require("../dto/auth.dto");
 const auth_service_1 = require("../services/auth.service");
 const logger_1 = require("../utils/logger");
+const container_setup_1 = require("../container/container.setup");
 /**
  * Enhanced Authentication controller class with comprehensive validation
  *
@@ -418,6 +419,6 @@ exports.AuthController = AuthController = __decorate([
     (0, routing_controllers_1.JsonController)('/auth'),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
-    __param(1, (0, typedi_1.Inject)('node')),
+    __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
     __metadata("design:paramtypes", [auth_service_1.AuthService, Object])
 ], AuthController);

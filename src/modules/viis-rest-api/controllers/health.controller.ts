@@ -8,6 +8,7 @@ import { Service, Inject } from 'typedi';
 import { DatabaseService } from '../services/database.service';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
+import { NODE_TOKEN } from '../container/container.setup';
 
 /**
  * Health check response interface
@@ -62,7 +63,7 @@ interface DetailedHealthResponse {
 export class HealthController {
     constructor(
         @Inject() private databaseService: DatabaseService,
-        @Inject('node') private node: Node
+        @Inject(NODE_TOKEN) private node: Node
     ) {
         logger.info(this.node, 'HealthController initialized with routing-controllers');
     }

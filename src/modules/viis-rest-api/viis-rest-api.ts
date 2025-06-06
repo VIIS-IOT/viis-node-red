@@ -11,7 +11,6 @@ import { ApiRoutes } from "./routes/api.routes";
 import { DatabaseService } from "./services/database.service";
 import { ContainerSetup } from "./container/container.setup";
 import { ApiConfigManager } from "./config/api.config";
-import Container from "typedi";
 import "reflect-metadata";
 
 /**
@@ -81,10 +80,10 @@ export = function (RED: NodeAPI) {
                 });
                 logger.info(node, "TypeDI container initialized");
 
-                // Get services from container
-                databaseService = Container.get(DatabaseService);
-                authService = Container.get(AuthService);
-                logger.info(node, "Services resolved from container");
+                // Get services using proper dependency injection
+                databaseService = ContainerSetup.getService(DatabaseService);
+                authService = ContainerSetup.getService(AuthService);
+                logger.info(node, "Services resolved from container using proper DI");
 
                 // Initialize and register API routes
                 apiRoutes = new ApiRoutes(databaseService, authService, node, configManager);

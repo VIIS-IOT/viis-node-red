@@ -33,6 +33,7 @@ import {
 } from '../dto/device.dto';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
+import { NODE_TOKEN } from '../container/container.setup';
 
 /**
  * Enhanced Device controller class with comprehensive validation
@@ -59,7 +60,7 @@ import { logger } from '../utils/logger';
 export class DeviceController {
     constructor(
         @Inject() private deviceService: DeviceService,
-        @Inject('node') private node: Node
+        @Inject(NODE_TOKEN) private node: Node
     ) {
         logger.info(this.node, 'Enhanced DeviceController initialized with routing-controllers and automatic validation');
     }

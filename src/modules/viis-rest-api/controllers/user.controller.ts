@@ -16,6 +16,7 @@ import {
 } from '../dto/user.dto';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
+import { NODE_TOKEN } from '../container/container.setup';
 
 /**
  * Enhanced User management controller class with comprehensive validation
@@ -44,7 +45,7 @@ import { logger } from '../utils/logger';
 export class UserController {
     constructor(
         @Inject() private databaseService: DatabaseService,
-        @Inject('node') private node: Node
+        @Inject(NODE_TOKEN) private node: Node
     ) {
         logger.info(this.node, 'Enhanced UserController initialized with routing-controllers and automatic validation');
     }

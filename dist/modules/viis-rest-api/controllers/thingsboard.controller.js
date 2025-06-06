@@ -37,6 +37,7 @@ const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
 const thingsboard_service_1 = require("../services/thingsboard.service");
 const schedule_activation_service_1 = require("../services/schedule-activation.service");
+const container_setup_1 = require("../container/container.setup");
 const thingsboard_dto_1 = require("../dto/thingsboard.dto");
 const common_types_1 = require("../types/common.types");
 /**
@@ -117,16 +118,6 @@ let ThingsBoardController = class ThingsBoardController {
      */
     async processOneWayRpc(deviceId, rpcData, user) {
         const requestId = this.generateRequestId();
-        return {
-            success: true,
-            deviceId,
-            method: rpcData.method,
-            telemetryRecordsCount: 0,
-            mqttPublished: false,
-            mqttTopic: '',
-            processingTime: 0,
-            requestId
-        };
         logger_1.logger.info(this.node, `Enhanced one-way RPC request for device: ${deviceId}`, {
             method: rpcData.method,
             requestId,
@@ -339,7 +330,7 @@ exports.ThingsBoardController = ThingsBoardController = __decorate([
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
     __param(1, (0, typedi_1.Inject)()),
-    __param(2, (0, typedi_1.Inject)('node')),
+    __param(2, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
     __metadata("design:paramtypes", [thingsboard_service_1.ThingsBoardService,
         schedule_activation_service_1.ScheduleActivationService, Object])
 ], ThingsBoardController);

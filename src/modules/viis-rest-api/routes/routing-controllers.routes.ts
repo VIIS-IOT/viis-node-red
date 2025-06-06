@@ -54,9 +54,6 @@ export class RoutingControllersRoutes {
         try {
             logger.info(this.node, 'Setting up routing-controllers integration...');
 
-            // Ensure TypeDI container has all required dependencies
-            this.ensureContainerSetup();
-
             // CRITICAL: Tell routing-controllers to use TypeDI for dependency injection
             useContainer(Container);
             logger.info(this.node, 'Configured routing-controllers to use TypeDI container');
@@ -172,62 +169,6 @@ export class RoutingControllersRoutes {
         });
 
         return fallbackControllers;
-    }
-
-    /**
-     * Ensure TypeDI container has all required dependencies
-     */
-    private ensureContainerSetup(): void {
-        // Verify all required services are in the container
-        if (!Container.has('node')) {
-            Container.set('node', this.node);
-            logger.debug(this.node, 'Node registered in TypeDI container');
-        } else {
-            // Verify the existing node is valid
-            const existingNode = Container.get('node') as Node;
-            if (!existingNode || typeof existingNode.log !== 'function') {
-                Container.set('node', this.node);
-                logger.debug(this.node, 'Node re-registered in TypeDI container (previous was invalid)');
-            }
-        }
-
-        if (!Container.has('configManager')) {
-            Container.set('configManager', this.configManager);
-            logger.debug(this.node, 'ConfigManager registered in TypeDI container');
-        }
-
-        if (!Container.has(AuthService)) {
-            Container.set(AuthService, this.authService);
-            logger.debug(this.node, 'AuthService registered in TypeDI container');
-        }
-
-        if (!Container.has(DatabaseService)) {
-            Container.set(DatabaseService, this.databaseService);
-            logger.debug(this.node, 'DatabaseService registered in TypeDI container');
-        }
-
-        // Register ServiceContext as a dependency that can be injected
-        const serviceContext = {
-            node: this.node,
-            databaseService: this.databaseService,
-            configManager: this.configManager
-        };
-        Container.set('serviceContext', serviceContext);
-        logger.debug(this.node, 'ServiceContext registered in TypeDI container');
-
-        // ThingsBoard service will be auto-created by TypeDI since it's decorated with @Service()
-        // Now it can inject ServiceContext automatically
-        if (!Container.has(ThingsBoardService)) {
-            const thingsBoardService = new ThingsBoardService(serviceContext);
-            // Initialize service asynchronously
-            thingsBoardService.initialize().catch(error => {
-                logger.error(this.node, 'Failed to initialize ThingsBoardService', { error: error.message });
-            });
-            Container.set(ThingsBoardService, thingsBoardService);
-            logger.debug(this.node, 'ThingsBoardService registered in TypeDI container');
-        }
-
-        logger.debug(this.node, 'TypeDI container setup verified and all dependencies registered');
     }
 
     /**

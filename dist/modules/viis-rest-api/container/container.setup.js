@@ -1,13 +1,44 @@
 "use strict";
 /**
  * @fileoverview TypeDI Container setup for VIIS REST API
+ * Proper dependency injection configuration following TypeDI best practices
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ContainerSetup = void 0;
-const typedi_1 = __importDefault(require("typedi"));
+exports.ContainerSetup = exports.SERVICE_CONTEXT_TOKEN = exports.GLOBAL_HELPER_TOKEN = exports.CONFIG_MANAGER_TOKEN = exports.JWT_SECRET_TOKEN = exports.NODE_TOKEN = void 0;
+const typedi_1 = __importStar(require("typedi"));
 const database_service_1 = require("../services/database.service");
 const auth_service_1 = require("../services/auth.service");
 const schedule_log_service_1 = require("../services/schedule-log.service");
@@ -19,12 +50,19 @@ const auth_middleware_1 = require("../middleware/auth.middleware");
 const validation_middleware_1 = require("../middleware/validation.middleware");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 require("reflect-metadata");
+// Define tokens for primitive dependencies
+exports.NODE_TOKEN = new typedi_1.Token('node');
+exports.JWT_SECRET_TOKEN = new typedi_1.Token('jwtSecret');
+exports.CONFIG_MANAGER_TOKEN = new typedi_1.Token('configManager');
+exports.GLOBAL_HELPER_TOKEN = new typedi_1.Token('globalHelper');
+exports.SERVICE_CONTEXT_TOKEN = new typedi_1.Token('serviceContext');
 /**
  * Setup TypeDI container with all services and dependencies
+ * Following proper dependency injection patterns
  */
 class ContainerSetup {
     /**
-     * Initialize the container with all dependencies
+     * Initialize the container with all dependencies using proper TypeDI patterns
      */
     static async initialize(config) {
         if (this.isInitialized) {
@@ -42,16 +80,19 @@ class ContainerSetup {
             if (!configManager) {
                 throw new Error('Invalid configManager provided');
             }
-            // Initialize GlobalContextHelper
+            // Register primitive dependencies using tokens
+            typedi_1.default.set(exports.NODE_TOKEN, node);
+            typedi_1.default.set(exports.JWT_SECRET_TOKEN, jwtSecret);
+            typedi_1.default.set(exports.CONFIG_MANAGER_TOKEN, configManager);
+            // BACKWARD COMPATIBILITY: Also register node with string identifier
+            // This ensures existing controllers using @Inject('node') still work
+            typedi_1.default.set('node', node);
+            // Initialize and register GlobalContextHelper
             const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
-            // Register core instances
-            typedi_1.default.set("node", node);
-            typedi_1.default.set("jwtSecret", jwtSecret);
-            typedi_1.default.set("configManager", configManager);
-            typedi_1.default.set("globalHelper", globalHelper);
+            typedi_1.default.set(exports.GLOBAL_HELPER_TOKEN, globalHelper);
             // Log successful registration for debugging
             console.log('[VIIS-REST-API] Container setup: Core dependencies registered successfully');
-            // Initialize and register DatabaseService
+            // Initialize DatabaseService first (required by other services)
             const databaseService = new database_service_1.DatabaseService(node);
             await databaseService.initialize();
             typedi_1.default.set(database_service_1.DatabaseService, databaseService);
@@ -61,40 +102,81 @@ class ContainerSetup {
                 databaseService,
                 configManager
             };
-            typedi_1.default.set("serviceContext", serviceContext);
-            // Initialize and register AuthService
-            const authService = new auth_service_1.AuthService(databaseService, jwtSecret, node, configManager);
-            await authService.initialize();
-            typedi_1.default.set(auth_service_1.AuthService, authService);
-            // Initialize and register ScheduleLogService
-            const scheduleLogService = new schedule_log_service_1.ScheduleLogService(serviceContext, databaseService);
-            await scheduleLogService.initialize();
-            typedi_1.default.set(schedule_log_service_1.ScheduleLogService, scheduleLogService);
-            // Initialize and register NotificationService
-            const notificationService = new notification_service_1.NotificationService(serviceContext, databaseService);
-            await notificationService.initialize();
-            typedi_1.default.set(notification_service_1.NotificationService, notificationService);
-            // Initialize and register ScheduleActivationService
-            const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService);
-            await scheduleActivationService.initialize();
-            typedi_1.default.set(schedule_activation_service_1.ScheduleActivationService, scheduleActivationService);
-            // Initialize and register ThingsBoardService
-            // Note: ThingsBoardService will be auto-created by TypeDI when needed
-            // since it's decorated with @Service() and can inject serviceContext
-            // Register validators
-            typedi_1.default.set(auth_validator_1.AuthValidator, new auth_validator_1.AuthValidator());
-            typedi_1.default.set(user_validator_1.UserValidator, new user_validator_1.UserValidator());
-            // Register middleware
-            typedi_1.default.set(auth_middleware_1.AuthMiddleware, new auth_middleware_1.AuthMiddleware(authService, node));
-            typedi_1.default.set(validation_middleware_1.ValidationMiddleware, new validation_middleware_1.ValidationMiddleware(node));
-            // Register controllers - TypeDI will handle dependency injection automatically
-            // Note: Controllers will be instantiated by TypeDI when requested via Container.get()
-            // The @Controller decorator and @Inject decorators handle the dependency resolution
+            typedi_1.default.set(exports.SERVICE_CONTEXT_TOKEN, serviceContext);
+            // Register services that need manual initialization
+            // These services will be automatically injected into controllers and other services
+            await this.registerCoreServices(databaseService, jwtSecret, node, configManager, serviceContext);
+            // Register validators (these are stateless and can be singletons)
+            this.registerValidators();
+            // Register middleware (these need specific dependencies)
+            await this.registerMiddleware(node);
+            // Controllers are automatically registered by routing-controllers
+            // They will be instantiated by TypeDI when needed with proper dependency injection
             this.isInitialized = true;
         }
         catch (error) {
             throw new Error(`Failed to initialize container: ${error.message}`);
         }
+    }
+    /**
+     * Register core services with proper dependency injection
+     */
+    static async registerCoreServices(databaseService, jwtSecret, node, configManager, serviceContext) {
+        // Register AuthService with proper dependencies
+        const authService = new auth_service_1.AuthService(databaseService, jwtSecret, node, configManager);
+        await authService.initialize();
+        typedi_1.default.set(auth_service_1.AuthService, authService);
+        // Register ScheduleLogService
+        const scheduleLogService = new schedule_log_service_1.ScheduleLogService(serviceContext, databaseService);
+        await scheduleLogService.initialize();
+        typedi_1.default.set(schedule_log_service_1.ScheduleLogService, scheduleLogService);
+        // Register NotificationService
+        const notificationService = new notification_service_1.NotificationService(serviceContext, databaseService);
+        await notificationService.initialize();
+        typedi_1.default.set(notification_service_1.NotificationService, notificationService);
+        // Register ScheduleActivationService
+        const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService);
+        await scheduleActivationService.initialize();
+        typedi_1.default.set(schedule_activation_service_1.ScheduleActivationService, scheduleActivationService);
+        // Note: ThingsBoardService and DeviceService are decorated with @Service()
+        // They will be automatically instantiated by TypeDI when needed
+    }
+    /**
+     * Register validators (stateless singletons)
+     */
+    static registerValidators() {
+        typedi_1.default.set(auth_validator_1.AuthValidator, new auth_validator_1.AuthValidator());
+        typedi_1.default.set(user_validator_1.UserValidator, new user_validator_1.UserValidator());
+        // DeviceValidator will be auto-registered when needed due to @Service() decorator
+    }
+    /**
+     * Register middleware with specific dependencies
+     */
+    static async registerMiddleware(node) {
+        // AuthMiddleware needs AuthService - get it from container
+        const authService = typedi_1.default.get(auth_service_1.AuthService);
+        typedi_1.default.set(auth_middleware_1.AuthMiddleware, new auth_middleware_1.AuthMiddleware(authService, node));
+        // ValidationMiddleware is simple
+        typedi_1.default.set(validation_middleware_1.ValidationMiddleware, new validation_middleware_1.ValidationMiddleware(node));
+    }
+    /**
+     * Get a service instance from the container
+     * This is the proper way to retrieve services instead of manual Container.get()
+     */
+    static getService(serviceClass) {
+        if (!this.isInitialized) {
+            throw new Error('Container not initialized. Call ContainerSetup.initialize() first.');
+        }
+        return typedi_1.default.get(serviceClass);
+    }
+    /**
+     * Get a service instance by token
+     */
+    static getServiceByToken(token) {
+        if (!this.isInitialized) {
+            throw new Error('Container not initialized. Call ContainerSetup.initialize() first.');
+        }
+        return typedi_1.default.get(token);
     }
     /**
      * Reset container (useful for testing)

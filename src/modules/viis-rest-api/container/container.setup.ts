@@ -1,25 +1,38 @@
 /**
  * @fileoverview TypeDI Container setup for VIIS REST API
+ * Proper dependency injection configuration following TypeDI best practices
  */
 
-import Container from "typedi";
+import Container, { Token } from "typedi";
 import { Node } from "node-red";
 import { DatabaseService } from "../services/database.service";
 import { AuthService } from "../services/auth.service";
 import { ScheduleLogService } from "../services/schedule-log.service";
 import { NotificationService } from "../services/notification.service";
 import { ScheduleActivationService } from "../services/schedule-activation.service";
+import { ThingsBoardService } from "../services/thingsboard.service";
+import { DeviceService } from "../services/device.service";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
 import { HealthController } from "../controllers/health.controller";
+import { DeviceController } from "../controllers/device.controller";
+import { ThingsBoardController } from "../controllers/thingsboard.controller";
 import { AuthValidator } from "../validators/auth.validator";
 import { UserValidator } from "../validators/user.validator";
+import { DeviceValidator } from "../validators/device.validator";
 import { AuthMiddleware } from "../middleware/auth.middleware";
 import { ValidationMiddleware } from "../middleware/validation.middleware";
 import { ApiConfigManager } from "../config/api.config";
 import { BaseService, ServiceContext } from "../services/base.service";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import "reflect-metadata";
+
+// Define tokens for primitive dependencies
+export const NODE_TOKEN = new Token<Node>('node');
+export const JWT_SECRET_TOKEN = new Token<string>('jwtSecret');
+export const CONFIG_MANAGER_TOKEN = new Token<ApiConfigManager>('configManager');
+export const GLOBAL_HELPER_TOKEN = new Token<GlobalContextHelper>('globalHelper');
+export const SERVICE_CONTEXT_TOKEN = new Token<ServiceContext>('serviceContext');
 
 /**
  * Container setup configuration
@@ -32,12 +45,13 @@ export interface ContainerConfig {
 
 /**
  * Setup TypeDI container with all services and dependencies
+ * Following proper dependency injection patterns
  */
 export class ContainerSetup {
     private static isInitialized = false;
 
     /**
-     * Initialize the container with all dependencies
+     * Initialize the container with all dependencies using proper TypeDI patterns
      */
     static async initialize(config: ContainerConfig): Promise<void> {
         if (this.isInitialized) {
@@ -58,19 +72,23 @@ export class ContainerSetup {
                 throw new Error('Invalid configManager provided');
             }
 
-            // Initialize GlobalContextHelper
-            const globalHelper = new GlobalContextHelper(node.context());
+            // Register primitive dependencies using tokens
+            Container.set(NODE_TOKEN, node);
+            Container.set(JWT_SECRET_TOKEN, jwtSecret);
+            Container.set(CONFIG_MANAGER_TOKEN, configManager);
 
-            // Register core instances
-            Container.set("node", node);
-            Container.set("jwtSecret", jwtSecret);
-            Container.set("configManager", configManager);
-            Container.set("globalHelper", globalHelper);
+            // BACKWARD COMPATIBILITY: Also register node with string identifier
+            // This ensures existing controllers using @Inject('node') still work
+            Container.set('node', node);
+
+            // Initialize and register GlobalContextHelper
+            const globalHelper = new GlobalContextHelper(node.context());
+            Container.set(GLOBAL_HELPER_TOKEN, globalHelper);
 
             // Log successful registration for debugging
             console.log('[VIIS-REST-API] Container setup: Core dependencies registered successfully');
 
-            // Initialize and register DatabaseService
+            // Initialize DatabaseService first (required by other services)
             const databaseService = new DatabaseService(node);
             await databaseService.initialize();
             Container.set(DatabaseService, databaseService);
@@ -81,52 +99,105 @@ export class ContainerSetup {
                 databaseService,
                 configManager
             };
-            Container.set("serviceContext", serviceContext);
+            Container.set(SERVICE_CONTEXT_TOKEN, serviceContext);
 
-            // Initialize and register AuthService
-            const authService = new AuthService(databaseService, jwtSecret, node, configManager);
-            await authService.initialize();
-            Container.set(AuthService, authService);
+            // Register services that need manual initialization
+            // These services will be automatically injected into controllers and other services
+            await this.registerCoreServices(databaseService, jwtSecret, node, configManager, serviceContext);
 
-            // Initialize and register ScheduleLogService
-            const scheduleLogService = new ScheduleLogService(serviceContext, databaseService);
-            await scheduleLogService.initialize();
-            Container.set(ScheduleLogService, scheduleLogService);
+            // Register validators (these are stateless and can be singletons)
+            this.registerValidators();
 
-            // Initialize and register NotificationService
-            const notificationService = new NotificationService(serviceContext, databaseService);
-            await notificationService.initialize();
-            Container.set(NotificationService, notificationService);
+            // Register middleware (these need specific dependencies)
+            await this.registerMiddleware(node);
 
-            // Initialize and register ScheduleActivationService
-            const scheduleActivationService = new ScheduleActivationService(
-                serviceContext,
-                scheduleLogService,
-                notificationService
-            );
-            await scheduleActivationService.initialize();
-            Container.set(ScheduleActivationService, scheduleActivationService);
-
-            // Initialize and register ThingsBoardService
-            // Note: ThingsBoardService will be auto-created by TypeDI when needed
-            // since it's decorated with @Service() and can inject serviceContext
-
-            // Register validators
-            Container.set(AuthValidator, new AuthValidator());
-            Container.set(UserValidator, new UserValidator());
-
-            // Register middleware
-            Container.set(AuthMiddleware, new AuthMiddleware(authService, node));
-            Container.set(ValidationMiddleware, new ValidationMiddleware(node));
-
-            // Register controllers - TypeDI will handle dependency injection automatically
-            // Note: Controllers will be instantiated by TypeDI when requested via Container.get()
-            // The @Controller decorator and @Inject decorators handle the dependency resolution
+            // Controllers are automatically registered by routing-controllers
+            // They will be instantiated by TypeDI when needed with proper dependency injection
 
             this.isInitialized = true;
         } catch (error) {
             throw new Error(`Failed to initialize container: ${(error as Error).message}`);
         }
+    }
+
+    /**
+     * Register core services with proper dependency injection
+     */
+    private static async registerCoreServices(
+        databaseService: DatabaseService,
+        jwtSecret: string,
+        node: Node,
+        configManager: ApiConfigManager,
+        serviceContext: ServiceContext
+    ): Promise<void> {
+        // Register AuthService with proper dependencies
+        const authService = new AuthService(databaseService, jwtSecret, node, configManager);
+        await authService.initialize();
+        Container.set(AuthService, authService);
+
+        // Register ScheduleLogService
+        const scheduleLogService = new ScheduleLogService(serviceContext, databaseService);
+        await scheduleLogService.initialize();
+        Container.set(ScheduleLogService, scheduleLogService);
+
+        // Register NotificationService
+        const notificationService = new NotificationService(serviceContext, databaseService);
+        await notificationService.initialize();
+        Container.set(NotificationService, notificationService);
+
+        // Register ScheduleActivationService
+        const scheduleActivationService = new ScheduleActivationService(
+            serviceContext,
+            scheduleLogService,
+            notificationService
+        );
+        await scheduleActivationService.initialize();
+        Container.set(ScheduleActivationService, scheduleActivationService);
+
+        // Note: ThingsBoardService and DeviceService are decorated with @Service()
+        // They will be automatically instantiated by TypeDI when needed
+    }
+
+    /**
+     * Register validators (stateless singletons)
+     */
+    private static registerValidators(): void {
+        Container.set(AuthValidator, new AuthValidator());
+        Container.set(UserValidator, new UserValidator());
+        // DeviceValidator will be auto-registered when needed due to @Service() decorator
+    }
+
+    /**
+     * Register middleware with specific dependencies
+     */
+    private static async registerMiddleware(node: Node): Promise<void> {
+        // AuthMiddleware needs AuthService - get it from container
+        const authService = Container.get(AuthService);
+        Container.set(AuthMiddleware, new AuthMiddleware(authService, node));
+
+        // ValidationMiddleware is simple
+        Container.set(ValidationMiddleware, new ValidationMiddleware(node));
+    }
+
+    /**
+     * Get a service instance from the container
+     * This is the proper way to retrieve services instead of manual Container.get()
+     */
+    static getService<T>(serviceClass: new (...args: any[]) => T): T {
+        if (!this.isInitialized) {
+            throw new Error('Container not initialized. Call ContainerSetup.initialize() first.');
+        }
+        return Container.get(serviceClass);
+    }
+
+    /**
+     * Get a service instance by token
+     */
+    static getServiceByToken<T>(token: Token<T>): T {
+        if (!this.isInitialized) {
+            throw new Error('Container not initialized. Call ContainerSetup.initialize() first.');
+        }
+        return Container.get(token);
     }
 
     /**

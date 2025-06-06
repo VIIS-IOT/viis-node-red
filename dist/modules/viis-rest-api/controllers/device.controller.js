@@ -28,6 +28,7 @@ const routing_controllers_1 = require("routing-controllers");
 const typedi_1 = require("typedi");
 const device_service_1 = require("../services/device.service");
 const logger_1 = require("../utils/logger");
+const container_setup_1 = require("../container/container.setup");
 /**
  * Enhanced Device controller class with comprehensive validation
  *
@@ -60,6 +61,6 @@ exports.DeviceController = DeviceController = __decorate([
     (0, routing_controllers_1.JsonController)('/devices'),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
-    __param(1, (0, typedi_1.Inject)('node')),
+    __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
     __metadata("design:paramtypes", [device_service_1.DeviceService, Object])
 ], DeviceController);

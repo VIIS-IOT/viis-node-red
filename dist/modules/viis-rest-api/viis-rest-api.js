@@ -4,16 +4,12 @@
  * Provides REST API endpoints using Node-RED's built-in Express server
  * with TypeORM database integration
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 const logger_1 = require("./utils/logger");
 const auth_service_1 = require("./services/auth.service");
 const api_routes_1 = require("./routes/api.routes");
 const database_service_1 = require("./services/database.service");
 const container_setup_1 = require("./container/container.setup");
 const api_config_1 = require("./config/api.config");
-const typedi_1 = __importDefault(require("typedi"));
 require("reflect-metadata");
 module.exports = function (RED) {
     /**
@@ -54,10 +50,10 @@ module.exports = function (RED) {
                     configManager
                 });
                 logger_1.logger.info(node, "TypeDI container initialized");
-                // Get services from container
-                databaseService = typedi_1.default.get(database_service_1.DatabaseService);
-                authService = typedi_1.default.get(auth_service_1.AuthService);
-                logger_1.logger.info(node, "Services resolved from container");
+                // Get services using proper dependency injection
+                databaseService = container_setup_1.ContainerSetup.getService(database_service_1.DatabaseService);
+                authService = container_setup_1.ContainerSetup.getService(auth_service_1.AuthService);
+                logger_1.logger.info(node, "Services resolved from container using proper DI");
                 // Initialize and register API routes
                 apiRoutes = new api_routes_1.ApiRoutes(databaseService, authService, node, configManager);
                 await apiRoutes.registerRoutes(RED, configManager.getAll());

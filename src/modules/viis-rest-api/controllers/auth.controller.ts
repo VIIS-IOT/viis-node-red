@@ -18,6 +18,7 @@ import {
 import { Node } from 'node-red';
 import { AuthService } from '../services/auth.service';
 import { logger } from '../utils/logger';
+import { NODE_TOKEN } from '../container/container.setup';
 
 /**
  * Enhanced Authentication controller class with comprehensive validation
@@ -42,7 +43,7 @@ import { logger } from '../utils/logger';
 export class AuthController {
     constructor(
         @Inject() private authService: AuthService,
-        @Inject('node') private node: Node
+        @Inject(NODE_TOKEN) private node: Node
     ) {
         // Validate that node is properly injected
         if (!this.node) {

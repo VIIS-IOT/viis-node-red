@@ -24,6 +24,7 @@ import { Node } from 'node-red';
 import { logger } from '../utils/logger';
 import { ThingsBoardService } from '../services/thingsboard.service';
 import { ScheduleActivationService, UserContext } from '../services/schedule-activation.service';
+import { NODE_TOKEN } from '../container/container.setup';
 import {
     ThingsBoardRpcRequestDto,
     RpcExecutionResultDto,
@@ -60,7 +61,7 @@ export class ThingsBoardController {
     constructor(
         @Inject() private thingsBoardService: ThingsBoardService,
         @Inject() private scheduleActivationService: ScheduleActivationService,
-        @Inject('node') private node: Node
+        @Inject(NODE_TOKEN) private node: Node
     ) {
         // Validate that node is properly injected
         if (!this.node) {
@@ -125,16 +126,7 @@ export class ThingsBoardController {
         @CurrentUser() user: any
     ): Promise<RpcExecutionResultDto> {
         const requestId = this.generateRequestId();
-        return {
-            success: true,
-            deviceId,
-            method: rpcData.method,
-            telemetryRecordsCount: 0,
-            mqttPublished: false,
-            mqttTopic: '',
-            processingTime: 0,
-            requestId
-        };
+
         logger.info(this.node, `Enhanced one-way RPC request for device: ${deviceId}`, {
             method: rpcData.method,
             requestId,

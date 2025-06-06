@@ -42,9 +42,6 @@ require("reflect-metadata");
 const routing_controllers_1 = require("routing-controllers");
 const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
-const auth_service_1 = require("../services/auth.service");
-const database_service_1 = require("../services/database.service");
-const thingsboard_service_1 = require("../services/thingsboard.service");
 const enhanced_validation_middleware_1 = require("../middleware/enhanced-validation.middleware");
 const path = __importStar(require("path"));
 // Fallback imports for manual registration if glob patterns fail
@@ -72,8 +69,6 @@ class RoutingControllersRoutes {
     async setupRoutingControllers(RED) {
         try {
             logger_1.logger.info(this.node, 'Setting up routing-controllers integration...');
-            // Ensure TypeDI container has all required dependencies
-            this.ensureContainerSetup();
             // CRITICAL: Tell routing-controllers to use TypeDI for dependency injection
             (0, routing_controllers_1.useContainer)(typedi_1.Container);
             logger_1.logger.info(this.node, 'Configured routing-controllers to use TypeDI container');
@@ -169,56 +164,6 @@ class RoutingControllersRoutes {
             controllerNames: fallbackControllers.map(ctrl => ctrl.name)
         });
         return fallbackControllers;
-    }
-    /**
-     * Ensure TypeDI container has all required dependencies
-     */
-    ensureContainerSetup() {
-        // Verify all required services are in the container
-        if (!typedi_1.Container.has('node')) {
-            typedi_1.Container.set('node', this.node);
-            logger_1.logger.debug(this.node, 'Node registered in TypeDI container');
-        }
-        else {
-            // Verify the existing node is valid
-            const existingNode = typedi_1.Container.get('node');
-            if (!existingNode || typeof existingNode.log !== 'function') {
-                typedi_1.Container.set('node', this.node);
-                logger_1.logger.debug(this.node, 'Node re-registered in TypeDI container (previous was invalid)');
-            }
-        }
-        if (!typedi_1.Container.has('configManager')) {
-            typedi_1.Container.set('configManager', this.configManager);
-            logger_1.logger.debug(this.node, 'ConfigManager registered in TypeDI container');
-        }
-        if (!typedi_1.Container.has(auth_service_1.AuthService)) {
-            typedi_1.Container.set(auth_service_1.AuthService, this.authService);
-            logger_1.logger.debug(this.node, 'AuthService registered in TypeDI container');
-        }
-        if (!typedi_1.Container.has(database_service_1.DatabaseService)) {
-            typedi_1.Container.set(database_service_1.DatabaseService, this.databaseService);
-            logger_1.logger.debug(this.node, 'DatabaseService registered in TypeDI container');
-        }
-        // Register ServiceContext as a dependency that can be injected
-        const serviceContext = {
-            node: this.node,
-            databaseService: this.databaseService,
-            configManager: this.configManager
-        };
-        typedi_1.Container.set('serviceContext', serviceContext);
-        logger_1.logger.debug(this.node, 'ServiceContext registered in TypeDI container');
-        // ThingsBoard service will be auto-created by TypeDI since it's decorated with @Service()
-        // Now it can inject ServiceContext automatically
-        if (!typedi_1.Container.has(thingsboard_service_1.ThingsBoardService)) {
-            const thingsBoardService = new thingsboard_service_1.ThingsBoardService(serviceContext);
-            // Initialize service asynchronously
-            thingsBoardService.initialize().catch(error => {
-                logger_1.logger.error(this.node, 'Failed to initialize ThingsBoardService', { error: error.message });
-            });
-            typedi_1.Container.set(thingsboard_service_1.ThingsBoardService, thingsBoardService);
-            logger_1.logger.debug(this.node, 'ThingsBoardService registered in TypeDI container');
-        }
-        logger_1.logger.debug(this.node, 'TypeDI container setup verified and all dependencies registered');
     }
     /**
      * Create authorization checker for routing-controllers
