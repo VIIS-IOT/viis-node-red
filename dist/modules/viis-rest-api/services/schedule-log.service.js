@@ -154,6 +154,136 @@ let ScheduleLogService = class ScheduleLogService extends base_service_1.BaseSer
         }, { scheduleId });
     }
     /**
+     * Get schedule logs with telemetry data
+     * Main endpoint for listing schedule logs with telemetry integration
+     */
+    async getScheduleLogsWithTelemetry(queryParams, userId) {
+        return this.executeOperation('getScheduleLogsWithTelemetry', async () => {
+            var _a;
+            this.logInfo('Getting schedule logs with telemetry', {
+                requestedBy: userId,
+                filters: queryParams
+            });
+            try {
+                const page = queryParams.page || 1;
+                const size = Math.min(queryParams.size || 100, 100);
+                const skip = (page - 1) * size;
+                const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+                const telemetryRepo = this.databaseService.getDeviceTelemetryRepository();
+                // Get schedule logs first
+                let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
+                    .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
+                    .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser');
+                // Apply filters similar to the main endpoint
+                if (queryParams.filters) {
+                    try {
+                        const parsedFilters = JSON.parse(queryParams.filters);
+                        qb = (0, query_filters_util_1.applyQueryFilters)(qb, parsedFilters, 'iot_schedule_log');
+                    }
+                    catch (parseError) {
+                        this.logError('Failed to parse filters', parseError, { filters: queryParams.filters });
+                        throw new common_types_1.ApiError(common_types_1.ErrorType.VALIDATION_ERROR, 'Invalid filters format', 400);
+                    }
+                }
+                // Apply time range filters
+                if (queryParams.start_date) {
+                    qb.andWhere('DATE(iot_schedule_log.start_time) >= :start_date', { start_date: queryParams.start_date });
+                }
+                if (queryParams.end_date) {
+                    qb.andWhere('DATE(iot_schedule_log.end_time) <= :end_date', { end_date: queryParams.end_date });
+                }
+                const total = await qb.getCount();
+                const scheduleLogs = await qb.skip(skip).take(size).getMany();
+                this.logInfo('Schedule logs retrieved successfully', {
+                    requestedBy: userId,
+                    total,
+                    returned: scheduleLogs.length,
+                    page,
+                    size
+                });
+                // For each schedule log, get associated telemetry data
+                const enrichedData = [];
+                for (const log of scheduleLogs) {
+                    const enrichedLog = {
+                        name: log.name,
+                        start_time: log.start_time,
+                        end_time: log.end_time,
+                        schedule_id: log.schedule_id,
+                        customer_user: log.customer_user,
+                        schedule: log.schedule ? {
+                            name: log.schedule.name,
+                            device_id: log.schedule.device_id,
+                            label: log.schedule.label,
+                            action: log.schedule.action,
+                            enable: log.schedule.enable
+                        } : undefined,
+                        telemetry: []
+                    };
+                    // Get telemetry data for the device within the schedule time range
+                    if (((_a = log.schedule) === null || _a === void 0 ? void 0 : _a.device_id) && log.start_time && log.end_time) {
+                        try {
+                            const telemetryData = await telemetryRepo.createQueryBuilder('telemetry')
+                                .where('telemetry.device_id = :device_id', { device_id: log.schedule.device_id })
+                                .andWhere('telemetry.timestamp >= :start_time', { start_time: log.start_time })
+                                .andWhere('telemetry.timestamp <= :end_time', { end_time: log.end_time })
+                                .orderBy('telemetry.timestamp', 'ASC')
+                                .getMany();
+                            enrichedLog.telemetry = telemetryData.map(t => ({
+                                device_id: t.device_id,
+                                timestamp: new Date(t.timestamp), // Convert number to Date
+                                data: {
+                                    key_name: t.key_name,
+                                    value_type: t.value_type,
+                                    int_value: t.int_value,
+                                    float_value: t.float_value,
+                                    string_value: t.string_value,
+                                    boolean_value: t.boolean_value,
+                                    json_value: t.json_value
+                                },
+                                id: t.id,
+                                key_name: t.key_name,
+                                value_type: t.value_type,
+                                int_value: t.int_value,
+                                float_value: t.float_value,
+                                string_value: t.string_value,
+                                boolean_value: t.boolean_value,
+                                json_value: t.json_value
+                            }));
+                        }
+                        catch (telemetryError) {
+                            this.logWarn('Failed to fetch telemetry data', {
+                                device_id: log.schedule.device_id,
+                                error: telemetryError
+                            });
+                        }
+                    }
+                    enrichedData.push(enrichedLog);
+                }
+                this.logInfo('Schedule logs with telemetry retrieved successfully', {
+                    requestedBy: userId,
+                    total,
+                    returned: enrichedData.length,
+                    page,
+                    size
+                });
+                return {
+                    data: enrichedData,
+                    page,
+                    size,
+                    total,
+                    totalPages: Math.ceil(total / size)
+                };
+            }
+            catch (error) {
+                this.logError('Error retrieving schedule logs with telemetry', error);
+                if (error instanceof common_types_1.ApiError) {
+                    throw error;
+                }
+                throw new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to retrieve schedule logs with telemetry: ${error.message}`, 500);
+            }
+        }, { userId, filters: queryParams });
+    }
+    /**
      * Get detailed schedule logs with comprehensive data
      * Supports filtering, pagination, and includes telemetry data, notifications, etc.
      */

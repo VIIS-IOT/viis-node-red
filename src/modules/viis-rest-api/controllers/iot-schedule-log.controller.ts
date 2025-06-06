@@ -11,13 +11,11 @@ import {
     IotScheduleLogQueryDto,
     CreateIotScheduleLogDto,
     UpdateIotScheduleLogDto,
-    ScheduleLogWithTelemetryDto,
     ScheduleLogDetailResponse
 } from '../dto/iot-schedule-log.dto';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
 import { NODE_TOKEN } from '../container/container.setup';
-import { applyQueryFilters, FilterTuple } from '../utils/query-filters.util';
 
 /**
  * IoT Schedule Log management controller class
@@ -188,7 +186,7 @@ export class IotScheduleLogController {
 
     /**
      * Get schedule logs with telemetry data for a specific time range
-     * GET /api/v2/scheduleLog/with-telemetry
+     * GET /api/v2/scheduleLog
      */
     @Get('/')
     @Authorized()
@@ -202,130 +200,7 @@ export class IotScheduleLogController {
         });
 
         try {
-            const page = queryParams.page || 1;
-            const size = Math.min(queryParams.size || 100, 100);
-            const skip = (page - 1) * size;
-
-            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
-            const telemetryRepo = this.databaseService.getDeviceTelemetryRepository();
-
-            // Get schedule logs first
-            let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
-                .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
-                .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser');
-
-            // Apply filters similar to the main endpoint
-            if (queryParams.filters) {
-                try {
-                    const parsedFilters: FilterTuple[] = JSON.parse(queryParams.filters);
-                    qb = applyQueryFilters(qb, parsedFilters, 'iot_schedule_log');
-                } catch (parseError) {
-                    logger.error(this.node, 'Failed to parse filters:', { filters: queryParams.filters, error: parseError });
-                    throw new Error('Invalid filters format');
-                }
-            }
-
-            // Apply time range filters
-            if (queryParams.start_date) {
-                qb.andWhere('DATE(iot_schedule_log.start_time) >= :start_date', { start_date: queryParams.start_date });
-            }
-
-            if (queryParams.end_date) {
-                qb.andWhere('DATE(iot_schedule_log.end_time) <= :end_date', { end_date: queryParams.end_date });
-            }
-            //debug
-            logger.info(this.node, 'Querying schedule logs with telemetry', {
-                requestedBy: user?.user_id,
-                filters: queryParams
-            });
-            const total = await qb.getCount();
-            const scheduleLogs = await qb.skip(skip).take(size).getMany();
-            //debug
-            logger.info(this.node, 'Schedule logs retrieved successfully', {
-                requestedBy: user?.user_id,
-                total,
-                returned: scheduleLogs.length,
-                page,
-                size
-            });
-
-            // For each schedule log, get associated telemetry data
-            const enrichedData: ScheduleLogWithTelemetryDto[] = [];
-
-            for (const log of scheduleLogs) {
-                const enrichedLog: ScheduleLogWithTelemetryDto = {
-                    name: log.name,
-                    start_time: log.start_time,
-                    end_time: log.end_time,
-                    schedule_id: log.schedule_id,
-                    customer_user: log.customer_user,
-                    schedule: log.schedule ? {
-                        name: log.schedule.name,
-                        device_id: log.schedule.device_id,
-                        label: log.schedule.label,
-                        action: log.schedule.action,
-                        enable: log.schedule.enable
-                    } : undefined,
-                    telemetry: []
-                };
-
-                // Get telemetry data for the device within the schedule time range
-                if (log.schedule?.device_id && log.start_time && log.end_time) {
-                    try {
-                        const telemetryData = await telemetryRepo.createQueryBuilder('telemetry')
-                            .where('telemetry.device_id = :device_id', { device_id: log.schedule.device_id })
-                            .andWhere('telemetry.timestamp >= :start_time', { start_time: log.start_time })
-                            .andWhere('telemetry.timestamp <= :end_time', { end_time: log.end_time })
-                            .orderBy('telemetry.timestamp', 'ASC')
-                            .getMany();
-
-                        enrichedLog.telemetry = telemetryData.map(t => ({
-                            device_id: t.device_id,
-                            timestamp: new Date(t.timestamp), // Convert number to Date
-                            data: {
-                                key_name: t.key_name,
-                                value_type: t.value_type,
-                                int_value: t.int_value,
-                                float_value: t.float_value,
-                                string_value: t.string_value,
-                                boolean_value: t.boolean_value,
-                                json_value: t.json_value
-                            },
-                            id: t.id,
-                            key_name: t.key_name,
-                            value_type: t.value_type,
-                            int_value: t.int_value,
-                            float_value: t.float_value,
-                            string_value: t.string_value,
-                            boolean_value: t.boolean_value,
-                            json_value: t.json_value
-                        }));
-                    } catch (telemetryError) {
-                        logger.warn(this.node, 'Failed to fetch telemetry data', {
-                            device_id: log.schedule.device_id,
-                            error: telemetryError
-                        });
-                    }
-                }
-
-                enrichedData.push(enrichedLog);
-            }
-
-            logger.info(this.node, 'Schedule logs with telemetry retrieved successfully', {
-                requestedBy: user?.user_id,
-                total,
-                returned: enrichedData.length,
-                page,
-                size
-            });
-
-            return {
-                data: enrichedData,
-                page,
-                size,
-                total,
-                totalPages: Math.ceil(total / size)
-            };
+            return await this.scheduleLogService.getScheduleLogsWithTelemetry(queryParams, user?.user_id);
         } catch (error: any) {
             logger.error(this.node, 'Error retrieving schedule logs with telemetry:', error);
             throw error;
