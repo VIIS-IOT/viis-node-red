@@ -13,8 +13,8 @@ const TEST_SCHEDULE_ID = '2653d364dbe67632';
 
 // Test credentials (adjust as needed)
 const TEST_USER = {
-    username: 'admin',
-    password: 'admin123'
+    usr: 'admin',
+    pwd: 'admin123'
 };
 
 let authToken = null;
@@ -70,7 +70,7 @@ async function authenticate() {
  */
 async function testHealthEndpoints() {
     console.log('\n📊 Testing health endpoints...');
-    
+
     try {
         // Test ThingsBoard service health
         const thingsBoardHealth = await apiRequest('GET', '/thingsboard/health');
@@ -92,7 +92,7 @@ async function testHealthEndpoints() {
  */
 async function testScheduleActivation() {
     console.log('\n🚀 Testing schedule activation...');
-    
+
     const rpcPayload = {
         method: 'set_state',
         params: {
@@ -112,7 +112,7 @@ async function testScheduleActivation() {
         console.log('   - Method:', response.method);
         console.log('   - MQTT Published:', response.mqttPublished);
         console.log('   - Processing Time:', response.processingTime, 'ms');
-        
+
         return true;
     } catch (error) {
         console.log('❌ Schedule activation failed:', error.message);
@@ -125,14 +125,14 @@ async function testScheduleActivation() {
  */
 async function testMonitoringStatus() {
     console.log('\n📈 Testing monitoring status...');
-    
+
     try {
         const status = await apiRequest('GET', '/schedule-monitor/status');
         console.log('✅ Monitoring status retrieved');
         console.log('   - Is Monitoring:', status.isMonitoring);
         console.log('   - Active Schedules Count:', status.activeSchedulesCount);
         console.log('   - Monitoring Interval:', status.monitoringIntervalMs, 'ms');
-        
+
         return status;
     } catch (error) {
         console.log('❌ Failed to get monitoring status:', error.message);
@@ -145,13 +145,13 @@ async function testMonitoringStatus() {
  */
 async function testActiveSchedules() {
     console.log('\n📋 Testing active schedules...');
-    
+
     try {
         const activeSchedules = await apiRequest('GET', '/schedule-monitor/active-schedules');
         console.log('✅ Active schedules retrieved');
         console.log('   - Total Count:', activeSchedules.totalCount);
         console.log('   - Is Monitoring:', activeSchedules.monitoringStatus.isMonitoring);
-        
+
         if (activeSchedules.activeSchedules.length > 0) {
             console.log('   - Active Schedules:');
             activeSchedules.activeSchedules.forEach((schedule, index) => {
@@ -161,7 +161,7 @@ async function testActiveSchedules() {
                 console.log(`        Customer User: ${schedule.customerUser}`);
             });
         }
-        
+
         return activeSchedules;
     } catch (error) {
         console.log('❌ Failed to get active schedules:', error.message);
@@ -174,7 +174,7 @@ async function testActiveSchedules() {
  */
 async function testScheduleDetails(scheduleId) {
     console.log(`\n🔍 Testing schedule details for: ${scheduleId}...`);
-    
+
     try {
         const scheduleDetails = await apiRequest('GET', `/schedule-monitor/active-schedules/${scheduleId}`);
         console.log('✅ Schedule details retrieved');
@@ -182,7 +182,7 @@ async function testScheduleDetails(scheduleId) {
         console.log('   - Device ID:', scheduleDetails.schedule.deviceId);
         console.log('   - Start Time:', scheduleDetails.schedule.startTime);
         console.log('   - Last COIL_AUTO_TRON Value:', scheduleDetails.schedule.lastCoilAutoTronValue);
-        
+
         return scheduleDetails;
     } catch (error) {
         console.log('❌ Failed to get schedule details:', error.message);
@@ -195,7 +195,7 @@ async function testScheduleDetails(scheduleId) {
  */
 async function simulateScheduleCompletion() {
     console.log('\n🏁 Simulating schedule completion...');
-    
+
     const rpcPayload = {
         method: 'set_state',
         params: {
@@ -210,7 +210,7 @@ async function simulateScheduleCompletion() {
         console.log('✅ Schedule completion simulation sent');
         console.log('   - COIL_AUTO_TRON set to 0');
         console.log('   - MQTT Published:', response.mqttPublished);
-        
+
         return true;
     } catch (error) {
         console.log('❌ Schedule completion simulation failed:', error.message);
@@ -271,7 +271,7 @@ async function runTests() {
     // Step 9: Simulate schedule completion
     console.log('\n⏳ Waiting 5 seconds before simulating completion...');
     await wait(5000);
-    
+
     await simulateScheduleCompletion();
 
     // Step 10: Wait for completion processing

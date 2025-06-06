@@ -48,7 +48,7 @@ export class ScheduleMonitorController {
         @Inject(NODE_TOKEN) private node: Node,
         private scheduleCompletionMonitor: ScheduleCompletionMonitorService,
         private scheduleActivationService: ScheduleActivationService
-    ) {}
+    ) { }
 
     /**
      * Get monitoring status
@@ -65,9 +65,9 @@ export class ScheduleMonitorController {
 
             const response: MonitoringStatusResponse = {
                 success: true,
-                isMonitoring: healthInfo.isMonitoring,
+                isMonitoring: healthInfo.details?.isMonitoring || false,
                 activeSchedulesCount: activeSchedules.size,
-                monitoringIntervalMs: healthInfo.monitoringIntervalMs,
+                monitoringIntervalMs: healthInfo.details?.monitoringIntervalMs || 5000,
                 serviceHealth: healthInfo
             };
 
@@ -109,8 +109,8 @@ export class ScheduleMonitorController {
                 activeSchedules,
                 totalCount: activeSchedules.length,
                 monitoringStatus: {
-                    isMonitoring: healthInfo.isMonitoring,
-                    monitoringIntervalMs: healthInfo.monitoringIntervalMs
+                    isMonitoring: healthInfo.details?.isMonitoring || false,
+                    monitoringIntervalMs: healthInfo.details?.monitoringIntervalMs || 5000
                 }
             };
 
@@ -150,7 +150,7 @@ export class ScheduleMonitorController {
 
             if (!scheduleInfo) {
                 throw new ApiError(
-                    ErrorType.NOT_FOUND,
+                    ErrorType.NOT_FOUND_ERROR,
                     `Active schedule not found: ${scheduleId}`,
                     404
                 );
@@ -206,7 +206,7 @@ export class ScheduleMonitorController {
 
             if (!scheduleInfo) {
                 throw new ApiError(
-                    ErrorType.NOT_FOUND,
+                    ErrorType.NOT_FOUND_ERROR,
                     `Active schedule not found: ${scheduleId}`,
                     404
                 );

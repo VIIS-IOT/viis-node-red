@@ -40,15 +40,16 @@ let ScheduleMonitorController = class ScheduleMonitorController {
      * GET /api/v2/schedule-monitor/status
      */
     async getMonitoringStatus() {
+        var _a, _b;
         logger_1.logger.info(this.node, 'Schedule monitoring status requested');
         try {
             const healthInfo = await this.scheduleCompletionMonitor.healthCheck();
             const activeSchedules = this.scheduleCompletionMonitor.getActiveSchedules();
             const response = {
                 success: true,
-                isMonitoring: healthInfo.isMonitoring,
+                isMonitoring: ((_a = healthInfo.details) === null || _a === void 0 ? void 0 : _a.isMonitoring) || false,
                 activeSchedulesCount: activeSchedules.size,
-                monitoringIntervalMs: healthInfo.monitoringIntervalMs,
+                monitoringIntervalMs: ((_b = healthInfo.details) === null || _b === void 0 ? void 0 : _b.monitoringIntervalMs) || 5000,
                 serviceHealth: healthInfo
             };
             logger_1.logger.info(this.node, 'Schedule monitoring status retrieved', {
@@ -69,6 +70,7 @@ let ScheduleMonitorController = class ScheduleMonitorController {
      * GET /api/v2/schedule-monitor/active-schedules
      */
     async getActiveSchedules() {
+        var _a, _b;
         logger_1.logger.info(this.node, 'Active schedules requested');
         try {
             const activeSchedulesMap = this.scheduleCompletionMonitor.getActiveSchedules();
@@ -79,8 +81,8 @@ let ScheduleMonitorController = class ScheduleMonitorController {
                 activeSchedules,
                 totalCount: activeSchedules.length,
                 monitoringStatus: {
-                    isMonitoring: healthInfo.isMonitoring,
-                    monitoringIntervalMs: healthInfo.monitoringIntervalMs
+                    isMonitoring: ((_a = healthInfo.details) === null || _a === void 0 ? void 0 : _a.isMonitoring) || false,
+                    monitoringIntervalMs: ((_b = healthInfo.details) === null || _b === void 0 ? void 0 : _b.monitoringIntervalMs) || 5000
                 }
             };
             logger_1.logger.info(this.node, 'Active schedules retrieved', {
@@ -107,7 +109,7 @@ let ScheduleMonitorController = class ScheduleMonitorController {
             const activeSchedulesMap = this.scheduleCompletionMonitor.getActiveSchedules();
             const scheduleInfo = activeSchedulesMap.get(scheduleId);
             if (!scheduleInfo) {
-                throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND, `Active schedule not found: ${scheduleId}`, 404);
+                throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND_ERROR, `Active schedule not found: ${scheduleId}`, 404);
             }
             logger_1.logger.info(this.node, 'Active schedule details retrieved', {
                 scheduleId,
@@ -143,7 +145,7 @@ let ScheduleMonitorController = class ScheduleMonitorController {
             const activeSchedulesMap = this.scheduleCompletionMonitor.getActiveSchedules();
             const scheduleInfo = activeSchedulesMap.get(scheduleId);
             if (!scheduleInfo) {
-                throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND, `Active schedule not found: ${scheduleId}`, 404);
+                throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND_ERROR, `Active schedule not found: ${scheduleId}`, 404);
             }
             this.scheduleCompletionMonitor.removeActiveSchedule(scheduleId);
             logger_1.logger.info(this.node, 'Active schedule removed from monitoring', {

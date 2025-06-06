@@ -53,7 +53,7 @@ export class ScheduleCompletionMonitorService extends BaseService {
 
     constructor(
         context: ServiceContext,
-        private databaseService: DatabaseService,
+        protected databaseService: DatabaseService,
         private notificationService: NotificationService
     ) {
         super(context, 'ScheduleCompletionMonitorService');
@@ -89,11 +89,11 @@ export class ScheduleCompletionMonitorService extends BaseService {
     }
 
     /**
-     * Cleanup when service is destroyed
+     * Override cleanup method to stop monitoring
      */
-    protected async onDestroy(): Promise<void> {
+    protected async onCleanup(): Promise<void> {
         this.stopMonitoring();
-        await super.onDestroy();
+        await super.onCleanup();
     }
 
     /**
@@ -151,7 +151,7 @@ export class ScheduleCompletionMonitorService extends BaseService {
                     const activeInfo: ActiveScheduleInfo = {
                         scheduleId: schedule.name,
                         deviceId: schedule.device_id || '',
-                        startTime: recentLog.created || new Date(),
+                        startTime: new Date(), // Use current time as fallback
                         customerUser: recentLog.customer_user || '',
                         customerId: '', // Will be populated from user context when needed
                         lastCoilAutoTronValue: 1 // Assume it was 1 when started
@@ -182,11 +182,12 @@ export class ScheduleCompletionMonitorService extends BaseService {
         try {
             // Get current coil register data from global context
             // This data is stored by the telemetry polling service
-            const coilRegisterData = this.node.context().global.get('coilRegisterData') || {};
+            const coilRegisterData: any = this.node.context().global.get('coilRegisterData') || {};
             const currentCoilAutoTron = coilRegisterData.COIL_AUTO_TRON;
 
             // Check each active schedule
-            for (const [scheduleId, activeInfo] of this.activeSchedules.entries()) {
+            const scheduleEntries = Array.from(this.activeSchedules.entries());
+            for (const [scheduleId, activeInfo] of scheduleEntries) {
                 await this.checkScheduleCompletion(scheduleId, activeInfo, currentCoilAutoTron);
             }
 

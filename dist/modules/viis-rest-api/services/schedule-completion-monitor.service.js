@@ -57,11 +57,11 @@ let ScheduleCompletionMonitorService = class ScheduleCompletionMonitorService ex
         }
     }
     /**
-     * Cleanup when service is destroyed
+     * Override cleanup method to stop monitoring
      */
-    async onDestroy() {
+    async onCleanup() {
         this.stopMonitoring();
-        await super.onDestroy();
+        await super.onCleanup();
     }
     /**
      * Start monitoring COIL_AUTO_TRON status changes
@@ -112,7 +112,7 @@ let ScheduleCompletionMonitorService = class ScheduleCompletionMonitorService ex
                     const activeInfo = {
                         scheduleId: schedule.name,
                         deviceId: schedule.device_id || '',
-                        startTime: recentLog.created || new Date(),
+                        startTime: new Date(), // Use current time as fallback
                         customerUser: recentLog.customer_user || '',
                         customerId: '', // Will be populated from user context when needed
                         lastCoilAutoTronValue: 1 // Assume it was 1 when started
@@ -142,7 +142,8 @@ let ScheduleCompletionMonitorService = class ScheduleCompletionMonitorService ex
             const coilRegisterData = this.node.context().global.get('coilRegisterData') || {};
             const currentCoilAutoTron = coilRegisterData.COIL_AUTO_TRON;
             // Check each active schedule
-            for (const [scheduleId, activeInfo] of this.activeSchedules.entries()) {
+            const scheduleEntries = Array.from(this.activeSchedules.entries());
+            for (const [scheduleId, activeInfo] of scheduleEntries) {
                 await this.checkScheduleCompletion(scheduleId, activeInfo, currentCoilAutoTron);
             }
         }
