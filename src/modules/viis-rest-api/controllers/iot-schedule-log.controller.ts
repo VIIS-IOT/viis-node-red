@@ -6,11 +6,13 @@ import 'reflect-metadata';
 import { JsonController, Get, Post, Put, Delete, Param, QueryParams, Body, Authorized, CurrentUser } from 'routing-controllers';
 import { Service, Inject } from 'typedi';
 import { DatabaseService } from '../services/database.service';
+import { ScheduleLogService } from '../services/schedule-log.service';
 import {
     IotScheduleLogQueryDto,
     CreateIotScheduleLogDto,
     UpdateIotScheduleLogDto,
-    ScheduleLogWithTelemetryDto
+    ScheduleLogWithTelemetryDto,
+    ScheduleLogDetailResponse
 } from '../dto/iot-schedule-log.dto';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
@@ -33,6 +35,7 @@ import { applyQueryFilters, FilterTuple } from '../utils/query-filters.util';
 export class IotScheduleLogController {
     constructor(
         @Inject() private databaseService: DatabaseService,
+        @Inject() private scheduleLogService: ScheduleLogService,
         @Inject(NODE_TOKEN) private node: Node
     ) {
         logger.info(this.node, 'IotScheduleLogController initialized');
@@ -328,6 +331,34 @@ export class IotScheduleLogController {
             throw error;
         }
     }
+
+    /**
+     * Get detailed schedule logs with comprehensive data
+     * GET /api/v2/scheduleLog/detail
+     *
+     * Supports the exact API format:
+     * ?page=1&size=1&filters=[["iot_schedule", "device_id", "like", "acc8cad0-3136-11ef-a8ea-8f79bc1b1c88"],["iot_schedule_log", "start_time", ">=", "2024-11-15 00:05:00"],["iot_schedule_log", "end_time", "<=", "2025-11-15 13:08:00"]]&order_by=tabiot_schedule_plan.label ASC
+     */
+    @Get('/detail')
+    @Authorized()
+    async getScheduleLogDetail(
+        @QueryParams() queryParams: IotScheduleLogQueryDto,
+        @CurrentUser() user: any
+    ): Promise<ScheduleLogDetailResponse> {
+        logger.info(this.node, 'Get schedule log detail request', {
+            requestedBy: user?.user_id,
+            filters: queryParams
+        });
+
+        try {
+            return await this.scheduleLogService.getScheduleLogDetail(queryParams, user?.user_id);
+        } catch (error: any) {
+            logger.error(this.node, 'Error retrieving schedule log detail:', error);
+            throw error;
+        }
+    }
+
+
 
     /**
      * Get a specific IoT schedule log by name

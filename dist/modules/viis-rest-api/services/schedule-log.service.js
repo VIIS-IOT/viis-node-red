@@ -16,15 +16,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleLogService = void 0;
 const typedi_1 = require("typedi");
 const base_service_1 = require("./base.service");
-const database_service_1 = require("./database.service");
 const TabiotSchedule_1 = require("../../../orm/entities/schedule/TabiotSchedule");
 const common_types_1 = require("../types/common.types");
+const query_filters_util_1 = require("../utils/query-filters.util");
 /**
  * Schedule Log service class
  * Handles schedule log creation and management operations
  */
 let ScheduleLogService = class ScheduleLogService extends base_service_1.BaseService {
-    constructor(context, databaseService) {
+    constructor(context) {
         super(context, 'ScheduleLogService');
     }
     /**
@@ -154,6 +154,131 @@ let ScheduleLogService = class ScheduleLogService extends base_service_1.BaseSer
         }, { scheduleId });
     }
     /**
+     * Get detailed schedule logs with comprehensive data
+     * Supports filtering, pagination, and includes telemetry data, notifications, etc.
+     */
+    async getScheduleLogDetail(queryParams, userId) {
+        return this.executeOperation('getScheduleLogDetail', async () => {
+            var _a, _b;
+            this.logInfo('Getting schedule log detail', {
+                requestedBy: userId,
+                filters: queryParams
+            });
+            try {
+                const page = queryParams.page || 1;
+                const size = Math.min(queryParams.size || 100, 100);
+                const skip = (page - 1) * size;
+                const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+                const telemetryRepo = this.databaseService.getDeviceTelemetryRepository();
+                const notificationRepo = this.databaseService.getNotificationRepository();
+                // Build complex query with all necessary joins
+                let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
+                    .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
+                    .leftJoinAndSelect('iot_schedule.schedulePlan', 'tabiot_schedule_plan')
+                    .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser');
+                // Apply dynamic filters if provided
+                if (queryParams.filters) {
+                    try {
+                        const parsedFilters = JSON.parse(queryParams.filters);
+                        qb = (0, query_filters_util_1.applyQueryFilters)(qb, parsedFilters, 'iot_schedule_log');
+                    }
+                    catch (parseError) {
+                        this.logError('Failed to parse filters', parseError, { filters: queryParams.filters });
+                        throw new common_types_1.ApiError(common_types_1.ErrorType.VALIDATION_ERROR, 'Invalid filters format', 400);
+                    }
+                }
+                // Apply ordering - support complex ordering like "tabiot_schedule_plan.label ASC"
+                if (queryParams.order_by) {
+                    const orderParts = queryParams.order_by.trim().split(' ');
+                    const field = orderParts[0];
+                    const direction = ((_a = orderParts[1]) === null || _a === void 0 ? void 0 : _a.toUpperCase()) === 'DESC' ? 'DESC' : 'ASC';
+                    // Handle complex field paths
+                    if (field.includes('.')) {
+                        qb.orderBy(field, direction);
+                    }
+                    else {
+                        qb.orderBy(`iot_schedule_log.${field}`, direction);
+                    }
+                }
+                else {
+                    qb.orderBy('iot_schedule_log.creation', 'DESC');
+                }
+                // Get total count and data
+                const total = await qb.getCount();
+                const scheduleLogs = await qb.skip(skip).take(size).getMany();
+                this.logInfo('Schedule logs retrieved for detail processing', {
+                    requestedBy: userId,
+                    total,
+                    returned: scheduleLogs.length,
+                    page,
+                    size
+                });
+                // Transform data to the required format
+                const scheduleData = [];
+                for (const log of scheduleLogs) {
+                    if (!((_b = log.schedule) === null || _b === void 0 ? void 0 : _b.schedulePlan)) {
+                        continue; // Skip logs without proper schedule plan data
+                    }
+                    const schedulePlan = log.schedule.schedulePlan;
+                    const schedule = log.schedule;
+                    // Format dates and times
+                    const startTimeUnix = this.formatToUnixTime(log.start_time, schedulePlan.start_date);
+                    const endTimeUnix = this.formatToUnixTime(log.end_time, schedulePlan.end_date);
+                    // Get notifications for this schedule/device
+                    const notifications = await this.getNotificationsForSchedule(notificationRepo, schedule.device_id, log.start_time, log.end_time);
+                    // Get telemetry data grouped by key
+                    const dataByKey = await this.getTelemetryDataByKey(telemetryRepo, schedule.device_id, startTimeUnix, endTimeUnix);
+                    const schedulePlanData = {
+                        name: schedulePlan.name || '',
+                        schedule_id: log.schedule_id || '',
+                        label: schedulePlan.label || '',
+                        device_id: schedule.device_id || '',
+                        start_date: schedulePlan.start_date || '',
+                        end_date: schedulePlan.end_date || '',
+                        start_time: log.start_time || '',
+                        end_time: log.end_time || '',
+                        start_time_unix: startTimeUnix,
+                        end_time_unix: endTimeUnix,
+                        log_creation: this.formatDateTime(log.creation),
+                        log_modified: this.formatDateTime(log.modified),
+                        notifications: notifications.filter((n) => n.severity !== 'error' && n.severity !== 'warning'),
+                        errors: notifications.filter((n) => n.severity === 'error'),
+                        warnings: notifications.filter((n) => n.severity === 'warning'),
+                        data_by_key: dataByKey
+                    };
+                    scheduleData.push(schedulePlanData);
+                }
+                const response = {
+                    result: {
+                        data: scheduleData,
+                        pagination: {
+                            totalElements: total,
+                            totalPages: Math.ceil(total / size),
+                            pageSize: size,
+                            pageNumber: page,
+                            order_by: queryParams.order_by || 'iot_schedule_log.creation DESC'
+                        }
+                    }
+                };
+                this.logInfo('Schedule log detail retrieved successfully', {
+                    requestedBy: userId,
+                    total,
+                    returned: scheduleData.length,
+                    page,
+                    size
+                });
+                return response;
+            }
+            catch (error) {
+                this.logError('Error retrieving schedule log detail', error);
+                if (error instanceof common_types_1.ApiError) {
+                    throw error;
+                }
+                throw new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to retrieve schedule log detail: ${error.message}`, 500);
+            }
+        }, { userId, filters: queryParams });
+    }
+    /**
      * Generate unique name for schedule log
      */
     generateScheduleLogName(scheduleId) {
@@ -166,6 +291,121 @@ let ScheduleLogService = class ScheduleLogService extends base_service_1.BaseSer
      */
     formatTimeForDatabase(date) {
         return date.toISOString().slice(11, 19); // Extract HH:MM:SS from ISO string
+    }
+    /**
+     * Format time to Unix timestamp string
+     */
+    formatToUnixTime(time, date) {
+        if (!time || !date) {
+            return new Date().toISOString();
+        }
+        try {
+            // Combine date and time
+            const dateTimeString = `${date}T${time}`;
+            const dateTime = new Date(dateTimeString);
+            return dateTime.toISOString();
+        }
+        catch (error) {
+            this.logWarn('Failed to format time to Unix', { time, date, error });
+            return new Date().toISOString();
+        }
+    }
+    /**
+     * Format date to string format
+     */
+    formatDateTime(date) {
+        if (!date) {
+            return '';
+        }
+        try {
+            const dateObj = typeof date === 'string' ? new Date(date) : date;
+            return dateObj.toISOString().slice(0, 19).replace('T', ' ');
+        }
+        catch (error) {
+            this.logWarn('Failed to format date time', { date, error });
+            return '';
+        }
+    }
+    /**
+     * Get notifications for a specific schedule/device within time range
+     */
+    async getNotificationsForSchedule(notificationRepo, deviceId, startTime, endTime) {
+        try {
+            if (!deviceId || !startTime || !endTime) {
+                return [];
+            }
+            const notifications = await notificationRepo.createQueryBuilder('notification')
+                .where('notification.device_id = :deviceId', { deviceId })
+                .andWhere('notification.created_at >= :startTime', { startTime })
+                .andWhere('notification.created_at <= :endTime', { endTime })
+                .orderBy('notification.created_at', 'DESC')
+                .getMany();
+            return notifications.map((n) => ({
+                name: n.id || n.name || '',
+                message: n.message || '',
+                severity: n.severity || 'notification',
+                created_at: this.formatDateTime(n.created_at),
+                type: n.type || 'device'
+            }));
+        }
+        catch (error) {
+            this.logWarn('Failed to get notifications for schedule', { deviceId, error });
+            return [];
+        }
+    }
+    /**
+     * Get telemetry data grouped by key for a device within time range
+     */
+    async getTelemetryDataByKey(telemetryRepo, deviceId, startTimeUnix, endTimeUnix) {
+        try {
+            if (!deviceId || !startTimeUnix || !endTimeUnix) {
+                return {};
+            }
+            const telemetryData = await telemetryRepo.createQueryBuilder('telemetry')
+                .where('telemetry.device_id = :deviceId', { deviceId })
+                .andWhere('telemetry.timestamp >= :startTime', { startTime: new Date(startTimeUnix) })
+                .andWhere('telemetry.timestamp <= :endTime', { endTime: new Date(endTimeUnix) })
+                .orderBy('telemetry.timestamp', 'ASC')
+                .getMany();
+            // Group by key_name
+            const groupedData = {};
+            for (const data of telemetryData) {
+                const keyName = data.key_name || 'unknown';
+                if (!groupedData[keyName]) {
+                    groupedData[keyName] = [];
+                }
+                // Determine the value based on value_type
+                let value = '';
+                switch (data.value_type) {
+                    case 'int':
+                        value = String(data.int_value || 0);
+                        break;
+                    case 'float':
+                        value = String(data.float_value || 0);
+                        break;
+                    case 'string':
+                        value = data.string_value || '';
+                        break;
+                    case 'boolean':
+                        value = String(data.boolean_value || false);
+                        break;
+                    case 'json':
+                        value = data.json_value ? JSON.stringify(data.json_value) : '{}';
+                        break;
+                    default:
+                        value = String(data.string_value || '');
+                }
+                groupedData[keyName].push({
+                    timestamp: new Date(data.timestamp).getTime(),
+                    value: value
+                });
+            }
+            return groupedData;
+        }
+        catch (error) {
+            this.logWarn('Failed to get telemetry data by key', { deviceId, error });
+            return {};
+        }
     }
     /**
      * Health check for schedule log service
@@ -181,5 +421,5 @@ let ScheduleLogService = class ScheduleLogService extends base_service_1.BaseSer
 exports.ScheduleLogService = ScheduleLogService;
 exports.ScheduleLogService = ScheduleLogService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [Object, database_service_1.DatabaseService])
+    __metadata("design:paramtypes", [Object])
 ], ScheduleLogService);

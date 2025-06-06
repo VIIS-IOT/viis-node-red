@@ -158,3 +158,55 @@ export class ScheduleLogWithTelemetryDto {
         [key: string]: any;
     }>;
 }
+
+/**
+ * Response interfaces for schedule log detail API
+ */
+export interface ScheduleLogDetailResponse {
+    result: ScheduleLogDetailResult;
+}
+
+export interface ScheduleLogDetailResult {
+    data: SchedulePlan[];
+    pagination: Pagination;
+}
+
+export interface SchedulePlan {
+    name: string;
+    schedule_id: string;
+    label: string;
+    device_id: string;
+    start_date: string;           // Example: "2025-04-10"
+    end_date: string;             // Example: "2025-12-31"
+    start_time: string;           // Example: "15:20:00"
+    end_time: string;             // Example: "15:24:00"
+    start_time_unix: string;      // Example: "2025-06-06T15:20:00.000Z"
+    end_time_unix: string;        // Example: "2025-06-06T15:24:00.000Z"
+    log_creation: string;         // Example: "2025-06-06 15:20:01"
+    log_modified: string;         // Example: "2025-06-06 15:20:01"
+    notifications: Notification[];
+    errors: any[];                // Empty array in example
+    warnings: Notification[];
+    data_by_key: Record<string, DataPoint[]>;
+}
+
+export interface Notification {
+    name: string;         // Example: "18eaa0cf-6229-4d5a-b391-e92b2d555874"
+    message: string;      // Example: "Bơm chính được bật từ Tủ Golden Bees"
+    severity: string;     // Example: "" or "notification"
+    created_at: string;   // Example: "2025-06-06 15:20:05"
+    type: string;         // Example: "device"
+}
+
+export interface DataPoint {
+    timestamp: number;    // Example: 1749198002781
+    value: string;        // Example: "130" or "false" or "{\"value\":33.2925,...}"
+}
+
+export interface Pagination {
+    totalElements: number;  // Example: 1686
+    totalPages: number;     // Example: 1686
+    pageSize: number;       // Example: 1
+    pageNumber: number;     // Example: 1
+    order_by: string;       // Example: "tabiot_schedule_plan.label ASC"
+}

@@ -130,7 +130,7 @@ class ContainerSetup {
         await authService.initialize();
         typedi_1.default.set(auth_service_1.AuthService, authService);
         // Register ScheduleLogService
-        const scheduleLogService = new schedule_log_service_1.ScheduleLogService(serviceContext, databaseService);
+        const scheduleLogService = new schedule_log_service_1.ScheduleLogService(serviceContext);
         await scheduleLogService.initialize();
         typedi_1.default.set(schedule_log_service_1.ScheduleLogService, scheduleLogService);
         // Register NotificationService

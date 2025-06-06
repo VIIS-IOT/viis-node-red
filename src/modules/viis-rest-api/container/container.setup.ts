@@ -139,7 +139,7 @@ export class ContainerSetup {
         Container.set(AuthService, authService);
 
         // Register ScheduleLogService
-        const scheduleLogService = new ScheduleLogService(serviceContext, databaseService);
+        const scheduleLogService = new ScheduleLogService(serviceContext);
         await scheduleLogService.initialize();
         Container.set(ScheduleLogService, scheduleLogService);
 

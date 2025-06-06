@@ -20,6 +20,7 @@ require("reflect-metadata");
 const routing_controllers_1 = require("routing-controllers");
 const typedi_1 = require("typedi");
 const database_service_1 = require("../services/database.service");
+const schedule_log_service_1 = require("../services/schedule-log.service");
 const iot_schedule_log_dto_1 = require("../dto/iot-schedule-log.dto");
 const logger_1 = require("../utils/logger");
 const container_setup_1 = require("../container/container.setup");
@@ -36,8 +37,9 @@ const query_filters_util_1 = require("../utils/query-filters.util");
  * - Follows the exact API format: {{serverURL}}/api/v2/scheduleLog?page=1&size=100&order_by=tabiot_schedule_plan.label ASC&filters=[...]
  */
 let IotScheduleLogController = class IotScheduleLogController {
-    constructor(databaseService, node) {
+    constructor(databaseService, scheduleLogService, node) {
         this.databaseService = databaseService;
+        this.scheduleLogService = scheduleLogService;
         this.node = node;
         logger_1.logger.info(this.node, 'IotScheduleLogController initialized');
     }
@@ -303,6 +305,26 @@ let IotScheduleLogController = class IotScheduleLogController {
         }
     }
     /**
+     * Get detailed schedule logs with comprehensive data
+     * GET /api/v2/scheduleLog/detail
+     *
+     * Supports the exact API format:
+     * ?page=1&size=1&filters=[["iot_schedule", "device_id", "like", "acc8cad0-3136-11ef-a8ea-8f79bc1b1c88"],["iot_schedule_log", "start_time", ">=", "2024-11-15 00:05:00"],["iot_schedule_log", "end_time", "<=", "2025-11-15 13:08:00"]]&order_by=tabiot_schedule_plan.label ASC
+     */
+    async getScheduleLogDetail(queryParams, user) {
+        logger_1.logger.info(this.node, 'Get schedule log detail request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            filters: queryParams
+        });
+        try {
+            return await this.scheduleLogService.getScheduleLogDetail(queryParams, user === null || user === void 0 ? void 0 : user.user_id);
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error retrieving schedule log detail:', error);
+            throw error;
+        }
+    }
+    /**
      * Get a specific IoT schedule log by name
      * GET /api/v2/scheduleLog/:name
      */
@@ -493,6 +515,15 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], IotScheduleLogController.prototype, "getScheduleLogsWithTelemetry", null);
 __decorate([
+    (0, routing_controllers_1.Get)('/detail'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.QueryParams)()),
+    __param(1, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [iot_schedule_log_dto_1.IotScheduleLogQueryDto, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "getScheduleLogDetail", null);
+__decorate([
     (0, routing_controllers_1.Get)('/:name'),
     (0, routing_controllers_1.Authorized)(),
     __param(0, (0, routing_controllers_1.Param)('name')),
@@ -533,6 +564,8 @@ exports.IotScheduleLogController = IotScheduleLogController = __decorate([
     (0, routing_controllers_1.JsonController)('/scheduleLog'),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
-    __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
-    __metadata("design:paramtypes", [database_service_1.DatabaseService, Object])
+    __param(1, (0, typedi_1.Inject)()),
+    __param(2, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
+    __metadata("design:paramtypes", [database_service_1.DatabaseService,
+        schedule_log_service_1.ScheduleLogService, Object])
 ], IotScheduleLogController);
