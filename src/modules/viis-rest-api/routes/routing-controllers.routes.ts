@@ -22,6 +22,7 @@ import { AuthController } from '../controllers/auth.controller';
 import { UserController } from '../controllers/user.controller';
 import { DeviceController } from '../controllers/device.controller';
 import { ThingsBoardController } from '../controllers/thingsboard.controller';
+import { ScheduleMonitorController } from '../controllers/schedule-monitor.controller';
 
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -160,7 +161,8 @@ export class RoutingControllersRoutes {
             AuthController,
             UserController,
             DeviceController,
-            ThingsBoardController
+            ThingsBoardController,
+            ScheduleMonitorController
         ];
 
         logger.info(this.node, 'Using fallback manual controller registration', {
@@ -368,7 +370,12 @@ export class RoutingControllersRoutes {
                     'POST /thingsboard/rpc/control/:id',
                     'POST /thingsboard/rpc/custom/:id',
                     'GET /thingsboard/health',
-                    'GET /thingsboard/stats'
+                    'GET /thingsboard/stats',
+                    'GET /schedule-monitor/status',
+                    'GET /schedule-monitor/active-schedules',
+                    'GET /schedule-monitor/active-schedules/:scheduleId',
+                    'DELETE /schedule-monitor/active-schedules/:scheduleId',
+                    'GET /schedule-monitor/health'
                 ]
             });
         }

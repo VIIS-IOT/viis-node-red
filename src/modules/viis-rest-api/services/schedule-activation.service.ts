@@ -5,10 +5,13 @@
 
 import { Service } from 'typedi';
 import { Node } from 'node-red';
+import { Repository } from 'typeorm';
 import { BaseService, ServiceContext } from './base.service';
 import { ScheduleLogService, CreateScheduleLogParams } from './schedule-log.service';
 import { NotificationService, CreateNotificationParams } from './notification.service';
-import { TabiotScheduleLog } from '../../../orm/entities/schedule/TabiotSchedule';
+import { DatabaseService } from './database.service';
+import { ScheduleCompletionMonitorService, ActiveScheduleInfo } from './schedule-completion-monitor.service';
+import { TabiotSchedule, TabiotScheduleLog } from '../../../orm/entities/schedule/TabiotSchedule';
 import { TabiotNotification } from '../../../orm/entities/notification/TabiotNotification';
 import { ApiError, ErrorType } from '../types/common.types';
 import { logger } from '../utils/logger';
@@ -61,10 +64,14 @@ export interface ScheduleActivationResult {
  */
 @Service()
 export class ScheduleActivationService extends BaseService {
+    private scheduleRepository: Repository<TabiotSchedule>;
+
     constructor(
         context: ServiceContext,
         private scheduleLogService: ScheduleLogService,
-        private notificationService: NotificationService
+        private notificationService: NotificationService,
+        protected databaseService: DatabaseService,
+        private scheduleCompletionMonitor: ScheduleCompletionMonitorService
     ) {
         super(context, 'ScheduleActivationService');
     }
@@ -79,6 +86,11 @@ export class ScheduleActivationService extends BaseService {
             // Initialize dependent services
             await this.scheduleLogService.initialize();
             await this.notificationService.initialize();
+            await this.databaseService.initialize();
+            await this.scheduleCompletionMonitor.initialize();
+
+            // Initialize repository
+            this.scheduleRepository = this.databaseService.getScheduleRepository();
 
             this.logInfo("Schedule activation service initialized successfully");
         } catch (error) {
@@ -118,11 +130,17 @@ export class ScheduleActivationService extends BaseService {
             };
 
             try {
-                // Step 1: Create schedule log
+                // Step 1: Update schedule status to "running"
+                await this.updateScheduleStatus(params.scheduleId, 'running');
+
+                // Step 2: Create schedule log
                 await this.createScheduleLogEntry(params, result);
 
-                // Step 2: Create notification and publish to MQTT
+                // Step 3: Create notification and publish to MQTT
                 await this.createNotificationEntry(params, result);
+
+                // Step 4: Register schedule for completion monitoring
+                await this.registerScheduleForMonitoring(params, result);
 
                 this.logInfo('Schedule activation processed successfully', {
                     deviceId: params.deviceId,
@@ -167,7 +185,7 @@ export class ScheduleActivationService extends BaseService {
             result.scheduleLog = await this.scheduleLogService.createScheduleLog(scheduleLogParams);
             result.scheduleLogCreated = true;
 
-            this.logInfo('Schedule log created successfully', {
+            this.logInfo('Schedule log creation successfully', {
                 scheduleId: params.scheduleId,
                 logName: result.scheduleLog.name
             });
@@ -214,7 +232,7 @@ export class ScheduleActivationService extends BaseService {
             result.notificationCreated = true;
             result.mqttPublished = mqttPublished;
 
-            this.logInfo('Notification created and published successfully', {
+            this.logInfo('Notification creation and published successfully', {
                 scheduleId: params.scheduleId,
                 notificationName: notification.name,
                 mqttPublished
@@ -225,6 +243,42 @@ export class ScheduleActivationService extends BaseService {
             this.logError(errorMessage, error);
             result.errors.push(errorMessage);
             // Don't throw - this is additional functionality
+        }
+    }
+
+    /**
+     * Update schedule status in database
+     */
+    private async updateScheduleStatus(scheduleId: string, status: 'running' | 'stopped' | 'finished' | ''): Promise<void> {
+        try {
+            this.logInfo('Updating schedule status', { scheduleId, status });
+
+            const schedule = await this.scheduleRepository.findOne({ where: { name: scheduleId } });
+
+            if (!schedule) {
+                this.logWarn('Schedule not found for status update', { scheduleId });
+                return;
+            }
+
+            schedule.status = status;
+            schedule.modified = new Date();
+
+            await this.scheduleRepository.save(schedule);
+
+            this.logInfo('Schedule status updated successfully', {
+                scheduleId,
+                status,
+                scheduleName: schedule.name
+            });
+
+        } catch (error) {
+            const errorMessage = `Failed to update schedule status: ${(error as Error).message}`;
+            this.logError(errorMessage, error, { scheduleId, status });
+            throw new ApiError(
+                ErrorType.DATABASE_ERROR,
+                errorMessage,
+                500
+            );
         }
     }
 
@@ -269,16 +323,59 @@ export class ScheduleActivationService extends BaseService {
     }
 
     /**
+     * Register schedule for completion monitoring
+     */
+    private async registerScheduleForMonitoring(
+        params: ScheduleActivationParams,
+        result: ScheduleActivationResult
+    ): Promise<void> {
+        try {
+            if (!result.scheduleLogCreated || !result.scheduleLog) {
+                this.logWarn('Cannot register schedule for monitoring - no schedule log creation', {
+                    scheduleId: params.scheduleId
+                });
+                return;
+            }
+
+            const activeScheduleInfo: ActiveScheduleInfo = {
+                scheduleId: params.scheduleId,
+                deviceId: params.deviceId,
+                startTime: new Date(),
+                customerUser: params.userContext.user_id,
+                customerId: params.userContext.customer_id,
+                lastCoilAutoTronValue: 1 // Assume it's 1 since we just activated
+            };
+
+            this.scheduleCompletionMonitor.addActiveSchedule(activeScheduleInfo);
+
+            this.logInfo('Schedule registered for completion monitoring', {
+                scheduleId: params.scheduleId,
+                deviceId: params.deviceId,
+                customerUser: params.userContext.user_id
+            });
+
+        } catch (error) {
+            this.logError('Failed to register schedule for monitoring', error, {
+                scheduleId: params.scheduleId,
+                deviceId: params.deviceId
+            });
+            // Don't throw - this is additional functionality
+        }
+    }
+
+    /**
      * Health check for schedule activation service
      */
     protected async onHealthCheck(): Promise<any> {
         const scheduleLogServiceHealthy = this.scheduleLogService.isInitialized();
         const notificationServiceHealthy = this.notificationService.isInitialized();
+        const monitorServiceHealthy = this.scheduleCompletionMonitor.isInitialized();
 
         return {
             scheduleLogServiceHealthy,
             notificationServiceHealthy,
-            status: (scheduleLogServiceHealthy && notificationServiceHealthy) ? 'healthy' : 'degraded'
+            monitorServiceHealthy,
+            status: (scheduleLogServiceHealthy && notificationServiceHealthy && monitorServiceHealthy) ? 'healthy' : 'degraded'
         };
     }
 }

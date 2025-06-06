@@ -44,6 +44,7 @@ const auth_service_1 = require("../services/auth.service");
 const schedule_log_service_1 = require("../services/schedule-log.service");
 const notification_service_1 = require("../services/notification.service");
 const schedule_activation_service_1 = require("../services/schedule-activation.service");
+const schedule_completion_monitor_service_1 = require("../services/schedule-completion-monitor.service");
 const auth_validator_1 = require("../validators/auth.validator");
 const user_validator_1 = require("../validators/user.validator");
 const auth_middleware_1 = require("../middleware/auth.middleware");
@@ -137,8 +138,12 @@ class ContainerSetup {
         const notificationService = new notification_service_1.NotificationService(serviceContext, databaseService);
         await notificationService.initialize();
         typedi_1.default.set(notification_service_1.NotificationService, notificationService);
+        // Register ScheduleCompletionMonitorService
+        const scheduleCompletionMonitor = new schedule_completion_monitor_service_1.ScheduleCompletionMonitorService(serviceContext, databaseService, notificationService);
+        await scheduleCompletionMonitor.initialize();
+        typedi_1.default.set(schedule_completion_monitor_service_1.ScheduleCompletionMonitorService, scheduleCompletionMonitor);
         // Register ScheduleActivationService
-        const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService);
+        const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService, databaseService, scheduleCompletionMonitor);
         await scheduleActivationService.initialize();
         typedi_1.default.set(schedule_activation_service_1.ScheduleActivationService, scheduleActivationService);
         // Register ThingsBoardService with proper initialization

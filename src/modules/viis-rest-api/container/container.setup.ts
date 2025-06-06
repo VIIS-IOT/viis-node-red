@@ -10,6 +10,7 @@ import { AuthService } from "../services/auth.service";
 import { ScheduleLogService } from "../services/schedule-log.service";
 import { NotificationService } from "../services/notification.service";
 import { ScheduleActivationService } from "../services/schedule-activation.service";
+import { ScheduleCompletionMonitorService } from "../services/schedule-completion-monitor.service";
 import { DeviceService } from "../services/device.service";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
@@ -148,11 +149,22 @@ export class ContainerSetup {
         await notificationService.initialize();
         Container.set(NotificationService, notificationService);
 
+        // Register ScheduleCompletionMonitorService
+        const scheduleCompletionMonitor = new ScheduleCompletionMonitorService(
+            serviceContext,
+            databaseService,
+            notificationService
+        );
+        await scheduleCompletionMonitor.initialize();
+        Container.set(ScheduleCompletionMonitorService, scheduleCompletionMonitor);
+
         // Register ScheduleActivationService
         const scheduleActivationService = new ScheduleActivationService(
             serviceContext,
             scheduleLogService,
-            notificationService
+            notificationService,
+            databaseService,
+            scheduleCompletionMonitor
         );
         await scheduleActivationService.initialize();
         Container.set(ScheduleActivationService, scheduleActivationService);

@@ -50,6 +50,7 @@ const auth_controller_1 = require("../controllers/auth.controller");
 const user_controller_1 = require("../controllers/user.controller");
 const device_controller_1 = require("../controllers/device.controller");
 const thingsboard_controller_1 = require("../controllers/thingsboard.controller");
+const schedule_monitor_controller_1 = require("../controllers/schedule-monitor.controller");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
  *
@@ -157,7 +158,8 @@ class RoutingControllersRoutes {
             auth_controller_1.AuthController,
             user_controller_1.UserController,
             device_controller_1.DeviceController,
-            thingsboard_controller_1.ThingsBoardController
+            thingsboard_controller_1.ThingsBoardController,
+            schedule_monitor_controller_1.ScheduleMonitorController
         ];
         logger_1.logger.info(this.node, 'Using fallback manual controller registration', {
             controllersCount: fallbackControllers.length,
@@ -333,7 +335,12 @@ class RoutingControllersRoutes {
                     'POST /thingsboard/rpc/control/:id',
                     'POST /thingsboard/rpc/custom/:id',
                     'GET /thingsboard/health',
-                    'GET /thingsboard/stats'
+                    'GET /thingsboard/stats',
+                    'GET /schedule-monitor/status',
+                    'GET /schedule-monitor/active-schedules',
+                    'GET /schedule-monitor/active-schedules/:scheduleId',
+                    'DELETE /schedule-monitor/active-schedules/:scheduleId',
+                    'GET /schedule-monitor/health'
                 ]
             });
         }
