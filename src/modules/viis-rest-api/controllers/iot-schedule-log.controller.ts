@@ -112,7 +112,7 @@ export class IotScheduleLogController {
                     qb.orderBy(`iot_schedule_log.${field}`, direction);
                 }
             } else {
-                qb.orderBy('iot_schedule_log.created_at', 'DESC');
+                qb.orderBy('iot_schedule_log.creation', 'DESC');
             }
 
             // Get total count
@@ -120,6 +120,14 @@ export class IotScheduleLogController {
 
             // Apply pagination
             const data = await qb.skip(skip).take(size).getMany();
+            //debug
+            logger.info(this.node, 'Schedule logs retrieved successfully', {
+                requestedBy: user?.user_id,
+                total,
+                returned: data.length,
+                page,
+                size
+            });
 
             // Transform data to plain objects to avoid serialization issues
             const transformedData = data.map(scheduleLog => ({
@@ -222,9 +230,21 @@ export class IotScheduleLogController {
             if (queryParams.end_date) {
                 qb.andWhere('DATE(iot_schedule_log.end_time) <= :end_date', { end_date: queryParams.end_date });
             }
-
+            //debug
+            logger.info(this.node, 'Querying schedule logs with telemetry', {
+                requestedBy: user?.user_id,
+                filters: queryParams
+            });
             const total = await qb.getCount();
             const scheduleLogs = await qb.skip(skip).take(size).getMany();
+            //debug
+            logger.info(this.node, 'Schedule logs retrieved successfully', {
+                requestedBy: user?.user_id,
+                total,
+                returned: scheduleLogs.length,
+                page,
+                size
+            });
 
             // For each schedule log, get associated telemetry data
             const enrichedData: ScheduleLogWithTelemetryDto[] = [];
