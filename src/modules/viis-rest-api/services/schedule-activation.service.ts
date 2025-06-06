@@ -15,9 +15,10 @@ import { logger } from '../utils/logger';
 
 /**
  * Interface for RPC parameters that trigger schedule activation
+ * COIL_AUTO_TRON accepts both boolean and numeric values (truthy check)
  */
 export interface ScheduleActivationTrigger {
-    COIL_AUTO_TRON: boolean;
+    COIL_AUTO_TRON: boolean | number;
     schedule_id: string;
 }
 
@@ -88,10 +89,11 @@ export class ScheduleActivationService extends BaseService {
 
     /**
      * Check if RPC parameters contain schedule activation trigger
+     * Accepts both boolean and numeric values for COIL_AUTO_TRON (truthy check)
      */
     isScheduleActivationTrigger(rpcParams: Record<string, any>): boolean {
         return (
-            rpcParams.COIL_AUTO_TRON === true &&
+            !!rpcParams.COIL_AUTO_TRON &&
             typeof rpcParams.schedule_id === 'string' &&
             rpcParams.schedule_id.trim().length > 0
         );

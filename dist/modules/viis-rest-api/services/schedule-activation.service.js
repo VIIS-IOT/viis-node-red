@@ -46,9 +46,10 @@ let ScheduleActivationService = class ScheduleActivationService extends base_ser
     }
     /**
      * Check if RPC parameters contain schedule activation trigger
+     * Accepts both boolean and numeric values for COIL_AUTO_TRON (truthy check)
      */
     isScheduleActivationTrigger(rpcParams) {
-        return (rpcParams.COIL_AUTO_TRON === true &&
+        return (!!rpcParams.COIL_AUTO_TRON &&
             typeof rpcParams.schedule_id === 'string' &&
             rpcParams.schedule_id.trim().length > 0);
     }
