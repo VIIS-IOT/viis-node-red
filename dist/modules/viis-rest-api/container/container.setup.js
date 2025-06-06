@@ -141,8 +141,14 @@ class ContainerSetup {
         const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService);
         await scheduleActivationService.initialize();
         typedi_1.default.set(schedule_activation_service_1.ScheduleActivationService, scheduleActivationService);
-        // Note: ThingsBoardService and DeviceService are decorated with @Service()
-        // They will be automatically instantiated by TypeDI when needed
+        // Register ThingsBoardService with proper initialization
+        // This service needs to be manually initialized to ensure MQTT client is set up
+        const { ThingsBoardService } = await Promise.resolve().then(() => __importStar(require('../services/thingsboard.service')));
+        const thingsBoardService = new ThingsBoardService(serviceContext);
+        await thingsBoardService.initialize();
+        typedi_1.default.set(ThingsBoardService, thingsBoardService);
+        // Note: DeviceService is decorated with @Service()
+        // It will be automatically instantiated by TypeDI when needed
     }
     /**
      * Register validators (stateless singletons)

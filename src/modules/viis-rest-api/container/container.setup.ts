@@ -10,7 +10,6 @@ import { AuthService } from "../services/auth.service";
 import { ScheduleLogService } from "../services/schedule-log.service";
 import { NotificationService } from "../services/notification.service";
 import { ScheduleActivationService } from "../services/schedule-activation.service";
-import { ThingsBoardService } from "../services/thingsboard.service";
 import { DeviceService } from "../services/device.service";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
@@ -158,8 +157,15 @@ export class ContainerSetup {
         await scheduleActivationService.initialize();
         Container.set(ScheduleActivationService, scheduleActivationService);
 
-        // Note: ThingsBoardService and DeviceService are decorated with @Service()
-        // They will be automatically instantiated by TypeDI when needed
+        // Register ThingsBoardService with proper initialization
+        // This service needs to be manually initialized to ensure MQTT client is set up
+        const { ThingsBoardService } = await import('../services/thingsboard.service');
+        const thingsBoardService = new ThingsBoardService(serviceContext);
+        await thingsBoardService.initialize();
+        Container.set(ThingsBoardService, thingsBoardService);
+
+        // Note: DeviceService is decorated with @Service()
+        // It will be automatically instantiated by TypeDI when needed
     }
 
     /**

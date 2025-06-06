@@ -127,7 +127,8 @@ export class ThingsBoardService extends BaseService {
                 const mqttPublished = await this.publishToMqtt(
                     mqttTopic,
                     transformationResult.records,
-                    context
+                    context,
+                    rpcRequest
                 );
 
                 const processingTime = Date.now() - startTime;
@@ -355,7 +356,8 @@ export class ThingsBoardService extends BaseService {
     private async publishToMqtt(
         topic: string,
         records: ProcessedTelemetryRecord[],
-        context: RpcProcessingContext
+        context: RpcProcessingContext,
+        rpcRequest: ThingsBoardRpcRequest
     ): Promise<boolean> {
         try {
             if (!this.mqttClient) {
@@ -374,8 +376,8 @@ export class ThingsBoardService extends BaseService {
                 return false;
             }
 
-            // Prepare payload in ThingsBoard format
-            const payload = this.buildMqttPayload(records, context);
+            // Prepare payload in original RPC request format
+            const payload = this.buildMqttPayload(records, context, rpcRequest);
 
             this.logDebug(`Publishing to MQTT`, {
                 topic,
@@ -413,21 +415,24 @@ export class ThingsBoardService extends BaseService {
     }
 
     /**
-     * Build MQTT payload in ThingsBoard format
+     * Build MQTT payload in original RPC request format
+     * Preserves the original request structure instead of transforming to telemetry format
      */
-    private buildMqttPayload(records: ProcessedTelemetryRecord[], context: RpcProcessingContext): any {
-        const telemetryData: Record<string, any> = {};
+    private buildMqttPayload(
+        records: ProcessedTelemetryRecord[],
+        context: RpcProcessingContext,
+        rpcRequest: ThingsBoardRpcRequest
+    ): any {
+        const params: Record<string, any> = {};
 
         records.forEach(record => {
-            telemetryData[record.key] = record.value;
+            params[record.key] = record.value;
         });
 
         return {
-            ts: Date.now(),
-            values: telemetryData,
-            deviceId: context.deviceId,
             method: context.method,
-            requestId: context.requestId
+            params: params,
+            timeout: rpcRequest.timeout || 5000
         };
     }
 

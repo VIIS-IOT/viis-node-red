@@ -101,7 +101,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
                 const transformationResult = await this.transformTelemetryData(rpcRequest.params || {}, context);
                 // Publish to MQTT
                 const mqttTopic = this.buildMqttTopic(deviceId, rpcRequest.method);
-                const mqttPublished = await this.publishToMqtt(mqttTopic, transformationResult.records, context);
+                const mqttPublished = await this.publishToMqtt(mqttTopic, transformationResult.records, context, rpcRequest);
                 const processingTime = Date.now() - startTime;
                 this.processingStats.totalProcessingTime += processingTime;
                 this.processingStats.successfulRequests++;
@@ -302,7 +302,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
     /**
      * Publish telemetry data to MQTT broker
      */
-    async publishToMqtt(topic, records, context) {
+    async publishToMqtt(topic, records, context, rpcRequest) {
         try {
             if (!this.mqttClient) {
                 this.logWarn('MQTT client not available, skipping MQTT publish', {
@@ -318,8 +318,8 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
                 });
                 return false;
             }
-            // Prepare payload in ThingsBoard format
-            const payload = this.buildMqttPayload(records, context);
+            // Prepare payload in original RPC request format
+            const payload = this.buildMqttPayload(records, context, rpcRequest);
             this.logDebug(`Publishing to MQTT`, {
                 topic,
                 recordsCount: records.length,
@@ -346,19 +346,18 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
         }
     }
     /**
-     * Build MQTT payload in ThingsBoard format
+     * Build MQTT payload in original RPC request format
+     * Preserves the original request structure instead of transforming to telemetry format
      */
-    buildMqttPayload(records, context) {
-        const telemetryData = {};
+    buildMqttPayload(records, context, rpcRequest) {
+        const params = {};
         records.forEach(record => {
-            telemetryData[record.key] = record.value;
+            params[record.key] = record.value;
         });
         return {
-            ts: Date.now(),
-            values: telemetryData,
-            deviceId: context.deviceId,
             method: context.method,
-            requestId: context.requestId
+            params: params,
+            timeout: rpcRequest.timeout || 5000
         };
     }
     /**
