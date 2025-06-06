@@ -113,14 +113,16 @@ class FanControlService {
         }
     }
     /**
-     * Process threshold mode fan control
+     * Process threshold mode fan control with anti-oscillation mechanisms
      */
     async processThresholdMode(config, sensorData, deviceStatus) {
         try {
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
-            if (tempIndoor === undefined || humiIndoor === undefined) {
-                this.logger.warn("Missing temperature or humidity data for threshold mode");
+            if (tempIndoor === undefined || humiIndoor === undefined ||
+                typeof tempIndoor !== 'number' || typeof humiIndoor !== 'number' ||
+                isNaN(tempIndoor) || isNaN(humiIndoor)) {
+                this.logger.warn("Missing or invalid temperature or humidity data for threshold mode");
                 return [];
             }
             // Get temperature thresholds
@@ -130,12 +132,22 @@ class FanControlService {
                 k3: config.set_k3_fan || 35,
                 k4: config.set_k4_fan || 40
             };
-            // Determine required group size based on thresholds
-            const requiredGroupSize = (0, groupUtils_1.getRecommendedGroupSize)(tempIndoor, humiIndoor, thresholds);
-            this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, required group size=${requiredGroupSize}`);
+            // Get current active fan count for hysteresis calculation
+            const currentActiveFanCount = this.getCurrentActiveFanCount(deviceStatus);
+            // Determine required group size with hysteresis to prevent oscillation
+            const requiredGroupSize = (0, groupUtils_1.getRecommendedGroupSize)(tempIndoor, humiIndoor, thresholds, {
+                currentGroupSize: currentActiveFanCount,
+                hysteresis: constants_1.CONTROL_CONFIG.THRESHOLD_HYSTERESIS_CELSIUS
+            });
+            this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, current fans=${currentActiveFanCount}, required group size=${requiredGroupSize}`);
+            // Check if change is actually needed (anti-oscillation)
+            if (currentActiveFanCount === requiredGroupSize) {
+                this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize})`);
+                return []; // No action needed - already in correct state
+            }
             if (requiredGroupSize === 0) {
                 // No fans needed - use optimized function if device status available
-                const reason = `Temperature below K1 threshold: ${tempIndoor}°C (<${thresholds.k1}°C), humidity=${humiIndoor}%`;
+                const reason = `Temperature below K1 threshold with hysteresis: ${tempIndoor}°C, humidity=${humiIndoor}%`;
                 if (deviceStatus) {
                     const coilMapping = this.getCoilMapping();
                     const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
@@ -255,6 +267,22 @@ class FanControlService {
         const globalCoils = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
         // Merge with default mappings
         return Object.assign(Object.assign(Object.assign({}, constants_1.FAN_CONFIG.COIL_MAPPING), constants_1.FAN_DAO_CONFIG.COIL_MAPPING), globalCoils);
+    }
+    /**
+     * Get current active fan count from device status
+     */
+    getCurrentActiveFanCount(deviceStatus) {
+        if (!deviceStatus) {
+            return 0;
+        }
+        let count = 0;
+        const fanKeys = ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'];
+        for (const fanKey of fanKeys) {
+            if (deviceStatus[fanKey] === true) {
+                count++;
+            }
+        }
+        return count;
     }
     /**
      * Create actions to turn off all fans
@@ -430,8 +458,10 @@ class FanControlService {
         try {
             const temperature = sensorData.temp_indoor;
             const humidity = sensorData.humi_indoor;
-            if (temperature === undefined || humidity === undefined) {
-                this.logger.warn("Missing temperature or humidity data for threshold mode");
+            if (temperature === undefined || humidity === undefined ||
+                typeof temperature !== 'number' || typeof humidity !== 'number' ||
+                isNaN(temperature) || isNaN(humidity)) {
+                this.logger.warn("Missing or invalid temperature or humidity data for threshold mode");
                 return [];
             }
             // Get temperature thresholds

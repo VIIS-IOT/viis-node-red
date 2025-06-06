@@ -31,6 +31,10 @@ exports.CONTROL_CONFIG = {
     // Fan group transition delays
     FAN_GROUP_TRANSITION_DELAY_MS: 2000, // 2 seconds default delay between fan group switches
     FAN_GROUP_OFF_DELAY_MS: 1000, // 1 second delay after turning off fans before turning on new group
+    // Anti-oscillation safety mechanisms
+    MIN_ACTION_INTERVAL_MS: 30000, // 30 seconds minimum between actions on same device
+    THRESHOLD_HYSTERESIS_CELSIUS: 1.0, // 1°C hysteresis to prevent oscillation
+    MAX_ACTIONS_PER_DEVICE_PER_HOUR: 10, // Rate limiting
 };
 // Fan control constants
 exports.FAN_CONFIG = {

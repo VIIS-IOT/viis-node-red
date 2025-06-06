@@ -175,8 +175,10 @@ export class FanControlService implements IFanControlService {
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
 
-            if (tempIndoor === undefined || humiIndoor === undefined) {
-                this.logger.warn("Missing temperature or humidity data for threshold mode");
+            if (tempIndoor === undefined || humiIndoor === undefined ||
+                typeof tempIndoor !== 'number' || typeof humiIndoor !== 'number' ||
+                isNaN(tempIndoor) || isNaN(humiIndoor)) {
+                this.logger.warn("Missing or invalid temperature or humidity data for threshold mode");
                 return [];
             }
 
@@ -602,8 +604,10 @@ export class FanControlService implements IFanControlService {
             const temperature = sensorData.temp_indoor;
             const humidity = sensorData.humi_indoor;
 
-            if (temperature === undefined || humidity === undefined) {
-                this.logger.warn("Missing temperature or humidity data for threshold mode");
+            if (temperature === undefined || humidity === undefined ||
+                typeof temperature !== 'number' || typeof humidity !== 'number' ||
+                isNaN(temperature) || isNaN(humidity)) {
+                this.logger.warn("Missing or invalid temperature or humidity data for threshold mode");
                 return [];
             }
 

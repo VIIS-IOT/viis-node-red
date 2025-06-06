@@ -13,7 +13,7 @@ class SensorService {
         this.cachedDeviceStatus = null;
         this.lastSensorUpdate = 0;
         this.lastDeviceUpdate = 0;
-        this.CACHE_TTL = 5000; // 5 seconds
+        this.CACHE_TTL = 15000; // 15 seconds - longer than polling interval to prevent false cache misses
         this.globalContext = options.globalContext;
         this.logger = new logger_1.Logger(options.node, options.nodeId);
     }
