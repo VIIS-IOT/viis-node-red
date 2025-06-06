@@ -235,7 +235,7 @@ export function isValidFanGroupSize(groupSize: number): boolean {
 }
 
 /**
- * Get recommended group size based on temperature thresholds
+ * Get recommended group size based on temperature thresholds with hysteresis
  * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */
 export function getRecommendedGroupSize(
@@ -253,7 +253,9 @@ export function getRecommendedGroupSize(
             k2: number,
             k3: number,
             k4: number
-        }
+        },
+        currentGroupSize?: number,
+        hysteresis?: number
     }
 ): number {
     // For future humidity integration
@@ -264,14 +266,37 @@ export function getRecommendedGroupSize(
         k4: 75
     };
 
-    // Temperature-only logic (current implementation)
-    if (temperature >= thresholds.k4) {
+    // Hysteresis configuration - prevents oscillation around threshold boundaries
+    const currentGroupSize = options?.currentGroupSize || 0;
+    const hysteresis = options?.hysteresis || 1.0; // Default 1°C hysteresis
+
+    // Calculate thresholds with hysteresis based on current state
+    const getEffectiveThreshold = (baseThreshold: number, targetGroupSize: number): number => {
+        if (currentGroupSize < targetGroupSize) {
+            // Moving up - use normal threshold
+            return baseThreshold;
+        } else if (currentGroupSize > targetGroupSize) {
+            // Moving down - use threshold minus hysteresis
+            return baseThreshold - hysteresis;
+        } else {
+            // Same group size - use threshold with hysteresis buffer
+            return baseThreshold - (hysteresis / 2);
+        }
+    };
+
+    // Temperature-only logic with hysteresis (current implementation)
+    const k4Threshold = getEffectiveThreshold(thresholds.k4, 6);
+    const k3Threshold = getEffectiveThreshold(thresholds.k3, 6);
+    const k2Threshold = getEffectiveThreshold(thresholds.k2, 4);
+    const k1Threshold = getEffectiveThreshold(thresholds.k1, 2);
+
+    if (temperature >= k4Threshold) {
         return 6; // All fans for K4
-    } else if (temperature >= thresholds.k3) {
+    } else if (temperature >= k3Threshold) {
         return 6; // All fans for K3
-    } else if (temperature >= thresholds.k2) {
+    } else if (temperature >= k2Threshold) {
         return 4; // 4 fans for K2
-    } else if (temperature >= thresholds.k1) {
+    } else if (temperature >= k1Threshold) {
         return 2; // 2 fans for K1
     }
 

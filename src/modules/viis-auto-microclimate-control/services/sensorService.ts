@@ -20,7 +20,7 @@ export class SensorService implements ISensorService {
     private cachedDeviceStatus: DeviceStatus | null = null;
     private lastSensorUpdate: number = 0;
     private lastDeviceUpdate: number = 0;
-    private readonly CACHE_TTL = 5000; // 5 seconds
+    private readonly CACHE_TTL = 15000; // 15 seconds - longer than polling interval to prevent false cache misses
 
     constructor(options: ServiceOptions) {
         this.globalContext = options.globalContext;

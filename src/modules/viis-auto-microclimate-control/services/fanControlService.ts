@@ -168,7 +168,7 @@ export class FanControlService implements IFanControlService {
     }
 
     /**
-     * Process threshold mode fan control
+     * Process threshold mode fan control with anti-oscillation mechanisms
      */
     async processThresholdMode(config: AutoControlConfig, sensorData: SensorData, deviceStatus?: DeviceStatus): Promise<ControlAction[]> {
         try {
@@ -188,14 +188,26 @@ export class FanControlService implements IFanControlService {
                 k4: config.set_k4_fan || 40
             };
 
-            // Determine required group size based on thresholds
-            const requiredGroupSize = getRecommendedGroupSize(tempIndoor, humiIndoor, thresholds);
+            // Get current active fan count for hysteresis calculation
+            const currentActiveFanCount = this.getCurrentActiveFanCount(deviceStatus);
 
-            this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, required group size=${requiredGroupSize}`);
+            // Determine required group size with hysteresis to prevent oscillation
+            const requiredGroupSize = getRecommendedGroupSize(tempIndoor, humiIndoor, thresholds, {
+                currentGroupSize: currentActiveFanCount,
+                hysteresis: CONTROL_CONFIG.THRESHOLD_HYSTERESIS_CELSIUS
+            });
+
+            this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, current fans=${currentActiveFanCount}, required group size=${requiredGroupSize}`);
+
+            // Check if change is actually needed (anti-oscillation)
+            if (currentActiveFanCount === requiredGroupSize) {
+                this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize})`);
+                return []; // No action needed - already in correct state
+            }
 
             if (requiredGroupSize === 0) {
                 // No fans needed - use optimized function if device status available
-                const reason = `Temperature below K1 threshold: ${tempIndoor}°C (<${thresholds.k1}°C), humidity=${humiIndoor}%`;
+                const reason = `Temperature below K1 threshold with hysteresis: ${tempIndoor}°C, humidity=${humiIndoor}%`;
                 if (deviceStatus) {
                     const coilMapping = this.getCoilMapping();
                     const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
@@ -343,6 +355,26 @@ export class FanControlService implements IFanControlService {
             ...FAN_DAO_CONFIG.COIL_MAPPING,
             ...globalCoils
         };
+    }
+
+    /**
+     * Get current active fan count from device status
+     */
+    private getCurrentActiveFanCount(deviceStatus?: DeviceStatus): number {
+        if (!deviceStatus) {
+            return 0;
+        }
+
+        let count = 0;
+        const fanKeys = ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'] as const;
+
+        for (const fanKey of fanKeys) {
+            if (deviceStatus[fanKey] === true) {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     /**
