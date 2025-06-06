@@ -45,149 +45,149 @@ export class IotScheduleLogController {
      * Supports the exact API format:
      * ?page=1&size=100&order_by=tabiot_schedule_plan.label ASC&filters=[["iot_schedule", "device_id", "like", "acc8cad0-3136-11ef-a8ea-8f79bc1b1c88"],["iot_schedule_log", "start_time", ">=", "2024-11-15 00:05:00"],["iot_schedule_log", "end_time", "<=", "2025-11-15 13:08:00"]]
      */
-    @Get('/')
-    @Authorized()
-    async getAllScheduleLogs(
-        @QueryParams() queryParams: IotScheduleLogQueryDto,
-        @CurrentUser() user: any
-    ): Promise<any> {
-        logger.info(this.node, 'Get all IoT schedule logs request', {
-            requestedBy: user?.user_id,
-            filters: queryParams
-        });
+    // @Get('/')
+    // @Authorized()
+    // async getAllScheduleLogs(
+    //     @QueryParams() queryParams: IotScheduleLogQueryDto,
+    //     @CurrentUser() user: any
+    // ): Promise<any> {
+    //     logger.info(this.node, 'Get all IoT schedule logs request', {
+    //         requestedBy: user?.user_id,
+    //         filters: queryParams
+    //     });
 
-        try {
-            const page = queryParams.page || 1;
-            const size = Math.min(queryParams.size || 100, 100);
-            const skip = (page - 1) * size;
+    //     try {
+    //         const page = queryParams.page || 1;
+    //         const size = Math.min(queryParams.size || 100, 100);
+    //         const skip = (page - 1) * size;
 
-            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
-            let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
-                .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
-                .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser')
-                .leftJoinAndSelect('iot_schedule.schedulePlan', 'tabiot_schedule_plan');
+    //         const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+    //         let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
+    //             .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
+    //             .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser')
+    //             .leftJoinAndSelect('iot_schedule.schedulePlan', 'tabiot_schedule_plan');
 
-            // Apply dynamic filters if provided
-            if (queryParams.filters) {
-                try {
-                    const parsedFilters: FilterTuple[] = JSON.parse(queryParams.filters);
-                    qb = applyQueryFilters(qb, parsedFilters, 'iot_schedule_log');
-                } catch (parseError) {
-                    logger.error(this.node, 'Failed to parse filters:', { filters: queryParams.filters, error: parseError });
-                    throw new Error('Invalid filters format');
-                }
-            }
+    //         // Apply dynamic filters if provided
+    //         if (queryParams.filters) {
+    //             try {
+    //                 const parsedFilters: FilterTuple[] = JSON.parse(queryParams.filters);
+    //                 qb = applyQueryFilters(qb, parsedFilters, 'iot_schedule_log');
+    //             } catch (parseError) {
+    //                 logger.error(this.node, 'Failed to parse filters:', { filters: queryParams.filters, error: parseError });
+    //                 throw new Error('Invalid filters format');
+    //             }
+    //         }
 
-            // Apply search filter
-            if (queryParams.search) {
-                qb.andWhere(
-                    '(iot_schedule.label ILIKE :search OR iot_schedule.device_id ILIKE :search OR tabiot_schedule_plan.label ILIKE :search)',
-                    { search: `%${queryParams.search}%` }
-                );
-            }
+    //         // Apply search filter
+    //         if (queryParams.search) {
+    //             qb.andWhere(
+    //                 '(iot_schedule.label ILIKE :search OR iot_schedule.device_id ILIKE :search OR tabiot_schedule_plan.label ILIKE :search)',
+    //                 { search: `%${queryParams.search}%` }
+    //             );
+    //         }
 
-            // Apply specific filters
-            if (queryParams.schedule_id) {
-                qb.andWhere('iot_schedule_log.schedule_id = :schedule_id', { schedule_id: queryParams.schedule_id });
-            }
+    //         // Apply specific filters
+    //         if (queryParams.schedule_id) {
+    //             qb.andWhere('iot_schedule_log.schedule_id = :schedule_id', { schedule_id: queryParams.schedule_id });
+    //         }
 
-            if (queryParams.start_time) {
-                qb.andWhere('iot_schedule_log.start_time >= :start_time', { start_time: queryParams.start_time });
-            }
+    //         if (queryParams.start_time) {
+    //             qb.andWhere('iot_schedule_log.start_time >= :start_time', { start_time: queryParams.start_time });
+    //         }
 
-            if (queryParams.end_time) {
-                qb.andWhere('iot_schedule_log.end_time <= :end_time', { end_time: queryParams.end_time });
-            }
+    //         if (queryParams.end_time) {
+    //             qb.andWhere('iot_schedule_log.end_time <= :end_time', { end_time: queryParams.end_time });
+    //         }
 
-            // Apply ordering - support complex ordering like "tabiot_schedule_plan.label ASC"
-            if (queryParams.order_by) {
-                const orderParts = queryParams.order_by.trim().split(' ');
-                const field = orderParts[0];
-                const direction = orderParts[1]?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+    //         // Apply ordering - support complex ordering like "tabiot_schedule_plan.label ASC"
+    //         if (queryParams.order_by) {
+    //             const orderParts = queryParams.order_by.trim().split(' ');
+    //             const field = orderParts[0];
+    //             const direction = orderParts[1]?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
 
-                // Handle complex field paths
-                if (field.includes('.')) {
-                    qb.orderBy(field, direction);
-                } else {
-                    qb.orderBy(`iot_schedule_log.${field}`, direction);
-                }
-            } else {
-                qb.orderBy('iot_schedule_log.creation', 'DESC');
-            }
+    //             // Handle complex field paths
+    //             if (field.includes('.')) {
+    //                 qb.orderBy(field, direction);
+    //             } else {
+    //                 qb.orderBy(`iot_schedule_log.${field}`, direction);
+    //             }
+    //         } else {
+    //             qb.orderBy('iot_schedule_log.creation', 'DESC');
+    //         }
 
-            // Get total count
-            const total = await qb.getCount();
+    //         // Get total count
+    //         const total = await qb.getCount();
 
-            // Apply pagination
-            const data = await qb.skip(skip).take(size).getMany();
-            //debug
-            logger.info(this.node, 'Schedule logs retrieved successfully', {
-                requestedBy: user?.user_id,
-                total,
-                returned: data.length,
-                page,
-                size
-            });
+    //         // Apply pagination
+    //         const data = await qb.skip(skip).take(size).getMany();
+    //         //debug
+    //         logger.info(this.node, 'Schedule logs retrieved successfully', {
+    //             requestedBy: user?.user_id,
+    //             total,
+    //             returned: data.length,
+    //             page,
+    //             size
+    //         });
 
-            // Transform data to plain objects to avoid serialization issues
-            const transformedData = data.map(scheduleLog => ({
-                name: scheduleLog.name,
-                start_time: scheduleLog.start_time,
-                end_time: scheduleLog.end_time,
-                schedule_id: scheduleLog.schedule_id,
-                customer_user: scheduleLog.customer_user,
-                schedule: scheduleLog.schedule ? {
-                    name: scheduleLog.schedule.name,
-                    device_id: scheduleLog.schedule.device_id,
-                    label: scheduleLog.schedule.label,
-                    action: scheduleLog.schedule.action,
-                    enable: scheduleLog.schedule.enable,
-                    schedule_plan_id: scheduleLog.schedule.schedule_plan_id
-                } : null,
-                customerUser: scheduleLog.customerUser ? {
-                    name: scheduleLog.customerUser.name,
-                    user_name: scheduleLog.customerUser.user_name,
-                    email: scheduleLog.customerUser.email,
-                    full_name: scheduleLog.customerUser.full_name
-                } : null,
-                schedulePlan: scheduleLog.schedule?.schedulePlan ? {
-                    name: scheduleLog.schedule.schedulePlan.name,
-                    label: scheduleLog.schedule.schedulePlan.label,
-                    schedule_count: scheduleLog.schedule.schedulePlan.schedule_count,
-                    status: scheduleLog.schedule.schedulePlan.status,
-                    enable: scheduleLog.schedule.schedulePlan.enable,
-                    device_id: scheduleLog.schedule.schedulePlan.device_id,
-                    start_date: scheduleLog.schedule.schedulePlan.start_date,
-                    end_date: scheduleLog.schedule.schedulePlan.end_date
-                } : null
-            }));
+    //         // Transform data to plain objects to avoid serialization issues
+    //         const transformedData = data.map(scheduleLog => ({
+    //             name: scheduleLog.name,
+    //             start_time: scheduleLog.start_time,
+    //             end_time: scheduleLog.end_time,
+    //             schedule_id: scheduleLog.schedule_id,
+    //             customer_user: scheduleLog.customer_user,
+    //             schedule: scheduleLog.schedule ? {
+    //                 name: scheduleLog.schedule.name,
+    //                 device_id: scheduleLog.schedule.device_id,
+    //                 label: scheduleLog.schedule.label,
+    //                 action: scheduleLog.schedule.action,
+    //                 enable: scheduleLog.schedule.enable,
+    //                 schedule_plan_id: scheduleLog.schedule.schedule_plan_id
+    //             } : null,
+    //             customerUser: scheduleLog.customerUser ? {
+    //                 name: scheduleLog.customerUser.name,
+    //                 user_name: scheduleLog.customerUser.user_name,
+    //                 email: scheduleLog.customerUser.email,
+    //                 full_name: scheduleLog.customerUser.full_name
+    //             } : null,
+    //             schedulePlan: scheduleLog.schedule?.schedulePlan ? {
+    //                 name: scheduleLog.schedule.schedulePlan.name,
+    //                 label: scheduleLog.schedule.schedulePlan.label,
+    //                 schedule_count: scheduleLog.schedule.schedulePlan.schedule_count,
+    //                 status: scheduleLog.schedule.schedulePlan.status,
+    //                 enable: scheduleLog.schedule.schedulePlan.enable,
+    //                 device_id: scheduleLog.schedule.schedulePlan.device_id,
+    //                 start_date: scheduleLog.schedule.schedulePlan.start_date,
+    //                 end_date: scheduleLog.schedule.schedulePlan.end_date
+    //             } : null
+    //         }));
 
-            logger.info(this.node, 'IoT schedule logs retrieved successfully', {
-                requestedBy: user?.user_id,
-                total,
-                returned: transformedData.length,
-                page,
-                size
-            });
+    //         logger.info(this.node, 'IoT schedule logs retrieved successfully', {
+    //             requestedBy: user?.user_id,
+    //             total,
+    //             returned: transformedData.length,
+    //             page,
+    //             size
+    //         });
 
-            return {
-                data: transformedData,
-                page,
-                size,
-                total,
-                totalPages: Math.ceil(total / size)
-            };
-        } catch (error: any) {
-            logger.error(this.node, 'Error retrieving IoT schedule logs:', error);
-            throw error;
-        }
-    }
+    //         return {
+    //             data: transformedData,
+    //             page,
+    //             size,
+    //             total,
+    //             totalPages: Math.ceil(total / size)
+    //         };
+    //     } catch (error: any) {
+    //         logger.error(this.node, 'Error retrieving IoT schedule logs:', error);
+    //         throw error;
+    //     }
+    // }
 
     /**
      * Get schedule logs with telemetry data for a specific time range
      * GET /api/v2/scheduleLog/with-telemetry
      */
-    @Get('/with-telemetry')
+    @Get('/')
     @Authorized()
     async getScheduleLogsWithTelemetry(
         @QueryParams() queryParams: IotScheduleLogQueryDto,

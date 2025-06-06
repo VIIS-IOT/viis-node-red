@@ -255,9 +255,16 @@ export class ThingsBoardController {
         requestId: string
     ): Promise<void> {
         try {
+            logger.info(this.node, 'Checking schedule activation conditions', {
+                deviceId,
+                requestId,
+                hasCoilAutoTron: rpcParams.COIL_AUTO_TRON,
+                hasScheduleId: !!rpcParams.schedule_id
+            });
+
             // Check if schedule activation conditions are met
             if (!this.scheduleActivationService.isScheduleActivationTrigger(rpcParams)) {
-                logger.debug(this.node, 'Schedule activation conditions not met', {
+                logger.info(this.node, 'Schedule activation conditions not met', {
                     deviceId,
                     requestId,
                     hasCoilAutoTron: rpcParams.COIL_AUTO_TRON,
