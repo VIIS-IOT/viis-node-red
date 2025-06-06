@@ -13,6 +13,7 @@ import {
     UpdateIotScheduleLogDto,
     ScheduleLogDetailResponse
 } from '../dto/iot-schedule-log.dto';
+import { ScheduleLogResponse } from '../services/schedule-log.service';
 import { Node } from 'node-red';
 import { logger } from '../utils/logger';
 import { NODE_TOKEN } from '../container/container.setup';
@@ -193,7 +194,7 @@ export class IotScheduleLogController {
     async getScheduleLogsWithTelemetry(
         @QueryParams() queryParams: IotScheduleLogQueryDto,
         @CurrentUser() user: any
-    ): Promise<any> {
+    ): Promise<ScheduleLogResponse> {
         logger.info(this.node, 'Get schedule logs with telemetry request', {
             requestedBy: user?.user_id,
             filters: queryParams

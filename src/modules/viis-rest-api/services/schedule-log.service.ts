@@ -15,6 +15,51 @@ import {
     Notification,
     DataPoint
 } from '../dto/iot-schedule-log.dto';
+
+/**
+ * Interface for main scheduleLog API response
+ */
+export interface ScheduleLogResponse {
+    result: ScheduleLogResult;
+}
+
+export interface ScheduleLogResult {
+    data: Schedule[];
+    pagination: ScheduleLogPagination;
+}
+
+export interface Schedule {
+    name: string;
+    schedule_id: string;
+    label: string;
+    device_id: string;
+    start_date: string;           // e.g. "2024-12-21"
+    end_date: string;             // e.g. "2030-10-21"
+    start_time: string;           // e.g. "15:48:00"
+    end_time: string;             // e.g. "15:59:00"
+    start_time_unix: string;      // e.g. "2025-06-06T15:48:00.000Z"
+    end_time_unix: string;        // e.g. "2025-06-06T15:59:00.000Z"
+    log_creation: string;         // e.g. "2025-06-06 15:50:08"
+    log_modified: string;         // e.g. "2025-06-06 15:50:08"
+    notifications: Notification[];
+    errors: any[];                // always array, empty in example []
+    warnings: Notification[];
+    avg_device_data: { [key: string]: number } | null;
+    customer_user: {
+        name: string;
+        user_name: string;
+        email: string;
+        full_name: string;
+    } | null;
+}
+
+export interface ScheduleLogPagination {
+    totalElements: number;  // e.g. 78711
+    totalPages: number;     // e.g. 7872
+    pageSize: number;       // e.g. 10
+    pageNumber: number;     // e.g. 1
+    order_by: string | null;
+}
 import { applyQueryFilters, FilterTuple } from '../utils/query-filters.util';
 
 /**
@@ -204,7 +249,7 @@ export class ScheduleLogService extends BaseService {
      * Get schedule logs with telemetry data
      * Main endpoint for listing schedule logs with telemetry integration
      */
-    async getScheduleLogsWithTelemetry(queryParams: IotScheduleLogQueryDto, userId?: string): Promise<any> {
+    async getScheduleLogsWithTelemetry(queryParams: IotScheduleLogQueryDto, userId?: string): Promise<ScheduleLogResponse> {
         return this.executeOperation('getScheduleLogsWithTelemetry', async () => {
             this.logInfo('Getting schedule logs with telemetry', {
                 requestedBy: userId,
@@ -218,10 +263,12 @@ export class ScheduleLogService extends BaseService {
 
                 const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
                 const telemetryRepo = this.databaseService.getDeviceTelemetryRepository();
+                const notificationRepo = this.databaseService.getNotificationRepository();
 
-                // Get schedule logs first
+                // Get schedule logs with all necessary joins
                 let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
                     .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
+                    .leftJoinAndSelect('iot_schedule.schedulePlan', 'tabiot_schedule_plan')
                     .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser');
 
                 // Apply filters similar to the main endpoint
@@ -259,83 +306,87 @@ export class ScheduleLogService extends BaseService {
                     size
                 });
 
-                // For each schedule log, get associated telemetry data
-                const enrichedData: any[] = [];
+                // Transform data to the required format
+                const scheduleData: Schedule[] = [];
 
                 for (const log of scheduleLogs) {
-                    const enrichedLog: any = {
-                        name: log.name,
-                        start_time: log.start_time,
-                        end_time: log.end_time,
-                        schedule_id: log.schedule_id,
-                        customer_user: log.customer_user,
-                        schedule: log.schedule ? {
-                            name: log.schedule.name,
-                            device_id: log.schedule.device_id,
-                            label: log.schedule.label,
-                            action: log.schedule.action,
-                            enable: log.schedule.enable
-                        } : undefined,
-                        telemetry: []
-                    };
-
-                    // Get telemetry data for the device within the schedule time range
-                    if (log.schedule?.device_id && log.start_time && log.end_time) {
-                        try {
-                            const telemetryData = await telemetryRepo.createQueryBuilder('telemetry')
-                                .where('telemetry.device_id = :device_id', { device_id: log.schedule.device_id })
-                                .andWhere('telemetry.timestamp >= :start_time', { start_time: log.start_time })
-                                .andWhere('telemetry.timestamp <= :end_time', { end_time: log.end_time })
-                                .orderBy('telemetry.timestamp', 'ASC')
-                                .getMany();
-
-                            enrichedLog.telemetry = telemetryData.map(t => ({
-                                device_id: t.device_id,
-                                timestamp: new Date(t.timestamp), // Convert number to Date
-                                data: {
-                                    key_name: t.key_name,
-                                    value_type: t.value_type,
-                                    int_value: t.int_value,
-                                    float_value: t.float_value,
-                                    string_value: t.string_value,
-                                    boolean_value: t.boolean_value,
-                                    json_value: t.json_value
-                                },
-                                id: t.id,
-                                key_name: t.key_name,
-                                value_type: t.value_type,
-                                int_value: t.int_value,
-                                float_value: t.float_value,
-                                string_value: t.string_value,
-                                boolean_value: t.boolean_value,
-                                json_value: t.json_value
-                            }));
-                        } catch (telemetryError) {
-                            this.logWarn('Failed to fetch telemetry data', {
-                                device_id: log.schedule.device_id,
-                                error: telemetryError
-                            });
-                        }
+                    if (!log.schedule?.schedulePlan) {
+                        continue; // Skip logs without proper schedule plan data
                     }
 
-                    enrichedData.push(enrichedLog);
+                    const schedulePlan = log.schedule.schedulePlan;
+                    const schedule = log.schedule;
+
+                    // Format dates and times
+                    const startTimeUnix = this.formatToUnixTime(log.start_time, schedulePlan.start_date);
+                    const endTimeUnix = this.formatToUnixTime(log.end_time, schedulePlan.end_date);
+
+                    // Get notifications for this schedule/device
+                    const notifications = await this.getNotificationsForSchedule(
+                        notificationRepo,
+                        schedule.device_id,
+                        log.start_time,
+                        log.end_time
+                    );
+
+                    // Calculate average device data from telemetry
+                    const avgDeviceData = await this.calculateAverageDeviceData(
+                        telemetryRepo,
+                        schedule.device_id,
+                        startTimeUnix,
+                        endTimeUnix
+                    );
+
+                    const scheduleItem: Schedule = {
+                        name: schedulePlan.name || '',
+                        schedule_id: log.schedule_id || '',
+                        label: schedulePlan.label || '',
+                        device_id: schedule.device_id || '',
+                        start_date: schedulePlan.start_date || '',
+                        end_date: schedulePlan.end_date || '',
+                        start_time: log.start_time || '',
+                        end_time: log.end_time || '',
+                        start_time_unix: startTimeUnix,
+                        end_time_unix: endTimeUnix,
+                        log_creation: this.formatDateTime(log.creation),
+                        log_modified: this.formatDateTime(log.modified),
+                        notifications: notifications.filter((n: Notification) => n.severity !== 'error' && n.severity !== 'warning'),
+                        errors: notifications.filter((n: Notification) => n.severity === 'error'),
+                        warnings: notifications.filter((n: Notification) => n.severity === 'warning'),
+                        avg_device_data: avgDeviceData,
+                        customer_user: log.customerUser ? {
+                            name: log.customerUser.name || '',
+                            user_name: log.customerUser.user_name || '',
+                            email: log.customerUser.email || '',
+                            full_name: log.customerUser.full_name || ''
+                        } : null
+                    };
+
+                    scheduleData.push(scheduleItem);
                 }
 
-                this.logInfo('Schedule logs with telemetry retrieved successfully', {
+                this.logInfo('Schedule logs retrieved successfully', {
                     requestedBy: userId,
                     total,
-                    returned: enrichedData.length,
+                    returned: scheduleData.length,
                     page,
                     size
                 });
 
-                return {
-                    data: enrichedData,
-                    page,
-                    size,
-                    total,
-                    totalPages: Math.ceil(total / size)
+                const response: ScheduleLogResponse = {
+                    result: {
+                        data: scheduleData,
+                        pagination: {
+                            totalElements: total,
+                            totalPages: Math.ceil(total / size),
+                            pageSize: size,
+                            pageNumber: page,
+                            order_by: queryParams.order_by || null
+                        }
+                    }
                 };
+
+                return response;
             } catch (error) {
                 this.logError('Error retrieving schedule logs with telemetry', error);
                 if (error instanceof ApiError) {
@@ -593,6 +644,71 @@ export class ScheduleLogService extends BaseService {
         } catch (error) {
             this.logWarn('Failed to get notifications for schedule', { deviceId, error });
             return [];
+        }
+    }
+
+    /**
+     * Calculate average device data from telemetry within time range
+     */
+    private async calculateAverageDeviceData(
+        telemetryRepo: any,
+        deviceId: string,
+        startTimeUnix: string,
+        endTimeUnix: string
+    ): Promise<{ [key: string]: number } | null> {
+        try {
+            if (!deviceId || !startTimeUnix || !endTimeUnix) {
+                return null;
+            }
+
+            const telemetryData = await telemetryRepo.createQueryBuilder('telemetry')
+                .where('telemetry.device_id = :deviceId', { deviceId })
+                .andWhere('telemetry.timestamp >= :startTime', { startTime: new Date(startTimeUnix) })
+                .andWhere('telemetry.timestamp <= :endTime', { endTime: new Date(endTimeUnix) })
+                .andWhere('telemetry.value_type IN (:...types)', { types: ['int', 'float'] })
+                .getMany();
+
+            if (telemetryData.length === 0) {
+                return null;
+            }
+
+            // Group by key_name and calculate averages
+            const averages: { [key: string]: number } = {};
+            const counts: { [key: string]: number } = {};
+            const sums: { [key: string]: number } = {};
+
+            for (const data of telemetryData) {
+                const keyName = data.key_name || 'unknown';
+                let value = 0;
+
+                if (data.value_type === 'int' && data.int_value !== null) {
+                    value = data.int_value;
+                } else if (data.value_type === 'float' && data.float_value !== null) {
+                    value = data.float_value;
+                } else {
+                    continue; // Skip non-numeric values
+                }
+
+                if (!sums[keyName]) {
+                    sums[keyName] = 0;
+                    counts[keyName] = 0;
+                }
+
+                sums[keyName] += value;
+                counts[keyName] += 1;
+            }
+
+            // Calculate averages
+            for (const keyName in sums) {
+                if (counts[keyName] > 0) {
+                    averages[keyName] = Math.round((sums[keyName] / counts[keyName]) * 100) / 100; // Round to 2 decimal places
+                }
+            }
+
+            return Object.keys(averages).length > 0 ? averages : null;
+        } catch (error) {
+            this.logWarn('Failed to calculate average device data', { deviceId, error });
+            return null;
         }
     }
 
