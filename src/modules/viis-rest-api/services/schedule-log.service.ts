@@ -57,6 +57,41 @@ export class ScheduleLogService extends BaseService {
         }
     }
 
+
+    async list(options: { page: number; limit: number; offset: number }): Promise<any> {
+        return this.executeOperation('listScheduleLogs', async () => {
+            this.ensureDatabaseService();
+
+            // TODO: Implement your list logic here
+            // Example:
+            // const repository = this.databaseService.getScheduleLogRepository();
+            // const [items, total] = await repository.findAndCount({
+            //     skip: options.offset,
+            //     take: options.limit
+            // });
+            // 
+            // return {
+            //     data: items,
+            //     pagination: {
+            //         page: options.page,
+            //         limit: options.limit,
+            //         total,
+            //         totalPages: Math.ceil(total / options.limit)
+            //     }
+            // };
+
+            return {
+                data: [],
+                pagination: {
+                    page: options.page,
+                    limit: options.limit,
+                    total: 0,
+                    totalPages: 0
+                }
+            };
+        });
+    }
+
     /**
      * Create a new schedule log entry
      */

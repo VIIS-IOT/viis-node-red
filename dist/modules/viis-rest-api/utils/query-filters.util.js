@@ -33,15 +33,16 @@ function applyQueryFilters(qb, filters, defaultTable) {
         // Remap real table names to the primary alias if needed
         const tableAlias = validAliases.includes(alias) ? alias : primaryAlias;
         const paramKey = `param${index}`;
-        // Quote the field name to preserve case sensitivity
-        const fieldPath = `${tableAlias}."${field}"`;
+        // Quote the field name using MySQL backticks to preserve case sensitivity
+        const fieldPath = `${tableAlias}.\`${field}\``;
         switch (operator.toLowerCase()) {
             case '=':
             case 'eq':
                 qb.andWhere(`${fieldPath} = :${paramKey}`, { [paramKey]: value });
                 break;
             case 'like':
-                qb.andWhere(`${fieldPath}::text ILIKE :${paramKey}`, { [paramKey]: `%${value}%` });
+                // Use MySQL-compatible LIKE syntax (no ::text cast, use LIKE instead of ILIKE)
+                qb.andWhere(`${fieldPath} LIKE :${paramKey}`, { [paramKey]: `%${value}%` });
                 break;
             case 'in':
                 if (Array.isArray(value)) {

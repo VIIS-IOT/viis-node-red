@@ -91,10 +91,6 @@ export class IotScheduleLogController {
                 qb.andWhere('iot_schedule_log.schedule_id = :schedule_id', { schedule_id: queryParams.schedule_id });
             }
 
-            if (queryParams.customer_user) {
-                qb.andWhere('iot_schedule_log.customer_user = :customer_user', { customer_user: queryParams.customer_user });
-            }
-
             if (queryParams.start_time) {
                 qb.andWhere('iot_schedule_log.start_time >= :start_time', { start_time: queryParams.start_time });
             }
@@ -125,16 +121,49 @@ export class IotScheduleLogController {
             // Apply pagination
             const data = await qb.skip(skip).take(size).getMany();
 
+            // Transform data to plain objects to avoid serialization issues
+            const transformedData = data.map(scheduleLog => ({
+                name: scheduleLog.name,
+                start_time: scheduleLog.start_time,
+                end_time: scheduleLog.end_time,
+                schedule_id: scheduleLog.schedule_id,
+                customer_user: scheduleLog.customer_user,
+                schedule: scheduleLog.schedule ? {
+                    name: scheduleLog.schedule.name,
+                    device_id: scheduleLog.schedule.device_id,
+                    label: scheduleLog.schedule.label,
+                    action: scheduleLog.schedule.action,
+                    enable: scheduleLog.schedule.enable,
+                    schedule_plan_id: scheduleLog.schedule.schedule_plan_id
+                } : null,
+                customerUser: scheduleLog.customerUser ? {
+                    name: scheduleLog.customerUser.name,
+                    user_name: scheduleLog.customerUser.user_name,
+                    email: scheduleLog.customerUser.email,
+                    full_name: scheduleLog.customerUser.full_name
+                } : null,
+                schedulePlan: scheduleLog.schedule?.schedulePlan ? {
+                    name: scheduleLog.schedule.schedulePlan.name,
+                    label: scheduleLog.schedule.schedulePlan.label,
+                    schedule_count: scheduleLog.schedule.schedulePlan.schedule_count,
+                    status: scheduleLog.schedule.schedulePlan.status,
+                    enable: scheduleLog.schedule.schedulePlan.enable,
+                    device_id: scheduleLog.schedule.schedulePlan.device_id,
+                    start_date: scheduleLog.schedule.schedulePlan.start_date,
+                    end_date: scheduleLog.schedule.schedulePlan.end_date
+                } : null
+            }));
+
             logger.info(this.node, 'IoT schedule logs retrieved successfully', {
                 requestedBy: user?.user_id,
                 total,
-                returned: data.length,
+                returned: transformedData.length,
                 page,
                 size
             });
 
             return {
-                data,
+                data: transformedData,
                 page,
                 size,
                 total,
@@ -312,7 +341,27 @@ export class IotScheduleLogController {
                 scheduleLogName: name
             });
 
-            return scheduleLog;
+            // Transform to plain object to avoid serialization issues
+            return {
+                name: scheduleLog.name,
+                start_time: scheduleLog.start_time,
+                end_time: scheduleLog.end_time,
+                schedule_id: scheduleLog.schedule_id,
+                customer_user: scheduleLog.customer_user,
+                schedule: scheduleLog.schedule ? {
+                    name: scheduleLog.schedule.name,
+                    device_id: scheduleLog.schedule.device_id,
+                    label: scheduleLog.schedule.label,
+                    action: scheduleLog.schedule.action,
+                    enable: scheduleLog.schedule.enable
+                } : null,
+                customerUser: scheduleLog.customerUser ? {
+                    name: scheduleLog.customerUser.name,
+                    user_name: scheduleLog.customerUser.user_name,
+                    email: scheduleLog.customerUser.email,
+                    full_name: scheduleLog.customerUser.full_name
+                } : null
+            };
         } catch (error: any) {
             logger.error(this.node, 'Error retrieving IoT schedule log:', error);
             throw error;
@@ -356,7 +405,14 @@ export class IotScheduleLogController {
                 scheduleLogName: savedScheduleLog.name
             });
 
-            return savedScheduleLog;
+            // Transform to plain object to avoid serialization issues
+            return {
+                name: savedScheduleLog.name,
+                start_time: savedScheduleLog.start_time,
+                end_time: savedScheduleLog.end_time,
+                schedule_id: savedScheduleLog.schedule_id,
+                customer_user: savedScheduleLog.customer_user
+            };
         } catch (error: any) {
             logger.error(this.node, 'Error creating IoT schedule log:', error);
             throw error;
@@ -406,7 +462,27 @@ export class IotScheduleLogController {
                 scheduleLogName: name
             });
 
-            return updatedScheduleLog;
+            // Transform to plain object to avoid serialization issues
+            return updatedScheduleLog ? {
+                name: updatedScheduleLog.name,
+                start_time: updatedScheduleLog.start_time,
+                end_time: updatedScheduleLog.end_time,
+                schedule_id: updatedScheduleLog.schedule_id,
+                customer_user: updatedScheduleLog.customer_user,
+                schedule: updatedScheduleLog.schedule ? {
+                    name: updatedScheduleLog.schedule.name,
+                    device_id: updatedScheduleLog.schedule.device_id,
+                    label: updatedScheduleLog.schedule.label,
+                    action: updatedScheduleLog.schedule.action,
+                    enable: updatedScheduleLog.schedule.enable
+                } : null,
+                customerUser: updatedScheduleLog.customerUser ? {
+                    name: updatedScheduleLog.customerUser.name,
+                    user_name: updatedScheduleLog.customerUser.user_name,
+                    email: updatedScheduleLog.customerUser.email,
+                    full_name: updatedScheduleLog.customerUser.full_name
+                } : null
+            } : null;
         } catch (error: any) {
             logger.error(this.node, 'Error updating IoT schedule log:', error);
             throw error;

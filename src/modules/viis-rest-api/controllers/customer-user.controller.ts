@@ -25,7 +25,7 @@ import { applyQueryFilters, FilterTuple } from '../utils/query-filters.util';
  * - Supports dynamic filtering and pagination
  * - Token-based authentication with @Authorized() decorator
  */
-@JsonController('/customer-users')
+@JsonController('/customerUser')
 @Service()
 export class CustomerUserController {
     constructor(
@@ -39,7 +39,7 @@ export class CustomerUserController {
      * Get all customer users with filtering and pagination
      * GET /api/v2/customer-users
      */
-    @Get('/')
+    @Get('/user')
     @Authorized()
     async getAllCustomerUsers(
         @QueryParams() queryParams: CustomerUserQueryDto,
@@ -97,7 +97,7 @@ export class CustomerUserController {
                 const [field, direction] = queryParams.order_by.split(' ');
                 qb.orderBy(`customer_user.${field}`, direction?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC');
             } else {
-                qb.orderBy('customer_user.created_at', 'DESC');
+                qb.orderBy('customer_user.created_time', 'DESC');
             }
 
             // Get total count
@@ -106,16 +106,55 @@ export class CustomerUserController {
             // Apply pagination
             const data = await qb.skip(skip).take(size).getMany();
 
+            // Transform data to plain objects to avoid serialization issues
+            const transformedData = data.map(customerUser => ({
+                name: customerUser.name,
+                user_id: customerUser.user_id,
+                user_name: customerUser.user_name,
+                email: customerUser.email,
+                full_name: customerUser.full_name,
+                phone_number: customerUser.phone_number,
+                customer_id: customerUser.customer_id,
+                user_type: customerUser.user_type,
+                iot_dynamic_role: customerUser.iot_dynamic_role,
+                is_deactivated: customerUser.is_deactivated,
+                created_time: customerUser.created_time,
+                is_admin: customerUser.is_admin,
+                role_label: customerUser.role_label,
+                user_avatar: customerUser.user_avatar,
+                address: customerUser.address,
+                date_join: customerUser.date_join,
+                date_active: customerUser.date_active,
+                first_name: customerUser.first_name,
+                last_name: customerUser.last_name,
+                district: customerUser.district,
+                ward: customerUser.ward,
+                province: customerUser.province,
+                description: customerUser.description,
+                employee_id: customerUser.employee_id,
+                iot_customer: customerUser.iot_customer ? {
+                    name: customerUser.iot_customer.name,
+                    customerName: customerUser.iot_customer.customerName,
+                    email: customerUser.iot_customer.email,
+                    phone: customerUser.iot_customer.phone,
+                    address: customerUser.iot_customer.address
+                } : null,
+                dynamicRole: customerUser.dynamicRole ? {
+                    name: customerUser.dynamicRole.name,
+                    label: customerUser.dynamicRole.label
+                } : null
+            }));
+
             logger.info(this.node, 'Customer users retrieved successfully', {
                 requestedBy: user?.user_id,
                 total,
-                returned: data.length,
+                returned: transformedData.length,
                 page,
                 size
             });
 
             return {
-                data,
+                data: transformedData,
                 page,
                 size,
                 total,
@@ -159,7 +198,49 @@ export class CustomerUserController {
                 customerUserName: name
             });
 
-            return customerUser;
+            // Transform to plain object to avoid serialization issues
+            return {
+                name: customerUser.name,
+                user_id: customerUser.user_id,
+                user_name: customerUser.user_name,
+                email: customerUser.email,
+                full_name: customerUser.full_name,
+                phone_number: customerUser.phone_number,
+                customer_id: customerUser.customer_id,
+                user_type: customerUser.user_type,
+                iot_dynamic_role: customerUser.iot_dynamic_role,
+                is_deactivated: customerUser.is_deactivated,
+                created_time: customerUser.created_time,
+                is_admin: customerUser.is_admin,
+                role_label: customerUser.role_label,
+                user_avatar: customerUser.user_avatar,
+                address: customerUser.address,
+                date_join: customerUser.date_join,
+                date_active: customerUser.date_active,
+                first_name: customerUser.first_name,
+                last_name: customerUser.last_name,
+                district: customerUser.district,
+                ward: customerUser.ward,
+                province: customerUser.province,
+                description: customerUser.description,
+                employee_id: customerUser.employee_id,
+                iot_customer: customerUser.iot_customer ? {
+                    name: customerUser.iot_customer.name,
+                    customerName: customerUser.iot_customer.customerName,
+                    email: customerUser.iot_customer.email,
+                    phone: customerUser.iot_customer.phone,
+                    address: customerUser.iot_customer.address
+                } : null,
+                dynamicRole: customerUser.dynamicRole ? {
+                    name: customerUser.dynamicRole.name,
+                    label: customerUser.dynamicRole.label
+                } : null,
+                credential: customerUser.credential ? {
+                    name: customerUser.credential.name,
+                    enable: customerUser.credential.enable,
+                    user_id: customerUser.credential.user_id
+                } : null
+            };
         } catch (error: any) {
             logger.error(this.node, 'Error retrieving customer user:', error);
             throw error;
@@ -207,7 +288,21 @@ export class CustomerUserController {
                 customerUserName: savedCustomerUser.name
             });
 
-            return savedCustomerUser;
+            // Transform to plain object to avoid serialization issues
+            return {
+                name: savedCustomerUser.name,
+                user_id: savedCustomerUser.user_id,
+                user_name: savedCustomerUser.user_name,
+                email: savedCustomerUser.email,
+                full_name: savedCustomerUser.full_name,
+                phone_number: savedCustomerUser.phone_number,
+                customer_id: savedCustomerUser.customer_id,
+                user_type: savedCustomerUser.user_type,
+                iot_dynamic_role: savedCustomerUser.iot_dynamic_role,
+                is_deactivated: savedCustomerUser.is_deactivated,
+                created_time: savedCustomerUser.created_time,
+                is_admin: savedCustomerUser.is_admin
+            };
         } catch (error: any) {
             logger.error(this.node, 'Error creating customer user:', error);
             throw error;
@@ -257,7 +352,29 @@ export class CustomerUserController {
                 customerUserName: name
             });
 
-            return updatedCustomerUser;
+            // Transform to plain object to avoid serialization issues
+            return updatedCustomerUser ? {
+                name: updatedCustomerUser.name,
+                user_id: updatedCustomerUser.user_id,
+                user_name: updatedCustomerUser.user_name,
+                email: updatedCustomerUser.email,
+                full_name: updatedCustomerUser.full_name,
+                phone_number: updatedCustomerUser.phone_number,
+                customer_id: updatedCustomerUser.customer_id,
+                user_type: updatedCustomerUser.user_type,
+                iot_dynamic_role: updatedCustomerUser.iot_dynamic_role,
+                is_deactivated: updatedCustomerUser.is_deactivated,
+                created_time: updatedCustomerUser.created_time,
+                is_admin: updatedCustomerUser.is_admin,
+                iot_customer: updatedCustomerUser.iot_customer ? {
+                    name: updatedCustomerUser.iot_customer.name,
+                    customerName: updatedCustomerUser.iot_customer.customerName
+                } : null,
+                dynamicRole: updatedCustomerUser.dynamicRole ? {
+                    name: updatedCustomerUser.dynamicRole.name,
+                    label: updatedCustomerUser.dynamicRole.label
+                } : null
+            } : null;
         } catch (error: any) {
             logger.error(this.node, 'Error updating customer user:', error);
             throw error;

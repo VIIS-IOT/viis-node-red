@@ -102,15 +102,41 @@ let IotNotificationController = class IotNotificationController {
             const total = await qb.getCount();
             // Apply pagination
             const data = await qb.skip(skip).take(size).getMany();
+            // Transform data to plain objects to avoid serialization issues
+            const transformedData = data.map(notification => ({
+                name: notification.name,
+                customer_user: notification.customer_user,
+                message: notification.message,
+                created_at: notification.created_at,
+                entity: notification.entity,
+                type: notification.type,
+                is_read: notification.is_read,
+                is_sent: notification.is_sent,
+                customer_id: notification.customer_id,
+                err_code: notification.err_code,
+                entity_label: notification.entity_label,
+                severity: notification.severity,
+                customer: notification.customer ? {
+                    name: notification.customer.name,
+                    customerName: notification.customer.customerName,
+                    email: notification.customer.email
+                } : null,
+                customerUser: notification.customerUser ? {
+                    name: notification.customerUser.name,
+                    user_name: notification.customerUser.user_name,
+                    email: notification.customerUser.email,
+                    full_name: notification.customerUser.full_name
+                } : null
+            }));
             logger_1.logger.info(this.node, 'IoT notifications retrieved successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 total,
-                returned: data.length,
+                returned: transformedData.length,
                 page,
                 size
             });
             return {
-                data,
+                data: transformedData,
                 page,
                 size,
                 total,
@@ -145,7 +171,32 @@ let IotNotificationController = class IotNotificationController {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 notificationName: name
             });
-            return notification;
+            // Transform to plain object to avoid serialization issues
+            return {
+                name: notification.name,
+                customer_user: notification.customer_user,
+                message: notification.message,
+                created_at: notification.created_at,
+                entity: notification.entity,
+                type: notification.type,
+                is_read: notification.is_read,
+                is_sent: notification.is_sent,
+                customer_id: notification.customer_id,
+                err_code: notification.err_code,
+                entity_label: notification.entity_label,
+                severity: notification.severity,
+                customer: notification.customer ? {
+                    name: notification.customer.name,
+                    customerName: notification.customer.customerName,
+                    email: notification.customer.email
+                } : null,
+                customerUser: notification.customerUser ? {
+                    name: notification.customerUser.name,
+                    user_name: notification.customerUser.user_name,
+                    email: notification.customerUser.email,
+                    full_name: notification.customerUser.full_name
+                } : null
+            };
         }
         catch (error) {
             logger_1.logger.error(this.node, 'Error retrieving IoT notification:', error);
