@@ -1,0 +1,447 @@
+"use strict";
+/**
+ * @fileoverview IoT Schedule Log management controller
+ */
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IotScheduleLogController = void 0;
+require("reflect-metadata");
+const routing_controllers_1 = require("routing-controllers");
+const typedi_1 = require("typedi");
+const database_service_1 = require("../services/database.service");
+const iot_schedule_log_dto_1 = require("../dto/iot-schedule-log.dto");
+const logger_1 = require("../utils/logger");
+const container_setup_1 = require("../container/container.setup");
+const query_filters_util_1 = require("../utils/query-filters.util");
+/**
+ * IoT Schedule Log management controller class
+ *
+ * This controller provides full CRUD operations for IoT schedule logs with advanced querying:
+ * - Uses routing-controllers decorators with automatic validation
+ * - Implements comprehensive error handling and logging
+ * - Supports dynamic filtering and pagination
+ * - Integration with device telemetry data
+ * - Token-based authentication with @Authorized() decorator
+ * - Follows the exact API format: {{serverURL}}/api/v2/scheduleLog?page=1&size=100&order_by=tabiot_schedule_plan.label ASC&filters=[...]
+ */
+let IotScheduleLogController = class IotScheduleLogController {
+    constructor(databaseService, node) {
+        this.databaseService = databaseService;
+        this.node = node;
+        logger_1.logger.info(this.node, 'IotScheduleLogController initialized');
+    }
+    /**
+     * Get all IoT schedule logs with filtering, pagination, and telemetry integration
+     * GET /api/v2/scheduleLog
+     *
+     * Supports the exact API format:
+     * ?page=1&size=100&order_by=tabiot_schedule_plan.label ASC&filters=[["iot_schedule", "device_id", "like", "acc8cad0-3136-11ef-a8ea-8f79bc1b1c88"],["iot_schedule_log", "start_time", ">=", "2024-11-15 00:05:00"],["iot_schedule_log", "end_time", "<=", "2025-11-15 13:08:00"]]
+     */
+    async getAllScheduleLogs(queryParams, user) {
+        var _a;
+        logger_1.logger.info(this.node, 'Get all IoT schedule logs request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            filters: queryParams
+        });
+        try {
+            const page = queryParams.page || 1;
+            const size = Math.min(queryParams.size || 100, 100);
+            const skip = (page - 1) * size;
+            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+            let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
+                .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
+                .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser')
+                .leftJoinAndSelect('iot_schedule.schedulePlan', 'tabiot_schedule_plan');
+            // Apply dynamic filters if provided
+            if (queryParams.filters) {
+                try {
+                    const parsedFilters = JSON.parse(queryParams.filters);
+                    qb = (0, query_filters_util_1.applyQueryFilters)(qb, parsedFilters, 'iot_schedule_log');
+                }
+                catch (parseError) {
+                    logger_1.logger.error(this.node, 'Failed to parse filters:', { filters: queryParams.filters, error: parseError });
+                    throw new Error('Invalid filters format');
+                }
+            }
+            // Apply search filter
+            if (queryParams.search) {
+                qb.andWhere('(iot_schedule.label ILIKE :search OR iot_schedule.device_id ILIKE :search OR tabiot_schedule_plan.label ILIKE :search)', { search: `%${queryParams.search}%` });
+            }
+            // Apply specific filters
+            if (queryParams.schedule_id) {
+                qb.andWhere('iot_schedule_log.schedule_id = :schedule_id', { schedule_id: queryParams.schedule_id });
+            }
+            if (queryParams.customer_user) {
+                qb.andWhere('iot_schedule_log.customer_user = :customer_user', { customer_user: queryParams.customer_user });
+            }
+            if (queryParams.start_time) {
+                qb.andWhere('iot_schedule_log.start_time >= :start_time', { start_time: queryParams.start_time });
+            }
+            if (queryParams.end_time) {
+                qb.andWhere('iot_schedule_log.end_time <= :end_time', { end_time: queryParams.end_time });
+            }
+            // Apply ordering - support complex ordering like "tabiot_schedule_plan.label ASC"
+            if (queryParams.order_by) {
+                const orderParts = queryParams.order_by.trim().split(' ');
+                const field = orderParts[0];
+                const direction = ((_a = orderParts[1]) === null || _a === void 0 ? void 0 : _a.toUpperCase()) === 'DESC' ? 'DESC' : 'ASC';
+                // Handle complex field paths
+                if (field.includes('.')) {
+                    qb.orderBy(field, direction);
+                }
+                else {
+                    qb.orderBy(`iot_schedule_log.${field}`, direction);
+                }
+            }
+            else {
+                qb.orderBy('iot_schedule_log.created_at', 'DESC');
+            }
+            // Get total count
+            const total = await qb.getCount();
+            // Apply pagination
+            const data = await qb.skip(skip).take(size).getMany();
+            logger_1.logger.info(this.node, 'IoT schedule logs retrieved successfully', {
+                requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+                total,
+                returned: data.length,
+                page,
+                size
+            });
+            return {
+                data,
+                page,
+                size,
+                total,
+                totalPages: Math.ceil(total / size)
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error retrieving IoT schedule logs:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get schedule logs with telemetry data for a specific time range
+     * GET /api/v2/scheduleLog/with-telemetry
+     */
+    async getScheduleLogsWithTelemetry(queryParams, user) {
+        var _a;
+        logger_1.logger.info(this.node, 'Get schedule logs with telemetry request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            filters: queryParams
+        });
+        try {
+            const page = queryParams.page || 1;
+            const size = Math.min(queryParams.size || 100, 100);
+            const skip = (page - 1) * size;
+            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+            const telemetryRepo = this.databaseService.getDeviceTelemetryRepository();
+            // Get schedule logs first
+            let qb = scheduleLogRepo.createQueryBuilder('iot_schedule_log')
+                .leftJoinAndSelect('iot_schedule_log.schedule', 'iot_schedule')
+                .leftJoinAndSelect('iot_schedule_log.customerUser', 'customerUser');
+            // Apply filters similar to the main endpoint
+            if (queryParams.filters) {
+                try {
+                    const parsedFilters = JSON.parse(queryParams.filters);
+                    qb = (0, query_filters_util_1.applyQueryFilters)(qb, parsedFilters, 'iot_schedule_log');
+                }
+                catch (parseError) {
+                    logger_1.logger.error(this.node, 'Failed to parse filters:', { filters: queryParams.filters, error: parseError });
+                    throw new Error('Invalid filters format');
+                }
+            }
+            // Apply time range filters
+            if (queryParams.start_date) {
+                qb.andWhere('DATE(iot_schedule_log.start_time) >= :start_date', { start_date: queryParams.start_date });
+            }
+            if (queryParams.end_date) {
+                qb.andWhere('DATE(iot_schedule_log.end_time) <= :end_date', { end_date: queryParams.end_date });
+            }
+            const total = await qb.getCount();
+            const scheduleLogs = await qb.skip(skip).take(size).getMany();
+            // For each schedule log, get associated telemetry data
+            const enrichedData = [];
+            for (const log of scheduleLogs) {
+                const enrichedLog = {
+                    name: log.name,
+                    start_time: log.start_time,
+                    end_time: log.end_time,
+                    schedule_id: log.schedule_id,
+                    customer_user: log.customer_user,
+                    schedule: log.schedule ? {
+                        name: log.schedule.name,
+                        device_id: log.schedule.device_id,
+                        label: log.schedule.label,
+                        action: log.schedule.action,
+                        enable: log.schedule.enable
+                    } : undefined,
+                    telemetry: []
+                };
+                // Get telemetry data for the device within the schedule time range
+                if (((_a = log.schedule) === null || _a === void 0 ? void 0 : _a.device_id) && log.start_time && log.end_time) {
+                    try {
+                        const telemetryData = await telemetryRepo.createQueryBuilder('telemetry')
+                            .where('telemetry.device_id = :device_id', { device_id: log.schedule.device_id })
+                            .andWhere('telemetry.timestamp >= :start_time', { start_time: log.start_time })
+                            .andWhere('telemetry.timestamp <= :end_time', { end_time: log.end_time })
+                            .orderBy('telemetry.timestamp', 'ASC')
+                            .getMany();
+                        enrichedLog.telemetry = telemetryData.map(t => ({
+                            device_id: t.device_id,
+                            timestamp: new Date(t.timestamp), // Convert number to Date
+                            data: {
+                                key_name: t.key_name,
+                                value_type: t.value_type,
+                                int_value: t.int_value,
+                                float_value: t.float_value,
+                                string_value: t.string_value,
+                                boolean_value: t.boolean_value,
+                                json_value: t.json_value
+                            },
+                            id: t.id,
+                            key_name: t.key_name,
+                            value_type: t.value_type,
+                            int_value: t.int_value,
+                            float_value: t.float_value,
+                            string_value: t.string_value,
+                            boolean_value: t.boolean_value,
+                            json_value: t.json_value
+                        }));
+                    }
+                    catch (telemetryError) {
+                        logger_1.logger.warn(this.node, 'Failed to fetch telemetry data', {
+                            device_id: log.schedule.device_id,
+                            error: telemetryError
+                        });
+                    }
+                }
+                enrichedData.push(enrichedLog);
+            }
+            logger_1.logger.info(this.node, 'Schedule logs with telemetry retrieved successfully', {
+                requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+                total,
+                returned: enrichedData.length,
+                page,
+                size
+            });
+            return {
+                data: enrichedData,
+                page,
+                size,
+                total,
+                totalPages: Math.ceil(total / size)
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error retrieving schedule logs with telemetry:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get a specific IoT schedule log by name
+     * GET /api/v2/scheduleLog/:name
+     */
+    async getScheduleLog(name, user) {
+        logger_1.logger.info(this.node, 'Get IoT schedule log request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            scheduleLogName: name
+        });
+        try {
+            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+            const scheduleLog = await scheduleLogRepo.findOne({
+                where: { name: name },
+                relations: ['schedule', 'customerUser']
+            });
+            if (!scheduleLog) {
+                logger_1.logger.warn(this.node, 'IoT schedule log not found', { name: name });
+                throw new Error('IoT schedule log not found');
+            }
+            logger_1.logger.info(this.node, 'IoT schedule log retrieved successfully', {
+                requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+                scheduleLogName: name
+            });
+            return scheduleLog;
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error retrieving IoT schedule log:', error);
+            throw error;
+        }
+    }
+    /**
+     * Create a new IoT schedule log
+     * POST /api/v2/scheduleLog
+     */
+    async createScheduleLog(scheduleLogData, user) {
+        logger_1.logger.info(this.node, 'Create IoT schedule log request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            scheduleLogName: scheduleLogData.name
+        });
+        try {
+            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+            // Check if schedule log already exists
+            const existingLog = await scheduleLogRepo.findOne({
+                where: { name: scheduleLogData.name }
+            });
+            if (existingLog) {
+                logger_1.logger.warn(this.node, 'IoT schedule log already exists', { name: scheduleLogData.name });
+                throw new Error('IoT schedule log with this name already exists');
+            }
+            // Create new schedule log
+            const newScheduleLog = scheduleLogRepo.create(scheduleLogData);
+            const savedScheduleLog = await scheduleLogRepo.save(newScheduleLog);
+            logger_1.logger.info(this.node, 'IoT schedule log created successfully', {
+                requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+                scheduleLogName: savedScheduleLog.name
+            });
+            return savedScheduleLog;
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error creating IoT schedule log:', error);
+            throw error;
+        }
+    }
+    /**
+     * Update an existing IoT schedule log
+     * PUT /api/v2/scheduleLog/:name
+     */
+    async updateScheduleLog(name, scheduleLogData, user) {
+        logger_1.logger.info(this.node, 'Update IoT schedule log request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            scheduleLogName: name
+        });
+        try {
+            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+            // Check if schedule log exists
+            const existingLog = await scheduleLogRepo.findOne({
+                where: { name: name }
+            });
+            if (!existingLog) {
+                logger_1.logger.warn(this.node, 'IoT schedule log not found for update', { name: name });
+                throw new Error('IoT schedule log not found');
+            }
+            // Update schedule log
+            await scheduleLogRepo.update({ name: name }, scheduleLogData);
+            // Fetch updated schedule log
+            const updatedScheduleLog = await scheduleLogRepo.findOne({
+                where: { name: name },
+                relations: ['schedule', 'customerUser']
+            });
+            logger_1.logger.info(this.node, 'IoT schedule log updated successfully', {
+                requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+                scheduleLogName: name
+            });
+            return updatedScheduleLog;
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error updating IoT schedule log:', error);
+            throw error;
+        }
+    }
+    /**
+     * Delete an IoT schedule log
+     * DELETE /api/v2/scheduleLog/:name
+     */
+    async deleteScheduleLog(name, user) {
+        logger_1.logger.info(this.node, 'Delete IoT schedule log request', {
+            requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+            scheduleLogName: name
+        });
+        try {
+            const scheduleLogRepo = this.databaseService.getScheduleLogRepository();
+            // Check if schedule log exists
+            const existingLog = await scheduleLogRepo.findOne({
+                where: { name: name }
+            });
+            if (!existingLog) {
+                logger_1.logger.warn(this.node, 'IoT schedule log not found for deletion', { name: name });
+                throw new Error('IoT schedule log not found');
+            }
+            // Delete schedule log
+            await scheduleLogRepo.delete({ name: name });
+            logger_1.logger.info(this.node, 'IoT schedule log deleted successfully', {
+                requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
+                scheduleLogName: name
+            });
+            return { message: 'IoT schedule log deleted successfully' };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error deleting IoT schedule log:', error);
+            throw error;
+        }
+    }
+};
+exports.IotScheduleLogController = IotScheduleLogController;
+__decorate([
+    (0, routing_controllers_1.Get)('/'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.QueryParams)()),
+    __param(1, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [iot_schedule_log_dto_1.IotScheduleLogQueryDto, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "getAllScheduleLogs", null);
+__decorate([
+    (0, routing_controllers_1.Get)('/with-telemetry'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.QueryParams)()),
+    __param(1, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [iot_schedule_log_dto_1.IotScheduleLogQueryDto, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "getScheduleLogsWithTelemetry", null);
+__decorate([
+    (0, routing_controllers_1.Get)('/:name'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('name')),
+    __param(1, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "getScheduleLog", null);
+__decorate([
+    (0, routing_controllers_1.Post)('/'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Body)()),
+    __param(1, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [iot_schedule_log_dto_1.CreateIotScheduleLogDto, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "createScheduleLog", null);
+__decorate([
+    (0, routing_controllers_1.Put)('/:name'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('name')),
+    __param(1, (0, routing_controllers_1.Body)()),
+    __param(2, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, iot_schedule_log_dto_1.UpdateIotScheduleLogDto, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "updateScheduleLog", null);
+__decorate([
+    (0, routing_controllers_1.Delete)('/:name'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('name')),
+    __param(1, (0, routing_controllers_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], IotScheduleLogController.prototype, "deleteScheduleLog", null);
+exports.IotScheduleLogController = IotScheduleLogController = __decorate([
+    (0, routing_controllers_1.JsonController)('/scheduleLog'),
+    (0, typedi_1.Service)(),
+    __param(0, (0, typedi_1.Inject)()),
+    __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
+    __metadata("design:paramtypes", [database_service_1.DatabaseService, Object])
+], IotScheduleLogController);
