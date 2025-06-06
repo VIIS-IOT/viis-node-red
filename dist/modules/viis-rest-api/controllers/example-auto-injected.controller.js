@@ -200,7 +200,7 @@ let ExampleAutoInjectedController = class ExampleAutoInjectedController {
 };
 exports.ExampleAutoInjectedController = ExampleAutoInjectedController;
 __decorate([
-    (0, routing_controllers_1.Get)('/health'),
+    (0, routing_controllers_1.Get)('/2'),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)

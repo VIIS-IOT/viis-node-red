@@ -12,9 +12,9 @@ import { DatabaseService } from '../services/database.service';
 import { AuthService } from '../services/auth.service';
 import { ExampleAutoInjectedService } from '../services/example-auto-injected.service';
 import { ApiConfigManager } from '../config/api.config';
-import { 
-    NODE_TOKEN, 
-    CONFIG_MANAGER_TOKEN 
+import {
+    NODE_TOKEN,
+    CONFIG_MANAGER_TOKEN
 } from '../container/container.setup';
 
 /**
@@ -46,7 +46,7 @@ export class ExampleAutoInjectedController {
         private readonly databaseService: DatabaseService,
         private readonly authService: AuthService,
         private readonly exampleService: ExampleAutoInjectedService,
-        
+
         // Inject primitive values using custom tokens
         @Inject(NODE_TOKEN) private readonly node: Node,
         @Inject(CONFIG_MANAGER_TOKEN) private readonly configManager: ApiConfigManager
@@ -58,7 +58,7 @@ export class ExampleAutoInjectedController {
         if (!this.configManager) {
             throw new Error('Config manager not properly injected');
         }
-        
+
         logger.info(this.node, 'ExampleAutoInjectedController initialized with automatic dependency injection');
     }
 
@@ -66,14 +66,14 @@ export class ExampleAutoInjectedController {
      * Public endpoint - no authentication required
      * GET /api/v2/example/health
      */
-    @Get('/health')
+    @Get('/2')
     async getHealth(): Promise<any> {
         logger.info(this.node, 'Example health check requested');
 
         try {
             // Use injected services
             const serviceHealth = await this.exampleService.healthCheck();
-            
+
             return {
                 success: true,
                 controller: 'ExampleAutoInjectedController',
@@ -114,7 +114,7 @@ export class ExampleAutoInjectedController {
         try {
             // Use injected service
             const result = await this.exampleService.performExampleOperation(userId);
-            
+
             return {
                 success: true,
                 requestedBy: currentUser.user_id,
@@ -161,7 +161,7 @@ export class ExampleAutoInjectedController {
 
             // Use injected config manager
             const apiPrefix = this.configManager.get('apiPrefix');
-            
+
             return {
                 success: true,
                 action: requestData.action,
@@ -198,7 +198,7 @@ export class ExampleAutoInjectedController {
             // Use injected services to gather stats
             const dbStats = this.databaseService.isInitialized();
             const serviceHealth = await this.exampleService.healthCheck();
-            
+
             return {
                 success: true,
                 stats: {

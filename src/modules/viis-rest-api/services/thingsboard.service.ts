@@ -13,6 +13,7 @@ import { DatabaseService } from './database.service';
 import { ApiConfigManager } from '../config/api.config';
 import { GlobalContextHelper } from '../../../ultils/global-context-helper';
 import { ENV_KEYS, MQTT_CONFIG, DEFAULTS } from '../constants';
+import { SERVICE_CONTEXT_TOKEN } from '../container/container.setup';
 import {
     ThingsBoardRpcRequest,
     ThingsBoardRpcResponse,
@@ -45,7 +46,7 @@ export class ThingsBoardService extends BaseService {
         mqttPublishFailures: 0
     };
 
-    constructor(@Inject('serviceContext') context: ServiceContext) {
+    constructor(@Inject(SERVICE_CONTEXT_TOKEN) context: ServiceContext) {
         super(context, 'ThingsBoardService');
         this.globalHelper = new GlobalContextHelper(this.node.context());
     }

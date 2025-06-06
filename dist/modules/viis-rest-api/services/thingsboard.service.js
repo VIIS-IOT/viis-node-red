@@ -26,6 +26,7 @@ const common_types_1 = require("../types/common.types");
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const constants_1 = require("../constants");
+const container_setup_1 = require("../container/container.setup");
 const thingsboard_types_1 = require("../types/thingsboard.types");
 /**
  * ThingsBoard RPC service class
@@ -455,6 +456,6 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
 exports.ThingsBoardService = ThingsBoardService;
 exports.ThingsBoardService = ThingsBoardService = __decorate([
     (0, typedi_1.Service)(),
-    __param(0, (0, typedi_1.Inject)('serviceContext')),
+    __param(0, (0, typedi_1.Inject)(container_setup_1.SERVICE_CONTEXT_TOKEN)),
     __metadata("design:paramtypes", [Object])
 ], ThingsBoardService);

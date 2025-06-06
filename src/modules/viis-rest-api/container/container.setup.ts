@@ -101,6 +101,10 @@ export class ContainerSetup {
             };
             Container.set(SERVICE_CONTEXT_TOKEN, serviceContext);
 
+            // BACKWARD COMPATIBILITY: Also register serviceContext with string identifier
+            // This ensures existing services using @Inject('serviceContext') still work
+            Container.set('serviceContext', serviceContext);
+
             // Register services that need manual initialization
             // These services will be automatically injected into controllers and other services
             await this.registerCoreServices(databaseService, jwtSecret, node, configManager, serviceContext);
