@@ -149,7 +149,7 @@ class ContainerSetup {
         // Register ThingsBoardService with proper initialization
         // This service needs to be manually initialized to ensure MQTT client is set up
         const { ThingsBoardService } = await Promise.resolve().then(() => __importStar(require('../services/thingsboard.service')));
-        const thingsBoardService = new ThingsBoardService(serviceContext);
+        const thingsBoardService = new ThingsBoardService(serviceContext, scheduleActivationService);
         await thingsBoardService.initialize();
         typedi_1.default.set(ThingsBoardService, thingsBoardService);
         // Note: DeviceService is decorated with @Service()

@@ -172,7 +172,7 @@ export class ContainerSetup {
         // Register ThingsBoardService with proper initialization
         // This service needs to be manually initialized to ensure MQTT client is set up
         const { ThingsBoardService } = await import('../services/thingsboard.service');
-        const thingsBoardService = new ThingsBoardService(serviceContext);
+        const thingsBoardService = new ThingsBoardService(serviceContext, scheduleActivationService);
         await thingsBoardService.initialize();
         Container.set(ThingsBoardService, thingsBoardService);
 

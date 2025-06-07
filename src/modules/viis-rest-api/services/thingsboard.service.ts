@@ -28,6 +28,8 @@ import {
     ThingsBoardConfig,
     RpcValidationResult
 } from '../types/thingsboard.types';
+import { ThingsBoardRpcRequestDto, RpcExecutionResultDto } from '../dto/thingsboard.dto';
+import { ScheduleActivationService, UserContext } from './schedule-activation.service';
 
 /**
  * ThingsBoard RPC service class
@@ -37,6 +39,7 @@ import {
 export class ThingsBoardService extends BaseService {
     private mqttClient: MqttClientCore | null = null;
     private globalHelper: GlobalContextHelper;
+    private scheduleActivationService: ScheduleActivationService | null = null;
     private processingStats = {
         totalRequests: 0,
         successfulRequests: 0,
@@ -46,9 +49,13 @@ export class ThingsBoardService extends BaseService {
         mqttPublishFailures: 0
     };
 
-    constructor(@Inject(SERVICE_CONTEXT_TOKEN) context: ServiceContext) {
+    constructor(
+        @Inject(SERVICE_CONTEXT_TOKEN) context: ServiceContext,
+        @Inject() scheduleActivationService?: ScheduleActivationService
+    ) {
         super(context, 'ThingsBoardService');
         this.globalHelper = new GlobalContextHelper(this.node.context());
+        this.scheduleActivationService = scheduleActivationService || null;
     }
 
     /**
@@ -530,6 +537,268 @@ export class ThingsBoardService extends BaseService {
             mqttPublishSuccessRate: Math.round(mqttSuccessRate * 100) / 100,
             lastProcessedAt: Date.now()
         };
+    }
+
+    /**
+     * Process one-way RPC request from DTO with schedule activation
+     */
+    async processOneWayRpcFromDto(
+        deviceId: string,
+        rpcData: ThingsBoardRpcRequestDto,
+        user?: any
+    ): Promise<RpcExecutionResultDto> {
+        const requestId = this.generateRequestId();
+        const userId = user?.user_id || user?.name;
+
+        return this.executeOperation('processOneWayRpcFromDto', async () => {
+
+            this.logInfo(`Processing one-way RPC request for device: ${deviceId}`, {
+                method: rpcData.method,
+                requestId,
+                deviceId,
+                hasParams: !!rpcData.params,
+                userId
+            });
+
+            try {
+                // Validate device ID
+                this.validateDeviceId(deviceId);
+
+                // Create processing context
+                const context: RpcProcessingContext = {
+                    deviceId,
+                    method: rpcData.method,
+                    requestId,
+                    startTime: Date.now()
+                };
+
+                // Convert DTO to internal request format
+                const rpcRequest: ThingsBoardRpcRequest = {
+                    method: rpcData.method,
+                    params: rpcData.params || {},
+                    timeout: rpcData.timeout || 30000,
+                    persistent: rpcData.persistent || false,
+                    retries: rpcData.retries || 3
+                };
+
+                // Process RPC request
+                const executionResult: RpcExecutionResult = await this.processRpcRequest(
+                    deviceId,
+                    rpcRequest,
+                    context
+                );
+
+                // Process schedule activation if conditions are met
+                await this.processScheduleActivationIfNeeded(deviceId, rpcData.params || {}, user, requestId);
+
+                this.logInfo(`One-way RPC processed successfully for device: ${deviceId}`, {
+                    method: rpcData.method,
+                    requestId,
+                    processingTime: executionResult.processingTime,
+                    recordsCount: executionResult.telemetryRecords.length,
+                    mqttPublished: executionResult.mqttPublished,
+                    userId
+                });
+
+                // Convert to response DTO
+                const responseDto: RpcExecutionResultDto = {
+                    success: executionResult.success,
+                    deviceId: executionResult.deviceId,
+                    method: executionResult.method,
+                    telemetryRecordsCount: executionResult.telemetryRecords.length,
+                    mqttPublished: executionResult.mqttPublished,
+                    mqttTopic: executionResult.mqttTopic,
+                    processingTime: executionResult.processingTime,
+                    errors: executionResult.errors.length > 0 ? executionResult.errors : undefined,
+                    warnings: executionResult.warnings.length > 0 ? executionResult.warnings : undefined,
+                    requestId
+                };
+
+                return responseDto;
+
+            } catch (error) {
+                this.logError(`One-way RPC failed for device: ${deviceId}`, error, {
+                    method: rpcData.method,
+                    requestId,
+                    deviceId,
+                    userId
+                });
+                throw error;
+            }
+        }, { deviceId, method: rpcData.method, userId });
+    }
+
+    /**
+     * Get service health information
+     */
+    async getServiceHealthInfo(): Promise<any> {
+        return this.executeOperation('getServiceHealthInfo', async () => {
+            this.logDebug('ThingsBoard service health check requested');
+
+            try {
+                const healthInfo = await this.healthCheck();
+                const processingStats = this.getProcessingStats();
+
+                this.logDebug('ThingsBoard service health check completed', {
+                    status: healthInfo.status
+                });
+
+                return {
+                    service: 'ThingsBoard RPC',
+                    status: healthInfo.status,
+                    timestamp: new Date().toISOString(),
+                    details: {
+                        ...healthInfo,
+                        processingStats
+                    }
+                };
+
+            } catch (error) {
+                this.logError('ThingsBoard service health check failed', error);
+                throw error;
+            }
+        });
+    }
+
+    /**
+     * Validate device ID format and constraints
+     */
+    validateDeviceId(deviceId: string): void {
+        if (!deviceId || typeof deviceId !== 'string') {
+            throw new ApiError(
+                ErrorType.VALIDATION_ERROR,
+                'Device ID is required and must be a string',
+                400
+            );
+        }
+
+        if (deviceId.trim().length === 0) {
+            throw new ApiError(
+                ErrorType.VALIDATION_ERROR,
+                'Device ID cannot be empty',
+                400
+            );
+        }
+
+        if (deviceId.length > 100) {
+            throw new ApiError(
+                ErrorType.VALIDATION_ERROR,
+                'Device ID cannot exceed 100 characters',
+                400
+            );
+        }
+
+        // Validate device ID format (alphanumeric, hyphens, underscores)
+        if (!/^[a-zA-Z0-9\-_]+$/.test(deviceId)) {
+            throw new ApiError(
+                ErrorType.VALIDATION_ERROR,
+                'Device ID must contain only letters, numbers, hyphens, and underscores',
+                400
+            );
+        }
+    }
+
+    /**
+     * Process schedule activation logic if conditions are met
+     */
+    private async processScheduleActivationIfNeeded(
+        deviceId: string,
+        rpcParams: Record<string, any>,
+        user: any,
+        requestId: string
+    ): Promise<void> {
+        try {
+            if (!this.scheduleActivationService) {
+                this.logDebug('Schedule activation service not available, skipping schedule activation');
+                return;
+            }
+
+            this.logInfo('Checking schedule activation conditions', {
+                deviceId,
+                requestId,
+                hasCoilAutoTron: rpcParams.COIL_AUTO_TRON,
+                hasScheduleId: !!rpcParams.schedule_id
+            });
+
+            // Check if schedule activation conditions are met
+            if (!this.scheduleActivationService.isScheduleActivationTrigger(rpcParams)) {
+                this.logInfo('Schedule activation conditions not met', {
+                    deviceId,
+                    requestId,
+                    hasCoilAutoTron: rpcParams.COIL_AUTO_TRON,
+                    hasScheduleId: !!rpcParams.schedule_id
+                });
+                return;
+            }
+
+            // Validate user context
+            const userContext: UserContext = {
+                user_id: user?.user_id || user?.name,
+                customer_id: user?.customer_id,
+                first_name: user?.first_name,
+                last_name: user?.last_name,
+                email: user?.email
+            };
+
+            if (!this.scheduleActivationService.validateUserContext(userContext)) {
+                this.logWarn('Invalid user context for schedule activation', {
+                    deviceId,
+                    requestId,
+                    userId: userContext.user_id
+                });
+                return;
+            }
+
+            // Extract schedule activation parameters
+            const activationParams = this.scheduleActivationService.extractScheduleActivationParams(
+                deviceId,
+                rpcParams,
+                userContext
+            );
+
+            if (!activationParams) {
+                this.logWarn('Failed to extract schedule activation parameters', {
+                    deviceId,
+                    requestId
+                });
+                return;
+            }
+
+            this.logInfo('Processing schedule activation', {
+                deviceId,
+                scheduleId: activationParams.scheduleId,
+                userId: userContext.user_id,
+                requestId
+            });
+
+            // Process schedule activation
+            const activationResult = await this.scheduleActivationService.processScheduleActivation(activationParams);
+
+            this.logInfo('Schedule activation processing completed', {
+                deviceId,
+                scheduleId: activationParams.scheduleId,
+                scheduleLogCreated: activationResult.scheduleLogCreated,
+                notificationCreated: activationResult.notificationCreated,
+                mqttPublished: activationResult.mqttPublished,
+                errors: activationResult.errors,
+                requestId
+            });
+
+        } catch (error) {
+            // Log error but don't throw - schedule activation is additional functionality
+            this.logError('Schedule activation processing failed', error, {
+                deviceId,
+                requestId,
+                stack: (error as Error).stack
+            });
+        }
+    }
+
+    /**
+     * Generate unique request ID for tracking
+     */
+    generateRequestId(): string {
+        return `rpc_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
     }
 
     /**
