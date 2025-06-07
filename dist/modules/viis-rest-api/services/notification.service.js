@@ -25,6 +25,7 @@ const client_registry_1 = __importDefault(require("../../../core/client-registry
 const common_types_1 = require("../types/common.types");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const constants_1 = require("../constants");
+const query_filters_util_1 = require("../utils/query-filters.util");
 /**
  * Notification service class
  * Handles notification creation and MQTT publishing operations
@@ -212,6 +213,271 @@ let NotificationService = class NotificationService extends base_service_1.BaseS
             err_code: notification.err_code,
             entity_label: notification.entity_label,
             timestamp: Date.now()
+        };
+    }
+    /**
+     * Get all notifications with filtering and pagination
+     */
+    async getAllNotifications(queryParams, userId) {
+        return this.executeOperation('getAllNotifications', async () => {
+            this.logInfo('Getting all notifications', {
+                requestedBy: userId,
+                filters: queryParams
+            });
+            try {
+                const page = queryParams.page || 1;
+                const size = Math.min(queryParams.size || 10, 100);
+                const skip = (page - 1) * size;
+                let qb = this.notificationRepository.createQueryBuilder('notification')
+                    .leftJoinAndSelect('notification.customer', 'customer')
+                    .leftJoinAndSelect('notification.customerUser', 'customerUser');
+                // Apply dynamic filters if provided
+                if (queryParams.filters) {
+                    try {
+                        const parsedFilters = JSON.parse(queryParams.filters);
+                        qb = (0, query_filters_util_1.applyQueryFilters)(qb, parsedFilters, 'notification');
+                    }
+                    catch (parseError) {
+                        this.logError('Failed to parse filters', parseError, { filters: queryParams.filters });
+                        throw new common_types_1.ApiError(common_types_1.ErrorType.VALIDATION_ERROR, 'Invalid filters format', 400);
+                    }
+                }
+                // Apply search filter
+                if (queryParams.search) {
+                    qb.andWhere('(notification.message ILIKE :search OR notification.entity ILIKE :search OR notification.entity_label ILIKE :search)', { search: `%${queryParams.search}%` });
+                }
+                // Apply specific filters
+                this.applySpecificFilters(qb, queryParams);
+                // Apply ordering
+                this.applyOrdering(qb, queryParams);
+                // Get total count
+                const total = await qb.getCount();
+                // Apply pagination
+                const data = await qb.skip(skip).take(size).getMany();
+                // Transform data
+                const transformedData = this.transformNotificationData(data);
+                this.logInfo('Notifications retrieved successfully', {
+                    requestedBy: userId,
+                    total,
+                    returned: transformedData.length,
+                    page,
+                    size
+                });
+                return {
+                    data: transformedData,
+                    page,
+                    size,
+                    total,
+                    totalPages: Math.ceil(total / size)
+                };
+            }
+            catch (error) {
+                this.logError('Error retrieving notifications', error);
+                throw error instanceof common_types_1.ApiError ? error : new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to retrieve notifications: ${error.message}`, 500);
+            }
+        }, { userId });
+    }
+    /**
+     * Get a specific notification by name
+     */
+    async getNotificationByName(name, userId) {
+        return this.executeOperation('getNotificationByName', async () => {
+            this.logInfo('Getting notification by name', {
+                requestedBy: userId,
+                notificationName: name
+            });
+            try {
+                const notification = await this.notificationRepository.findOne({
+                    where: { name: name },
+                    relations: ['customer', 'customerUser']
+                });
+                if (!notification) {
+                    this.logWarn('Notification not found', { name: name });
+                    throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND_ERROR, 'IoT notification not found', 404);
+                }
+                this.logInfo('Notification retrieved successfully', {
+                    requestedBy: userId,
+                    notificationName: name
+                });
+                return this.transformSingleNotification(notification);
+            }
+            catch (error) {
+                this.logError('Error retrieving notification', error);
+                throw error instanceof common_types_1.ApiError ? error : new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to retrieve notification: ${error.message}`, 500);
+            }
+        }, { name, userId });
+    }
+    /**
+     * Create a new notification from DTO
+     */
+    async createNotificationFromDto(notificationData, userId) {
+        return this.executeOperation('createNotificationFromDto', async () => {
+            this.logInfo('Creating notification from DTO', {
+                requestedBy: userId,
+                notificationName: notificationData.name
+            });
+            try {
+                // Check if notification already exists
+                const existingNotification = await this.notificationRepository.findOne({
+                    where: { name: notificationData.name }
+                });
+                if (existingNotification) {
+                    this.logWarn('Notification already exists', { name: notificationData.name });
+                    throw new common_types_1.ApiError(common_types_1.ErrorType.VALIDATION_ERROR, 'IoT notification with this name already exists', 409);
+                }
+                // Create new notification
+                const newNotification = this.notificationRepository.create(Object.assign(Object.assign({}, notificationData), { created_at: new Date() }));
+                const savedNotification = await this.notificationRepository.save(newNotification);
+                this.logInfo('Notification created successfully', {
+                    requestedBy: userId,
+                    notificationName: savedNotification.name
+                });
+                return savedNotification;
+            }
+            catch (error) {
+                this.logError('Error creating notification', error);
+                throw error instanceof common_types_1.ApiError ? error : new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to create notification: ${error.message}`, 500);
+            }
+        }, { name: notificationData.name, userId });
+    }
+    /**
+     * Update an existing notification
+     */
+    async updateNotification(name, notificationData, userId) {
+        return this.executeOperation('updateNotification', async () => {
+            this.logInfo('Updating notification', {
+                requestedBy: userId,
+                notificationName: name
+            });
+            try {
+                // Check if notification exists
+                const existingNotification = await this.notificationRepository.findOne({
+                    where: { name: name }
+                });
+                if (!existingNotification) {
+                    this.logWarn('Notification not found for update', { name: name });
+                    throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND_ERROR, 'IoT notification not found', 404);
+                }
+                // Update notification
+                await this.notificationRepository.update({ name: name }, notificationData);
+                // Fetch updated notification
+                const updatedNotification = await this.notificationRepository.findOne({
+                    where: { name: name },
+                    relations: ['customer', 'customerUser']
+                });
+                this.logInfo('Notification updated successfully', {
+                    requestedBy: userId,
+                    notificationName: name
+                });
+                return updatedNotification;
+            }
+            catch (error) {
+                this.logError('Error updating notification', error);
+                throw error instanceof common_types_1.ApiError ? error : new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to update notification: ${error.message}`, 500);
+            }
+        }, { name, userId });
+    }
+    /**
+     * Delete a notification
+     */
+    async deleteNotification(name, userId) {
+        return this.executeOperation('deleteNotification', async () => {
+            this.logInfo('Deleting notification', {
+                requestedBy: userId,
+                notificationName: name
+            });
+            try {
+                // Check if notification exists
+                const existingNotification = await this.notificationRepository.findOne({
+                    where: { name: name }
+                });
+                if (!existingNotification) {
+                    this.logWarn('Notification not found for deletion', { name: name });
+                    throw new common_types_1.ApiError(common_types_1.ErrorType.NOT_FOUND_ERROR, 'IoT notification not found', 404);
+                }
+                // Delete notification
+                await this.notificationRepository.delete({ name: name });
+                this.logInfo('Notification deleted successfully', {
+                    requestedBy: userId,
+                    notificationName: name
+                });
+                return { message: 'IoT notification deleted successfully' };
+            }
+            catch (error) {
+                this.logError('Error deleting notification', error);
+                throw error instanceof common_types_1.ApiError ? error : new common_types_1.ApiError(common_types_1.ErrorType.DATABASE_ERROR, `Failed to delete notification: ${error.message}`, 500);
+            }
+        }, { name, userId });
+    }
+    /**
+     * Apply specific filters to query builder
+     */
+    applySpecificFilters(qb, queryParams) {
+        if (queryParams.customer_user) {
+            qb.andWhere('notification.customer_user = :customer_user', { customer_user: queryParams.customer_user });
+        }
+        if (queryParams.customer_id) {
+            qb.andWhere('notification.customer_id = :customer_id', { customer_id: queryParams.customer_id });
+        }
+        if (queryParams.type) {
+            qb.andWhere('notification.type = :type', { type: queryParams.type });
+        }
+        if (queryParams.severity) {
+            qb.andWhere('notification.severity = :severity', { severity: queryParams.severity });
+        }
+        if (queryParams.is_read !== undefined) {
+            qb.andWhere('notification.is_read = :is_read', { is_read: queryParams.is_read ? 1 : 0 });
+        }
+        if (queryParams.is_sent !== undefined) {
+            qb.andWhere('notification.is_sent = :is_sent', { is_sent: queryParams.is_sent ? 1 : 0 });
+        }
+    }
+    /**
+     * Apply ordering to query builder
+     */
+    applyOrdering(qb, queryParams) {
+        if (queryParams.order_by) {
+            const [field, direction] = queryParams.order_by.split(' ');
+            qb.orderBy(`notification.${field}`, (direction === null || direction === void 0 ? void 0 : direction.toUpperCase()) === 'DESC' ? 'DESC' : 'ASC');
+        }
+        else {
+            qb.orderBy('notification.created_at', 'DESC');
+        }
+    }
+    /**
+     * Transform notification data to plain objects
+     */
+    transformNotificationData(notifications) {
+        return notifications.map(notification => this.transformSingleNotification(notification));
+    }
+    /**
+     * Transform single notification to plain object
+     */
+    transformSingleNotification(notification) {
+        return {
+            name: notification.name,
+            customer_user: notification.customer_user,
+            message: notification.message,
+            created_at: notification.created_at,
+            entity: notification.entity,
+            type: notification.type,
+            is_read: notification.is_read,
+            is_sent: notification.is_sent,
+            customer_id: notification.customer_id,
+            err_code: notification.err_code,
+            entity_label: notification.entity_label,
+            severity: notification.severity,
+            customer: notification.customer ? {
+                name: notification.customer.name,
+                customerName: notification.customer.customerName,
+                email: notification.customer.email
+            } : null,
+            customerUser: notification.customerUser ? {
+                name: notification.customerUser.name,
+                user_name: notification.customerUser.user_name,
+                email: notification.customerUser.email,
+                full_name: notification.customerUser.full_name
+            } : null
         };
     }
     /**

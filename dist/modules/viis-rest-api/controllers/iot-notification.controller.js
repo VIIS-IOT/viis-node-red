@@ -19,11 +19,10 @@ exports.IotNotificationController = void 0;
 require("reflect-metadata");
 const routing_controllers_1 = require("routing-controllers");
 const typedi_1 = require("typedi");
-const database_service_1 = require("../services/database.service");
+const notification_service_1 = require("../services/notification.service");
 const iot_notification_dto_1 = require("../dto/iot-notification.dto");
 const logger_1 = require("../utils/logger");
 const container_setup_1 = require("../container/container.setup");
-const query_filters_util_1 = require("../utils/query-filters.util");
 /**
  * IoT Notification management controller class
  *
@@ -34,8 +33,8 @@ const query_filters_util_1 = require("../utils/query-filters.util");
  * - Token-based authentication with @Authorized() decorator
  */
 let IotNotificationController = class IotNotificationController {
-    constructor(databaseService, node) {
-        this.databaseService = databaseService;
+    constructor(notificationService, node) {
+        this.notificationService = notificationService;
         this.node = node;
         logger_1.logger.info(this.node, 'IotNotificationController initialized');
     }
@@ -49,99 +48,15 @@ let IotNotificationController = class IotNotificationController {
             filters: queryParams
         });
         try {
-            const page = queryParams.page || 1;
-            const size = Math.min(queryParams.size || 10, 100);
-            const skip = (page - 1) * size;
-            const notificationRepo = this.databaseService.getNotificationRepository();
-            let qb = notificationRepo.createQueryBuilder('notification')
-                .leftJoinAndSelect('notification.customer', 'customer')
-                .leftJoinAndSelect('notification.customerUser', 'customerUser');
-            // Apply dynamic filters if provided
-            if (queryParams.filters) {
-                try {
-                    const parsedFilters = JSON.parse(queryParams.filters);
-                    qb = (0, query_filters_util_1.applyQueryFilters)(qb, parsedFilters, 'notification');
-                }
-                catch (parseError) {
-                    logger_1.logger.error(this.node, 'Failed to parse filters:', { filters: queryParams.filters, error: parseError });
-                    throw new Error('Invalid filters format');
-                }
-            }
-            // Apply search filter
-            if (queryParams.search) {
-                qb.andWhere('(notification.message ILIKE :search OR notification.entity ILIKE :search OR notification.entity_label ILIKE :search)', { search: `%${queryParams.search}%` });
-            }
-            // Apply specific filters
-            if (queryParams.customer_user) {
-                qb.andWhere('notification.customer_user = :customer_user', { customer_user: queryParams.customer_user });
-            }
-            if (queryParams.customer_id) {
-                qb.andWhere('notification.customer_id = :customer_id', { customer_id: queryParams.customer_id });
-            }
-            if (queryParams.type) {
-                qb.andWhere('notification.type = :type', { type: queryParams.type });
-            }
-            if (queryParams.severity) {
-                qb.andWhere('notification.severity = :severity', { severity: queryParams.severity });
-            }
-            if (queryParams.is_read !== undefined) {
-                qb.andWhere('notification.is_read = :is_read', { is_read: queryParams.is_read ? 1 : 0 });
-            }
-            if (queryParams.is_sent !== undefined) {
-                qb.andWhere('notification.is_sent = :is_sent', { is_sent: queryParams.is_sent ? 1 : 0 });
-            }
-            // Apply ordering
-            if (queryParams.order_by) {
-                const [field, direction] = queryParams.order_by.split(' ');
-                qb.orderBy(`notification.${field}`, (direction === null || direction === void 0 ? void 0 : direction.toUpperCase()) === 'DESC' ? 'DESC' : 'ASC');
-            }
-            else {
-                qb.orderBy('notification.created_at', 'DESC');
-            }
-            // Get total count
-            const total = await qb.getCount();
-            // Apply pagination
-            const data = await qb.skip(skip).take(size).getMany();
-            // Transform data to plain objects to avoid serialization issues
-            const transformedData = data.map(notification => ({
-                name: notification.name,
-                customer_user: notification.customer_user,
-                message: notification.message,
-                created_at: notification.created_at,
-                entity: notification.entity,
-                type: notification.type,
-                is_read: notification.is_read,
-                is_sent: notification.is_sent,
-                customer_id: notification.customer_id,
-                err_code: notification.err_code,
-                entity_label: notification.entity_label,
-                severity: notification.severity,
-                customer: notification.customer ? {
-                    name: notification.customer.name,
-                    customerName: notification.customer.customerName,
-                    email: notification.customer.email
-                } : null,
-                customerUser: notification.customerUser ? {
-                    name: notification.customerUser.name,
-                    user_name: notification.customerUser.user_name,
-                    email: notification.customerUser.email,
-                    full_name: notification.customerUser.full_name
-                } : null
-            }));
+            const result = await this.notificationService.getAllNotifications(queryParams, user === null || user === void 0 ? void 0 : user.user_id);
             logger_1.logger.info(this.node, 'IoT notification retrieved successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
-                total,
-                returned: transformedData.length,
-                page,
-                size
+                total: result.total,
+                returned: result.data.length,
+                page: result.page,
+                size: result.size
             });
-            return {
-                data: transformedData,
-                page,
-                size,
-                total,
-                totalPages: Math.ceil(total / size)
-            };
+            return result;
         }
         catch (error) {
             logger_1.logger.error(this.node, 'Error retrieving IoT notification:', error);
@@ -158,45 +73,12 @@ let IotNotificationController = class IotNotificationController {
             notificationName: name
         });
         try {
-            const notificationRepo = this.databaseService.getNotificationRepository();
-            const notification = await notificationRepo.findOne({
-                where: { name: name },
-                relations: ['customer', 'customerUser']
-            });
-            if (!notification) {
-                logger_1.logger.warn(this.node, 'IoT notification not found', { name: name });
-                throw new Error('IoT notification not found');
-            }
+            const notification = await this.notificationService.getNotificationByName(name, user === null || user === void 0 ? void 0 : user.user_id);
             logger_1.logger.info(this.node, 'IoT notification retrieved successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 notificationName: name
             });
-            // Transform to plain object to avoid serialization issues
-            return {
-                name: notification.name,
-                customer_user: notification.customer_user,
-                message: notification.message,
-                created_at: notification.created_at,
-                entity: notification.entity,
-                type: notification.type,
-                is_read: notification.is_read,
-                is_sent: notification.is_sent,
-                customer_id: notification.customer_id,
-                err_code: notification.err_code,
-                entity_label: notification.entity_label,
-                severity: notification.severity,
-                customer: notification.customer ? {
-                    name: notification.customer.name,
-                    customerName: notification.customer.customerName,
-                    email: notification.customer.email
-                } : null,
-                customerUser: notification.customerUser ? {
-                    name: notification.customerUser.name,
-                    user_name: notification.customerUser.user_name,
-                    email: notification.customerUser.email,
-                    full_name: notification.customerUser.full_name
-                } : null
-            };
+            return notification;
         }
         catch (error) {
             logger_1.logger.error(this.node, 'Error retrieving IoT notification:', error);
@@ -213,18 +95,7 @@ let IotNotificationController = class IotNotificationController {
             notificationName: notificationData.name
         });
         try {
-            const notificationRepo = this.databaseService.getNotificationRepository();
-            // Check if notification already exists
-            const existingNotification = await notificationRepo.findOne({
-                where: { name: notificationData.name }
-            });
-            if (existingNotification) {
-                logger_1.logger.warn(this.node, 'IoT notification already exists', { name: notificationData.name });
-                throw new Error('IoT notification with this name already exists');
-            }
-            // Create new notification
-            const newNotification = notificationRepo.create(Object.assign(Object.assign({}, notificationData), { created_at: new Date() }));
-            const savedNotification = await notificationRepo.save(newNotification);
+            const savedNotification = await this.notificationService.createNotificationFromDto(notificationData, user === null || user === void 0 ? void 0 : user.user_id);
             logger_1.logger.info(this.node, 'IoT notification created successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 notificationName: savedNotification.name
@@ -246,22 +117,7 @@ let IotNotificationController = class IotNotificationController {
             notificationName: name
         });
         try {
-            const notificationRepo = this.databaseService.getNotificationRepository();
-            // Check if notification exists
-            const existingNotification = await notificationRepo.findOne({
-                where: { name: name }
-            });
-            if (!existingNotification) {
-                logger_1.logger.warn(this.node, 'IoT notification not found for update', { name: name });
-                throw new Error('IoT notification not found');
-            }
-            // Update notification
-            await notificationRepo.update({ name: name }, notificationData);
-            // Fetch updated notification
-            const updatedNotification = await notificationRepo.findOne({
-                where: { name: name },
-                relations: ['customer', 'customerUser']
-            });
+            const updatedNotification = await this.notificationService.updateNotification(name, notificationData, user === null || user === void 0 ? void 0 : user.user_id);
             logger_1.logger.info(this.node, 'IoT notification updated successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 notificationName: name
@@ -283,22 +139,12 @@ let IotNotificationController = class IotNotificationController {
             notificationName: name
         });
         try {
-            const notificationRepo = this.databaseService.getNotificationRepository();
-            // Check if notification exists
-            const existingNotification = await notificationRepo.findOne({
-                where: { name: name }
-            });
-            if (!existingNotification) {
-                logger_1.logger.warn(this.node, 'IoT notification not found for deletion', { name: name });
-                throw new Error('IoT notification not found');
-            }
-            // Delete notification
-            await notificationRepo.delete({ name: name });
+            const result = await this.notificationService.deleteNotification(name, user === null || user === void 0 ? void 0 : user.user_id);
             logger_1.logger.info(this.node, 'IoT notification deleted successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 notificationName: name
             });
-            return { message: 'IoT notification deleted successfully' };
+            return result;
         }
         catch (error) {
             logger_1.logger.error(this.node, 'Error deleting IoT notification:', error);
@@ -358,5 +204,5 @@ exports.IotNotificationController = IotNotificationController = __decorate([
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
     __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
-    __metadata("design:paramtypes", [database_service_1.DatabaseService, Object])
+    __metadata("design:paramtypes", [notification_service_1.NotificationService, Object])
 ], IotNotificationController);
