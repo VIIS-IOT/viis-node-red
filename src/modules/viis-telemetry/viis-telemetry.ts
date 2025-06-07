@@ -118,7 +118,7 @@ module.exports = function (RED: NodeAPI) {
         const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
         const localMqttClient = await ClientRegistry.getLocalMqttClient(localMqttConfig, node);
         const thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
-        const mysqlClient = ClientRegistry.getMySqlClient(mysqlConfig, node);
+        const mysqlClient = await ClientRegistry.getMySqlClient(mysqlConfig, node);
 
         if (!modbusClient || !localMqttClient || !thingsboardMqttClient || !mysqlClient) {
           node.error("Failed to retrieve clients from registry");

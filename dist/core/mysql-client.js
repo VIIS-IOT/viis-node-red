@@ -96,5 +96,27 @@ class MySqlClientCore extends events_1.EventEmitter {
             return false;
         }
     }
+    // Kiểm tra trạng thái kết nối đồng bộ (synchronous check)
+    isConnectedCheck() {
+        return this.pool !== null;
+    }
+    // Lấy thông tin pool size cho monitoring
+    getPoolSize() {
+        if (!this.pool) {
+            return 0;
+        }
+        // MySQL2 pool doesn't expose size directly, return config limit
+        return this.config.connectionLimit || 10;
+    }
+    // Lấy thông tin chi tiết về pool
+    getPoolInfo() {
+        return {
+            connectionLimit: this.config.connectionLimit || 10,
+            queueLimit: this.config.queueLimit || 0,
+            connectTimeout: this.config.connectTimeout || 10000,
+            waitForConnections: this.config.waitForConnections || true,
+            isInitialized: this.pool !== null
+        };
+    }
 }
 exports.MySqlClientCore = MySqlClientCore;

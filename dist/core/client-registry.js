@@ -134,13 +134,69 @@ class ClientRegistry {
         node.warn(`[MODBUS-SINGLE-CONNECTION] Shared connection config: ${(_a = this.modbusConfig) === null || _a === void 0 ? void 0 : _a.type} ${(_b = this.modbusConfig) === null || _b === void 0 ? void 0 : _b.host}:${(_c = this.modbusConfig) === null || _c === void 0 ? void 0 : _c.tcpPort}`);
         return this.modbusInstance;
     }
-    static getMySqlClient(config, node) {
-        if (!this.mysqlInstance) {
-            this.mysqlInstance = new mysql_client_1.MySqlClientCore(config, node);
-            this.activeConnections.mysql++;
-            node.log("Created new MySQL client instance");
-            this.logActiveConnections(node);
+    /**
+     * Validate if the provided config matches the existing shared MySQL config
+     * This ensures only ONE MySQL connection is used across all nodes
+     */
+    static validateMySqlConfig(config, node) {
+        if (!this.mysqlConfig) {
+            return true; // No existing config, any config is valid
         }
+        const configMatches = (this.mysqlConfig.host === config.host &&
+            this.mysqlConfig.port === config.port &&
+            this.mysqlConfig.user === config.user &&
+            this.mysqlConfig.password === config.password &&
+            this.mysqlConfig.database === config.database);
+        if (!configMatches) {
+            node.warn(`[MYSQL-SINGLE-CONNECTION-ENFORCED] Node ${node.id} config differs from shared config:`);
+            node.warn(`  Existing shared config: ${this.mysqlConfig.host}:${this.mysqlConfig.port}/${this.mysqlConfig.database} user=${this.mysqlConfig.user}`);
+            node.warn(`  Requested config: ${config.host}:${config.port}/${config.database} user=${config.user}`);
+            node.warn(`  ENFORCING SINGLE CONNECTION: Using existing shared connection to prevent multiple MySQL connections.`);
+            node.warn(`  All VIIS nodes MUST use the same MySQL connection for proper resource management.`);
+        }
+        return configMatches;
+    }
+    static async getMySqlClient(config, node) {
+        // Wait if another node is already initializing
+        while (this.initializingFlags.mysql) {
+            node.warn("[MYSQL-INIT] Another node is initializing MySQL client, waiting...");
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        // Validate config compatibility - ENFORCES SINGLE CONNECTION
+        this.validateMySqlConfig(config, node);
+        if (!this.mysqlInstance || !this.mysqlInstance.isConnectedCheck()) {
+            this.initializingFlags.mysql = true;
+            node.warn(`[MYSQL-INIT] Node ${node.id} starting MySQL client initialization`);
+            try {
+                if (this.mysqlInstance) {
+                    this.mysqlInstance.disconnect();
+                    this.activeConnections.mysql--;
+                    node.log("Previous MySQL instance disconnected due to invalid state");
+                }
+                // Store the config from the first node that creates the connection
+                if (!this.mysqlConfig) {
+                    this.mysqlConfig = Object.assign({}, config);
+                    node.warn(`[MYSQL-INIT] Storing shared config for ALL nodes: ${config.host}:${config.port}/${config.database} user=${config.user}`);
+                }
+                // Always use the stored config to ensure consistency - SINGLE CONNECTION ENFORCED
+                this.mysqlInstance = new mysql_client_1.MySqlClientCore(this.mysqlConfig, node);
+                this.activeConnections.mysql++;
+                node.warn(`[MYSQL-INIT] Created new MySQL client instance - all nodes will share this connection`);
+                this.logActiveConnections(node);
+            }
+            catch (error) {
+                this.mysqlInstance = null; // Reset on failure
+                node.error(`Failed to connect MySQL client: ${error.message}`);
+                throw error;
+            }
+            finally {
+                this.initializingFlags.mysql = false;
+            }
+        }
+        this.referenceCount.mysql++;
+        this.clientUsers.mysql.add(node.id);
+        node.warn(`[MYSQL-INIT] Node ${node.id} got MySQL client, ref count: ${this.referenceCount.mysql}`);
+        node.warn(`[MYSQL-INIT] Active users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
         return this.mysqlInstance;
     }
     static releaseClient(type, node) {
@@ -186,31 +242,50 @@ class ClientRegistry {
             }
         }
         else if (type === "mysql" && this.mysqlInstance) {
-            this.mysqlInstance.disconnect();
-            this.activeConnections.mysql--;
-            this.mysqlInstance = null;
-            this.clientUsers.mysql.clear();
-            node.log("Disconnected and cleared MySQL client instance");
-            this.logActiveConnections(node);
+            this.referenceCount.mysql--;
+            this.clientUsers.mysql.delete(node.id);
+            node.warn(`[MYSQL-RELEASE] Node ${node.id} released MySQL client, ref count: ${this.referenceCount.mysql}`);
+            node.warn(`[MYSQL-RELEASE] Remaining users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
+            if (this.referenceCount.mysql <= 0) {
+                this.mysqlInstance.disconnect();
+                this.activeConnections.mysql--;
+                this.mysqlInstance = null;
+                this.mysqlConfig = null; // Reset config when no nodes are using the client
+                this.clientUsers.mysql.clear();
+                node.warn("[MYSQL-RELEASE] MySQL connection has been disconnected - no more users");
+                this.logActiveConnections(node);
+            }
         }
     }
     static logActiveConnections(node) {
         node.warn(`[CONNECTION-STATUS] Active server connections - Modbus: ${this.activeConnections.modbus}, ThingsBoard MQTT: ${this.activeConnections.thingsboardMqtt}, Local MQTT: ${this.activeConnections.localMqtt}, MySQL: ${this.activeConnections.mysql}`);
-        // Enforce single connection validation
+        // Enforce single connection validation for Modbus
         if (this.activeConnections.modbus > 1) {
             node.error(`[CRITICAL-ERROR] MULTIPLE MODBUS CONNECTIONS DETECTED! Count: ${this.activeConnections.modbus}. This should NEVER happen!`);
         }
         else if (this.activeConnections.modbus === 1) {
             node.warn(`[MODBUS-SINGLE-CONNECTION] ✓ Correctly using SINGLE modbus connection as designed`);
         }
+        // Enforce single connection validation for MySQL
+        if (this.activeConnections.mysql > 1) {
+            node.error(`[CRITICAL-ERROR] MULTIPLE MYSQL CONNECTIONS DETECTED! Count: ${this.activeConnections.mysql}. This should NEVER happen!`);
+        }
+        else if (this.activeConnections.mysql === 1) {
+            node.warn(`[MYSQL-SINGLE-CONNECTION] ✓ Correctly using SINGLE MySQL connection as designed`);
+        }
     }
     static logConnectionCounts(node) {
-        node.warn(`[CONNECTION-COUNTS] Reference counts - Modbus: ${this.referenceCount.modbus}, ThingsBoard: ${this.referenceCount.thingsboard}, Local MQTT: ${this.referenceCount.local}`);
+        node.warn(`[CONNECTION-COUNTS] Reference counts - Modbus: ${this.referenceCount.modbus}, ThingsBoard: ${this.referenceCount.thingsboard}, Local MQTT: ${this.referenceCount.local}, MySQL: ${this.referenceCount.mysql}`);
         this.logActiveConnections(node);
         // Log shared modbus config if exists
         if (this.modbusConfig && this.referenceCount.modbus > 0) {
             node.warn(`[MODBUS-SINGLE-CONNECTION] Shared config used by ALL nodes: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
             node.warn(`[MODBUS-SINGLE-CONNECTION] All nodes sharing THE SAME connection: ${Array.from(this.clientUsers.modbus).join(', ')}`);
+        }
+        // Log shared mysql config if exists
+        if (this.mysqlConfig && this.referenceCount.mysql > 0) {
+            node.warn(`[MYSQL-SINGLE-CONNECTION] Shared config used by ALL nodes: ${this.mysqlConfig.host}:${this.mysqlConfig.port}/${this.mysqlConfig.database} user=${this.mysqlConfig.user}`);
+            node.warn(`[MYSQL-SINGLE-CONNECTION] All nodes sharing THE SAME connection: ${Array.from(this.clientUsers.mysql).join(', ')}`);
         }
     }
     /**
@@ -241,12 +316,40 @@ class ClientRegistry {
             config: this.modbusConfig
         };
     }
+    /**
+     * Validate that only one MySQL connection exists
+     * This method should be called periodically to ensure system integrity
+     */
+    static validateSingleMySqlConnection(node) {
+        const isValid = this.activeConnections.mysql <= 1;
+        if (!isValid) {
+            node.error(`[CRITICAL-VIOLATION] MULTIPLE MYSQL CONNECTIONS DETECTED! Active: ${this.activeConnections.mysql}`);
+            node.error(`[CRITICAL-VIOLATION] This violates the single connection requirement!`);
+            node.error(`[CRITICAL-VIOLATION] Users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
+        }
+        else if (this.activeConnections.mysql === 1) {
+            node.log(`[MYSQL-VALIDATION] ✓ Single connection requirement satisfied`);
+        }
+        return isValid;
+    }
+    /**
+     * Get current MySQL connection status for monitoring
+     */
+    static getMySqlConnectionStatus() {
+        return {
+            hasConnection: this.mysqlInstance !== null,
+            activeConnections: this.activeConnections.mysql,
+            referenceCount: this.referenceCount.mysql,
+            users: Array.from(this.clientUsers.mysql),
+            config: this.mysqlConfig
+        };
+    }
 }
 ClientRegistry.modbusInstance = null;
 ClientRegistry.thingsboardMqttInstance = null;
 ClientRegistry.localMqttInstance = null;
 ClientRegistry.mysqlInstance = null;
-ClientRegistry.referenceCount = { modbus: 0, thingsboard: 0, local: 0 };
+ClientRegistry.referenceCount = { modbus: 0, thingsboard: 0, local: 0, mysql: 0 };
 ClientRegistry.activeConnections = {
     modbus: 0,
     thingsboardMqtt: 0,
@@ -255,6 +358,8 @@ ClientRegistry.activeConnections = {
 };
 // Store the config used for the shared modbus client
 ClientRegistry.modbusConfig = null;
+// Store the config used for the shared mysql client
+ClientRegistry.mysqlConfig = null;
 // Mutex-like flags to prevent race conditions
 ClientRegistry.initializingFlags = {
     thingsboard: false,

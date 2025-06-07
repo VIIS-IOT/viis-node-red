@@ -27,7 +27,7 @@ const query_filters_util_1 = require("../utils/query-filters.util");
 /**
  * IoT Notification management controller class
  *
- * This controller provides full CRUD operations for IoT notifications:
+ * This controller provides full CRUD operations for IoT notification:
  * - Uses routing-controllers decorators with automatic validation
  * - Implements comprehensive error handling and logging
  * - Supports dynamic filtering and pagination
@@ -40,11 +40,11 @@ let IotNotificationController = class IotNotificationController {
         logger_1.logger.info(this.node, 'IotNotificationController initialized');
     }
     /**
-     * Get all IoT notifications with filtering and pagination
-     * GET /api/v2/iot-notifications
+     * Get all IoT notification with filtering and pagination
+     * GET /api/v2/notification
      */
     async getAllNotifications(queryParams, user) {
-        logger_1.logger.info(this.node, 'Get all IoT notifications request', {
+        logger_1.logger.info(this.node, 'Get all IoT notification request', {
             requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
             filters: queryParams
         });
@@ -128,7 +128,7 @@ let IotNotificationController = class IotNotificationController {
                     full_name: notification.customerUser.full_name
                 } : null
             }));
-            logger_1.logger.info(this.node, 'IoT notifications retrieved successfully', {
+            logger_1.logger.info(this.node, 'IoT notification retrieved successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
                 total,
                 returned: transformedData.length,
@@ -144,13 +144,13 @@ let IotNotificationController = class IotNotificationController {
             };
         }
         catch (error) {
-            logger_1.logger.error(this.node, 'Error retrieving IoT notifications:', error);
+            logger_1.logger.error(this.node, 'Error retrieving IoT notification:', error);
             throw error;
         }
     }
     /**
      * Get a specific IoT notification by name
-     * GET /api/v2/iot-notifications/:name
+     * GET /api/v2/notification/:name
      */
     async getNotification(name, user) {
         logger_1.logger.info(this.node, 'Get IoT notification request', {
@@ -205,7 +205,7 @@ let IotNotificationController = class IotNotificationController {
     }
     /**
      * Create a new IoT notification
-     * POST /api/v2/iot-notifications
+     * POST /api/v2/notification
      */
     async createNotification(notificationData, user) {
         logger_1.logger.info(this.node, 'Create IoT notification request', {
@@ -238,7 +238,7 @@ let IotNotificationController = class IotNotificationController {
     }
     /**
      * Update an existing IoT notification
-     * PUT /api/v2/iot-notifications/:name
+     * PUT /api/v2/notification/:name
      */
     async updateNotification(name, notificationData, user) {
         logger_1.logger.info(this.node, 'Update IoT notification request', {
@@ -275,7 +275,7 @@ let IotNotificationController = class IotNotificationController {
     }
     /**
      * Delete an IoT notification
-     * DELETE /api/v2/iot-notifications/:name
+     * DELETE /api/v2/notification/:name
      */
     async deleteNotification(name, user) {
         logger_1.logger.info(this.node, 'Delete IoT notification request', {
@@ -354,7 +354,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], IotNotificationController.prototype, "deleteNotification", null);
 exports.IotNotificationController = IotNotificationController = __decorate([
-    (0, routing_controllers_1.JsonController)('/iot-notifications'),
+    (0, routing_controllers_1.JsonController)('/notification'),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
     __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),

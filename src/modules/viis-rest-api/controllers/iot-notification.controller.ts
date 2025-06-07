@@ -19,13 +19,13 @@ import { applyQueryFilters, FilterTuple } from '../utils/query-filters.util';
 /**
  * IoT Notification management controller class
  * 
- * This controller provides full CRUD operations for IoT notifications:
+ * This controller provides full CRUD operations for IoT notification:
  * - Uses routing-controllers decorators with automatic validation
  * - Implements comprehensive error handling and logging
  * - Supports dynamic filtering and pagination
  * - Token-based authentication with @Authorized() decorator
  */
-@JsonController('/iot-notifications')
+@JsonController('/notification')
 @Service()
 export class IotNotificationController {
     constructor(
@@ -36,8 +36,8 @@ export class IotNotificationController {
     }
 
     /**
-     * Get all IoT notifications with filtering and pagination
-     * GET /api/v2/iot-notifications
+     * Get all IoT notification with filtering and pagination
+     * GET /api/v2/notification
      */
     @Get('/')
     @Authorized()
@@ -45,7 +45,7 @@ export class IotNotificationController {
         @QueryParams() queryParams: IotNotificationQueryDto,
         @CurrentUser() user: any
     ): Promise<any> {
-        logger.info(this.node, 'Get all IoT notifications request', {
+        logger.info(this.node, 'Get all IoT notification request', {
             requestedBy: user?.user_id,
             filters: queryParams
         });
@@ -145,7 +145,7 @@ export class IotNotificationController {
                 } : null
             }));
 
-            logger.info(this.node, 'IoT notifications retrieved successfully', {
+            logger.info(this.node, 'IoT notification retrieved successfully', {
                 requestedBy: user?.user_id,
                 total,
                 returned: transformedData.length,
@@ -161,14 +161,14 @@ export class IotNotificationController {
                 totalPages: Math.ceil(total / size)
             };
         } catch (error: any) {
-            logger.error(this.node, 'Error retrieving IoT notifications:', error);
+            logger.error(this.node, 'Error retrieving IoT notification:', error);
             throw error;
         }
     }
 
     /**
      * Get a specific IoT notification by name
-     * GET /api/v2/iot-notifications/:name
+     * GET /api/v2/notification/:name
      */
     @Get('/:name')
     @Authorized()
@@ -232,7 +232,7 @@ export class IotNotificationController {
 
     /**
      * Create a new IoT notification
-     * POST /api/v2/iot-notifications
+     * POST /api/v2/notification
      */
     @Post('/')
     @Authorized()
@@ -280,7 +280,7 @@ export class IotNotificationController {
 
     /**
      * Update an existing IoT notification
-     * PUT /api/v2/iot-notifications/:name
+     * PUT /api/v2/notification/:name
      */
     @Put('/:name')
     @Authorized()
@@ -330,7 +330,7 @@ export class IotNotificationController {
 
     /**
      * Delete an IoT notification
-     * DELETE /api/v2/iot-notifications/:name
+     * DELETE /api/v2/notification/:name
      */
     @Delete('/:name')
     @Authorized()
