@@ -200,7 +200,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], IotNotificationController.prototype, "deleteNotification", null);
 exports.IotNotificationController = IotNotificationController = __decorate([
-    (0, routing_controllers_1.JsonController)('/notification'),
+    (0, routing_controllers_1.JsonController)('/web-notification'),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
     __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),

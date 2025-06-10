@@ -242,6 +242,17 @@ let NotificationService = class NotificationService extends base_service_1.BaseS
                         throw new common_types_1.ApiError(common_types_1.ErrorType.VALIDATION_ERROR, 'Invalid filters format', 400);
                     }
                 }
+                // Apply dynamic OR filters if provided
+                if (queryParams.or_filters) {
+                    try {
+                        const parsedOrFilters = JSON.parse(queryParams.or_filters);
+                        qb = (0, query_filters_util_1.applyOrQueryFilters)(qb, parsedOrFilters, 'notification');
+                    }
+                    catch (parseError) {
+                        this.logError('Failed to parse OR filters', parseError, { or_filters: queryParams.or_filters });
+                        throw new common_types_1.ApiError(common_types_1.ErrorType.VALIDATION_ERROR, 'Invalid OR filters format', 400);
+                    }
+                }
                 // Apply search filter
                 if (queryParams.search) {
                     qb.andWhere('(notification.message ILIKE :search OR notification.entity ILIKE :search OR notification.entity_label ILIKE :search)', { search: `%${queryParams.search}%` });

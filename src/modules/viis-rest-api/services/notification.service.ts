@@ -20,7 +20,7 @@ import {
     CreateIotNotificationDto,
     UpdateIotNotificationDto
 } from '../dto/iot-notification.dto';
-import { applyQueryFilters, FilterTuple } from '../utils/query-filters.util';
+import { applyQueryFilters, applyOrQueryFilters, FilterTuple } from '../utils/query-filters.util';
 
 /**
  * Interface for notification creation parameters
@@ -318,6 +318,17 @@ export class NotificationService extends BaseService {
                     } catch (parseError) {
                         this.logError('Failed to parse filters', parseError, { filters: queryParams.filters });
                         throw new ApiError(ErrorType.VALIDATION_ERROR, 'Invalid filters format', 400);
+                    }
+                }
+
+                // Apply dynamic OR filters if provided
+                if (queryParams.or_filters) {
+                    try {
+                        const parsedOrFilters: FilterTuple[] = JSON.parse(queryParams.or_filters);
+                        qb = applyOrQueryFilters(qb, parsedOrFilters, 'notification');
+                    } catch (parseError) {
+                        this.logError('Failed to parse OR filters', parseError, { or_filters: queryParams.or_filters });
+                        throw new ApiError(ErrorType.VALIDATION_ERROR, 'Invalid OR filters format', 400);
                     }
                 }
 

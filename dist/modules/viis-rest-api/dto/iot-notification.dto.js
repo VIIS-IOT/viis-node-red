@@ -72,6 +72,11 @@ __decorate([
 ], IotNotificationQueryDto.prototype, "filters", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)({ message: 'OR filters must be a string' }),
+    __metadata("design:type", String)
+], IotNotificationQueryDto.prototype, "or_filters", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)({ message: 'Search term must be a string' }),
     (0, class_validator_1.MaxLength)(100, { message: 'Search term must not exceed 100 characters' }),
     __metadata("design:type", String)

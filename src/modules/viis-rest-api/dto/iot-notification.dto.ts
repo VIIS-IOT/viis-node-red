@@ -64,6 +64,10 @@ export class IotNotificationQueryDto {
     filters?: string;
 
     @IsOptional()
+    @IsString({ message: 'OR filters must be a string' })
+    or_filters?: string;
+
+    @IsOptional()
     @IsString({ message: 'Search term must be a string' })
     @MaxLength(100, { message: 'Search term must not exceed 100 characters' })
     search?: string;

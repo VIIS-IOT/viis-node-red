@@ -24,7 +24,7 @@ import { NODE_TOKEN } from '../container/container.setup';
  * - Supports dynamic filtering and pagination
  * - Token-based authentication with @Authorized() decorator
  */
-@JsonController('/notification')
+@JsonController('/web-notification')
 @Service()
 export class IotNotificationController {
     constructor(
