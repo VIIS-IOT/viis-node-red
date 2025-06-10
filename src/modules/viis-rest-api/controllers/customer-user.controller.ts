@@ -40,7 +40,6 @@ export class CustomerUserController {
      * GET /api/v2/customer-users
      */
     @Get('/user')
-    @Authorized()
     async getAllCustomerUsers(
         @QueryParams() queryParams: CustomerUserQueryDto,
         @CurrentUser() user: any

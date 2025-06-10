@@ -365,7 +365,6 @@ let CustomerUserController = class CustomerUserController {
 exports.CustomerUserController = CustomerUserController;
 __decorate([
     (0, routing_controllers_1.Get)('/user'),
-    (0, routing_controllers_1.Authorized)(),
     __param(0, (0, routing_controllers_1.QueryParams)()),
     __param(1, (0, routing_controllers_1.CurrentUser)()),
     __metadata("design:type", Function),
