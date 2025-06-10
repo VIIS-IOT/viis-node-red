@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MqttClientCore = void 0;
 const mqtt_1 = __importDefault(require("mqtt"));
 const events_1 = require("events");
+const connection_monitor_1 = require("./connection-monitor");
 // Enhanced MQTT Client with Google IoT standards compliance
 class MqttClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -31,6 +32,10 @@ class MqttClientCore extends events_1.EventEmitter {
         };
         this.initializeClient();
         this.startHealthCheck();
+        // Register with connection monitor for automatic recovery
+        const monitor = connection_monitor_1.ConnectionMonitor.getInstance();
+        const clientId = this.config.clientId || `nodered_${Math.random().toString(16).substring(2, 8)}`;
+        monitor.registerClient(clientId, this, node);
     }
     // Enhanced MQTT client initialization with proper error handling
     initializeClient() {
@@ -153,13 +158,15 @@ class MqttClientCore extends events_1.EventEmitter {
     handleConnectionError(error) {
         this.connectionState.isConnecting = false;
         this.connectionState.reconnectAttempts++;
+        // Reset stale connection promise to prevent hanging waitForConnection calls
+        this.connectionPromise = null;
         this.node.error(`MQTT Connection Error: ${error.message}`);
         this.node.status({
             fill: "yellow",
             shape: "ring",
             text: `Error: ${error.message} (Attempt ${this.connectionState.reconnectAttempts})`
         });
-        // Circuit breaker logic
+        // Circuit breaker logic with more aggressive recovery
         if (this.config.enableCircuitBreaker &&
             this.connectionState.reconnectAttempts >= (this.config.maxReconnectAttempts || 10)) {
             this.openCircuitBreaker();
@@ -169,16 +176,35 @@ class MqttClientCore extends events_1.EventEmitter {
         }
         this.emit("mqtt-error", { error, state: this.connectionState });
     }
-    // Circuit breaker implementation
+    // Circuit breaker implementation with progressive recovery
     openCircuitBreaker() {
         this.connectionState.circuitBreakerOpen = true;
         this.node.warn("Circuit breaker opened - stopping reconnection attempts");
-        // Close circuit breaker after a timeout
+        this.node.status({ fill: "red", shape: "ring", text: "Circuit breaker open - will retry in 30s" });
+        // Shorter initial timeout with progressive backoff
+        const initialTimeout = 30000; // 30 seconds instead of 5 minutes
         this.circuitBreakerTimer = setTimeout(() => {
             this.connectionState.circuitBreakerOpen = false;
             this.connectionState.reconnectAttempts = 0;
             this.node.log("Circuit breaker closed - reconnection attempts resumed");
-        }, 300000); // 5 minutes
+            this.node.status({ fill: "yellow", shape: "ring", text: "Retrying connection..." });
+            // Immediately attempt reconnection
+            this.initializeClient();
+        }, initialTimeout);
+    }
+    // Add method to manually reset circuit breaker for external recovery triggers
+    resetCircuitBreaker() {
+        if (this.connectionState.circuitBreakerOpen) {
+            this.node.warn("Manually resetting circuit breaker");
+            this.connectionState.circuitBreakerOpen = false;
+            this.connectionState.reconnectAttempts = 0;
+            if (this.circuitBreakerTimer) {
+                clearTimeout(this.circuitBreakerTimer);
+                this.circuitBreakerTimer = null;
+            }
+            // Attempt immediate reconnection
+            this.initializeClient();
+        }
     }
     // Smart reconnection with exponential backoff
     scheduleReconnection() {
@@ -302,18 +328,41 @@ class MqttClientCore extends events_1.EventEmitter {
             maxSize: this.config.messageQueueSize || 100
         };
     }
-    // Chờ kết nối trước khi sử dụng
+    // Enhanced connection waiting with automatic recovery
     async waitForConnection(timeoutMs = 30000) {
         var _a;
         if ((_a = this.client) === null || _a === void 0 ? void 0 : _a.connected)
-            return; // Đã kết nối thì return ngay
-        if (!this.connectionPromise)
-            throw new Error("Client not initialized");
-        // Promise.race với kiểu rõ ràng là Promise<void>
-        await Promise.race([
-            this.connectionPromise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Connection timeout")), timeoutMs)),
-        ]);
+            return; // Already connected
+        // If circuit breaker is open, try to reset it for recovery
+        if (this.connectionState.circuitBreakerOpen) {
+            this.node.warn("Circuit breaker is open, attempting reset for recovery");
+            this.resetCircuitBreaker();
+        }
+        // If no connection promise exists, try to reinitialize
+        if (!this.connectionPromise) {
+            this.node.warn("No connection promise exists, reinitializing client");
+            this.initializeClient();
+        }
+        if (!this.connectionPromise) {
+            throw new Error("Failed to initialize MQTT client connection");
+        }
+        // Promise.race with timeout
+        try {
+            await Promise.race([
+                this.connectionPromise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Connection timeout")), timeoutMs)),
+            ]);
+        }
+        catch (error) {
+            // On timeout or error, reset connection promise and try once more
+            this.connectionPromise = null;
+            this.node.warn(`Connection wait failed: ${error.message}, attempting recovery`);
+            // Reset circuit breaker if it's blocking recovery
+            if (this.connectionState.circuitBreakerOpen) {
+                this.resetCircuitBreaker();
+            }
+            throw error;
+        }
     }
     // Subscribe topic
     async subscribe(topic, qos = this.config.qos) {

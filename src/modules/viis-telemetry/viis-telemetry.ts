@@ -242,7 +242,7 @@ module.exports = function (RED: NodeAPI) {
   }
 
   /**
-   * Create ThingsBoard MQTT configuration
+   * Create ThingsBoard MQTT configuration with validation
    */
   function createThingsboardMqttConfig(globalHelper: GlobalContextHelper): MqttConfig {
     const host = globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
@@ -250,12 +250,27 @@ module.exports = function (RED: NodeAPI) {
     const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
     const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
 
+    // Validate critical configuration
+    if (!deviceToken || deviceToken.trim() === '') {
+      throw new Error('DEVICE_ACCESS_TOKEN is required for ThingsBoard MQTT connection');
+    }
+
+    // Log configuration for debugging (without sensitive data)
+    console.log(`[THINGSBOARD-CONFIG] Host: ${host}:${port}, Token: ${deviceToken.substring(0, 8)}...`);
+
     return {
       broker: `mqtt://${host}:${port}`,
       clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substring(2, 10)}`,
       username: deviceToken,
       password: password,
       qos: 1,
+      // Enhanced connection settings for stability
+      connectTimeout: 30000,
+      keepalive: 60,
+      maxReconnectAttempts: 15, // Increased from default 10
+      reconnectBackoffMultiplier: 1.5,
+      maxReconnectDelay: 60000,
+      enableCircuitBreaker: true
     };
   }
 

@@ -4,9 +4,59 @@ const modbus_client_1 = require("./modbus-client");
 const mqtt_client_1 = require("./mqtt-client");
 const mysql_client_1 = require("./mysql-client");
 class ClientRegistry {
+    // Start automatic recovery mechanism
+    static startRecoveryMechanism() {
+        if (this.recoveryTimer)
+            return; // Already running
+        this.recoveryTimer = setInterval(() => {
+            this.performHealthCheck();
+        }, this.RECOVERY_INTERVAL);
+    }
+    // Stop recovery mechanism
+    static stopRecoveryMechanism() {
+        if (this.recoveryTimer) {
+            clearInterval(this.recoveryTimer);
+            this.recoveryTimer = null;
+        }
+    }
+    // Perform health check and recovery
+    static performHealthCheck() {
+        // Check ThingsBoard MQTT connection
+        if (this.thingsboardMqttInstance && this.referenceCount.thingsboard > 0) {
+            if (!this.thingsboardMqttInstance.isConnected()) {
+                console.warn("[RECOVERY] ThingsBoard MQTT client disconnected, attempting recovery");
+                try {
+                    this.thingsboardMqttInstance.resetCircuitBreaker();
+                }
+                catch (error) {
+                    console.error("[RECOVERY] Failed to reset ThingsBoard circuit breaker:", error);
+                }
+            }
+        }
+        // Check Local MQTT connection
+        if (this.localMqttInstance && this.referenceCount.local > 0) {
+            if (!this.localMqttInstance.isConnected()) {
+                console.warn("[RECOVERY] Local MQTT client disconnected, attempting recovery");
+                try {
+                    this.localMqttInstance.resetCircuitBreaker();
+                }
+                catch (error) {
+                    console.error("[RECOVERY] Failed to reset Local circuit breaker:", error);
+                }
+            }
+        }
+    }
     static async getThingsboardMqttClient(config, node) {
-        // Wait if another node is already initializing
+        const maxWaitTime = 30000; // 30 seconds max wait
+        const startTime = Date.now();
+        // Wait if another node is already initializing, but with timeout
         while (this.initializingFlags.thingsboard) {
+            if (Date.now() - startTime > maxWaitTime) {
+                node.error("[THINGSBOARD-INIT] Timeout waiting for other node initialization, forcing reset");
+                this.initializingFlags.thingsboard = false;
+                this.thingsboardMqttInstance = null;
+                break;
+            }
             node.warn("[THINGSBOARD-INIT] Another node is initializing ThingsBoard client, waiting...");
             await new Promise(resolve => setTimeout(resolve, 100));
         }
@@ -24,16 +74,36 @@ class ClientRegistry {
             catch (error) {
                 this.thingsboardMqttInstance = null; // Reset on failure
                 node.error(`Failed to connect Thingsboard MQTT client: ${error.message}`);
+                // Add recovery mechanism - try to reset circuit breaker if it exists
+                if (this.thingsboardMqttInstance && typeof this.thingsboardMqttInstance.resetCircuitBreaker === 'function') {
+                    node.warn("Attempting to reset circuit breaker for recovery");
+                    this.thingsboardMqttInstance.resetCircuitBreaker();
+                }
                 throw error;
             }
             finally {
                 this.initializingFlags.thingsboard = false;
             }
         }
+        // Verify the instance is actually connected before returning
+        if (!this.thingsboardMqttInstance.isConnected()) {
+            node.warn("ThingsBoard MQTT instance exists but not connected, attempting recovery");
+            try {
+                await this.thingsboardMqttInstance.waitForConnection(10000); // 10 second timeout
+            }
+            catch (error) {
+                node.warn(`Recovery attempt failed: ${error.message}`);
+                // Don't throw here, let the node try to use the instance and handle errors
+            }
+        }
         this.referenceCount.thingsboard++;
         this.clientUsers.thingsboard.add(node.id);
         node.warn(`[THINGSBOARD-INIT] Node ${node.id} got ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
         node.warn(`[THINGSBOARD-INIT] Active users: ${Array.from(this.clientUsers.thingsboard).join(', ')}`);
+        // Start recovery mechanism if this is the first client
+        if (this.referenceCount.thingsboard === 1) {
+            this.startRecoveryMechanism();
+        }
         return this.thingsboardMqttInstance;
     }
     static async getLocalMqttClient(config, node) {
@@ -374,4 +444,7 @@ ClientRegistry.clientUsers = {
     local: new Set(),
     mysql: new Set()
 };
+// Recovery mechanism - periodic health check
+ClientRegistry.recoveryTimer = null;
+ClientRegistry.RECOVERY_INTERVAL = 60000; // 1 minute
 exports.default = ClientRegistry;
