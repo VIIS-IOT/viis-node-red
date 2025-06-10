@@ -152,8 +152,20 @@ module.exports = function (RED: NodeAPI) {
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
-                        const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
+                        const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
+
+                        // Publish configuration parameters if any
+                        if (configParameters && configParameters.length > 0) {
+                            for (const configParam of configParameters) {
+                                try {
+                                    await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                    node.warn(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                } catch (error) {
+                                    node.error(`Failed to publish config parameter ${configParam.key}: ${(error as Error).message}`);
+                                }
+                            }
+                        }
                         // --- Bổ sung reset các key time_valve_ và set_flow ---
                         const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
                         node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
@@ -271,7 +283,20 @@ module.exports = function (RED: NodeAPI) {
                             await scheduleService.resetModbusCommands(modbusClient, resetKeys);
                         }
                         // --- End reset logic ---
-                        const { holdingCommands, coilCommands } = scheduleService.mapScheduleToModbus(schedule);
+                        const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
+
+                        // Publish configuration parameters if any
+                        if (configParameters && configParameters.length > 0) {
+                            for (const configParam of configParameters) {
+                                try {
+                                    await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                    node.warn(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                } catch (error) {
+                                    node.error(`Failed to publish config parameter ${configParam.key}: ${(error as Error).message}`);
+                                }
+                            }
+                        }
+
                         if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                             await scheduleService.updateScheduleStatus(schedule, "running");
                             let writeSuccess = false;

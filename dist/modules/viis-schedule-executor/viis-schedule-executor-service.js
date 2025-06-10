@@ -184,14 +184,15 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
- * Map schedule thành danh sách các lệnh modbus
+ * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
  */
     mapScheduleToModbus(schedule) {
         const holdingCommands = [];
         const coilCommands = [];
+        const configParameters = [];
         if (!schedule.action) {
             console.warn(`Schedule ${schedule.name} has no action defined`);
-            return { holdingCommands, coilCommands };
+            return { holdingCommands, coilCommands, configParameters };
         }
         try {
             const actionObj = JSON.parse(schedule.action);
@@ -242,9 +243,10 @@ let ScheduleService = class ScheduleService {
                             value = false;
                         }
                     }
-                    // Chỉ xử lý các key có giá trị truthy sau khi xử lý
-                    if (value) {
-                        if (modbusHolding.hasOwnProperty(key)) {
+                    // Xử lý tất cả các key, không chỉ những key có giá trị truthy
+                    if (modbusHolding.hasOwnProperty(key)) {
+                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
+                        if (value) {
                             holdingCommands.push({
                                 key,
                                 value: Number(value),
@@ -255,7 +257,10 @@ let ScheduleService = class ScheduleService {
                             });
                             console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
                         }
-                        else if (modbusCoils.hasOwnProperty(key)) {
+                    }
+                    else if (modbusCoils.hasOwnProperty(key)) {
+                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
+                        if (value) {
                             coilCommands.push({
                                 key,
                                 value: Boolean(value),
@@ -266,8 +271,17 @@ let ScheduleService = class ScheduleService {
                             });
                             console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                         }
-                        else {
-                            console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}`);
+                    }
+                    else {
+                        // Xử lý unmapped keys như configuration parameters
+                        console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}, storing as config parameter`);
+                        try {
+                            const configParam = this.storeConfigParameter(key, value, schedule.name);
+                            configParameters.push(configParam);
+                            console.log(`Successfully stored config parameter: ${key}=${configParam.value} (type: ${configParam.type})`);
+                        }
+                        catch (error) {
+                            console.error(`Failed to store config parameter ${key}: ${error.message}`);
                         }
                     }
                 }
@@ -276,7 +290,7 @@ let ScheduleService = class ScheduleService {
         catch (error) {
             console.error(`Error parsing action for schedule ${schedule.name}: ${error.message}`);
         }
-        return { holdingCommands, coilCommands };
+        return { holdingCommands, coilCommands, configParameters };
     }
     /**
  * Gửi các lệnh modbus qua modbusClient
@@ -641,9 +655,14 @@ let ScheduleService = class ScheduleService {
         const activeCommands = this.getActiveCommands(schedule.name);
         if (activeCommands.length === 0) {
             console.log(`No active commands stored for schedule ${schedule.name}, mapping anew`);
-            const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule);
+            const { holdingCommands, coilCommands, configParameters } = this.mapScheduleToModbus(schedule);
             this.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
             await this.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
+            // Note: Config parameters are not re-published during power loss recovery
+            // as they are already stored in global context
+            if (configParameters && configParameters.length > 0) {
+                console.log(`Found ${configParameters.length} config parameters during re-execution, already stored in context`);
+            }
             return true;
         }
         // Lấy manualOverrides từ global context
@@ -743,6 +762,120 @@ let ScheduleService = class ScheduleService {
     }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+    /**
+     * Validate and convert value for configuration parameters
+     */
+    validateAndConvertValue(key, rawValue) {
+        // Handle null/undefined
+        if (rawValue === null || rawValue === undefined) {
+            return rawValue;
+        }
+        // Handle boolean strings
+        if (typeof rawValue === "string") {
+            const lowerValue = rawValue.toLowerCase().trim();
+            if (lowerValue === "true") {
+                return true;
+            }
+            else if (lowerValue === "false") {
+                return false;
+            }
+            // Handle numeric strings
+            const trimmed = rawValue.trim();
+            if (/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(trimmed) || /^-?\d+(\.\d+)?$/.test(trimmed)) {
+                const num = parseFloat(trimmed.replace(/,/g, ''));
+                if (!isNaN(num)) {
+                    return num;
+                }
+            }
+        }
+        // Handle numbers
+        if (typeof rawValue === "number") {
+            return rawValue;
+        }
+        // Handle booleans
+        if (typeof rawValue === "boolean") {
+            return rawValue;
+        }
+        // Default to string
+        return String(rawValue);
+    }
+    /**
+     * Auto-detect type for configuration parameter
+     */
+    detectParameterType(value) {
+        if (typeof value === "boolean") {
+            return "boolean";
+        }
+        else if (typeof value === "number") {
+            return "number";
+        }
+        else {
+            return "string";
+        }
+    }
+    /**
+     * Get schedule configuration values from global context
+     */
+    getScheduleConfigValues() {
+        var _a;
+        return ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("scheduleConfigValues")) || {};
+    }
+    /**
+     * Set schedule configuration values in global context
+     */
+    setScheduleConfigValues(values) {
+        var _a;
+        (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("scheduleConfigValues", values);
+        console.log(`Updated schedule config values: ${JSON.stringify(values)}`);
+    }
+    /**
+     * Store configuration parameter
+     */
+    storeConfigParameter(key, value, scheduleId) {
+        const validatedValue = this.validateAndConvertValue(key, value);
+        const type = this.detectParameterType(validatedValue);
+        const configParam = {
+            key,
+            value: validatedValue,
+            type,
+            timestamp: Date.now(),
+            scheduleId
+        };
+        // Store in global context
+        const currentConfig = this.getScheduleConfigValues();
+        currentConfig[key] = validatedValue;
+        this.setScheduleConfigValues(currentConfig);
+        console.log(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
+        return configParam;
+    }
+    /**
+     * Publish configuration update via MQTT
+     */
+    async publishConfigUpdate(thingsboardClient, emqxClient, configParam) {
+        try {
+            const payload = {
+                ts: configParam.timestamp,
+                [configParam.key]: configParam.value,
+                note: `Config parameter updated (no Modbus mapping) for schedule ${configParam.scheduleId}`,
+                type: configParam.type,
+                source: "schedule-executor"
+            };
+            const payloadString = JSON.stringify(payload);
+            // Publish to ThingsBoard
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await thingsboardClient.publish(thingsboardTopic, payloadString);
+            console.log(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
+            // Publish to EMQX local
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await emqxClient.publish(emqxTopic, payloadString);
+            console.log(`Published config update to EMQX local: ${configParam.key}=${configParam.value}`);
+        }
+        catch (error) {
+            console.error(`Error publishing config update for ${configParam.key}: ${error.message}`);
+            throw error;
+        }
     }
 };
 exports.ScheduleService = ScheduleService;

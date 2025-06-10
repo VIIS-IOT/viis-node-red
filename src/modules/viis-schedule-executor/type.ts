@@ -41,3 +41,15 @@ export interface RpcPayload {
 export interface ManualModbusOverrides {
     [key: string]: { fc: number; value: any; timestamp: number };
 }
+
+export interface ScheduleConfigValues {
+    [key: string]: any;
+}
+
+export interface ConfigParameter {
+    key: string;
+    value: any;
+    type: 'number' | 'boolean' | 'string';
+    timestamp: number;
+    scheduleId: string;
+}

@@ -6,7 +6,7 @@ import { AppDataSource } from "../../orm/dataSource";
 import { SyncScheduleService } from "../../services/syncSchedule/SyncScheduleService";
 import Container, { Service } from "typedi";
 import { Node } from "node-red";
-import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig } from "./type";
+import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig, ScheduleConfigValues, ConfigParameter } from "./type";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 // require('dotenv').config();
@@ -160,14 +160,16 @@ export class ScheduleService {
 
 
     /**
- * Map schedule thành danh sách các lệnh modbus
+ * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
  */
-    mapScheduleToModbus(schedule: TabiotSchedule): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] } {
+    mapScheduleToModbus(schedule: TabiotSchedule): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[], configParameters: ConfigParameter[] } {
         const holdingCommands: ModbusCmd[] = [];
         const coilCommands: ModbusCmd[] = [];
+        const configParameters: ConfigParameter[] = [];
+
         if (!schedule.action) {
             console.warn(`Schedule ${schedule.name} has no action defined`);
-            return { holdingCommands, coilCommands };
+            return { holdingCommands, coilCommands, configParameters };
         }
 
         try {
@@ -218,9 +220,11 @@ export class ScheduleService {
                             value = false;
                         }
                     }
-                    // Chỉ xử lý các key có giá trị truthy sau khi xử lý
-                    if (value) {
-                        if (modbusHolding.hasOwnProperty(key)) {
+
+                    // Xử lý tất cả các key, không chỉ những key có giá trị truthy
+                    if (modbusHolding.hasOwnProperty(key)) {
+                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
+                        if (value) {
                             holdingCommands.push({
                                 key,
                                 value: Number(value),
@@ -230,7 +234,10 @@ export class ScheduleService {
                                 quantity: 1,
                             });
                             console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
-                        } else if (modbusCoils.hasOwnProperty(key)) {
+                        }
+                    } else if (modbusCoils.hasOwnProperty(key)) {
+                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
+                        if (value) {
                             coilCommands.push({
                                 key,
                                 value: Boolean(value),
@@ -240,8 +247,16 @@ export class ScheduleService {
                                 quantity: 1,
                             });
                             console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
-                        } else {
-                            console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}`);
+                        }
+                    } else {
+                        // Xử lý unmapped keys như configuration parameters
+                        console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}, storing as config parameter`);
+                        try {
+                            const configParam = this.storeConfigParameter(key, value, schedule.name);
+                            configParameters.push(configParam);
+                            console.log(`Successfully stored config parameter: ${key}=${configParam.value} (type: ${configParam.type})`);
+                        } catch (error) {
+                            console.error(`Failed to store config parameter ${key}: ${(error as Error).message}`);
                         }
                     }
                 }
@@ -250,7 +265,7 @@ export class ScheduleService {
             console.error(`Error parsing action for schedule ${schedule.name}: ${(error as Error).message}`);
         }
 
-        return { holdingCommands, coilCommands };
+        return { holdingCommands, coilCommands, configParameters };
     }
 
 
@@ -645,9 +660,16 @@ export class ScheduleService {
         const activeCommands = this.getActiveCommands(schedule.name);
         if (activeCommands.length === 0) {
             console.log(`No active commands stored for schedule ${schedule.name}, mapping anew`);
-            const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule);
+            const { holdingCommands, coilCommands, configParameters } = this.mapScheduleToModbus(schedule);
             this.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
             await this.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
+
+            // Note: Config parameters are not re-published during power loss recovery
+            // as they are already stored in global context
+            if (configParameters && configParameters.length > 0) {
+                console.log(`Found ${configParameters.length} config parameters during re-execution, already stored in context`);
+            }
+
             return true;
         }
 
@@ -759,5 +781,134 @@ export class ScheduleService {
 
     delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Validate and convert value for configuration parameters
+     */
+    private validateAndConvertValue(key: string, rawValue: any): any {
+        // Handle null/undefined
+        if (rawValue === null || rawValue === undefined) {
+            return rawValue;
+        }
+
+        // Handle boolean strings
+        if (typeof rawValue === "string") {
+            const lowerValue = rawValue.toLowerCase().trim();
+            if (lowerValue === "true") {
+                return true;
+            } else if (lowerValue === "false") {
+                return false;
+            }
+
+            // Handle numeric strings
+            const trimmed = rawValue.trim();
+            if (/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(trimmed) || /^-?\d+(\.\d+)?$/.test(trimmed)) {
+                const num = parseFloat(trimmed.replace(/,/g, ''));
+                if (!isNaN(num)) {
+                    return num;
+                }
+            }
+        }
+
+        // Handle numbers
+        if (typeof rawValue === "number") {
+            return rawValue;
+        }
+
+        // Handle booleans
+        if (typeof rawValue === "boolean") {
+            return rawValue;
+        }
+
+        // Default to string
+        return String(rawValue);
+    }
+
+    /**
+     * Auto-detect type for configuration parameter
+     */
+    private detectParameterType(value: any): 'number' | 'boolean' | 'string' {
+        if (typeof value === "boolean") {
+            return "boolean";
+        } else if (typeof value === "number") {
+            return "number";
+        } else {
+            return "string";
+        }
+    }
+
+    /**
+     * Get schedule configuration values from global context
+     */
+    private getScheduleConfigValues(): ScheduleConfigValues {
+        return this.node?.context().global.get("scheduleConfigValues") as ScheduleConfigValues || {};
+    }
+
+    /**
+     * Set schedule configuration values in global context
+     */
+    private setScheduleConfigValues(values: ScheduleConfigValues): void {
+        this.node?.context().global.set("scheduleConfigValues", values);
+        console.log(`Updated schedule config values: ${JSON.stringify(values)}`);
+    }
+
+    /**
+     * Store configuration parameter
+     */
+    private storeConfigParameter(key: string, value: any, scheduleId: string): ConfigParameter {
+        const validatedValue = this.validateAndConvertValue(key, value);
+        const type = this.detectParameterType(validatedValue);
+
+        const configParam: ConfigParameter = {
+            key,
+            value: validatedValue,
+            type,
+            timestamp: Date.now(),
+            scheduleId
+        };
+
+        // Store in global context
+        const currentConfig = this.getScheduleConfigValues();
+        currentConfig[key] = validatedValue;
+        this.setScheduleConfigValues(currentConfig);
+
+        console.log(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
+        return configParam;
+    }
+
+    /**
+     * Publish configuration update via MQTT
+     */
+    async publishConfigUpdate(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        configParam: ConfigParameter
+    ): Promise<void> {
+        try {
+            const payload = {
+                ts: configParam.timestamp,
+                [configParam.key]: configParam.value,
+                note: `Config parameter updated (no Modbus mapping) for schedule ${configParam.scheduleId}`,
+                type: configParam.type,
+                source: "schedule-executor"
+            };
+            const payloadString = JSON.stringify(payload);
+
+            // Publish to ThingsBoard
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await thingsboardClient.publish(thingsboardTopic, payloadString);
+            console.log(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
+
+            // Publish to EMQX local
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await emqxClient.publish(emqxTopic, payloadString);
+            console.log(`Published config update to EMQX local: ${configParam.key}=${configParam.value}`);
+
+        } catch (error) {
+            console.error(`Error publishing config update for ${configParam.key}: ${(error as Error).message}`);
+            throw error;
+        }
     }
 }
