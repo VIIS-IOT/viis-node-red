@@ -446,6 +446,13 @@ class FanControlService {
                 }
             }
         }
+        // Check if the required group size has changed from the saved rotation state
+        // This is the key fix for K1 → K2 transitions
+        if (rotationState && rotationState.requiredGroupSize !== requiredGroupSize) {
+            this.logger.warn(`[STABLE] Threshold group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, forcing transition to new group size`);
+            // Force immediate transition to new group size by using standard rotation logic
+            return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+        }
         // If we already have the correct number of fans active, check if we should rotate
         if (currentActiveFans.length === requiredGroupSize) {
             // Check if current fans match any of the valid groups
@@ -563,6 +570,7 @@ class FanControlService {
      * Process threshold mode with transition support
      */
     async processThresholdModeWithTransition(config, sensorData, deviceStatus) {
+        var _a;
         try {
             const temperature = sensorData.temp_indoor;
             const humidity = sensorData.humi_indoor;
@@ -628,12 +636,25 @@ class FanControlService {
             }
             // Get current active fans
             const currentActiveFans = Object.keys(deviceStatusRecord).filter(key => deviceStatusRecord[key] === true && (0, groupUtils_1.getAllFanKeys)().includes(key));
+            // Add comprehensive logging for threshold mode transitions
+            this.logger.warn(`🔄 Threshold Analysis: temp=${temperature}°C, required=${requiredGroupSize} fans, current=[${currentActiveFans.join(',')}], target=[${targetGroup.join(',')}]`);
+            // Log rotation state for debugging
+            const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+            const rotationState = this.flowContext.get(contextKey);
+            if (rotationState) {
+                this.logger.warn(`📊 Rotation State: savedGroupSize=${rotationState.requiredGroupSize}, currentGroupIndex=${rotationState.currentGroupIndex}, activeGroup=[${((_a = rotationState.activeGroup) === null || _a === void 0 ? void 0 : _a.join(',')) || 'none'}]`);
+            }
+            else {
+                this.logger.warn(`📊 Rotation State: No saved state found`);
+            }
             // Check if transition is needed with improved logic
             if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize, config)) {
+                this.logger.warn(`🚀 Initiating transition: [${currentActiveFans.join(',')}] → [${targetGroup.join(',')}] (${reason})`);
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             }
             else {
+                this.logger.debug(`✅ No transition needed: maintaining current state`);
                 // No transition needed, create actions directly using non-optimized function for consistency
                 return (0, groupUtils_1.createFanGroupActions)(targetGroup, true, reason, coilMapping);
             }
@@ -709,6 +730,14 @@ class FanControlService {
             this.logger.debug(`Transition cooldown active, skipping new transition (${cooldownMs - ((0, timeUtils_1.getCurrentTimestamp)() - lastTransitionTime)}ms remaining)`);
             return false;
         }
+        // Check if the required group size has changed (e.g., K1 → K2 threshold change)
+        // This is critical for proper threshold mode transitions
+        const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+        const rotationState = this.flowContext.get(contextKey);
+        if (rotationState && typeof rotationState === 'object' && rotationState.requiredGroupSize !== requiredGroupSize) {
+            this.logger.warn(`[TRANSITION] Threshold group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, transition required`);
+            return true; // Force transition when group size requirement changes
+        }
         // If current group size matches required size and fans are valid, no transition needed
         if (currentGroup.length === requiredGroupSize && currentGroup.length > 0) {
             // Check if all current fans are valid fan keys
@@ -726,8 +755,6 @@ class FanControlService {
                 const configuredInterval = (config === null || config === void 0 ? void 0 : config.set_time_alternate_fan) ||
                     (this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
                 const rotationInterval = (0, timeUtils_1.minutesToMs)(configuredInterval);
-                const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
-                const rotationState = this.flowContext.get(contextKey);
                 if (rotationState && typeof rotationState === 'object') {
                     const timeSinceLastRotation = (0, timeUtils_1.getCurrentTimestamp)() - (rotationState.lastRotationTime || 0);
                     if (timeSinceLastRotation < rotationInterval * 0.9) { // 90% of interval to prevent premature rotation

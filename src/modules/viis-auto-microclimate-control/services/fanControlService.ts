@@ -576,6 +576,14 @@ export class FanControlService implements IFanControlService {
             }
         }
 
+        // Check if the required group size has changed from the saved rotation state
+        // This is the key fix for K1 → K2 transitions
+        if (rotationState && rotationState.requiredGroupSize !== requiredGroupSize) {
+            this.logger.warn(`[STABLE] Threshold group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, forcing transition to new group size`);
+            // Force immediate transition to new group size by using standard rotation logic
+            return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+        }
+
         // If we already have the correct number of fans active, check if we should rotate
         if (currentActiveFans.length === requiredGroupSize) {
             // Check if current fans match any of the valid groups
@@ -792,11 +800,25 @@ export class FanControlService implements IFanControlService {
                 deviceStatusRecord[key] === true && getAllFanKeys().includes(key)
             );
 
+            // Add comprehensive logging for threshold mode transitions
+            this.logger.warn(`🔄 Threshold Analysis: temp=${temperature}°C, required=${requiredGroupSize} fans, current=[${currentActiveFans.join(',')}], target=[${targetGroup.join(',')}]`);
+
+            // Log rotation state for debugging
+            const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+            const rotationState = this.flowContext.get(contextKey);
+            if (rotationState) {
+                this.logger.warn(`📊 Rotation State: savedGroupSize=${rotationState.requiredGroupSize}, currentGroupIndex=${rotationState.currentGroupIndex}, activeGroup=[${rotationState.activeGroup?.join(',') || 'none'}]`);
+            } else {
+                this.logger.warn(`📊 Rotation State: No saved state found`);
+            }
+
             // Check if transition is needed with improved logic
             if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize, config)) {
+                this.logger.warn(`🚀 Initiating transition: [${currentActiveFans.join(',')}] → [${targetGroup.join(',')}] (${reason})`);
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             } else {
+                this.logger.debug(`✅ No transition needed: maintaining current state`);
                 // No transition needed, create actions directly using non-optimized function for consistency
                 return createFanGroupActions(targetGroup, true, reason, coilMapping);
             }
@@ -884,6 +906,16 @@ export class FanControlService implements IFanControlService {
             return false;
         }
 
+        // Check if the required group size has changed (e.g., K1 → K2 threshold change)
+        // This is critical for proper threshold mode transitions
+        const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+        const rotationState = this.flowContext.get(contextKey);
+
+        if (rotationState && typeof rotationState === 'object' && rotationState.requiredGroupSize !== requiredGroupSize) {
+            this.logger.warn(`[TRANSITION] Threshold group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, transition required`);
+            return true; // Force transition when group size requirement changes
+        }
+
         // If current group size matches required size and fans are valid, no transition needed
         if (currentGroup.length === requiredGroupSize && currentGroup.length > 0) {
             // Check if all current fans are valid fan keys
@@ -902,8 +934,6 @@ export class FanControlService implements IFanControlService {
                 const configuredInterval = config?.set_time_alternate_fan ||
                     (this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
                 const rotationInterval = minutesToMs(configuredInterval);
-                const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
-                const rotationState = this.flowContext.get(contextKey);
 
                 if (rotationState && typeof rotationState === 'object') {
                     const timeSinceLastRotation = getCurrentTimestamp() - (rotationState.lastRotationTime || 0);
