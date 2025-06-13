@@ -391,6 +391,11 @@ class FanControlService {
             this.logger.warn(`Current group: ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (interval: ${config.set_time_alternate_fan || 15}min)`);
             this.logger.warn(`Time since last rotation: ${Math.round(timeSinceLastRotation / 60000)} minutes`);
         }
+        else {
+            // Even if it's not time to rotate, ensure we return the correct active group
+            // This prevents the system from reverting to a different group
+            this.logger.debug(`Not time to rotate yet, maintaining current group: [${rotationState.activeGroup.join(',')}]`);
+        }
         // Validate active group consistency
         if (!rotationState.activeGroup || rotationState.activeGroup.length !== requiredGroupSize) {
             this.logger.warn(`Invalid active group size, fixing: expected ${requiredGroupSize}, got ${((_a = rotationState.activeGroup) === null || _a === void 0 ? void 0 : _a.length) || 0}`);
@@ -411,7 +416,6 @@ class FanControlService {
      * Get stable rotation target group that prevents unnecessary transitions
      */
     getStableRotationTargetGroup(fanGroups, requiredGroupSize, config, deviceStatusRecord) {
-        var _a;
         // Check if we're currently in a transition - if so, don't change target
         if (this.isTransitionInProgress()) {
             const transitionState = this.getFanGroupTransitionState();
@@ -453,43 +457,10 @@ class FanControlService {
             // Force immediate transition to new group size by using standard rotation logic
             return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
         }
-        // If we already have the correct number of fans active, check if we should rotate
-        if (currentActiveFans.length === requiredGroupSize) {
-            // Check if current fans match any of the valid groups
-            const currentGroupIndex = fanGroups.findIndex(group => this.arraysEqual(currentActiveFans, group.sort()));
-            if (currentGroupIndex >= 0) {
-                // Current group is valid, sync rotation state with current reality
-                if (!rotationState || typeof rotationState !== 'object') {
-                    rotationState = {
-                        currentGroupIndex: currentGroupIndex,
-                        lastRotationTime: (0, timeUtils_1.getCurrentTimestamp)(),
-                        activeGroup: [...currentActiveFans],
-                        requiredGroupSize: requiredGroupSize
-                    };
-                    this.flowContext.set(contextKey, rotationState);
-                    this.logger.debug(`Synced rotation state with current active fans: [${currentActiveFans.join(', ')}]`);
-                }
-                else {
-                    // Update rotation state to match reality if different
-                    if (!this.arraysEqual(((_a = rotationState.activeGroup) === null || _a === void 0 ? void 0 : _a.sort()) || [], currentActiveFans)) {
-                        rotationState.currentGroupIndex = currentGroupIndex;
-                        rotationState.activeGroup = [...currentActiveFans];
-                        rotationState.requiredGroupSize = requiredGroupSize;
-                        this.flowContext.set(contextKey, rotationState);
-                        this.logger.debug(`Updated rotation state to match current active fans: [${currentActiveFans.join(', ')}]`);
-                    }
-                }
-                // Check if it's time to rotate
-                const rotationInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan || 15);
-                if ((0, timeUtils_1.hasTimeElapsed)(rotationState.lastRotationTime, rotationInterval)) {
-                    return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                }
-                else {
-                    // Not time to rotate yet, keep current group
-                    return currentActiveFans;
-                }
-            }
-        }
+        // For threshold mode, always use the standard rotation logic to ensure proper cycling
+        // This fixes the bug where the system gets stuck on one fan group
+        this.logger.debug(`[STABLE] Using standard rotation logic for threshold mode to ensure proper cycling`);
+        return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
         // If we don't have the right number of fans or they don't match a valid group,
         // use the standard rotation logic
         return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
@@ -738,34 +709,14 @@ class FanControlService {
             this.logger.warn(`[TRANSITION] Threshold group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, transition required`);
             return true; // Force transition when group size requirement changes
         }
-        // If current group size matches required size and fans are valid, no transition needed
-        if (currentGroup.length === requiredGroupSize && currentGroup.length > 0) {
-            // Check if all current fans are valid fan keys
-            const allValidFans = currentGroup.every(fan => (0, groupUtils_1.getAllFanKeys)().includes(fan));
-            if (allValidFans) {
-                // Only transition if the new group is significantly different
-                // For same-size groups, only transition if it's a planned rotation
-                const isDifferentGroup = !this.arraysEqual(currentGroup.sort(), newGroup.sort());
-                if (!isDifferentGroup) {
-                    return false; // Same group, no transition needed
-                }
-                // For different groups of same size, check if this is a planned rotation
-                // by verifying the rotation interval has elapsed
-                // Use config parameter if available, otherwise read from global config
-                const configuredInterval = (config === null || config === void 0 ? void 0 : config.set_time_alternate_fan) ||
-                    (this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_VALUES) || {}).set_time_alternate_fan || 15;
-                const rotationInterval = (0, timeUtils_1.minutesToMs)(configuredInterval);
-                if (rotationState && typeof rotationState === 'object') {
-                    const timeSinceLastRotation = (0, timeUtils_1.getCurrentTimestamp)() - (rotationState.lastRotationTime || 0);
-                    if (timeSinceLastRotation < rotationInterval * 0.9) { // 90% of interval to prevent premature rotation
-                        this.logger.debug(`Rotation interval not met, skipping transition (${Math.round(timeSinceLastRotation / 1000)}s < ${Math.round(rotationInterval * 0.9 / 1000)}s) - configured: ${configuredInterval}min`);
-                        return false;
-                    }
-                }
-            }
+        // Always allow transitions if the target group is different (this fixes the threshold mode bug)
+        const isDifferentGroup = !this.arraysEqual(currentGroup.sort(), newGroup.sort());
+        if (isDifferentGroup) {
+            this.logger.debug(`Different target group detected: [${currentGroup.join(',')}] → [${newGroup.join(',')}], allowing transition`);
+            return true;
         }
-        // Use the standard transition check for other cases
-        return this.requiresGroupTransition(currentGroup, newGroup);
+        // Same group, no transition needed
+        return false;
     }
     /**
      * Initiate fan group transition with delay
