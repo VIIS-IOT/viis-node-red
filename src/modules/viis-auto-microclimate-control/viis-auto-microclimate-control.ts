@@ -14,7 +14,7 @@ import { AutoControlHandler } from "./handlers/autoControlHandler";
 import { ConfigService } from "./services/configService";
 import { SensorService } from "./services/sensorService";
 import { ModbusService } from "./services/modbusService";
-import { FanControlService } from "./services/fanControlService";
+import { EnhancedFanControlService } from "./services/enhancedFanControlService";
 import { WaterPumpControlService } from "./services/waterPumpControlService";
 import { CurtainControlService } from "./services/curtainControlService";
 import { Logger } from "./utils/logger";
@@ -104,7 +104,7 @@ module.exports = function (RED: NodeAPI) {
                 const configService = new ConfigService(serviceOptions);
                 const sensorService = new SensorService(serviceOptions);
                 const modbusService = new ModbusService(serviceOptions, modbusClient);
-                const fanControlService = new FanControlService(serviceOptions);
+                const fanControlService = new EnhancedFanControlService(serviceOptions);
                 const waterPumpControlService = new WaterPumpControlService(serviceOptions);
                 const curtainControlService = new CurtainControlService(serviceOptions);
 

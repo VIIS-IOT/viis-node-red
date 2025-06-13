@@ -12,7 +12,7 @@ const autoControlHandler_1 = require("./handlers/autoControlHandler");
 const configService_1 = require("./services/configService");
 const sensorService_1 = require("./services/sensorService");
 const modbusService_1 = require("./services/modbusService");
-const fanControlService_1 = require("./services/fanControlService");
+const enhancedFanControlService_1 = require("./services/enhancedFanControlService");
 const waterPumpControlService_1 = require("./services/waterPumpControlService");
 const curtainControlService_1 = require("./services/curtainControlService");
 const logger_1 = require("./utils/logger");
@@ -79,7 +79,7 @@ module.exports = function (RED) {
                 const configService = new configService_1.ConfigService(serviceOptions);
                 const sensorService = new sensorService_1.SensorService(serviceOptions);
                 const modbusService = new modbusService_1.ModbusService(serviceOptions, modbusClient);
-                const fanControlService = new fanControlService_1.FanControlService(serviceOptions);
+                const fanControlService = new enhancedFanControlService_1.EnhancedFanControlService(serviceOptions);
                 const waterPumpControlService = new waterPumpControlService_1.WaterPumpControlService(serviceOptions);
                 const curtainControlService = new curtainControlService_1.CurtainControlService(serviceOptions);
                 // Initialize auto control handler
