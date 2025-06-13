@@ -25,6 +25,7 @@ import {
     STATUS_MESSAGES,
     ERROR_MESSAGES
 } from "./constants";
+import { FanControlService } from "./services/fanControlService";
 
 module.exports = function (RED: NodeAPI) {
     function ViisAutoMicroclimateControlNode(this: Node, config: ViisAutoMicroclimateControlNodeDef) {
@@ -104,7 +105,7 @@ module.exports = function (RED: NodeAPI) {
                 const configService = new ConfigService(serviceOptions);
                 const sensorService = new SensorService(serviceOptions);
                 const modbusService = new ModbusService(serviceOptions, modbusClient);
-                const fanControlService = new EnhancedFanControlService(serviceOptions);
+                const fanControlService = new FanControlService(serviceOptions);
                 const waterPumpControlService = new WaterPumpControlService(serviceOptions);
                 const curtainControlService = new CurtainControlService(serviceOptions);
 
