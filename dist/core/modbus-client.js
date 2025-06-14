@@ -12,12 +12,12 @@ class ModbusClientCore extends events_1.EventEmitter {
         super();
         this.isConnected = false;
         this.wasConnected = false; // Track connection state
+        this.node = node; // Set node first before calling other methods
         this.config = Object.assign({ tcpPort: 502, baudRate: 9600, parity: "none", unitId: 1, timeout: 5000, reconnectInterval: 5000, 
             // Board-specific defaults
             boardType: "STM32", writeTimeout: 5000, readTimeout: 5000, connectionTimeout: 3000, maxRetries: 3 }, config);
-        // Apply board-specific optimizations
+        // Apply board-specific optimizations (after node is set)
         this.applyBoardSpecificConfig();
-        this.node = node;
         this.client = new modbus_serial_1.default();
         this.initializeClient();
         this.startConnectionCheck(); // Bắt đầu kiểm tra kết nối
@@ -34,7 +34,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.config.readTimeout = this.config.readTimeout || 8000;
                 this.config.connectionTimeout = this.config.connectionTimeout || 5000;
                 this.config.maxRetries = this.config.maxRetries || 3;
-                this.node.log(`[${boardType}] Applied ATmega-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                if (this.node && this.node.log) {
+                    this.node.log(`[${boardType}] Applied ATmega-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                }
                 break;
             case "STM32":
                 // STM32 boards can handle shorter timeouts
@@ -42,7 +44,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.config.readTimeout = this.config.readTimeout || 3000;
                 this.config.connectionTimeout = this.config.connectionTimeout || 2000;
                 this.config.maxRetries = this.config.maxRetries || 2;
-                this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                if (this.node && this.node.log) {
+                    this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                }
                 break;
             default:
                 // Generic configuration
@@ -50,7 +54,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.config.readTimeout = this.config.readTimeout || 5000;
                 this.config.connectionTimeout = this.config.connectionTimeout || 3000;
                 this.config.maxRetries = this.config.maxRetries || 3;
-                this.node.log(`[${boardType}] Applied generic configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                if (this.node && this.node.log) {
+                    this.node.log(`[${boardType}] Applied generic configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                }
                 break;
         }
     }

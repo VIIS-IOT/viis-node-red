@@ -15,11 +15,9 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExampleAutoInjectedService = void 0;
 const typedi_1 = require("typedi");
-const node_red_1 = require("node-red");
 const logger_1 = require("../utils/logger");
 const database_service_1 = require("./database.service");
 const auth_service_1 = require("./auth.service");
@@ -117,5 +115,5 @@ exports.ExampleAutoInjectedService = ExampleAutoInjectedService = __decorate([
     __param(3, (0, typedi_1.Inject)(container_setup_1.JWT_SECRET_TOKEN)),
     __param(4, (0, typedi_1.Inject)(container_setup_1.CONFIG_MANAGER_TOKEN)),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        auth_service_1.AuthService, typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object, String, api_config_1.ApiConfigManager])
+        auth_service_1.AuthService, Object, String, api_config_1.ApiConfigManager])
 ], ExampleAutoInjectedService);

@@ -12,10 +12,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DatabaseService = void 0;
-const node_red_1 = require("node-red");
 const typedi_1 = require("typedi");
 const dataSource_1 = require("../../../orm/dataSource");
 const customer_1 = require("../../../orm/entities/customer/customer");
@@ -210,5 +208,5 @@ let DatabaseService = class DatabaseService {
 exports.DatabaseService = DatabaseService;
 exports.DatabaseService = DatabaseService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object])
+    __metadata("design:paramtypes", [Object])
 ], DatabaseService);

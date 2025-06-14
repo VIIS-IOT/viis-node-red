@@ -15,13 +15,11 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
-const node_red_1 = require("node-red");
 const typedi_1 = require("typedi");
 const logger_1 = require("../utils/logger");
 const common_types_1 = require("../types/common.types");
@@ -270,5 +268,5 @@ let AuthService = class AuthService extends base_service_1.BaseService {
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [database_service_1.DatabaseService, String, typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object, api_config_1.ApiConfigManager])
+    __metadata("design:paramtypes", [database_service_1.DatabaseService, String, Object, api_config_1.ApiConfigManager])
 ], AuthService);
