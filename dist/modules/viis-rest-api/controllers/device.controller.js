@@ -21,12 +21,14 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DeviceController = void 0;
 require("reflect-metadata");
 const routing_controllers_1 = require("routing-controllers");
 const typedi_1 = require("typedi");
 const device_service_1 = require("../services/device.service");
+const node_red_1 = require("node-red");
 const logger_1 = require("../utils/logger");
 const container_setup_1 = require("../container/container.setup");
 /**
@@ -62,5 +64,5 @@ exports.DeviceController = DeviceController = __decorate([
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)()),
     __param(1, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
-    __metadata("design:paramtypes", [device_service_1.DeviceService, Object])
+    __metadata("design:paramtypes", [device_service_1.DeviceService, typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object])
 ], DeviceController);

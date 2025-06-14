@@ -14,6 +14,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IotScheduleLogController = void 0;
 require("reflect-metadata");
@@ -22,6 +23,7 @@ const typedi_1 = require("typedi");
 const database_service_1 = require("../services/database.service");
 const schedule_log_service_1 = require("../services/schedule-log.service");
 const iot_schedule_log_dto_1 = require("../dto/iot-schedule-log.dto");
+const node_red_1 = require("node-red");
 const logger_1 = require("../utils/logger");
 const container_setup_1 = require("../container/container.setup");
 /**
@@ -452,5 +454,5 @@ exports.IotScheduleLogController = IotScheduleLogController = __decorate([
     __param(1, (0, typedi_1.Inject)()),
     __param(2, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        schedule_log_service_1.ScheduleLogService, Object])
+        schedule_log_service_1.ScheduleLogService, typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object])
 ], IotScheduleLogController);

@@ -140,10 +140,30 @@ class FanControlService {
                 hysteresis: constants_1.CONTROL_CONFIG.THRESHOLD_HYSTERESIS_CELSIUS
             });
             this.logger.debug(`Threshold mode: temp=${tempIndoor}°C, humidity=${humiIndoor}%, current fans=${currentActiveFanCount}, required group size=${requiredGroupSize}`);
-            // Check if change is actually needed (anti-oscillation)
-            if (currentActiveFanCount === requiredGroupSize) {
-                this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize})`);
-                return []; // No action needed - already in correct state
+            // For threshold mode, we need to allow rotation even if the fan count matches
+            // This is the key difference from the original logic that was causing the rotation bug
+            // We should only skip if we're in the exact same group AND it's not time to rotate
+            if (currentActiveFanCount === requiredGroupSize && requiredGroupSize > 0) {
+                // Check if we need to rotate within the same group size
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                if (fanGroups.length > 1) {
+                    // Multiple groups available for this size - check if rotation is needed
+                    const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+                    const rotationState = this.flowContext.get(contextKey);
+                    const rotationInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan || 15);
+                    if (rotationState && (0, timeUtils_1.hasTimeElapsed)(rotationState.lastRotationTime, rotationInterval)) {
+                        this.logger.debug(`Fan count matches but rotation is due: proceeding with rotation logic`);
+                        // Continue with rotation logic below
+                    }
+                    else {
+                        this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize}) and no rotation due`);
+                        return []; // No action needed - already in correct state and no rotation due
+                    }
+                }
+                else {
+                    this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize}) and only one group available`);
+                    return []; // No action needed - only one group available for this size
+                }
             }
             if (requiredGroupSize === 0) {
                 // No fans needed - use optimized function if device status available
@@ -323,6 +343,7 @@ class FanControlService {
     }
     /**
      * Get rotation target group for threshold mode with improved consistency
+     * This method implements the same rotation logic as automatic mode but with threshold-specific state management
      */
     getRotationTargetGroup(fanGroups, requiredGroupSize, config) {
         var _a;
@@ -363,25 +384,30 @@ class FanControlService {
             this.flowContext.set(contextKey, rotationState);
             this.logger.warn(`Initialized threshold rotation state for group size ${requiredGroupSize}: [${rotationState.activeGroup.join(', ')}]`);
         }
-        // If the required group size changed, reinitialize with appropriate groups
+        // Critical fix: If the required group size changed, we need to handle the transition properly
+        // This prevents the bug where rotation gets stuck when switching between K1/K2 thresholds
         if (rotationState.requiredGroupSize !== requiredGroupSize) {
+            this.logger.warn(`🔄 Group size transition detected: ${rotationState.requiredGroupSize} → ${requiredGroupSize}`);
+            // Preserve rotation timing but update to new group size
+            // This ensures smooth transitions between threshold levels
             const newFanGroups = this.getFanGroups(requiredGroupSize);
+            const newGroupIndex = Math.min(rotationState.currentGroupIndex, newFanGroups.length - 1);
             rotationState = {
-                currentGroupIndex: 0,
-                lastRotationTime: (0, timeUtils_1.getCurrentTimestamp)(),
-                activeGroup: newFanGroups[0] || [],
+                currentGroupIndex: newGroupIndex,
+                lastRotationTime: rotationState.lastRotationTime, // Preserve timing to maintain rotation schedule
+                activeGroup: newFanGroups[newGroupIndex] || [],
                 requiredGroupSize: requiredGroupSize
             };
             this.flowContext.set(contextKey, rotationState);
-            this.logger.warn(`Group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, reinitialized rotation state`);
+            this.logger.warn(`Updated rotation state for new group size ${requiredGroupSize}: group ${newGroupIndex + 1}/${newFanGroups.length} [${rotationState.activeGroup.join(', ')}]`);
         }
-        // Check if it's time to rotate
+        // Check if it's time to rotate (same logic as automatic rotation mode)
         const timeSinceLastRotation = (0, timeUtils_1.getCurrentTimestamp)() - rotationState.lastRotationTime;
         const shouldRotate = (0, timeUtils_1.hasTimeElapsed)(rotationState.lastRotationTime, rotationInterval);
-        this.logger.debug(`Rotation check: time since last = ${Math.round(timeSinceLastRotation / 1000)}s, interval = ${Math.round(rotationInterval / 1000)}s, should rotate = ${shouldRotate}`);
+        this.logger.debug(`Threshold rotation check: time since last = ${Math.round(timeSinceLastRotation / 1000)}s, interval = ${Math.round(rotationInterval / 1000)}s, should rotate = ${shouldRotate}`);
         if (shouldRotate) {
             const previousGroup = [...rotationState.activeGroup];
-            // Move to next group in sequence
+            // Move to next group in sequence (same logic as automatic rotation mode)
             rotationState.currentGroupIndex = (0, groupUtils_1.getNextGroupIndex)(rotationState.currentGroupIndex, fanGroups.length);
             rotationState.lastRotationTime = (0, timeUtils_1.getCurrentTimestamp)();
             rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex];
@@ -409,13 +435,14 @@ class FanControlService {
             rotationState.activeGroup = fanGroups[0] || [];
             this.flowContext.set(contextKey, rotationState);
         }
-        this.logger.debug(`Final rotation target: [${rotationState.activeGroup.join(',')}] (group ${rotationState.currentGroupIndex + 1}/${fanGroups.length})`);
+        this.logger.debug(`Final threshold rotation target: [${rotationState.activeGroup.join(',')}] (group ${rotationState.currentGroupIndex + 1}/${fanGroups.length})`);
         return rotationState.activeGroup || fanGroups[0] || [];
     }
     /**
      * Get stable rotation target group that prevents unnecessary transitions
      */
     getStableRotationTargetGroup(fanGroups, requiredGroupSize, config, deviceStatusRecord) {
+        var _a;
         // Check if we're currently in a transition - if so, don't change target
         if (this.isTransitionInProgress()) {
             const transitionState = this.getFanGroupTransitionState();
@@ -454,16 +481,64 @@ class FanControlService {
         // This is the key fix for K1 → K2 transitions
         if (rotationState && rotationState.requiredGroupSize !== requiredGroupSize) {
             this.logger.warn(`[STABLE] Threshold group size changed from ${rotationState.requiredGroupSize} to ${requiredGroupSize}, forcing transition to new group size`);
-            // Force immediate transition to new group size by using standard rotation logic
-            return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+            // Initialize new rotation state for the new group size
+            const newRotationState = {
+                currentGroupIndex: 0,
+                lastRotationTime: (0, timeUtils_1.getCurrentTimestamp)(),
+                activeGroup: fanGroups[0] || [],
+                requiredGroupSize: requiredGroupSize
+            };
+            this.flowContext.set(contextKey, newRotationState);
+            this.logger.warn(`[STABLE] Initialized new rotation state for group size ${requiredGroupSize}: [${newRotationState.activeGroup.join(', ')}]`);
+            return newRotationState.activeGroup;
         }
-        // For threshold mode, always use the standard rotation logic to ensure proper cycling
-        // This fixes the bug where the system gets stuck on one fan group
-        this.logger.debug(`[STABLE] Using standard rotation logic for threshold mode to ensure proper cycling`);
-        return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-        // If we don't have the right number of fans or they don't match a valid group,
-        // use the standard rotation logic
-        return this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+        // If no rotation state exists, initialize it
+        if (!rotationState || typeof rotationState !== 'object' || !Array.isArray(rotationState.activeGroup)) {
+            rotationState = {
+                currentGroupIndex: 0,
+                lastRotationTime: (0, timeUtils_1.getCurrentTimestamp)(),
+                activeGroup: fanGroups[0] || [],
+                requiredGroupSize: requiredGroupSize
+            };
+            this.flowContext.set(contextKey, rotationState);
+            this.logger.warn(`[STABLE] Initialized threshold rotation state for group size ${requiredGroupSize}: [${rotationState.activeGroup.join(', ')}]`);
+            return rotationState.activeGroup;
+        }
+        // Check if it's time to rotate using the same logic as automatic rotation mode
+        const rotationInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan || 15);
+        const timeSinceLastRotation = (0, timeUtils_1.getCurrentTimestamp)() - rotationState.lastRotationTime;
+        const shouldRotate = (0, timeUtils_1.hasTimeElapsed)(rotationState.lastRotationTime, rotationInterval);
+        this.logger.debug(`[STABLE] Rotation check: time since last = ${Math.round(timeSinceLastRotation / 1000)}s, interval = ${Math.round(rotationInterval / 1000)}s, should rotate = ${shouldRotate}`);
+        if (shouldRotate) {
+            const previousGroup = [...rotationState.activeGroup];
+            // Move to next group in sequence
+            rotationState.currentGroupIndex = (0, groupUtils_1.getNextGroupIndex)(rotationState.currentGroupIndex, fanGroups.length);
+            rotationState.lastRotationTime = (0, timeUtils_1.getCurrentTimestamp)();
+            rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex];
+            // Save updated state
+            this.flowContext.set(contextKey, rotationState);
+            this.logger.warn(`🔄 [STABLE] Threshold rotation (size ${requiredGroupSize}): [${previousGroup.join(',')}] → [${rotationState.activeGroup.join(',')}]`);
+            this.logger.warn(`[STABLE] Current group: ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (interval: ${config.set_time_alternate_fan || 15}min)`);
+            this.logger.warn(`[STABLE] Time since last rotation: ${Math.round(timeSinceLastRotation / 60000)} minutes`);
+        }
+        else {
+            this.logger.debug(`[STABLE] Not time to rotate yet, maintaining current group: [${rotationState.activeGroup.join(',')}]`);
+        }
+        // Validate active group consistency
+        if (!rotationState.activeGroup || rotationState.activeGroup.length !== requiredGroupSize) {
+            this.logger.warn(`[STABLE] Invalid active group size, fixing: expected ${requiredGroupSize}, got ${((_a = rotationState.activeGroup) === null || _a === void 0 ? void 0 : _a.length) || 0}`);
+            rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex] || fanGroups[0] || [];
+            this.flowContext.set(contextKey, rotationState);
+        }
+        // Ensure currentGroupIndex is valid
+        if (rotationState.currentGroupIndex >= fanGroups.length) {
+            this.logger.warn(`[STABLE] Invalid currentGroupIndex ${rotationState.currentGroupIndex}, resetting to 0`);
+            rotationState.currentGroupIndex = 0;
+            rotationState.activeGroup = fanGroups[0] || [];
+            this.flowContext.set(contextKey, rotationState);
+        }
+        this.logger.debug(`[STABLE] Final rotation target: [${rotationState.activeGroup.join(',')}] (group ${rotationState.currentGroupIndex + 1}/${fanGroups.length})`);
+        return rotationState.activeGroup || fanGroups[0] || [];
     }
     /**
      * Helper method to compare arrays for equality

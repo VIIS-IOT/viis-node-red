@@ -18,8 +18,10 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ValidationMiddleware = void 0;
+const node_red_1 = require("node-red");
 const typedi_1 = require("typedi");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
@@ -189,5 +191,5 @@ let ValidationMiddleware = class ValidationMiddleware {
 exports.ValidationMiddleware = ValidationMiddleware;
 exports.ValidationMiddleware = ValidationMiddleware = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object])
 ], ValidationMiddleware);
