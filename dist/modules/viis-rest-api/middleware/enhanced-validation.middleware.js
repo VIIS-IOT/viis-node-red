@@ -26,11 +26,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var _a, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BusinessRuleValidationInterceptor = exports.EnhancedValidationMiddleware = void 0;
 const routing_controllers_1 = require("routing-controllers");
 const class_validator_1 = require("class-validator");
 const typedi_1 = require("typedi");
+const node_red_1 = require("node-red");
 const logger_1 = require("../utils/logger");
 const common_types_1 = require("../types/common.types");
 /**
@@ -198,7 +200,7 @@ exports.EnhancedValidationMiddleware = EnhancedValidationMiddleware = __decorate
     (0, routing_controllers_1.Middleware)({ type: 'after' }),
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)('node')),
-    __metadata("design:paramtypes", [Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _a : Object])
 ], EnhancedValidationMiddleware);
 /**
  * Custom validation interceptor for additional business rule validation
@@ -289,5 +291,5 @@ exports.BusinessRuleValidationInterceptor = BusinessRuleValidationInterceptor;
 exports.BusinessRuleValidationInterceptor = BusinessRuleValidationInterceptor = __decorate([
     (0, typedi_1.Service)(),
     __param(0, (0, typedi_1.Inject)('node')),
-    __metadata("design:paramtypes", [Object])
+    __metadata("design:paramtypes", [typeof (_b = typeof node_red_1.Node !== "undefined" && node_red_1.Node) === "function" ? _b : Object])
 ], BusinessRuleValidationInterceptor);
