@@ -4,7 +4,7 @@
  * Centralized configuration and magic numbers
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
+exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Flow context keys (node-specific)
@@ -45,6 +45,48 @@ exports.MODBUS_CONFIG = {
     DEFAULT_UNIT_ID: 1,
     DEFAULT_TIMEOUT: 5000,
     DEFAULT_RECONNECT_INTERVAL: 5000,
+    // Board-specific defaults
+    DEFAULT_BOARD_TYPE: "STM32",
+    DEFAULT_WRITE_TIMEOUT: 5000,
+    DEFAULT_READ_TIMEOUT: 5000,
+    DEFAULT_CONNECTION_TIMEOUT: 3000,
+    DEFAULT_MAX_RETRIES: 3,
+};
+// Board-specific timeout configurations
+exports.BOARD_CONFIGS = {
+    STM32: {
+        WRITE_TIMEOUT: 3000,
+        READ_TIMEOUT: 3000,
+        CONNECTION_TIMEOUT: 2000,
+        MAX_RETRIES: 2,
+        SOCKET_OPTIONS: {
+            keepAlive: false,
+            noDelay: true,
+            family: 4,
+        }
+    },
+    ATMEGA: {
+        WRITE_TIMEOUT: 8000, // ATmega may need more time
+        READ_TIMEOUT: 8000,
+        CONNECTION_TIMEOUT: 5000,
+        MAX_RETRIES: 3,
+        SOCKET_OPTIONS: {
+            keepAlive: true,
+            noDelay: false,
+            family: 4,
+        }
+    },
+    GENERIC: {
+        WRITE_TIMEOUT: 5000,
+        READ_TIMEOUT: 5000,
+        CONNECTION_TIMEOUT: 3000,
+        MAX_RETRIES: 3,
+        SOCKET_OPTIONS: {
+            keepAlive: false,
+            noDelay: true,
+            family: 4,
+        }
+    }
 };
 // Function codes for Modbus operations
 exports.MODBUS_FUNCTION_CODES = {
@@ -69,6 +111,12 @@ exports.ENV_KEYS = {
     MODBUS_UNIT_ID: "MODBUS_UNIT_ID",
     MODBUS_TIMEOUT: "MODBUS_TIMEOUT",
     MODBUS_RECONNECT_INTERVAL: "MODBUS_RECONNECT_INTERVAL",
+    // Board-specific configuration
+    MODBUS_BOARD_TYPE: "MODBUS_BOARD_TYPE",
+    MODBUS_WRITE_TIMEOUT: "MODBUS_WRITE_TIMEOUT",
+    MODBUS_READ_TIMEOUT: "MODBUS_READ_TIMEOUT",
+    MODBUS_CONNECTION_TIMEOUT: "MODBUS_CONNECTION_TIMEOUT",
+    MODBUS_MAX_RETRIES: "MODBUS_MAX_RETRIES",
     THINGSBOARD_HOST: "THINGSBOARD_HOST",
     THINGSBOARD_PORT: "THINGSBOARD_PORT",
     DEVICE_ACCESS_TOKEN: "DEVICE_ACCESS_TOKEN",

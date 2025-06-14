@@ -207,5 +207,26 @@ class MqttService {
     getPublishTopic() {
         return this.publishTopic;
     }
+    /**
+     * Publish error status
+     */
+    async publishError(errorMessage) {
+        this.logger.warn(`[MQTT-ERROR] Publishing error status: ${errorMessage}`);
+        const mqttPayload = {
+            ts: Date.now(),
+            error: errorMessage,
+            status: "error"
+        };
+        try {
+            const payloadString = JSON.stringify(mqttPayload);
+            await this.mqttClient.publish(this.publishTopic, payloadString);
+            this.node.send({ payload: mqttPayload });
+            this.logger.warn(`Published error status: ${errorMessage}`);
+        }
+        catch (error) {
+            // Don't throw error here to prevent cascading failures
+            this.logger.error(`Failed to publish error status: ${error.message}`);
+        }
+    }
 }
 exports.MqttService = MqttService;

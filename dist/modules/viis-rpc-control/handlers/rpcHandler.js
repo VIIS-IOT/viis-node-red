@@ -33,8 +33,16 @@ class RpcHandler {
         catch (error) {
             const err = error;
             let errorMessage = constants_1.ERROR_MESSAGES.RPC_HANDLING_ERROR + `: ${err.message}`;
+            // Handle specific timeout errors
+            if (err.message.includes("timeout") || err.message.includes("TIMEOUT")) {
+                const boardType = err.message.includes("STM32") ? "STM32" :
+                    err.message.includes("ATMEGA") ? "ATMEGA" : "UNKNOWN";
+                errorMessage = `${boardType} board timeout error: ${err.message}. Consider increasing timeout values or checking board responsiveness.`;
+                this.node.status({ fill: "yellow", shape: "ring", text: `${boardType} timeout` });
+                this.logger.error(`${boardType} timeout detected: ${err.message}`);
+            }
             // Handle specific Modbus connection errors
-            if (err.message.includes("Port Not Open") ||
+            else if (err.message.includes("Port Not Open") ||
                 err.message.includes("Modbus client not connected") ||
                 err.message.includes("Failed to establish a stable connection")) {
                 errorMessage = `Modbus connection error: ${err.message}. Please check device connection and configuration.`;
@@ -48,11 +56,24 @@ class RpcHandler {
                     this.logger.error(`Reconnection attempt failed: ${reconnectError.message}`);
                 }
             }
+            // Handle write operation failures
+            else if (err.message.includes("WRITE-FAILED")) {
+                errorMessage = `Modbus write operation failed: ${err.message}. Check board compatibility and configuration.`;
+                this.node.status({ fill: "red", shape: "ring", text: "Write failed" });
+                this.logger.error(`Write operation failed: ${err.message}`);
+            }
             else {
                 this.node.status({ fill: "red", shape: "ring", text: "RPC error" });
             }
             this.logger.error(errorMessage);
-            throw new Error(errorMessage);
+            // Don't re-throw the error to prevent uncaught exceptions
+            // Instead, publish error status via MQTT if possible
+            try {
+                await this.mqttService.publishError(errorMessage);
+            }
+            catch (publishError) {
+                this.logger.error(`Failed to publish error status: ${publishError.message}`);
+            }
         }
     }
     /**

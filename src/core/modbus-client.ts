@@ -13,6 +13,12 @@ export interface ModbusConfig {
     unitId?: number; // Modbus Unit ID (mặc định 1)
     timeout?: number; // Timeout cho mỗi request (ms)
     reconnectInterval?: number; // Thời gian chờ trước khi reconnect (ms, chỉ TCP)
+    // Board-specific configuration
+    boardType?: "STM32" | "ATMEGA" | "GENERIC"; // Board type for optimization
+    writeTimeout?: number; // Timeout for write operations (ms)
+    readTimeout?: number; // Timeout for read operations (ms)
+    connectionTimeout?: number; // Timeout for connection establishment (ms)
+    maxRetries?: number; // Maximum retry attempts
 }
 
 // Định nghĩa interface cho dữ liệu đọc được
@@ -39,12 +45,56 @@ export class ModbusClientCore extends EventEmitter {
             unitId: 1,
             timeout: 5000,
             reconnectInterval: 5000,
+            // Board-specific defaults
+            boardType: "STM32",
+            writeTimeout: 5000,
+            readTimeout: 5000,
+            connectionTimeout: 3000,
+            maxRetries: 3,
             ...config, // Ghi đè bởi config từ người dùng, type không cần mặc định vì bắt buộc
         };
+
+        // Apply board-specific optimizations
+        this.applyBoardSpecificConfig();
+
         this.node = node;
         this.client = new ModbusRTU();
         this.initializeClient();
         this.startConnectionCheck(); // Bắt đầu kiểm tra kết nối
+    }
+
+    /**
+     * Apply board-specific configuration optimizations
+     */
+    private applyBoardSpecificConfig(): void {
+        const boardType = this.config.boardType || "STM32";
+
+        switch (boardType) {
+            case "ATMEGA":
+                // ATmega boards typically need longer timeouts
+                this.config.writeTimeout = this.config.writeTimeout || 8000;
+                this.config.readTimeout = this.config.readTimeout || 8000;
+                this.config.connectionTimeout = this.config.connectionTimeout || 5000;
+                this.config.maxRetries = this.config.maxRetries || 3;
+                this.node.log(`[${boardType}] Applied ATmega-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                break;
+            case "STM32":
+                // STM32 boards can handle shorter timeouts
+                this.config.writeTimeout = this.config.writeTimeout || 3000;
+                this.config.readTimeout = this.config.readTimeout || 3000;
+                this.config.connectionTimeout = this.config.connectionTimeout || 2000;
+                this.config.maxRetries = this.config.maxRetries || 2;
+                this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                break;
+            default:
+                // Generic configuration
+                this.config.writeTimeout = this.config.writeTimeout || 5000;
+                this.config.readTimeout = this.config.readTimeout || 5000;
+                this.config.connectionTimeout = this.config.connectionTimeout || 3000;
+                this.config.maxRetries = this.config.maxRetries || 3;
+                this.node.log(`[${boardType}] Applied generic configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                break;
+        }
     }
 
     // Khởi tạo client
@@ -78,45 +128,72 @@ export class ModbusClientCore extends EventEmitter {
         }
     }
 
-    // Kết nối TCP với các tùy chọn tối ưu cho STM32
+    // Kết nối TCP với các tùy chọn tối ưu cho board cụ thể
     private async connectTCP(): Promise<void> {
         if (!this.config.host || !this.config.tcpPort) {
             throw new Error("Host and tcpPort are required for Modbus TCP");
         }
 
-        // Tùy chọn tối ưu cho STM32 và embedded devices
+        const boardType = this.config.boardType || "STM32";
+
+        // Tùy chọn socket được tối ưu cho từng loại board
+        const socketOptions = this.getBoardSpecificSocketOptions(boardType);
         const tcpOptions = {
             port: this.config.tcpPort,
-            // Tùy chọn socket được tối ưu cho embedded devices
             socketOptions: {
-                // KHÔNG dùng keep-alive với STM32 vì có thể gây vấn đề
-                keepAlive: false,
-                // Timeout ngắn hơn cho embedded devices
-                timeout: Math.min(this.config.timeout || 3000, 3000),
-                // Không trì hoãn gửi dữ liệu (quan trọng cho real-time)
-                noDelay: true,
-                // Thêm các tùy chọn cho embedded devices
-                family: 4, // Force IPv4
-                // Retry connection nhanh hơn
-                connectTimeout: 2000
+                ...socketOptions,
+                timeout: this.config.connectionTimeout || socketOptions.timeout,
+                connectTimeout: this.config.connectionTimeout || socketOptions.connectTimeout
             }
         };
 
-        this.node.log(`[STM32-OPTIMIZED] Connecting to Modbus TCP at ${this.config.host}:${this.config.tcpPort}`);
+        this.node.log(`[${boardType}-OPTIMIZED] Connecting to Modbus TCP at ${this.config.host}:${this.config.tcpPort} with timeout ${this.config.connectionTimeout}ms`);
 
         try {
-            // Thử kết nối với timeout ngắn cho STM32
+            // Thử kết nối với timeout được cấu hình cho board cụ thể
             const connectPromise = this.client.connectTCP(this.config.host, tcpOptions);
             const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Connection timeout after 2s')), 2000);
+                setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Connection timeout after ${this.config.connectionTimeout}ms`)), this.config.connectionTimeout || 3000);
             });
 
             await Promise.race([connectPromise, timeoutPromise]);
-            this.node.log(`[STM32-SUCCESS] Connected to STM32 Modbus at ${this.config.host}:${this.config.tcpPort}`);
+            this.node.log(`[${boardType}-SUCCESS] Connected to ${boardType} Modbus at ${this.config.host}:${this.config.tcpPort}`);
         } catch (error) {
             const err = error as Error;
-            this.node.error(`[STM32-FAILED] Failed to connect to STM32 at ${this.config.host}:${this.config.tcpPort}: ${err.message}`);
+            this.node.error(`[${boardType}-FAILED] Failed to connect to ${boardType} at ${this.config.host}:${this.config.tcpPort}: ${err.message}`);
             throw error;
+        }
+    }
+
+    /**
+     * Get board-specific socket options
+     */
+    private getBoardSpecificSocketOptions(boardType: string): any {
+        switch (boardType) {
+            case "ATMEGA":
+                return {
+                    keepAlive: true,
+                    timeout: 5000,
+                    noDelay: false, // ATmega may benefit from Nagle's algorithm
+                    family: 4,
+                    connectTimeout: 5000
+                };
+            case "STM32":
+                return {
+                    keepAlive: false,
+                    timeout: 3000,
+                    noDelay: true,
+                    family: 4,
+                    connectTimeout: 2000
+                };
+            default:
+                return {
+                    keepAlive: false,
+                    timeout: 3000,
+                    noDelay: true,
+                    family: 4,
+                    connectTimeout: 3000
+                };
         }
     }
 
@@ -408,18 +485,24 @@ export class ModbusClientCore extends EventEmitter {
     public async readCoils(address: number, length: number): Promise<ModbusData> {
         await this.ensureConnected();
 
+        const boardType = this.config.boardType || "STM32";
+        const readTimeout = this.config.readTimeout || 5000;
+
         try {
-            // Thêm timeout wrapper cho STM32
+            this.node.debug(`[${boardType}-READ] Reading coils at address ${address}, length ${length} with timeout ${readTimeout}ms`);
+
+            // Add timeout wrapper with configurable timeout
             const readPromise = this.client.readCoils(address, length);
             const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Read coils timeout after 3s`)), 3000);
+                setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read coils timeout after ${readTimeout}ms`)), readTimeout);
             });
 
             const { data } = await Promise.race([readPromise, timeoutPromise]);
+            this.node.debug(`[${boardType}-READ] Successfully read coils at ${address}: ${data.length} values`);
             return { address, data };
         } catch (error) {
             const err = error as Error;
-            this.node.warn(`[STM32-READ] Error reading coils at ${address}: ${err.message}`);
+            this.node.warn(`[${boardType}-READ] Error reading coils at ${address}: ${err.message}`);
             this.handleError(err);
             throw error;
         }
@@ -469,40 +552,82 @@ export class ModbusClientCore extends EventEmitter {
     public async writeRegister(address: number, value: number): Promise<void> {
         await this.ensureConnected();
 
-        try {
-            // Thêm timeout wrapper cho STM32 write operations
-            const writePromise = this.client.writeRegister(address, value);
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Write register timeout after 3s`)), 3000);
-            });
+        const boardType = this.config.boardType || "STM32";
+        const writeTimeout = this.config.writeTimeout || 5000;
+        let retryCount = 0;
+        const maxRetries = this.config.maxRetries || 3;
 
-            await Promise.race([writePromise, timeoutPromise]);
-            this.node.log(`[STM32-WRITE] Successfully wrote register ${address} = ${value}`);
-        } catch (error) {
-            const err = error as Error;
-            this.node.warn(`[STM32-WRITE] Error writing register ${address}: ${err.message}`);
-            this.handleError(err);
-            throw error;
+        while (retryCount <= maxRetries) {
+            try {
+                this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
+
+                // Add timeout wrapper for write operations with configurable timeout
+                const writePromise = this.client.writeRegister(address, value);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Write register timeout after ${writeTimeout}ms`)), writeTimeout);
+                });
+
+                await Promise.race([writePromise, timeoutPromise]);
+                this.node.log(`[${boardType}-WRITE] Successfully wrote register ${address} = ${value} on attempt ${retryCount + 1}`);
+                return; // Success, exit retry loop
+
+            } catch (error) {
+                const err = error as Error;
+                retryCount++;
+
+                // Check if this is a timeout error and we have retries left
+                if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                    this.node.warn(`[${boardType}-WRITE] Write register ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
+                    continue;
+                }
+
+                // Final error handling
+                this.node.error(`[${boardType}-WRITE] Failed to write register ${address} after ${retryCount} attempts: ${err.message}`);
+                this.handleError(err);
+                throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
+            }
         }
     }
 
     public async writeCoil(address: number, value: boolean): Promise<void> {
         await this.ensureConnected();
 
-        try {
-            // Thêm timeout wrapper cho STM32 write operations
-            const writePromise = this.client.writeCoil(address, value);
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Write coil timeout after 3s`)), 3000);
-            });
+        const boardType = this.config.boardType || "STM32";
+        const writeTimeout = this.config.writeTimeout || 5000;
+        let retryCount = 0;
+        const maxRetries = this.config.maxRetries || 3;
 
-            await Promise.race([writePromise, timeoutPromise]);
-            this.node.log(`[STM32-WRITE] Successfully wrote coil ${address} = ${value}`);
-        } catch (error) {
-            const err = error as Error;
-            this.node.warn(`[STM32-WRITE] Error writing coil ${address}: ${err.message}`);
-            this.handleError(err);
-            throw error;
+        while (retryCount <= maxRetries) {
+            try {
+                this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
+
+                // Add timeout wrapper for write operations with configurable timeout
+                const writePromise = this.client.writeCoil(address, value);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Write coil timeout after ${writeTimeout}ms`)), writeTimeout);
+                });
+
+                await Promise.race([writePromise, timeoutPromise]);
+                this.node.log(`[${boardType}-WRITE] Successfully wrote coil ${address} = ${value} on attempt ${retryCount + 1}`);
+                return; // Success, exit retry loop
+
+            } catch (error) {
+                const err = error as Error;
+                retryCount++;
+
+                // Check if this is a timeout error and we have retries left
+                if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                    this.node.warn(`[${boardType}-WRITE] Write coil ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
+                    continue;
+                }
+
+                // Final error handling
+                this.node.error(`[${boardType}-WRITE] Failed to write coil ${address} after ${retryCount} attempts: ${err.message}`);
+                this.handleError(err);
+                throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
+            }
         }
     }
 

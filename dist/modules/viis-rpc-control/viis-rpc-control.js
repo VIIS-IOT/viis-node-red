@@ -50,7 +50,7 @@ module.exports = function (RED) {
                 const scalingUtils = new scaling_1.ScalingUtils(configService, new logger_1.Logger(node, "SCALING"));
                 // Load environment configuration
                 const deviceId = globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ID, constants_1.DEFAULTS.DEVICE_ID);
-                // Initialize Modbus client configuration
+                // Initialize Modbus client configuration with board-specific settings
                 const modbusConfig = {
                     type: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_TYPE, constants_1.MODBUS_CONFIG.DEFAULT_TYPE),
                     host: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_HOST, constants_1.MODBUS_CONFIG.DEFAULT_HOST),
@@ -61,6 +61,12 @@ module.exports = function (RED) {
                     unitId: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_UNIT_ID, constants_1.MODBUS_CONFIG.DEFAULT_UNIT_ID),
                     timeout: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_TIMEOUT, constants_1.MODBUS_CONFIG.DEFAULT_TIMEOUT),
                     reconnectInterval: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_RECONNECT_INTERVAL, constants_1.MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
+                    // Board-specific configuration
+                    boardType: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_BOARD_TYPE, constants_1.MODBUS_CONFIG.DEFAULT_BOARD_TYPE),
+                    writeTimeout: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_WRITE_TIMEOUT, constants_1.MODBUS_CONFIG.DEFAULT_WRITE_TIMEOUT),
+                    readTimeout: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_READ_TIMEOUT, constants_1.MODBUS_CONFIG.DEFAULT_READ_TIMEOUT),
+                    connectionTimeout: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_CONNECTION_TIMEOUT, constants_1.MODBUS_CONFIG.DEFAULT_CONNECTION_TIMEOUT),
+                    maxRetries: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_MAX_RETRIES, constants_1.MODBUS_CONFIG.DEFAULT_MAX_RETRIES),
                 };
                 // Log Modbus configuration for debugging
                 logger.log(`Modbus Configuration: ${JSON.stringify(modbusConfig, null, 2)}`);
