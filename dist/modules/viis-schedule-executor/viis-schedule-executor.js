@@ -289,17 +289,21 @@ module.exports = function (RED) {
                         }
                     }
                     else if (schedule.status === "running" && isDue) {
-                        // Trường hợp đang running - chỉ kiểm tra định kỳ để tránh spam
+                        // Trường hợp đang running - DISABLED automatic coil recovery
+                        // Previously: System would check every 60 seconds and re-execute commands if coil states changed
+                        // Now: If external source turns off coils, they will remain off (no automatic recovery)
+                        // Keep the timestamp tracking for potential future use, but don't perform recovery
                         const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
                         const now = Date.now();
                         const lastCheck = lastCheckTimestamps[schedule.name] || 0;
                         const checkInterval = 60000; // Chỉ kiểm tra mỗi 60 giây
                         if (now - lastCheck >= checkInterval) {
-                            const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
-                            if (writeSuccess) {
-                                node.warn(`Re-executed commands for schedule ${schedule.name} after detecting changes`);
-                                // Note: No MQTT publishing here since this is just command re-execution, not status change
-                            }
+                            // DISABLED: Automatic coil recovery logic
+                            // const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
+                            // if (writeSuccess) {
+                            //     node.warn(`Re-executed commands for schedule ${schedule.name} after detecting changes`);
+                            // }
+                            node.warn(`Schedule ${schedule.name} is running - automatic coil recovery is DISABLED`);
                             // Cập nhật timestamp
                             lastCheckTimestamps[schedule.name] = now;
                             globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);

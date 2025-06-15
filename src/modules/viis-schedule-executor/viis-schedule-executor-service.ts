@@ -655,7 +655,14 @@ export class ScheduleService {
     }
 
 
-
+    /**
+     * DISABLED: Automatic coil recovery after power loss or external interference
+     * This method was previously used to automatically restore coil states when they
+     * were changed by external sources. It has been disabled to prevent automatic
+     * recovery - if coils are turned off externally, they will remain off.
+     *
+     * @deprecated This method is no longer called from the main execution loop
+     */
     async reExecuteAfterPowerLoss(modbusClient: ModbusClientCore, schedule: TabiotSchedule): Promise<boolean> {
         const activeCommands = this.getActiveCommands(schedule.name);
         if (activeCommands.length === 0) {
