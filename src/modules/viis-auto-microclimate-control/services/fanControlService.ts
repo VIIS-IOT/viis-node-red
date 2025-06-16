@@ -28,6 +28,7 @@ import {
     getNextGroupIndex,
     createFanGroupActions,
     createOptimizedFanGroupActions,
+    createDelayedFanGroupActions,
     createFanDaoActions,
     getRecommendedGroupSize,
     getAllFanKeys
@@ -152,13 +153,16 @@ export class FanControlService implements IFanControlService {
                 this.logger.warn(`Fan rotation: switching to group ${rotationState.currentGroupIndex + 1}/${fanGroups.length} (${rotationState.activeGroup.join(', ')})`);
             }
 
-            // Create actions for current active group
+            // Create actions for current active group with delay for smooth operation
             const coilMapping = this.getCoilMapping();
-            return createFanGroupActions(
+            const currentDeviceStatus = this.getCurrentDeviceStatus();
+            return createDelayedFanGroupActions(
                 rotationState.activeGroup,
                 true,
-                `Rotation mode: group ${rotationState.currentGroupIndex + 1}`,
-                coilMapping
+                `Rotation mode: group ${rotationState.currentGroupIndex + 1} with 1s delay`,
+                coilMapping,
+                currentDeviceStatus,
+                1000 // 1 second delay
             );
 
         } catch (error) {
@@ -227,14 +231,14 @@ export class FanControlService implements IFanControlService {
             }
 
             if (requiredGroupSize === 0) {
-                // No fans needed - use optimized function if device status available
+                // No fans needed - use delayed turn off for smooth operation
                 const reason = `Temperature below K1 threshold with hysteresis: ${tempIndoor}°C, humidity=${humiIndoor}%`;
                 if (deviceStatus) {
                     const coilMapping = this.getCoilMapping();
                     const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
-                    return createOptimizedFanGroupActions([], false, reason, coilMapping, deviceStatusRecord);
+                    return createDelayedFanGroupActions([], false, reason, coilMapping, deviceStatusRecord, 1000);
                 }
-                return this.createTurnOffAllFansActions(reason);
+                return this.createTurnOffAllFansActionsWithDelay(reason);
             }
 
             // Get appropriate fan groups
@@ -428,6 +432,30 @@ export class FanControlService implements IFanControlService {
                     address: address,
                     fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
                     reason: reason
+                });
+            }
+        });
+
+        return actions;
+    }
+
+    /**
+     * Create actions to turn off all fans with delay
+     */
+    private createTurnOffAllFansActionsWithDelay(reason: string, delayMs: number = 1000): ControlAction[] {
+        const actions: ControlAction[] = [];
+        const coilMapping = this.getCoilMapping();
+
+        getAllFanKeys().forEach(fanKey => {
+            const address = coilMapping[fanKey];
+            if (address !== undefined) {
+                actions.push({
+                    deviceKey: fanKey,
+                    value: false,
+                    address: address,
+                    fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                    reason: reason,
+                    delay: delayMs
                 });
             }
         });
@@ -713,7 +741,7 @@ export class FanControlService implements IFanControlService {
             // Add comprehensive logging for threshold mode transitions
             this.logger.warn(`🔄 Threshold Analysis: temp=${temperature}°C, required=${requiredGroupSize} fans, current=[${currentActiveFans.join(',')}], target=[${targetGroup.join(',')}]`);
 
-            // Log rotation state for debugging
+            // Log rotation state for debugging and check for threshold level changes
             const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold`;
             const rotationState = this.flowContext.get(contextKey);
             if (rotationState) {
@@ -722,15 +750,18 @@ export class FanControlService implements IFanControlService {
                 this.logger.warn(`📊 Rotation State: No saved state found`);
             }
 
-            // Check if transition is needed with improved logic
-            if (this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize, config)) {
-                this.logger.warn(`🚀 Initiating transition: [${currentActiveFans.join(',')}] → [${targetGroup.join(',')}] (${reason})`);
+            // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling
+            const isThresholdLevelChange = rotationState && rotationState.requiredGroupSize !== requiredGroupSize;
+
+            if (isThresholdLevelChange) {
+                // Threshold level changed - use transition for smooth change
+                this.logger.warn(`🔄 Threshold level change: ${rotationState.requiredGroupSize} → ${requiredGroupSize} fans, using transition`);
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
                 return []; // Transition will be handled in next cycle
             } else {
-                this.logger.debug(`✅ No transition needed: maintaining current state`);
-                // No transition needed, create actions directly using non-optimized function for consistency
-                return createFanGroupActions(targetGroup, true, reason, coilMapping);
+                // Normal rotation within same threshold level - use delayed control for smooth operation
+                this.logger.debug(`✅ Normal rotation: delayed control [${targetGroup.join(',')}] with 1s delay`);
+                return createDelayedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord, 1000);
             }
 
         } catch (error) {
@@ -964,7 +995,7 @@ export class FanControlService implements IFanControlService {
     /**
      * Get current device status from global context
      */
-    private getCurrentDeviceStatus(): Record<string, boolean> {
+    public getCurrentDeviceStatus(): Record<string, boolean> {
         const coilData = this.globalContext.get(CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA) || {};
         const deviceStatus: Record<string, boolean> = {};
 

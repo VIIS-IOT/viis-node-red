@@ -219,6 +219,7 @@ export interface ControlAction {
     address: number;
     fc: number;
     reason: string;
+    delay?: number; // Optional delay in milliseconds before executing action
 }
 
 // Control execution result

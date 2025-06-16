@@ -17,6 +17,7 @@ exports.getInactiveFans = getInactiveFans;
 exports.createFanGroupActions = createFanGroupActions;
 exports.createOptimizedFanGroupActions = createOptimizedFanGroupActions;
 exports.createFanDaoActions = createFanDaoActions;
+exports.createDelayedFanGroupActions = createDelayedFanGroupActions;
 exports.isValidFanGroupSize = isValidFanGroupSize;
 exports.getRecommendedGroupSize = getRecommendedGroupSize;
 const constants_1 = require("../constants");
@@ -202,6 +203,66 @@ function createFanDaoActions(turnOn, reason, coilMapping) {
             });
         }
     });
+    return actions;
+}
+/**
+ * Create optimized fan control actions with delay support
+ * Adds 1 second delay before turning off fans and before turning on fans
+ */
+function createDelayedFanGroupActions(targetGroup, turnOn, reason, coilMapping, currentDeviceStatus, delayMs = 1000 // Default 1 second delay
+) {
+    const actions = [];
+    const allFanKeys = getAllFanKeys();
+    if (turnOn) {
+        // When turning on: first turn off fans not in target group, then turn on target group with delay
+        allFanKeys.forEach(fanKey => {
+            const shouldBeOn = targetGroup.includes(fanKey);
+            const currentlyOn = currentDeviceStatus[fanKey] === true;
+            const address = coilMapping[fanKey];
+            if (address !== undefined) {
+                if (!shouldBeOn && currentlyOn) {
+                    // Turn off fans not in target group (with delay)
+                    actions.push({
+                        deviceKey: fanKey,
+                        value: false,
+                        address: address,
+                        fc: 5, // WRITE_SINGLE_COIL
+                        reason: `${reason} - Turn off ${fanKey}`,
+                        delay: delayMs
+                    });
+                }
+                else if (shouldBeOn && !currentlyOn) {
+                    // Turn on target group fans (with delay)
+                    actions.push({
+                        deviceKey: fanKey,
+                        value: true,
+                        address: address,
+                        fc: 5, // WRITE_SINGLE_COIL
+                        reason: `${reason} - Turn on ${fanKey}`,
+                        delay: delayMs
+                    });
+                }
+                // Skip if fan is already in correct state
+            }
+        });
+    }
+    else {
+        // When turning off: turn off all fans with delay
+        allFanKeys.forEach(fanKey => {
+            const currentlyOn = currentDeviceStatus[fanKey] === true;
+            const address = coilMapping[fanKey];
+            if (address !== undefined && currentlyOn) {
+                actions.push({
+                    deviceKey: fanKey,
+                    value: false,
+                    address: address,
+                    fc: 5, // WRITE_SINGLE_COIL
+                    reason: `${reason} - Turn off ${fanKey}`,
+                    delay: delayMs
+                });
+            }
+        });
+    }
     return actions;
 }
 /**
