@@ -304,15 +304,6 @@ export function isValidFanGroupSize(groupSize: number): boolean {
 }
 
 /**
- * Check if a group size supports rotation (has multiple groups)
- * This is critical for K3/K4 modes which use 6 fans but should not rotate
- */
-export function supportsRotation(groupSize: number): boolean {
-    const groups = getFanGroups(groupSize);
-    return groups.length > 1;
-}
-
-/**
  * Get recommended group size based on temperature thresholds with hysteresis
  * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */

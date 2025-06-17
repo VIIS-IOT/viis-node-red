@@ -19,7 +19,6 @@ exports.createOptimizedFanGroupActions = createOptimizedFanGroupActions;
 exports.createFanDaoActions = createFanDaoActions;
 exports.createDelayedFanGroupActions = createDelayedFanGroupActions;
 exports.isValidFanGroupSize = isValidFanGroupSize;
-exports.supportsRotation = supportsRotation;
 exports.getRecommendedGroupSize = getRecommendedGroupSize;
 const constants_1 = require("../constants");
 /**
@@ -271,14 +270,6 @@ function createDelayedFanGroupActions(targetGroup, turnOn, reason, coilMapping, 
  */
 function isValidFanGroupSize(groupSize) {
     return [1, 2, 4, 6].includes(groupSize);
-}
-/**
- * Check if a group size supports rotation (has multiple groups)
- * This is critical for K3/K4 modes which use 6 fans but should not rotate
- */
-function supportsRotation(groupSize) {
-    const groups = getFanGroups(groupSize);
-    return groups.length > 1;
 }
 /**
  * Get recommended group size based on temperature thresholds with hysteresis
