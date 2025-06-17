@@ -847,21 +847,38 @@ export class ScheduleService {
 
     /**
      * Get schedule configuration values from global context
+     * Note: For RPC control commands, use configKeyValues instead
      */
     private getScheduleConfigValues(): ScheduleConfigValues {
-        return this.node?.context().global.get("scheduleConfigValues") as ScheduleConfigValues || {};
+        return this.node?.context().global.get("configKeyValues") as ScheduleConfigValues || {};
     }
 
     /**
      * Set schedule configuration values in global context
+     * Note: For RPC control commands, use configKeyValues instead
      */
     private setScheduleConfigValues(values: ScheduleConfigValues): void {
-        this.node?.context().global.set("scheduleConfigValues", values);
+        this.node?.context().global.set("configKeyValues", values);
         console.log(`Updated schedule config values: ${JSON.stringify(values)}`);
     }
 
     /**
-     * Store configuration parameter
+     * Get configKeyValues from global context (for RPC control commands)
+     */
+    private getConfigKeyValues(): Record<string, any> {
+        return this.node?.context().global.get("configKeyValues") as Record<string, any> || {};
+    }
+
+    /**
+     * Set configKeyValues in global context (for RPC control commands)
+     */
+    private setConfigKeyValues(values: Record<string, any>): void {
+        this.node?.context().global.set("configKeyValues", values);
+        console.log(`Updated configKeyValues: ${JSON.stringify(values)}`);
+    }
+
+    /**
+     * Store configuration parameter (for schedule execution)
      */
     private storeConfigParameter(key: string, value: any, scheduleId: string): ConfigParameter {
         const validatedValue = this.validateAndConvertValue(key, value);
@@ -875,13 +892,56 @@ export class ScheduleService {
             scheduleId
         };
 
-        // Store in global context
+        // Store in global context (configKeyValues for schedule execution)
         const currentConfig = this.getScheduleConfigValues();
         currentConfig[key] = validatedValue;
         this.setScheduleConfigValues(currentConfig);
 
         console.log(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
         return configParam;
+    }
+
+    /**
+     * Process RPC control command - write to configKeyValues if not found in modbus mapping
+     */
+    public processRpcControlCommand(key: string, value: any): { success: boolean; action: 'modbus' | 'config'; result?: any } {
+        try {
+            // Get modbus mappings
+            const modbusCoils: Record<string, number> = this.globalHelper?.getJsonEnvVar("MODBUS_COILS", {}) || {};
+            const modbusHolding: Record<string, number> = this.globalHelper?.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) || {};
+
+            // Check if key exists in modbus mapping
+            if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
+                // Key found in modbus mapping - should be handled by modbus logic
+                console.log(`RPC control key ${key} found in modbus mapping, should be handled by modbus`);
+                return {
+                    success: true,
+                    action: 'modbus',
+                    result: {
+                        address: modbusCoils[key] || modbusHolding[key],
+                        type: modbusCoils.hasOwnProperty(key) ? 'coil' : 'holding'
+                    }
+                };
+            } else {
+                // Key not found in modbus mapping - write to configKeyValues
+                console.warn(`RPC control key ${key} not found in modbus mapping, storing in configKeyValues`);
+
+                const validatedValue = this.validateAndConvertValue(key, value);
+                const currentConfig = this.getConfigKeyValues();
+                currentConfig[key] = validatedValue;
+                this.setConfigKeyValues(currentConfig);
+
+                console.log(`Stored RPC control parameter in configKeyValues: ${key}=${validatedValue}`);
+                return {
+                    success: true,
+                    action: 'config',
+                    result: { key, value: validatedValue }
+                };
+            }
+        } catch (error) {
+            console.error(`Error processing RPC control command ${key}: ${(error as Error).message}`);
+            return { success: false, action: 'config' };
+        }
     }
 
     /**

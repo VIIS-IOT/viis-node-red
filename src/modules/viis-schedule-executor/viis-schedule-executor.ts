@@ -6,7 +6,7 @@ import { ScheduleService } from "./viis-schedule-executor-service";
 import ClientRegistry from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
-import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, ScheduleExecutorNodeDef } from "./type";
+import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, RpcControlResult, ScheduleExecutorNodeDef } from "./type";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 module.exports = function (RED: NodeAPI) {
@@ -209,6 +209,46 @@ module.exports = function (RED: NodeAPI) {
                     done();
                     return;
                 } else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
+                    // Handle other RPC methods (e.g., control commands)
+                    const payload = msg.payload as RpcPayload;
+
+                    if (payload.method === "control" && payload.params) {
+                        // Process RPC control commands
+                        const results: any[] = [];
+
+                        for (const [key, value] of Object.entries(payload.params)) {
+                            if (key === 'scheduleId') continue; // Skip scheduleId parameter
+
+                            const result = scheduleService.processRpcControlCommand(key, value);
+                            results.push({ key, ...result });
+
+                            if (result.success && result.action === 'config') {
+                                node.warn(`RPC control: ${key}=${value} stored in configKeyValues`);
+                            } else if (result.success && result.action === 'modbus') {
+                                node.warn(`RPC control: ${key}=${value} should be handled by modbus (address: ${result.result?.address})`);
+                            } else {
+                                node.error(`RPC control failed for ${key}=${value}`);
+                            }
+                        }
+
+                        // Send response with results
+                        const responseMsg = {
+                            ...msg,
+                            payload: {
+                                method: payload.method,
+                                results: results,
+                                timestamp: Date.now()
+                            }
+                        };
+
+                        node.status({ fill: "green", shape: "dot", text: "RPC control processed" });
+                        send(responseMsg);
+                        done();
+                        return;
+                    }
+
+                    // Unknown RPC method
+                    node.warn(`Unknown RPC method: ${payload.method}`);
                     return null;
                 }
 

@@ -82,12 +82,12 @@ interface ConfigParameter {
 
 ### 1. Configuration Storage
 
-Unmapped keys are stored in the global context under the key `scheduleConfigValues`:
+Unmapped keys are stored in the global context under the key `configKeyValues`:
 
 ```typescript
 // Global context structure
 {
-    "scheduleConfigValues": {
+    "configKeyValues": {
         "irrigation_mode": "automatic",
         "user_id": "farmer_001",
         "weather_compensation": true,
@@ -196,7 +196,7 @@ No new environment variables required. The enhancement uses existing:
 - `DEVICE_ID`: For EMQX MQTT topic construction
 
 ### Global Context Keys
-- `scheduleConfigValues`: Stores all configuration parameter values
+- `configKeyValues`: Stores all configuration parameter values
 - Existing keys remain unchanged
 
 ## Monitoring and Debugging

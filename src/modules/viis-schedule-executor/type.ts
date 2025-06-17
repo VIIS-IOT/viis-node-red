@@ -34,6 +34,7 @@ export interface RpcPayload {
     method: string;
     params?: {
         scheduleId?: string;
+        [key: string]: any; // Support for RPC control commands
     };
 }
 
@@ -44,6 +45,12 @@ export interface ManualModbusOverrides {
 
 export interface ScheduleConfigValues {
     [key: string]: any;
+}
+
+export interface RpcControlResult {
+    success: boolean;
+    action: 'modbus' | 'config';
+    result?: any;
 }
 
 export interface ConfigParameter {
