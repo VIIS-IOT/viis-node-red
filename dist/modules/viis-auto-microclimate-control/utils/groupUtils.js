@@ -5,6 +5,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getFanGroups = getFanGroups;
+exports.supportsRotation = supportsRotation;
 exports.getNextGroupIndex = getNextGroupIndex;
 exports.getAllFanKeys = getAllFanKeys;
 exports.getAllFanDaoKeys = getAllFanDaoKeys;
@@ -38,6 +39,14 @@ function getFanGroups(groupSize) {
             // Default to 2-fan groups if invalid size
             return constants_1.FAN_CONFIG.GROUPS.TWO_FANS.map(group => [...group]);
     }
+}
+/**
+ * Check if a group size supports rotation (has multiple groups)
+ * This is critical for K3/K4 modes which use 6 fans but should not rotate
+ */
+function supportsRotation(groupSize) {
+    const groups = getFanGroups(groupSize);
+    return groups.length > 1;
 }
 /**
  * Get the next group index for rotation

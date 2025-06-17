@@ -25,6 +25,15 @@ export function getFanGroups(groupSize: number): string[][] {
 }
 
 /**
+ * Check if a group size supports rotation (has multiple groups)
+ * This is critical for K3/K4 modes which use 6 fans but should not rotate
+ */
+export function supportsRotation(groupSize: number): boolean {
+    const groups = getFanGroups(groupSize);
+    return groups.length > 1;
+}
+
+/**
  * Get the next group index for rotation
  */
 export function getNextGroupIndex(currentIndex: number, totalGroups: number): number {
