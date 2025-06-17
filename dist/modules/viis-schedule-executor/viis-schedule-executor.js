@@ -84,7 +84,6 @@ module.exports = function (RED) {
         };
         const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
         node.on("input", async function (msg, send, done) {
-            var _a;
             try {
                 // Initialize MQTT clients
                 const thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, node);
@@ -182,39 +181,6 @@ module.exports = function (RED) {
                     return;
                 }
                 else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
-                    // Handle other RPC methods (e.g., control commands)
-                    const payload = msg.payload;
-                    if (payload.method === "control" && payload.params) {
-                        // Process RPC control commands
-                        const results = [];
-                        for (const [key, value] of Object.entries(payload.params)) {
-                            if (key === 'scheduleId')
-                                continue; // Skip scheduleId parameter
-                            const result = scheduleService.processRpcControlCommand(key, value);
-                            results.push(Object.assign({ key }, result));
-                            if (result.success && result.action === 'config') {
-                                node.warn(`RPC control: ${key}=${value} stored in configKeyValues`);
-                            }
-                            else if (result.success && result.action === 'modbus') {
-                                node.warn(`RPC control: ${key}=${value} should be handled by modbus (address: ${(_a = result.result) === null || _a === void 0 ? void 0 : _a.address})`);
-                            }
-                            else {
-                                node.error(`RPC control failed for ${key}=${value}`);
-                            }
-                        }
-                        // Send response with results
-                        const responseMsg = Object.assign(Object.assign({}, msg), { payload: {
-                                method: payload.method,
-                                results: results,
-                                timestamp: Date.now()
-                            } });
-                        node.status({ fill: "green", shape: "dot", text: "RPC control processed" });
-                        send(responseMsg);
-                        done();
-                        return;
-                    }
-                    // Unknown RPC method
-                    node.warn(`Unknown RPC method: ${payload.method}`);
                     return null;
                 }
                 const schedules = await scheduleService.getDueSchedules();

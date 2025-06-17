@@ -39,10 +39,10 @@ describe('RPC Control Commands Logic', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-
+        
         // Initialize service
-        scheduleService = new ScheduleService(mockNode as any);
-
+        scheduleService = new ScheduleService(mockNode as any, mockGlobalHelper);
+        
         // Setup default mock returns
         mockGlobalContext.get.mockImplementation((key: string) => {
             if (key === 'configKeyValues') {
@@ -68,7 +68,7 @@ describe('RPC Control Commands Logic', () => {
             expect(result.success).toBe(true);
             expect(result.action).toBe('config');
             expect(result.result).toEqual({ key: 'custom_setting', value: 42 });
-
+            
             // Verify configKeyValues was updated
             expect(mockGlobalContext.set).toHaveBeenCalledWith('configKeyValues', { custom_setting: 42 });
         });
@@ -88,7 +88,7 @@ describe('RPC Control Commands Logic', () => {
             expect(result.success).toBe(true);
             expect(result.action).toBe('modbus');
             expect(result.result).toEqual({ address: 0, type: 'coil' });
-
+            
             // Verify configKeyValues was NOT updated
             expect(mockGlobalContext.set).not.toHaveBeenCalledWith('configKeyValues', expect.anything());
         });
@@ -108,7 +108,7 @@ describe('RPC Control Commands Logic', () => {
             expect(result.success).toBe(true);
             expect(result.action).toBe('modbus');
             expect(result.result).toEqual({ address: 10, type: 'holding' });
-
+            
             // Verify configKeyValues was NOT updated
             expect(mockGlobalContext.set).not.toHaveBeenCalledWith('configKeyValues', expect.anything());
         });
@@ -161,7 +161,7 @@ describe('RPC Control Commands Logic', () => {
             expect(result.success).toBe(true);
             expect(result.action).toBe('config');
             expect(result.result).toEqual({ key: 'debug_mode', value: true });
-
+            
             expect(mockGlobalContext.set).toHaveBeenCalledWith('configKeyValues', { debug_mode: true });
         });
 
@@ -176,7 +176,7 @@ describe('RPC Control Commands Logic', () => {
             expect(result.success).toBe(true);
             expect(result.action).toBe('config');
             expect(result.result).toEqual({ key: 'user_preference', value: 'high' });
-
+            
             expect(mockGlobalContext.set).toHaveBeenCalledWith('configKeyValues', { user_preference: 'high' });
         });
     });

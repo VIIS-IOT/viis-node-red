@@ -1,18 +1,18 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function (o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
     if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
+        desc = { enumerable: true, get: function () { return m[k]; } };
     }
     Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
+}) : (function (o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
 }));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function (o, v) {
     Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
+}) : function (o, v) {
     o["default"] = v;
 });
 var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
@@ -22,7 +22,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
+    var ownKeys = function (o) {
         ownKeys = Object.getOwnPropertyNames || function (o) {
             var ar = [];
             for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
@@ -824,7 +824,6 @@ let ScheduleService = class ScheduleService {
     }
     /**
      * Get schedule configuration values from global context
-     * Note: For RPC control commands, use configKeyValues instead
      */
     getScheduleConfigValues() {
         var _a;
@@ -832,7 +831,6 @@ let ScheduleService = class ScheduleService {
     }
     /**
      * Set schedule configuration values in global context
-     * Note: For RPC control commands, use configKeyValues instead
      */
     setScheduleConfigValues(values) {
         var _a;
@@ -840,22 +838,7 @@ let ScheduleService = class ScheduleService {
         console.log(`Updated schedule config values: ${JSON.stringify(values)}`);
     }
     /**
-     * Get configKeyValues from global context (for RPC control commands)
-     */
-    getConfigKeyValues() {
-        var _a;
-        return ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("configKeyValues")) || {};
-    }
-    /**
-     * Set configKeyValues in global context (for RPC control commands)
-     */
-    setConfigKeyValues(values) {
-        var _a;
-        (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("configKeyValues", values);
-        console.log(`Updated configKeyValues: ${JSON.stringify(values)}`);
-    }
-    /**
-     * Store configuration parameter (for schedule execution)
+     * Store configuration parameter
      */
     storeConfigParameter(key, value, scheduleId) {
         const validatedValue = this.validateAndConvertValue(key, value);
@@ -867,54 +850,12 @@ let ScheduleService = class ScheduleService {
             timestamp: Date.now(),
             scheduleId
         };
-        // Store in global context (configKeyValues for schedule execution)
+        // Store in global context
         const currentConfig = this.getScheduleConfigValues();
         currentConfig[key] = validatedValue;
         this.setScheduleConfigValues(currentConfig);
         console.log(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
         return configParam;
-    }
-    /**
-     * Process RPC control command - write to configKeyValues if not found in modbus mapping
-     */
-    processRpcControlCommand(key, value) {
-        var _a, _b;
-        try {
-            // Get modbus mappings
-            const modbusCoils = ((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getJsonEnvVar("MODBUS_COILS", {})) || {};
-            const modbusHolding = ((_b = this.globalHelper) === null || _b === void 0 ? void 0 : _b.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {})) || {};
-            // Check if key exists in modbus mapping
-            if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
-                // Key found in modbus mapping - should be handled by modbus logic
-                console.log(`RPC control key ${key} found in modbus mapping, should be handled by modbus`);
-                return {
-                    success: true,
-                    action: 'modbus',
-                    result: {
-                        address: modbusCoils[key] || modbusHolding[key],
-                        type: modbusCoils.hasOwnProperty(key) ? 'coil' : 'holding'
-                    }
-                };
-            }
-            else {
-                // Key not found in modbus mapping - write to configKeyValues
-                console.warn(`RPC control key ${key} not found in modbus mapping, storing in configKeyValues`);
-                const validatedValue = this.validateAndConvertValue(key, value);
-                const currentConfig = this.getConfigKeyValues();
-                currentConfig[key] = validatedValue;
-                this.setConfigKeyValues(currentConfig);
-                console.log(`Stored RPC control parameter in configKeyValues: ${key}=${validatedValue}`);
-                return {
-                    success: true,
-                    action: 'config',
-                    result: { key, value: validatedValue }
-                };
-            }
-        }
-        catch (error) {
-            console.error(`Error processing RPC control command ${key}: ${error.message}`);
-            return { success: false, action: 'config' };
-        }
     }
     /**
      * Publish configuration update via MQTT

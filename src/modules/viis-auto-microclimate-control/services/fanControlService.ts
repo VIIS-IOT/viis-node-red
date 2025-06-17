@@ -31,8 +31,7 @@ import {
     createDelayedFanGroupActions,
     createFanDaoActions,
     getRecommendedGroupSize,
-    getAllFanKeys,
-    supportsRotation
+    getAllFanKeys
 } from "../utils/groupUtils";
 import { minutesToMs, hasTimeElapsed, getCurrentTimestamp } from "../utils/timeUtils";
 
@@ -135,26 +134,6 @@ export class FanControlService implements IFanControlService {
                 return [];
             }
 
-            // Check if rotation is supported for this group size
-            if (!supportsRotation(groupSize)) {
-                // Only one group available - no rotation needed, just keep fans on
-                const targetGroup = fanGroups[0];
-                this.logger.debug(`Single group mode for rotation size ${groupSize}: using [${targetGroup.join(', ')}] - no rotation needed`);
-
-                // Check if fans are already in the correct state
-                const currentDeviceStatus = this.getCurrentDeviceStatus();
-                const coilMapping = this.getCoilMapping();
-
-                // Use optimized function to avoid unnecessary actions
-                return createOptimizedFanGroupActions(
-                    targetGroup,
-                    true,
-                    `Single group mode: no rotation needed`,
-                    coilMapping,
-                    currentDeviceStatus
-                );
-            }
-
             // Get current rotation state
             let rotationState = this.getRotationState();
 
@@ -231,7 +210,8 @@ export class FanControlService implements IFanControlService {
             // We should only skip if we're in the exact same group AND it's not time to rotate
             if (currentActiveFanCount === requiredGroupSize && requiredGroupSize > 0) {
                 // Check if we need to rotate within the same group size
-                if (supportsRotation(requiredGroupSize)) {
+                const fanGroups = this.getFanGroups(requiredGroupSize);
+                if (fanGroups.length > 1) {
                     // Multiple groups available for this size - check if rotation is needed
                     const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
                     const rotationState = this.flowContext.get(contextKey);
@@ -245,8 +225,7 @@ export class FanControlService implements IFanControlService {
                         return []; // No action needed - already in correct state and no rotation due
                     }
                 } else {
-                    // Only one group available for this size (e.g., K3/K4 with 6 fans)
-                    this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize}) and only one group available (K3/K4 mode)`);
+                    this.logger.debug(`No change needed: current fan count (${currentActiveFanCount}) matches required (${requiredGroupSize}) and only one group available`);
                     return []; // No action needed - only one group available for this size
                 }
             }
@@ -272,31 +251,26 @@ export class FanControlService implements IFanControlService {
             // For threshold mode, determine target group based on requirements
             let targetGroup: string[];
 
-            // Check if this group size supports rotation (has multiple groups)
-            if (!supportsRotation(requiredGroupSize)) {
-                // Only one group available for this size (e.g., K3/K4 with 6 fans)
-                // Use the single available group directly without rotation logic
-                targetGroup = fanGroups[0];
-                this.logger.debug(`Single group mode for size ${requiredGroupSize}: using [${targetGroup.join(', ')}] - no rotation needed`);
+            if (requiredGroupSize === 6) {
+                // K3 or K4: Use all 6 fans (no rotation needed)
+                targetGroup = getAllFanKeys();
+                this.logger.debug(`K3/K4 threshold: using all fans [${targetGroup.join(', ')}]`);
+            } else if (requiredGroupSize === 4) {
+                // K2: Use rotation logic for 4-fan groups
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                this.logger.debug(`K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
+            } else if (requiredGroupSize === 2) {
+                // K1: Use rotation logic for 2-fan groups
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                this.logger.debug(`K1 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
+            } else if (requiredGroupSize === 1) {
+                // Single fan mode: Use rotation logic for 1-fan groups
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                this.logger.debug(`Single fan mode: using 1-fan group [${targetGroup.join(', ')}]`);
             } else {
-                // Multiple groups available - use rotation logic
-                if (requiredGroupSize === 4) {
-                    // K2: Use rotation logic for 4-fan groups
-                    targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                    this.logger.debug(`K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
-                } else if (requiredGroupSize === 2) {
-                    // K1: Use rotation logic for 2-fan groups
-                    targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                    this.logger.debug(`K1 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
-                } else if (requiredGroupSize === 1) {
-                    // Single fan mode: Use rotation logic for 1-fan groups
-                    targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                    this.logger.debug(`Single fan mode: using 1-fan group [${targetGroup.join(', ')}]`);
-                } else {
-                    // Fallback: use rotation logic for any other group size
-                    targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                    this.logger.debug(`Custom group size ${requiredGroupSize}: using group [${targetGroup.join(', ')}]`);
-                }
+                // Fallback: use rotation logic for any other group size
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                this.logger.debug(`Custom group size ${requiredGroupSize}: using group [${targetGroup.join(', ')}]`);
             }
 
             const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
