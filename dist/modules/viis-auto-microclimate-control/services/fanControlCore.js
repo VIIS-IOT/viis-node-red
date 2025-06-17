@@ -125,6 +125,23 @@ class FanControlCore {
         const targetGroup = this.getTargetGroupForSize(requiredGroupSize);
         // Check if transition is needed
         const currentActiveFans = Object.keys(deviceStatus).filter(key => deviceStatus[key] === true && (0, groupUtils_1.getAllFanKeys)().includes(key));
+        // Special logic for K3/K4 thresholds: disable group switching when all 6 fans should be active
+        if (requiredGroupSize === 6) {
+            // For K3/K4, if we already have 6 fans active, no transition needed
+            if (currentActiveFans.length === 6) {
+                logger.debug("K3/K4 mode: All 6 fans already active, skipping group transition logic");
+                // Direct control to ensure all fans stay on
+                const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
+                const actions = (0, groupUtils_1.createOptimizedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+                return {
+                    actions,
+                    targetGroup,
+                    requiredGroupSize,
+                    requiresTransition: false,
+                    reason
+                };
+            }
+        }
         const requiresTransition = this.requiresStableGroupTransition(currentActiveFans, targetGroup, requiredGroupSize);
         if (requiresTransition) {
             return {

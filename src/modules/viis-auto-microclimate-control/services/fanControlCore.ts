@@ -19,7 +19,8 @@ import {
     createOptimizedFanGroupActions,
     createFanDaoActions,
     getRecommendedGroupSize,
-    getAllFanKeys
+    getAllFanKeys,
+    supportsRotation
 } from "../utils/groupUtils";
 import { minutesToMs, hasTimeElapsed, getCurrentTimestamp } from "../utils/timeUtils";
 import { FAN_CONFIG, FAN_DAO_CONFIG, MODBUS_FUNCTION_CODES } from "../constants";
@@ -192,6 +193,26 @@ export class FanControlCore {
         const currentActiveFans = Object.keys(deviceStatus).filter(key =>
             deviceStatus[key] === true && getAllFanKeys().includes(key)
         );
+
+        // Special logic for K3/K4 thresholds: disable group switching when all 6 fans should be active
+        if (requiredGroupSize === 6) {
+            // For K3/K4, if we already have 6 fans active, no transition needed
+            if (currentActiveFans.length === 6) {
+                logger.debug("K3/K4 mode: All 6 fans already active, skipping group transition logic");
+
+                // Direct control to ensure all fans stay on
+                const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
+                const actions = createOptimizedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+
+                return {
+                    actions,
+                    targetGroup,
+                    requiredGroupSize,
+                    requiresTransition: false,
+                    reason
+                };
+            }
+        }
 
         const requiresTransition = this.requiresStableGroupTransition(
             currentActiveFans,
