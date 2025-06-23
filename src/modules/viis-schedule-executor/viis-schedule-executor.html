@@ -17,6 +17,10 @@
         <label for="node-input-description"><i class="fa fa-info-circle"></i> Description</label>
         <input type="text" id="node-input-description" placeholder="Optional description">
     </div>
+    <div class="form-row">
+        <label for="node-input-debugEnable"><i class="fa fa-bug"></i> Enable Debug</label>
+        <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+    </div>
 </script>
 
 <script type="text/javascript">
@@ -26,7 +30,8 @@
         defaults: {
             name: { value: "" },
             scheduleInterval: { value: 10, required: true },
-            description: { value: "" }
+            description: { value: "" },
+            debugEnable: { value: false }
         },
         inputs: 1,
         outputs: 1,

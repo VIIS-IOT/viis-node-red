@@ -5,6 +5,8 @@ import { NodeDef, Node } from "node-red";
  */
 export interface ViisModbusGetterNodeDef extends NodeDef {
     name: string;
+    enableLogging: boolean; // Add logging enable/disable option
+
 }
 
 /**
@@ -31,6 +33,7 @@ export interface ModbusResponse {
 export interface ServiceOptions {
     node: Node;
     nodeId: string;
+    enableLogging: boolean; // Add logging flag to service options
 }
 
 /**

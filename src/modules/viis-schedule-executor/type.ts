@@ -25,6 +25,7 @@ export interface ScheduleExecutorNodeDef extends NodeDef {
     name: string;
     scheduleInterval: number;
     description: string;
+    debugEnable: boolean; // Add debugEnable property
 }
 
 

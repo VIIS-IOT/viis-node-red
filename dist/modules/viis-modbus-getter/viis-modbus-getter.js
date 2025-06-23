@@ -19,8 +19,8 @@ module.exports = function (RED) {
         let modbusGetterService = null;
         let logger;
         try {
-            // Initialize logger
-            logger = new logger_1.Logger(node, node.id);
+            // Initialize logger with enableLogging flag from config
+            logger = new logger_1.Logger(node, node.id, config.enableLogging);
             logger.log("Initializing VIIS Modbus Getter Node...");
             // Set initial status
             node.status({ fill: "yellow", shape: "ring", text: constants_1.STATUS_MESSAGES.INITIALIZING });
@@ -48,14 +48,22 @@ module.exports = function (RED) {
             }
             logger.log("Modbus client initialized successfully");
             client_registry_1.default.logConnectionCounts(node);
-            // Create service options
+            // Create service options with enableLogging flag
             const serviceOptions = {
                 node: node,
-                nodeId: node.id
+                nodeId: node.id,
+                enableLogging: config.enableLogging
             };
             // Initialize modbus getter service
             modbusGetterService = new modbusGetterService_1.ModbusGetterService(serviceOptions, modbusClient);
             logger.log("ModbusGetterService initialized successfully");
+            // Log configuration status
+            if (config.enableLogging) {
+                logger.log("Detailed logging is ENABLED");
+            }
+            else {
+                logger.log("Detailed logging is DISABLED");
+            }
             // Set ready status
             node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.READY });
             // Handle incoming messages
@@ -66,10 +74,18 @@ module.exports = function (RED) {
                     }
                     // Set reading status
                     node.status({ fill: "blue", shape: "dot", text: constants_1.STATUS_MESSAGES.READING });
+                    // Log incoming request if logging is enabled
+                    if (config.enableLogging) {
+                        logger.debug(`Processing request: ${JSON.stringify(msg.payload)}`);
+                    }
                     // Process the modbus request
                     const response = await modbusGetterService.processRequest(msg.payload);
                     // Update message payload with response
                     msg.payload = response;
+                    // Log successful response if logging is enabled
+                    if (config.enableLogging) {
+                        logger.debug(`Response: ${JSON.stringify(response)}`);
+                    }
                     // Send the message
                     send(msg);
                     // Set ready status
@@ -81,6 +97,7 @@ module.exports = function (RED) {
                 }
                 catch (error) {
                     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    // Always log errors regardless of enableLogging setting
                     logger.error(`Error processing request: ${errorMessage}`);
                     // Set error status
                     node.status({ fill: "red", shape: "ring", text: constants_1.STATUS_MESSAGES.ERROR });

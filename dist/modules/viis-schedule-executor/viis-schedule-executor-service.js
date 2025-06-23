@@ -1,18 +1,18 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function (o, m, k, k2) {
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
     if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function () { return m[k]; } };
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
     Object.defineProperty(o, k2, desc);
-}) : (function (o, m, k, k2) {
+}) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
 }));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function (o, v) {
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
     Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function (o, v) {
+}) : function(o, v) {
     o["default"] = v;
 });
 var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
@@ -22,7 +22,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function (o) {
+    var ownKeys = function(o) {
         ownKeys = Object.getOwnPropertyNames || function (o) {
             var ar = [];
             for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
@@ -54,16 +54,26 @@ const typedi_1 = __importStar(require("typedi"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 // require('dotenv').config();
 let ScheduleService = class ScheduleService {
-    constructor(node) {
-        this.node = node; // Lưu node để truy cập global context
-        this.globalHelper = node ? new global_context_helper_1.GlobalContextHelper(node.context()) : null; // Khởi tạo GlobalContextHelper
+    constructor(node, debugEnable = false) {
+        this.node = node;
+        this.debugEnable = debugEnable; // Store debugEnable
+        this.globalHelper = node ? new global_context_helper_1.GlobalContextHelper(node.context()) : null;
         try {
             this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
-            console.log("SyncScheduleService initialized successfully");
+            this.debugLog("SyncScheduleService initialized successfully");
         }
         catch (error) {
             console.error(`Failed to initialize SyncScheduleService: ${error.message}`);
             this.syncScheduleService = undefined;
+        }
+    }
+    // Helper function for conditional logging
+    debugLog(message) {
+        if (this.debugEnable) {
+            //this.debugLog(message);
+            if (this.node) {
+                this.node.warn(message); // Also log to Node-RED debug panel
+            }
         }
     }
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
@@ -72,12 +82,12 @@ let ScheduleService = class ScheduleService {
         const scaleConfigs = ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("scaleConfigs")) || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
-            console.log(`No scale config for ${key} in ${direction}, returning ${value}`);
+            this.debugLog(`No scale config for ${key} in ${direction}, returning ${value}`);
             return value;
         }
         const shouldMultiply = config.operation === 'multiply';
         const result = shouldMultiply ? value * config.factor : value / config.factor;
-        console.log(`Scaled ${key} (${direction}): ${value} -> ${result} (operation: ${config.operation}, factor: ${config.factor})`);
+        this.debugLog(`Scaled ${key} (${direction}): ${value} -> ${result} (operation: ${config.operation}, factor: ${config.factor})`);
         return result;
     }
     /**
@@ -86,9 +96,9 @@ let ScheduleService = class ScheduleService {
     async getDueSchedules() {
         try {
             if (!dataSource_1.AppDataSource.isInitialized) {
-                console.log("Initializing AppDataSource...");
+                this.debugLog("Initializing AppDataSource...");
                 await dataSource_1.AppDataSource.initialize();
-                console.log("AppDataSource initialized successfully");
+                this.debugLog("AppDataSource initialized successfully");
             }
             // Lấy device_id từ global variable
             const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : (process.env.DEVICE_ID || "");
@@ -108,8 +118,8 @@ let ScheduleService = class ScheduleService {
                 .andWhere("schedule.device_id = :deviceId", { deviceId: deviceId })
                 .printSql()
                 .getMany();
-            // console.log(`schedules sql: ${JSON.stringify(schedules)}`)
-            console.log(`Retrieved ${schedules.length} schedules from DB for device_id: ${deviceId}`);
+            // this.debugLog(`schedules sql: ${JSON.stringify(schedules)}`)
+            this.debugLog(`Retrieved ${schedules.length} schedules from DB for device_id: ${deviceId}`);
             return schedules;
         }
         catch (error) {
@@ -127,7 +137,7 @@ let ScheduleService = class ScheduleService {
                 return false;
             }
             if (schedule.enable !== 1) {
-                console.log(`Schedule ${schedule.name} is not enabled`);
+                this.debugLog(`Schedule ${schedule.name} is not enabled`);
                 return false;
             }
             // Lấy giờ hiện tại theo múi giờ UTC+7
@@ -138,7 +148,7 @@ let ScheduleService = class ScheduleService {
                 const startDate = (0, moment_1.default)(schedule.start_date, "YYYY-MM-DD");
                 const endDate = (0, moment_1.default)(schedule.end_date, "YYYY-MM-DD");
                 if (!now.isBetween(startDate, endDate, 'day', '[]')) {
-                    console.log(`Schedule ${schedule.name} is outside enabled range (${startDate.format('YYYY-MM-DD')} - ${endDate.format('YYYY-MM-DD')})`);
+                    this.debugLog(`Schedule ${schedule.name} is outside enabled range (${startDate.format('YYYY-MM-DD')} - ${endDate.format('YYYY-MM-DD')})`);
                     return false;
                 }
             }
@@ -169,13 +179,13 @@ let ScheduleService = class ScheduleService {
             }
             // Kiểm tra xem giờ hiện tại có nằm trong khoảng startDateTime và endDateTime không
             const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[]");
-            console.log({
+            this.debugLog(JSON.stringify({
                 now: now.format(),
                 startDateTime: startDateTime.format(),
                 endDateTime: endDateTime.format(),
                 isDue,
-            });
-            console.log(`Schedule ${schedule.name} isDue: ${isDue}`);
+            }));
+            this.debugLog(`Schedule ${schedule.name} isDue: ${isDue}`);
             return isDue;
         }
         catch (error) {
@@ -255,7 +265,7 @@ let ScheduleService = class ScheduleService {
                                 address: modbusHolding[key],
                                 quantity: 1,
                             });
-                            console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
+                            this.debugLog(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
                         }
                     }
                     else if (modbusCoils.hasOwnProperty(key)) {
@@ -269,7 +279,7 @@ let ScheduleService = class ScheduleService {
                                 address: modbusCoils[key],
                                 quantity: 1,
                             });
-                            console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
+                            this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                         }
                     }
                     else {
@@ -278,7 +288,7 @@ let ScheduleService = class ScheduleService {
                         try {
                             const configParam = this.storeConfigParameter(key, value, schedule.name);
                             configParameters.push(configParam);
-                            console.log(`Successfully stored config parameter: ${key}=${configParam.value} (type: ${configParam.type})`);
+                            this.debugLog(`Successfully stored config parameter: ${key}=${configParam.value} (type: ${configParam.type})`);
                         }
                         catch (error) {
                             console.error(`Failed to store config parameter ${key}: ${error.message}`);
@@ -301,7 +311,7 @@ let ScheduleService = class ScheduleService {
             try {
                 let writeValue = this.scaleValue(cmd.key, cmd.value, 'write'); // Scale nếu có config
                 await modbusClient.writeRegister(cmd.address, Number(writeValue));
-                console.log(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
+                this.debugLog(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
                 await this.delay(100);
             }
             catch (error) {
@@ -317,12 +327,12 @@ let ScheduleService = class ScheduleService {
         const isFinishing = schedule && schedule.status === 'finished';
         if (isStarting) {
             // Khi start: ghi valve trước, delay 5s, sau đó ghi pump/power
-            console.log(`Starting schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing valve coils first`);
+            this.debugLog(`Starting schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing valve coils first`);
             // Thực hiện valve coils trước
             for (const cmd of valveCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    console.log(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                    this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -333,7 +343,7 @@ let ScheduleService = class ScheduleService {
             for (const cmd of otherCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    console.log(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -342,13 +352,13 @@ let ScheduleService = class ScheduleService {
             }
             // Delay 5 giây trước khi ghi các pump/power coils
             if (controlCoils.length > 0) {
-                console.log('Delaying 5 seconds before writing pump/power coils');
+                this.debugLog('Delaying 5 seconds before writing pump/power coils');
                 await this.delay(5000);
                 // Thực hiện control coils (pump, power)
                 for (const cmd of controlCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        console.log(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
+                        this.debugLog(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
                         await this.delay(100);
                     }
                     catch (error) {
@@ -359,12 +369,12 @@ let ScheduleService = class ScheduleService {
         }
         else if (isFinishing) {
             // Khi finish: ghi tắt pump/power trước, delay 5s, sau đó tắt valve
-            console.log(`Finishing schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing pump/power coils first`);
+            this.debugLog(`Finishing schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing pump/power coils first`);
             // Thực hiện control coils (pump, power) trước
             for (const cmd of controlCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    console.log(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
+                    this.debugLog(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -375,7 +385,7 @@ let ScheduleService = class ScheduleService {
             for (const cmd of otherCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    console.log(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -384,13 +394,13 @@ let ScheduleService = class ScheduleService {
             }
             // Delay 5 giây trước khi ghi các valve coils
             if (valveCoils.length > 0) {
-                console.log('Delaying 5 seconds before writing valve coils');
+                this.debugLog('Delaying 5 seconds before writing valve coils');
                 await this.delay(5000);
                 // Thực hiện valve coils
                 for (const cmd of valveCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        console.log(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                        this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
                         await this.delay(100);
                     }
                     catch (error) {
@@ -401,13 +411,13 @@ let ScheduleService = class ScheduleService {
         }
         else {
             // Nếu không có schedule hoặc status không phải running/finished, thực hiện theo thứ tự thông thường
-            console.log('Executing coil commands in default order');
+            this.debugLog('Executing coil commands in default order');
             // Sau đó thực hiện coil commands
             for (const cmd of commands.coilCommands) {
                 try {
                     let writeValue = cmd.value;
                     await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
-                    console.log(`Wrote coil at ${cmd.address} with value ${writeValue}`);
+                    this.debugLog(`Wrote coil at ${cmd.address} with value ${writeValue}`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -438,12 +448,12 @@ let ScheduleService = class ScheduleService {
                     continue;
                 }
                 // So sánh với giá trị gốc (cmd.value)
-                console.log(`Verifying ${cmd.key}: readValue = ${readValue} (${typeof readValue}), expected = ${cmd.value} (${typeof cmd.value})`);
+                this.debugLog(`Verifying ${cmd.key}: readValue = ${readValue} (${typeof readValue}), expected = ${cmd.value} (${typeof cmd.value})`);
                 if (readValue !== cmd.value) {
                     console.warn(`Verification failed for ${cmd.key} at ${cmd.address}: expected ${cmd.value}, got ${readValue}`);
                     return false;
                 }
-                console.log(`Verified ${cmd.key} at ${cmd.address} successfully`);
+                this.debugLog(`Verified ${cmd.key} at ${cmd.address} successfully`);
             }
             catch (error) {
                 console.error(`Error verifying modbus write for ${cmd.key}: ${error.message}`);
@@ -471,12 +481,12 @@ let ScheduleService = class ScheduleService {
             // Publish to ThingsBoard
             const thingsboardTopic = "v1/devices/me/telemetry";
             await thingsboardClient.publish(thingsboardTopic, payloadString);
-            console.log(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
+            this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
             // Publish to EMQX local
             const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
-            console.log(`Published MQTT notification to EMQX local for ${schedule.name}`);
+            this.debugLog(`Published MQTT notification to EMQX local for ${schedule.name}`);
         }
         catch (error) {
             console.error(`Error publishing MQTT for ${schedule.name}: ${error.message}`);
@@ -488,7 +498,7 @@ let ScheduleService = class ScheduleService {
      */
     async syncScheduleLog(schedule, success) {
         try {
-            console.log(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
+            this.debugLog(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
             if (this.syncScheduleService) {
                 // Assuming schedule.start_time and schedule.end_time are in a time-only format like "HH:mm"
                 const now = (0, moment_1.default)(); // Current date and time
@@ -505,7 +515,7 @@ let ScheduleService = class ScheduleService {
                     deleted: null
                 };
                 await this.syncScheduleService.logSchedule(scheduleLogBody);
-                console.log(`Logged schedule ${schedule.name} successfully`);
+                this.debugLog(`Logged schedule ${schedule.name} successfully`);
             }
             else {
                 console.warn("SyncScheduleService is not available, skipping log");
@@ -521,9 +531,9 @@ let ScheduleService = class ScheduleService {
     async updateScheduleStatus(schedule, status) {
         try {
             if (!dataSource_1.AppDataSource.isInitialized) {
-                console.log("Initializing AppDataSource...");
+                this.debugLog("Initializing AppDataSource...");
                 await dataSource_1.AppDataSource.initialize();
-                console.log("AppDataSource initialized successfully");
+                this.debugLog("AppDataSource initialized successfully");
             }
             const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
             // Cập nhật trạng thái
@@ -533,10 +543,10 @@ let ScheduleService = class ScheduleService {
             schedule.modified = nowPlus7;
             // Lưu entity với giá trị modified đã chỉnh sửa
             await repository.save(schedule);
-            console.log(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
+            this.debugLog(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
             if (this.syncScheduleService) {
                 await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
-                console.log(`Synced ${schedule.name} to server`);
+                this.debugLog(`Synced ${schedule.name} to server`);
             }
             else {
                 console.warn("SyncScheduleService is not available, skipping sync");
@@ -562,7 +572,7 @@ let ScheduleService = class ScheduleService {
         for (const cmd of holdingRegisters) {
             try {
                 await modbusClient.writeRegister(cmd.address, 0);
-                console.log(`Reset register at ${cmd.address} to 0`);
+                this.debugLog(`Reset register at ${cmd.address} to 0`);
                 await this.delay(100);
             }
             catch (error) {
@@ -572,12 +582,12 @@ let ScheduleService = class ScheduleService {
         }
         // Khi finish schedule, luôn reset theo thứ tự: pump/power trước, sau đó đến valve
         if (schedule && schedule.status === 'finished') {
-            console.log(`Ordered reset for finished schedule ${schedule.name}`);
+            this.debugLog(`Ordered reset for finished schedule ${schedule.name}`);
             // Reset control coils (pump, power) trước
             for (const cmd of controlCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    console.log(`Reset control coil at ${cmd.address} to false`);
+                    this.debugLog(`Reset control coil at ${cmd.address} to false`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -589,7 +599,7 @@ let ScheduleService = class ScheduleService {
             for (const cmd of otherCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    console.log(`Reset other coil at ${cmd.address} to false`);
+                    this.debugLog(`Reset other coil at ${cmd.address} to false`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -599,13 +609,13 @@ let ScheduleService = class ScheduleService {
             }
             // Delay 5 giây trước khi reset valve coils
             if (valveCoils.length > 0) {
-                console.log('Delaying 5 seconds before resetting valve coils');
+                this.debugLog('Delaying 5 seconds before resetting valve coils');
                 await this.delay(5000);
                 // Reset valve coils
                 for (const cmd of valveCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, false);
-                        console.log(`Reset valve coil at ${cmd.address} to false`);
+                        this.debugLog(`Reset valve coil at ${cmd.address} to false`);
                         await this.delay(100);
                     }
                     catch (error) {
@@ -620,7 +630,7 @@ let ScheduleService = class ScheduleService {
             for (const cmd of commands.filter(cmd => cmd.fc === 5)) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    console.log(`Reset coil at ${cmd.address} to false`);
+                    this.debugLog(`Reset coil at ${cmd.address} to false`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -662,14 +672,14 @@ let ScheduleService = class ScheduleService {
     async reExecuteAfterPowerLoss(modbusClient, schedule) {
         const activeCommands = this.getActiveCommands(schedule.name);
         if (activeCommands.length === 0) {
-            console.log(`No active commands stored for schedule ${schedule.name}, mapping anew`);
+            this.debugLog(`No active commands stored for schedule ${schedule.name}, mapping anew`);
             const { holdingCommands, coilCommands, configParameters } = this.mapScheduleToModbus(schedule);
             this.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
             await this.executeModbusCommands(modbusClient, { holdingCommands, coilCommands });
             // Note: Config parameters are not re-published during power loss recovery
             // as they are already stored in global context
             if (configParameters && configParameters.length > 0) {
-                console.log(`Found ${configParameters.length} config parameters during re-execution, already stored in context`);
+                this.debugLog(`Found ${configParameters.length} config parameters during re-execution, already stored in context`);
             }
             return true;
         }
@@ -683,7 +693,7 @@ let ScheduleService = class ScheduleService {
             console.warn(`All active commands for schedule ${schedule.name} are overridden. Skipping re-execution.`);
             return false;
         }
-        // console.log(`Checking commands for schedule ${schedule.name} for non-overridden keys`);
+        // this.debugLog(`Checking commands for schedule ${schedule.name} for non-overridden keys`);
         // Kiểm tra và thực thi holding commands
         const holdingCommandsToExecute = [];
         for (const cmd of holdingCommandsToCheck) {
@@ -693,10 +703,10 @@ let ScheduleService = class ScheduleService {
                 const currentValue = this.scaleValue(cmd.key, rawValue, 'read');
                 if (currentValue !== cmd.value) {
                     holdingCommandsToExecute.push(cmd);
-                    console.log(`Holding register at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
+                    this.debugLog(`Holding register at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
                 }
                 else {
-                    // console.log(`Holding register at ${cmd.address} already correct: ${currentValue}`);
+                    // this.debugLog(`Holding register at ${cmd.address} already correct: ${currentValue}`);
                 }
             }
             catch (error) {
@@ -712,10 +722,10 @@ let ScheduleService = class ScheduleService {
                 const currentValue = Boolean(readResult.data[0]);
                 if (currentValue !== cmd.value) {
                     coilCommandsToExecute.push(cmd);
-                    console.log(`Coil at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
+                    this.debugLog(`Coil at ${cmd.address} needs update: current=${currentValue}, expected=${cmd.value}`);
                 }
                 else {
-                    // console.log(`Coil at ${cmd.address} already correct: ${currentValue}`);
+                    // this.debugLog(`Coil at ${cmd.address} already correct: ${currentValue}`);
                 }
             }
             catch (error) {
@@ -725,7 +735,7 @@ let ScheduleService = class ScheduleService {
         }
         // Nếu không có lệnh nào cần thực thi, trả về false ngay lập tức
         if (holdingCommandsToExecute.length === 0 && coilCommandsToExecute.length === 0) {
-            // console.log(`All registers and coils for schedule ${schedule.name} are already in correct state. No re-execution needed.`);
+            // this.debugLog(`All registers and coils for schedule ${schedule.name} are already in correct state. No re-execution needed.`);
             return false;
         }
         // Thực thi các lệnh cần cập nhật
@@ -736,7 +746,7 @@ let ScheduleService = class ScheduleService {
         // Xác minh lại sau khi ghi
         const writeSuccess = await this.verifyModbusWrite(modbusClient, [...holdingCommandsToExecute, ...coilCommandsToExecute]);
         if (writeSuccess) {
-            console.log(`Successfully re-executed necessary commands for schedule ${schedule.name}`);
+            this.debugLog(`Successfully re-executed necessary commands for schedule ${schedule.name}`);
         }
         else {
             console.warn(`Failed to verify some commands for schedule ${schedule.name} after re-execution`);
@@ -750,7 +760,7 @@ let ScheduleService = class ScheduleService {
         const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
         activeModbusCommands[scheduleId] = commands;
         this.node.context().global.set("activeModbusCommands", activeModbusCommands);
-        console.log(`Stored active commands for schedule ${scheduleId}: ${JSON.stringify(commands)}`);
+        this.debugLog(`Stored active commands for schedule ${scheduleId}: ${JSON.stringify(commands)}`);
     }
     /**
      * Retrieve active commands for a schedule
@@ -766,7 +776,7 @@ let ScheduleService = class ScheduleService {
         const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
         delete activeModbusCommands[scheduleId];
         this.node.context().global.set("activeModbusCommands", activeModbusCommands);
-        console.log(`Cleared active commands for schedule ${scheduleId}`);
+        this.debugLog(`Cleared active commands for schedule ${scheduleId}`);
     }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -824,6 +834,7 @@ let ScheduleService = class ScheduleService {
     }
     /**
      * Get schedule configuration values from global context
+     * Note: For RPC control commands, use configKeyValues instead
      */
     getScheduleConfigValues() {
         var _a;
@@ -831,14 +842,30 @@ let ScheduleService = class ScheduleService {
     }
     /**
      * Set schedule configuration values in global context
+     * Note: For RPC control commands, use configKeyValues instead
      */
     setScheduleConfigValues(values) {
         var _a;
         (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("configKeyValues", values);
-        console.log(`Updated schedule config values: ${JSON.stringify(values)}`);
+        this.debugLog(`Updated schedule config values: ${JSON.stringify(values)}`);
     }
     /**
-     * Store configuration parameter
+     * Get configKeyValues from global context (for RPC control commands)
+     */
+    getConfigKeyValues() {
+        var _a;
+        return ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("configKeyValues")) || {};
+    }
+    /**
+     * Set configKeyValues in global context (for RPC control commands)
+     */
+    setConfigKeyValues(values) {
+        var _a;
+        (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("configKeyValues", values);
+        this.debugLog(`Updated configKeyValues: ${JSON.stringify(values)}`);
+    }
+    /**
+     * Store configuration parameter (for schedule execution)
      */
     storeConfigParameter(key, value, scheduleId) {
         const validatedValue = this.validateAndConvertValue(key, value);
@@ -850,12 +877,54 @@ let ScheduleService = class ScheduleService {
             timestamp: Date.now(),
             scheduleId
         };
-        // Store in global context
+        // Store in global context (configKeyValues for schedule execution)
         const currentConfig = this.getScheduleConfigValues();
         currentConfig[key] = validatedValue;
         this.setScheduleConfigValues(currentConfig);
-        console.log(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
+        this.debugLog(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
         return configParam;
+    }
+    /**
+     * Process RPC control command - write to configKeyValues if not found in modbus mapping
+     */
+    processRpcControlCommand(key, value) {
+        var _a, _b;
+        try {
+            // Get modbus mappings
+            const modbusCoils = ((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getJsonEnvVar("MODBUS_COILS", {})) || {};
+            const modbusHolding = ((_b = this.globalHelper) === null || _b === void 0 ? void 0 : _b.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {})) || {};
+            // Check if key exists in modbus mapping
+            if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
+                // Key found in modbus mapping - should be handled by modbus logic
+                this.debugLog(`RPC control key ${key} found in modbus mapping, should be handled by modbus`);
+                return {
+                    success: true,
+                    action: 'modbus',
+                    result: {
+                        address: modbusCoils[key] || modbusHolding[key],
+                        type: modbusCoils.hasOwnProperty(key) ? 'coil' : 'holding'
+                    }
+                };
+            }
+            else {
+                // Key not found in modbus mapping - write to configKeyValues
+                console.warn(`RPC control key ${key} not found in modbus mapping, storing in configKeyValues`);
+                const validatedValue = this.validateAndConvertValue(key, value);
+                const currentConfig = this.getConfigKeyValues();
+                currentConfig[key] = validatedValue;
+                this.setConfigKeyValues(currentConfig);
+                this.debugLog(`Stored RPC control parameter in configKeyValues: ${key}=${validatedValue}`);
+                return {
+                    success: true,
+                    action: 'config',
+                    result: { key, value: validatedValue }
+                };
+            }
+        }
+        catch (error) {
+            console.error(`Error processing RPC control command ${key}: ${error.message}`);
+            return { success: false, action: 'config' };
+        }
     }
     /**
      * Publish configuration update via MQTT
@@ -873,12 +942,12 @@ let ScheduleService = class ScheduleService {
             // Publish to ThingsBoard
             const thingsboardTopic = "v1/devices/me/telemetry";
             await thingsboardClient.publish(thingsboardTopic, payloadString);
-            console.log(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
+            this.debugLog(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
             // Publish to EMQX local
             const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
-            console.log(`Published config update to EMQX local: ${configParam.key}=${configParam.value}`);
+            this.debugLog(`Published config update to EMQX local: ${configParam.key}=${configParam.value}`);
         }
         catch (error) {
             console.error(`Error publishing config update for ${configParam.key}: ${error.message}`);
@@ -889,5 +958,5 @@ let ScheduleService = class ScheduleService {
 exports.ScheduleService = ScheduleService;
 exports.ScheduleService = ScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [Object])
+    __metadata("design:paramtypes", [Object, Boolean])
 ], ScheduleService);
