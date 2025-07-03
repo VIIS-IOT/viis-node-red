@@ -219,13 +219,15 @@ let ScheduleActivationService = class ScheduleActivationService extends base_ser
             this.logWarn('No user context provided for schedule activation');
             return false;
         }
-        if (!userContext.user_id || !userContext.customer_id) {
-            this.logWarn('Incomplete user context for schedule activation', {
-                hasUserId: !!userContext.user_id,
-                hasCustomerId: !!userContext.customer_id
-            });
-            return false;
-        }
+        //debug user context
+        this.logDebug('User context for schedule activation', userContext);
+        // if (!userContext.user_id || !userContext.customer_id) {
+        //     this.logWarn('Incomplete user context for schedule activation', {
+        //         hasUserId: !!userContext.user_id,
+        //         hasCustomerId: !!userContext.customer_id
+        //     });
+        //     return false;
+        // }
         return true;
     }
     /**

@@ -35,7 +35,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.config.connectionTimeout = this.config.connectionTimeout || 5000;
                 this.config.maxRetries = this.config.maxRetries || 3;
                 if (this.node && this.node.log) {
-                    this.node.log(`[${boardType}] Applied ATmega-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                    //this.node.log(`[${boardType}] Applied ATmega-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
                 }
                 break;
             case "STM32":
@@ -45,7 +45,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.config.connectionTimeout = this.config.connectionTimeout || 2000;
                 this.config.maxRetries = this.config.maxRetries || 2;
                 if (this.node && this.node.log) {
-                    this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                    //this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
                 }
                 break;
             default:
@@ -55,14 +55,14 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.config.connectionTimeout = this.config.connectionTimeout || 3000;
                 this.config.maxRetries = this.config.maxRetries || 3;
                 if (this.node && this.node.log) {
-                    this.node.log(`[${boardType}] Applied generic configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
+                    //this.node.log(`[${boardType}] Applied generic configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
                 }
                 break;
         }
     }
     // Khởi tạo client
     async initializeClient() {
-        //this.node.log(`Modbus: Attempting to connect type ${this.config.type}...`); // Log connection attempt
+        ////this.node.log(`Modbus: Attempting to connect type ${this.config.type}...`); // Log connection attempt
         try {
             if (this.config.type === "TCP") {
                 await this.connectTCP();
@@ -76,19 +76,19 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
             this.isConnected = true;
             if (!this.wasConnected) { // Chỉ log khi trạng thái thay đổi
-                //this.node.log(`Modbus: isConnected status changed to true (Connected)`);
+                ////this.node.log(`Modbus: isConnected status changed to true (Connected)`);
                 this.node.status({ fill: "green", shape: "dot", text: "Connected" });
                 this.emit("modbus-status", { status: "connected" });
             }
             if (this.config.type === "TCP") {
-                //this.node.log(`Modbus TCP: Connected successfully to ${this.config.host}:${this.config.tcpPort}`); // Log TCP connect success
+                ////this.node.log(`Modbus TCP: Connected successfully to ${this.config.host}:${this.config.tcpPort}`); // Log TCP connect success
             }
             else if (this.config.type === "RTU") {
-                //this.node.log(`Modbus RTU: Connected successfully to ${this.config.serialPort}`); // Log RTU connect success
+                ////this.node.log(`Modbus RTU: Connected successfully to ${this.config.serialPort}`); // Log RTU connect success
             }
         }
         catch (error) {
-            //this.node.log(`Modbus: Connection failed for type ${this.config.type}: ${(error as Error).message}`); // Log connection error
+            ////this.node.log(`Modbus: Connection failed for type ${this.config.type}: ${(error as Error).message}`); // Log connection error
             this.handleError(error);
             if (this.config.type === "TCP")
                 this.scheduleReconnect();
@@ -106,7 +106,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             port: this.config.tcpPort,
             socketOptions: Object.assign(Object.assign({}, socketOptions), { timeout: this.config.connectionTimeout || socketOptions.timeout, connectTimeout: this.config.connectionTimeout || socketOptions.connectTimeout })
         };
-        this.node.log(`[${boardType}-OPTIMIZED] Connecting to Modbus TCP at ${this.config.host}:${this.config.tcpPort} with timeout ${this.config.connectionTimeout}ms`);
+        //this.node.log(`[${boardType}-OPTIMIZED] Connecting to Modbus TCP at ${this.config.host}:${this.config.tcpPort} with timeout ${this.config.connectionTimeout}ms`);
         try {
             // Thử kết nối với timeout được cấu hình cho board cụ thể
             const connectPromise = this.client.connectTCP(this.config.host, tcpOptions);
@@ -114,7 +114,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Connection timeout after ${this.config.connectionTimeout}ms`)), this.config.connectionTimeout || 3000);
             });
             await Promise.race([connectPromise, timeoutPromise]);
-            this.node.log(`[${boardType}-SUCCESS] Connected to ${boardType} Modbus at ${this.config.host}:${this.config.tcpPort}`);
+            //this.node.log(`[${boardType}-SUCCESS] Connected to ${boardType} Modbus at ${this.config.host}:${this.config.tcpPort}`);
         }
         catch (error) {
             const err = error;
@@ -189,7 +189,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
             this.isConnected = false;
             if (this.wasConnected) { // Chỉ log khi trạng thái thay đổi
-                this.node.log(`Modbus connection lost due to: "${error.message}"`);
+                //this.node.log(`Modbus connection lost due to: "${error.message}"`);
                 this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
                 this.emit("modbus-status", { status: "disconnected", error: error.message });
                 // Đóng kết nối hiện tại nếu còn mở
@@ -214,13 +214,13 @@ class ModbusClientCore extends events_1.EventEmitter {
     scheduleReconnect() {
         // Nếu đã có timer đang chạy, không tạo thêm
         if (this.reconnectTimer) {
-            this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
+            //this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
             return;
         }
         // STM32 cần thời gian recovery ngắn hơn nhưng ổn định
         const quickReconnectTime = 2000; // 2 giây cho STM32
         const standardReconnectTime = Math.max(this.config.reconnectInterval || 5000, 5000); // Tối thiểu 5s
-        this.node.log(`[STM32-RECONNECT] Scheduling quick reconnect in ${quickReconnectTime}ms`);
+        //this.node.log(`[STM32-RECONNECT] Scheduling quick reconnect in ${quickReconnectTime}ms`);
         // Thử kết nối lại nhanh
         this.reconnectTimer = setTimeout(async () => {
             try {
@@ -228,12 +228,12 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.client = new modbus_serial_1.default();
                 // Thử kết nối lại
                 await this.initializeClient();
-                this.node.log(`[STM32-RECONNECT] Quick reconnect successful`);
+                //this.node.log(`[STM32-RECONNECT] Quick reconnect successful`);
                 // Xóa timer
                 clearTimeout(this.reconnectTimer);
                 this.reconnectTimer = undefined;
                 // KHÔNG verify với readCoils ngay - STM32 cần thời gian ổn định
-                this.node.log(`[STM32-RECONNECT] Connection established, allowing STM32 to stabilize`);
+                //this.node.log(`[STM32-RECONNECT] Connection established, allowing STM32 to stabilize`);
             }
             catch (error) {
                 const err = error;
@@ -242,14 +242,14 @@ class ModbusClientCore extends events_1.EventEmitter {
                 clearTimeout(this.reconnectTimer);
                 this.reconnectTimer = undefined;
                 // Lên lịch thử lại với thời gian dài hơn cho STM32
-                this.node.log(`[STM32-RECONNECT] Scheduling standard reconnect in ${standardReconnectTime}ms`);
+                //this.node.log(`[STM32-RECONNECT] Scheduling standard reconnect in ${standardReconnectTime}ms`);
                 this.reconnectTimer = setTimeout(async () => {
                     try {
                         // Tạo client mới lần nữa
                         this.client = new modbus_serial_1.default();
                         // Thử kết nối lại
                         await this.initializeClient();
-                        this.node.log(`[STM32-RECONNECT] Standard reconnect successful`);
+                        //this.node.log(`[STM32-RECONNECT] Standard reconnect successful`);
                         // Xóa timer
                         clearTimeout(this.reconnectTimer);
                         this.reconnectTimer = undefined;
@@ -277,12 +277,12 @@ class ModbusClientCore extends events_1.EventEmitter {
         }
         // Exponential backoff: 5s, 10s, 20s, 30s, 30s
         const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
-        this.node.log(`[STM32-RECONNECT] Scheduling backoff reconnect attempt ${attempt}/${maxAttempts} in ${delay}ms`);
+        //this.node.log(`[STM32-RECONNECT] Scheduling backoff reconnect attempt ${attempt}/${maxAttempts} in ${delay}ms`);
         this.reconnectTimer = setTimeout(async () => {
             try {
                 this.client = new modbus_serial_1.default();
                 await this.initializeClient();
-                this.node.log(`[STM32-RECONNECT] Backoff reconnect successful on attempt ${attempt}`);
+                //this.node.log(`[STM32-RECONNECT] Backoff reconnect successful on attempt ${attempt}`);
                 clearTimeout(this.reconnectTimer);
                 this.reconnectTimer = undefined;
             }
@@ -301,7 +301,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             try {
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
                 if (!this.isConnected || !this.client.isOpen) {
-                    this.node.log("[STM32-CHECK] Connection appears to be closed, attempting to reconnect...");
+                    //this.node.log("[STM32-CHECK] Connection appears to be closed, attempting to reconnect...");
                     // Đánh dấu là đã ngắt kết nối
                     this.isConnected = false;
                     // Thử kết nối lại
@@ -316,13 +316,13 @@ class ModbusClientCore extends events_1.EventEmitter {
                 }
                 // Nếu có vấn đề với connection state
                 if (!this.isConnected) {
-                    this.node.log("[STM32-CHECK] Connection state inconsistent, attempting reconnect...");
+                    //this.node.log("[STM32-CHECK] Connection state inconsistent, attempting reconnect...");
                     await this.initializeClient();
                 }
             }
             catch (error) {
                 const err = error;
-                this.node.log(`[STM32-CHECK] Connection check failed: ${err.message}`);
+                //this.node.log(`[STM32-CHECK] Connection check failed: ${err.message}`);
                 // Nếu lỗi liên quan đến kết nối, đánh dấu là đã ngắt kết nối
                 if (err.message.includes("Timed out") ||
                     err.message.includes("Port Not Open") ||
@@ -354,7 +354,7 @@ class ModbusClientCore extends events_1.EventEmitter {
     async ensureConnected() {
         // Kiểm tra kết nối hiện tại
         if (!this.isConnected || !this.client.isOpen) {
-            this.node.log("[STM32-ENSURE] Connection lost or not initialized, attempting to reconnect...");
+            //this.node.log("[STM32-ENSURE] Connection lost or not initialized, attempting to reconnect...");
             // Đóng kết nối hiện tại nếu còn mở
             try {
                 if (this.client.isOpen) {
@@ -377,7 +377,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 catch (error) {
                     retryCount++;
                     const err = error;
-                    this.node.log(`[STM32-ENSURE] Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
+                    //this.node.log(`[STM32-ENSURE] Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
                     if (retryCount >= maxRetries) {
                         throw new Error(`[STM32-ENSURE] Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
                     }
@@ -402,14 +402,14 @@ class ModbusClientCore extends events_1.EventEmitter {
         const boardType = this.config.boardType || "STM32";
         const readTimeout = this.config.readTimeout || 5000;
         try {
-            this.node.debug(`[${boardType}-READ] Reading coils at address ${address}, length ${length} with timeout ${readTimeout}ms`);
+            //this.node.debug(`[${boardType}-READ] Reading coils at address ${address}, length ${length} with timeout ${readTimeout}ms`);
             // Add timeout wrapper with configurable timeout
             const readPromise = this.client.readCoils(address, length);
             const timeoutPromise = new Promise((_, reject) => {
                 setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read coils timeout after ${readTimeout}ms`)), readTimeout);
             });
             const { data } = await Promise.race([readPromise, timeoutPromise]);
-            this.node.debug(`[${boardType}-READ] Successfully read coils at ${address}: ${data.length} values`);
+            //this.node.debug(`[${boardType}-READ] Successfully read coils at ${address}: ${data.length} values`);
             return { address, data };
         }
         catch (error) {
@@ -464,14 +464,14 @@ class ModbusClientCore extends events_1.EventEmitter {
         const maxRetries = this.config.maxRetries || 3;
         while (retryCount <= maxRetries) {
             try {
-                this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
+                //this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
                 // Add timeout wrapper for write operations with configurable timeout
                 const writePromise = this.client.writeRegister(address, value);
                 const timeoutPromise = new Promise((_, reject) => {
                     setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Write register timeout after ${writeTimeout}ms`)), writeTimeout);
                 });
                 await Promise.race([writePromise, timeoutPromise]);
-                this.node.log(`[${boardType}-WRITE] Successfully wrote register ${address} = ${value} on attempt ${retryCount + 1}`);
+                //this.node.log(`[${boardType}-WRITE] Successfully wrote register ${address} = ${value} on attempt ${retryCount + 1}`);
                 return; // Success, exit retry loop
             }
             catch (error) {
@@ -498,14 +498,14 @@ class ModbusClientCore extends events_1.EventEmitter {
         const maxRetries = this.config.maxRetries || 3;
         while (retryCount <= maxRetries) {
             try {
-                this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
+                //this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
                 // Add timeout wrapper for write operations with configurable timeout
                 const writePromise = this.client.writeCoil(address, value);
                 const timeoutPromise = new Promise((_, reject) => {
                     setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Write coil timeout after ${writeTimeout}ms`)), writeTimeout);
                 });
                 await Promise.race([writePromise, timeoutPromise]);
-                this.node.log(`[${boardType}-WRITE] Successfully wrote coil ${address} = ${value} on attempt ${retryCount + 1}`);
+                //this.node.log(`[${boardType}-WRITE] Successfully wrote coil ${address} = ${value} on attempt ${retryCount + 1}`);
                 return; // Success, exit retry loop
             }
             catch (error) {
@@ -526,7 +526,7 @@ class ModbusClientCore extends events_1.EventEmitter {
     }
     // Ngắt kết nối
     disconnect() {
-        //this.node.log("Modbus: Disconnecting client..."); // Log disconnect start
+        ////this.node.log("Modbus: Disconnecting client..."); // Log disconnect start
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
@@ -535,11 +535,11 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
             this.isConnected = false;
             if (this.wasConnected) { // Chỉ log khi trạng thái thay đổi
-                //this.node.log(`Modbus: isConnected status changed to false (Disconnected)`);
+                ////this.node.log(`Modbus: isConnected status changed to false (Disconnected)`);
                 this.node.status({ fill: "grey", shape: "ring", text: "Disconnected" });
                 this.emit("modbus-status", { status: "disconnected" });
             }
-            //this.node.log("Modbus: Client disconnected."); // Log disconnect complete
+            ////this.node.log("Modbus: Client disconnected."); // Log disconnect complete
         });
     }
     // Kiểm tra trạng thái kết nối

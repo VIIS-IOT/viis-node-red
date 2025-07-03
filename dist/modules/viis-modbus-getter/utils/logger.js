@@ -5,7 +5,7 @@ exports.Logger = void 0;
  * Logger utility for VIIS Modbus Getter Node
  */
 class Logger {
-    constructor(node, nodeId, enableLogging = true) {
+    constructor(node, nodeId, enableLogging = false) {
         this.node = node;
         this.nodeId = nodeId;
         this.enableLogging = enableLogging;

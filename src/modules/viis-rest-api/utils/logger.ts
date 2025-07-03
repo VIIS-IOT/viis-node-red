@@ -50,7 +50,6 @@ export class Logger {
             } else {
                 console.error(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
             }
-            console.error(`[VIIS-REST-API] ${logMessage}`);
         }
     }
 
@@ -65,7 +64,6 @@ export class Logger {
             } else {
                 console.warn(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
             }
-            console.warn(`[VIIS-REST-API] ${logMessage}`);
         }
     }
 
@@ -80,7 +78,6 @@ export class Logger {
             } else {
                 console.log(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
             }
-            console.log(`[VIIS-REST-API] ${logMessage}`);
         }
     }
 
@@ -95,7 +92,6 @@ export class Logger {
             } else {
                 console.debug(`[VIIS-REST-API][FALLBACK] ${logMessage}`);
             }
-            console.debug(`[VIIS-REST-API] ${logMessage}`);
         }
     }
 
