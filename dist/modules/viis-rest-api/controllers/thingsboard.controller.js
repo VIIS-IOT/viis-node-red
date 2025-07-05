@@ -122,7 +122,7 @@ let ThingsBoardController = class ThingsBoardController {
         });
         try {
             // Process RPC request using service
-            const responseDto = await this.thingsBoardService.processOneWayRpcFromDto(deviceId, rpcData, user === null || user === void 0 ? void 0 : user.user_id);
+            const responseDto = await this.thingsBoardService.processOneWayRpcFromDto(deviceId, rpcData, user);
             // Schedule activation logic is now handled within the service
             logger_1.logger.info(this.node, `One-way RPC processed successfully for device: ${deviceId}`, {
                 method: rpcData.method,

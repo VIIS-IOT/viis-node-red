@@ -1,13 +1,13 @@
 /**
  * @fileoverview ThingsBoard RPC controller - Migrated to routing-controllers
- * 
+ *
  * This controller demonstrates the enhanced patterns for VIIS API modules:
  * - Uses routing-controllers decorators with automatic validation
  * - Leverages class-validator DTOs for request validation
  * - Implements comprehensive error handling and logging
  * - Provides ThingsBoard RPC processing functionality
  * - Serves as a template for other API module controllers
- * 
+ *
  * Features:
  * - Automatic request validation using enhanced DTOs
  * - ThingsBoard RPC message processing
@@ -128,7 +128,7 @@ export class ThingsBoardController {
             const responseDto = await this.thingsBoardService.processOneWayRpcFromDto(
                 deviceId,
                 rpcData,
-                user?.user_id
+                user
             );
 
             // Schedule activation logic is now handled within the service

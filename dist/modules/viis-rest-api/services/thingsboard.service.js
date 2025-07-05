@@ -484,6 +484,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
      */
     async processOneWayRpcFromDto(deviceId, rpcData, user) {
         const requestId = this.generateRequestId();
+        console.log('user mother fucker', user);
         const userId = (user === null || user === void 0 ? void 0 : user.user_id) || (user === null || user === void 0 ? void 0 : user.name);
         return this.executeOperation('processOneWayRpcFromDto', async () => {
             this.logInfo(`Processing one-way RPC request for device: ${deviceId}`, {
