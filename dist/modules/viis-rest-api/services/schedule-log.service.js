@@ -246,7 +246,9 @@ let ScheduleLogService = class ScheduleLogService extends base_service_1.BaseSer
                             name: log.customerUser.name || '',
                             user_name: log.customerUser.user_name || '',
                             email: log.customerUser.email || '',
-                            full_name: log.customerUser.full_name || ''
+                            full_name: log.customerUser.full_name || '',
+                            first_name: log.customerUser.first_name || '',
+                            last_name: log.customerUser.last_name || ''
                         } : null
                     };
                     scheduleData.push(scheduleItem);

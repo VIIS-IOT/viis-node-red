@@ -250,7 +250,9 @@ let IotScheduleLogController = class IotScheduleLogController {
                     name: scheduleLog.customerUser.name,
                     user_name: scheduleLog.customerUser.user_name,
                     email: scheduleLog.customerUser.email,
-                    full_name: scheduleLog.customerUser.full_name
+                    full_name: scheduleLog.customerUser.full_name,
+                    first_name: scheduleLog.customerUser.first_name,
+                    last_name: scheduleLog.customerUser.last_name
                 } : null
             };
         }
@@ -279,7 +281,8 @@ let IotScheduleLogController = class IotScheduleLogController {
                 throw new Error('IoT schedule log with this name already exists');
             }
             // Create new schedule log
-            const newScheduleLog = scheduleLogRepo.create(scheduleLogData);
+            const newScheduleLog = scheduleLogRepo.create(Object.assign(Object.assign({}, scheduleLogData), { customer_user: user === null || user === void 0 ? void 0 : user.user_id // Automatically set customer_user from current user
+             }));
             const savedScheduleLog = await scheduleLogRepo.save(newScheduleLog);
             logger_1.logger.info(this.node, 'IoT schedule log created successfully', {
                 requestedBy: user === null || user === void 0 ? void 0 : user.user_id,
@@ -347,7 +350,9 @@ let IotScheduleLogController = class IotScheduleLogController {
                     name: updatedScheduleLog.customerUser.name,
                     user_name: updatedScheduleLog.customerUser.user_name,
                     email: updatedScheduleLog.customerUser.email,
-                    full_name: updatedScheduleLog.customerUser.full_name
+                    full_name: updatedScheduleLog.customerUser.full_name,
+                    first_name: updatedScheduleLog.customerUser.first_name,
+                    last_name: updatedScheduleLog.customerUser.last_name
                 } : null
             } : null;
         }
