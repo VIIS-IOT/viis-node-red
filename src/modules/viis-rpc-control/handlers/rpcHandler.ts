@@ -130,10 +130,42 @@ export class RpcHandler implements IRpcHandler {
 
     /**
      * Handle standard parameter processing
+     * Sort to process holding registers first, then coils
      */
     private async handleStandardParams(params: Record<string, any>): Promise<void> {
-        console.log("handleStandardParams", params)
+        console.log("handleStandardParams", params);
+        
+        // Get modbus mappings from global variables
+        const modbusHoldingRegisters = this.modbusService.getModbusHoldingRegisters() || {};
+        const modbusCoils = this.modbusService.getModbusCoils() || {};
+        
+        // Separate parameters into holding registers, coils, and config-only
+        const holdingParams: Array<[string, any]> = [];
+        const coilParams: Array<[string, any]> = [];
+        const configParams: Array<[string, any]> = [];
+        
         for (const [key, rawValue] of Object.entries(params)) {
+            if (modbusHoldingRegisters.hasOwnProperty(key)) {
+                holdingParams.push([key, rawValue]);
+            } else if (modbusCoils.hasOwnProperty(key)) {
+                coilParams.push([key, rawValue]);
+            } else {
+                configParams.push([key, rawValue]);
+            }
+        }
+        
+        this.logger.log(`Processing parameters - Holding: ${holdingParams.length}, Coils: ${coilParams.length}, Config: ${configParams.length}`);
+        
+        // Process in order: holding registers first, then coils, then config-only
+        for (const [key, rawValue] of holdingParams) {
+            await this.processParameter(key, rawValue);
+        }
+        
+        for (const [key, rawValue] of coilParams) {
+            await this.processParameter(key, rawValue);
+        }
+        
+        for (const [key, rawValue] of configParams) {
             await this.processParameter(key, rawValue);
         }
     }

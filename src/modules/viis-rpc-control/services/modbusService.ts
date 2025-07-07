@@ -305,6 +305,20 @@ export class ModbusService implements IModbusService {
     }
 
     /**
+     * Get modbus holding registers mapping
+     */
+    getModbusHoldingRegisters(): Record<string, number> {
+        return this.environmentConfig.modbusHoldingRegisters || {};
+    }
+
+    /**
+     * Get modbus coils mapping
+     */
+    getModbusCoils(): Record<string, number> {
+        return this.environmentConfig.modbusCoils || {};
+    }
+
+    /**
      * Check if an error is related to connection issues
      */
     private isConnectionError(errorMessage: string): boolean {

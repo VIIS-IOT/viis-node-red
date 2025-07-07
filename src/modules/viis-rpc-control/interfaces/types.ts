@@ -124,6 +124,8 @@ export interface IModbusService {
     writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void>;
     readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean>;
     checkConnection(): Promise<void>;
+    getModbusHoldingRegisters(): Record<string, number>;
+    getModbusCoils(): Record<string, number>;
 }
 
 // MQTT service interface
