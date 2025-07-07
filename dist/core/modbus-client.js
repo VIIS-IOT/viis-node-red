@@ -546,5 +546,29 @@ class ModbusClientCore extends events_1.EventEmitter {
     isConnectedCheck() {
         return this.isConnected;
     }
+    // Public method to manually trigger reconnection
+    async reconnect() {
+        this.node.warn("[MODBUS-RECONNECT] Manual reconnection requested");
+        // Clear any existing reconnect timer
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
+        // Mark as disconnected
+        this.isConnected = false;
+        // Close existing connection
+        try {
+            if (this.client.isOpen) {
+                this.client.close();
+            }
+        }
+        catch (closeErr) {
+            // Ignore close errors
+        }
+        // Create new client instance
+        this.client = new modbus_serial_1.default();
+        // Attempt to reconnect
+        await this.initializeClient();
+    }
 }
 exports.ModbusClientCore = ModbusClientCore;

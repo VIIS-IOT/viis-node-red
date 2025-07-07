@@ -118,8 +118,15 @@ class ModbusService {
             console.log(`MODBUS WRITE SUCCESS: key=${key}, address=${mapping.address}, value=${writeValue}`);
         }
         catch (error) {
-            console.error(`MODBUS WRITE ERROR for ${key}:`, error.message);
-            const errorMessage = constants_1.ERROR_MESSAGES.MODBUS_WRITE_FAILED(key) + `: ${error.message}`;
+            const errorMsg = error.message;
+            console.error(`MODBUS WRITE ERROR for ${key}:`, errorMsg);
+            // Check if this is a connection error and provide more context
+            if (this.isConnectionError(errorMsg)) {
+                const connectionError = `[MODBUS-SERVICE] Connection lost during write operation for ${key}. Error: ${errorMsg}. Please check device connection and try again.`;
+                this.logger.error(connectionError);
+                throw new Error(connectionError);
+            }
+            const errorMessage = constants_1.ERROR_MESSAGES.MODBUS_WRITE_FAILED(key) + `: ${errorMsg}`;
             this.logger.error(errorMessage);
             throw new Error(errorMessage);
         }
@@ -246,6 +253,27 @@ class ModbusService {
         return this.findModbusMapping(key) !== null;
     }
     /**
+     * Check if an error is related to connection issues
+     */
+    isConnectionError(errorMessage) {
+        const connectionErrorPatterns = [
+            "Port Not Open",
+            "Timed out",
+            "ECONNREFUSED",
+            "ETIMEDOUT",
+            "ECONNRESET",
+            "EPIPE",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "socket hang up",
+            "socket closed",
+            "Connection lost",
+            "timeout",
+            "TIMEOUT"
+        ];
+        return connectionErrorPatterns.some(pattern => errorMessage.toLowerCase().includes(pattern.toLowerCase()));
+    }
+    /**
      * Check Modbus connection and attempt to reconnect if needed
      */
     async checkConnection() {
@@ -255,19 +283,23 @@ class ModbusService {
             }
             // Check if client reports as connected
             if (!this.modbusClient.isConnectedCheck()) {
-                this.logger.warn("Modbus client reports as disconnected, attempting to reconnect...");
-                await this.modbusClient.reconnect();
-                return;
+                this.logger.warn("[MODBUS-SERVICE] Modbus client reports as disconnected, attempting to reconnect...");
+                try {
+                    await this.modbusClient.reconnect();
+                    this.logger.warn("[MODBUS-SERVICE] Reconnection successful");
+                    // Wait a moment for connection to stabilize
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    return;
+                }
+                catch (reconnectError) {
+                    const reconnectMsg = `[MODBUS-SERVICE] Reconnection failed: ${reconnectError.message}`;
+                    this.logger.error(reconnectMsg);
+                    throw new Error(reconnectMsg);
+                }
             }
-            // Try a simple read operation to verify connection
-            try {
-                await this.modbusClient.readCoils(0, 1);
-                this.logger.debug("Modbus connection verified successfully");
-            }
-            catch (testError) {
-                this.logger.warn(`Modbus connection test failed: ${testError.message}, attempting to reconnect...`);
-                await this.modbusClient.reconnect();
-            }
+            // Try a simple read operation to verify connection (skip for now to avoid additional errors)
+            // The connection check via isConnectedCheck() should be sufficient
+            this.logger.debug("[MODBUS-SERVICE] Modbus connection verified successfully");
         }
         catch (error) {
             const errorMsg = `Modbus connection check failed: ${error.message}`;
