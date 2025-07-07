@@ -163,14 +163,14 @@ export class RpcHandler implements IRpcHandler {
             const value = this.validationService.validateAndConvertValue(key, rawValue);
             this.logger.warn(`Validated value: ${value}`);
 
-            // Write to Modbus
+            // Write to Modbus with connection error handling
             this.logger.warn(`Attempting to write to Modbus: key=${key}, value=${value}`);
-            await this.modbusService.writeToModbus(key, mapping, value);
+            await this.writeToModbusWithRetry(key, mapping, value);
             this.logger.warn(`Modbus write completed for: ${key}`);
 
             // Read back the value to confirm
             this.logger.warn(`Reading back value from Modbus: ${key}`);
-            const readValue = await this.modbusService.readFromModbus(key, mapping);
+            const readValue = await this.readFromModbusWithRetry(key, mapping);
             this.logger.warn(`Read value from Modbus: ${key}=${readValue} (type: ${typeof readValue})`);
 
             // Publish the result
@@ -272,6 +272,120 @@ export class RpcHandler implements IRpcHandler {
             const failedCount = rpcBodies.length - successCount;
             throw new Error(`Batch processing partially failed: ${failedCount} requests failed`);
         }
+    }
+
+    /**
+     * Write to Modbus with connection error handling and retry logic
+     */
+    private async writeToModbusWithRetry(key: string, mapping: any, value: any, maxRetries: number = 2): Promise<void> {
+        let lastError: Error | null = null;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                await this.modbusService.writeToModbus(key, mapping, value);
+                return; // Success, exit retry loop
+            } catch (error) {
+                lastError = error as Error;
+                const errorMessage = lastError.message;
+                
+                // Check if this is a connection-related error
+                if (this.isConnectionError(errorMessage)) {
+                    this.logger.error(`[RPC-HANDLER] Modbus connection lost: ${errorMessage}`);
+                    
+                    if (attempt < maxRetries) {
+                        this.logger.warn(`[RPC-HANDLER] Attempting reconnection (${attempt}/${maxRetries})...`);
+                        
+                        try {
+                            await this.modbusService.checkConnection();
+                            this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying operation...`);
+                            // Continue to next iteration to retry the operation
+                        } catch (reconnectError) {
+                            this.logger.error(`[RPC-HANDLER] Reconnection attempt failed: ${(reconnectError as Error).message}`);
+                            // Continue to next iteration anyway, maybe the connection will work
+                        }
+                        
+                        // Wait before retry
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                    }
+                } else {
+                    // Non-connection error, don't retry
+                    throw lastError;
+                }
+            }
+        }
+        
+        // All retries failed
+        const finalError = `[RPC-HANDLER] Modbus connection error: ${lastError?.message}. Please check device connection and configuration.`;
+        this.logger.error(finalError);
+        throw new Error(finalError);
+    }
+    
+    /**
+     * Read from Modbus with connection error handling and retry logic
+     */
+    private async readFromModbusWithRetry(key: string, mapping: any, maxRetries: number = 2): Promise<number | boolean> {
+        let lastError: Error | null = null;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await this.modbusService.readFromModbus(key, mapping);
+            } catch (error) {
+                lastError = error as Error;
+                const errorMessage = lastError.message;
+                
+                // Check if this is a connection-related error
+                if (this.isConnectionError(errorMessage)) {
+                    this.logger.error(`[RPC-HANDLER] Modbus connection lost during read: ${errorMessage}`);
+                    
+                    if (attempt < maxRetries) {
+                        this.logger.warn(`[RPC-HANDLER] Attempting reconnection for read (${attempt}/${maxRetries})...`);
+                        
+                        try {
+                            await this.modbusService.checkConnection();
+                            this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying read operation...`);
+                        } catch (reconnectError) {
+                            this.logger.error(`[RPC-HANDLER] Reconnection attempt failed: ${(reconnectError as Error).message}`);
+                        }
+                        
+                        // Wait before retry
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                    }
+                } else {
+                    // Non-connection error, don't retry
+                    throw lastError;
+                }
+            }
+        }
+        
+        // All retries failed
+        const finalError = `[RPC-HANDLER] Modbus read error: ${lastError?.message}. Please check device connection and configuration.`;
+        this.logger.error(finalError);
+        throw new Error(finalError);
+    }
+    
+    /**
+     * Check if an error is related to connection issues
+     */
+    private isConnectionError(errorMessage: string): boolean {
+        const connectionErrorPatterns = [
+            "Port Not Open",
+            "Timed out",
+            "ECONNREFUSED",
+            "ETIMEDOUT",
+            "ECONNRESET",
+            "EPIPE",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "socket hang up",
+            "socket closed",
+            "Connection lost",
+            "timeout",
+            "TIMEOUT"
+        ];
+        
+        return connectionErrorPatterns.some(pattern => 
+            errorMessage.toLowerCase().includes(pattern.toLowerCase())
+        );
     }
 
     /**
