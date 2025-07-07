@@ -253,6 +253,18 @@ class ModbusService {
         return this.findModbusMapping(key) !== null;
     }
     /**
+     * Get modbus holding registers mapping
+     */
+    getModbusHoldingRegisters() {
+        return this.environmentConfig.modbusHoldingRegisters || {};
+    }
+    /**
+     * Get modbus coils mapping
+     */
+    getModbusCoils() {
+        return this.environmentConfig.modbusCoils || {};
+    }
+    /**
      * Check if an error is related to connection issues
      */
     isConnectionError(errorMessage) {
