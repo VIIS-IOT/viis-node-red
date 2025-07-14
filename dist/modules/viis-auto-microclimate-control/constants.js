@@ -109,18 +109,22 @@ exports.CURTAIN_CONFIG = {
     // Luoi mapping - each luoi has thu (retract) and dai (extend) coils
     LUOI_MAPPING: {
         "luoi_1": { thu: "luoi_1_thu", dai: "luoi_1_dai" },
-        "luoi_2": { thu: "luoi_2_thu", dai: "luoi_2_dai" }
+        "luoi_2": { thu: "luoi_2_thu", dai: "luoi_2_dai" },
+        "luoi_3": { thu: "luoi_3_thu", dai: "luoi_3_dai" }
     },
     COIL_MAPPING: {
         "luoi_1_thu": 16,
         "luoi_1_dai": 17,
         "luoi_2_thu": 12,
-        "luoi_2_dai": 13
+        "luoi_2_dai": 13,
+        "luoi_3_thu": 14,
+        "luoi_3_dai": 15
     },
     // Coil pairs for conflict prevention
     COIL_PAIRS: [
         { key1: "luoi_1_thu", key2: "luoi_1_dai" },
-        { key1: "luoi_2_thu", key2: "luoi_2_dai" }
+        { key1: "luoi_2_thu", key2: "luoi_2_dai" },
+        { key1: "luoi_3_thu", key2: "luoi_3_dai" }
     ],
     DEFAULT_THRESHOLDS: {
         LIGHT_DAI: 50000, // lux - outdoor light threshold for extending curtain
