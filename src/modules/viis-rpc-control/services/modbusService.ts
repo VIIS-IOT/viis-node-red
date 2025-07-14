@@ -12,7 +12,7 @@ import {
     ManualOverride
 } from "../interfaces/types";
 import { ModbusData } from "../../../core/modbus-client";
-import { MODBUS_FUNCTION_CODES, ERROR_MESSAGES, ENV_KEYS, DEFAULTS } from "../constants";
+import { MODBUS_FUNCTION_CODES, ERROR_MESSAGES, ENV_KEYS, DEFAULTS, HOLDING_SETML_BOM_OFFSETS } from "../constants";
 import { Logger } from "../utils/logger";
 import { ScalingUtils } from "../utils/scaling";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
@@ -101,6 +101,26 @@ export class ModbusService implements IModbusService {
     }
 
     /**
+     * Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
+     */
+    private applyHoldingSetmlBomOffset(key: string, value: number | boolean): number | boolean {
+        // Check if offset feature is enabled
+        if (!HOLDING_SETML_BOM_OFFSETS.ENABLED) {
+            return value;
+        }
+
+        // Only apply offset to numeric values and specific keys
+        if (typeof value === "number" && key in HOLDING_SETML_BOM_OFFSETS.OFFSETS) {
+            const offset = HOLDING_SETML_BOM_OFFSETS.OFFSETS[key as keyof typeof HOLDING_SETML_BOM_OFFSETS.OFFSETS];
+            const offsetValue = value + offset;
+            this.logger.warn(`[OFFSET] Applied offset to ${key}: ${value} + ${offset} = ${offsetValue}`);
+            return offsetValue;
+        }
+
+        return value;
+    }
+
+    /**
      * Write value to Modbus device
      */
     async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
@@ -109,9 +129,12 @@ export class ModbusService implements IModbusService {
         try {
             let writeValue = value;
 
+            // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
+            writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
+
             // Apply scaling for numeric values
-            if (typeof value === "number") {
-                writeValue = this.scalingUtils.scaleValue(key, value, "write");
+            if (typeof writeValue === "number") {
+                writeValue = this.scalingUtils.scaleValue(key, writeValue, "write");
                 console.log(`Scaled value for writing: ${value} -> ${writeValue}`);
             }
 
@@ -341,6 +364,35 @@ export class ModbusService implements IModbusService {
         return connectionErrorPatterns.some(pattern => 
             errorMessage.toLowerCase().includes(pattern.toLowerCase())
         );
+    }
+
+    /**
+     * Check if HOLDING_SETML_BOM offset feature is enabled
+     */
+    isHoldingSetmlBomOffsetEnabled(): boolean {
+        return HOLDING_SETML_BOM_OFFSETS.ENABLED;
+    }
+
+    /**
+     * Get the offset value for a specific HOLDING_SETML_BOM key
+     */
+    getHoldingSetmlBomOffset(key: string): number | null {
+        if (!HOLDING_SETML_BOM_OFFSETS.ENABLED) {
+            return null;
+        }
+        
+        if (key in HOLDING_SETML_BOM_OFFSETS.OFFSETS) {
+            return HOLDING_SETML_BOM_OFFSETS.OFFSETS[key as keyof typeof HOLDING_SETML_BOM_OFFSETS.OFFSETS];
+        }
+        
+        return null;
+    }
+
+    /**
+     * Get all HOLDING_SETML_BOM offset configurations
+     */
+    getHoldingSetmlBomOffsetConfig(): typeof HOLDING_SETML_BOM_OFFSETS {
+        return HOLDING_SETML_BOM_OFFSETS;
     }
 
     /**

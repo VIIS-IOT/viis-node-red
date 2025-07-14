@@ -77,15 +77,34 @@ class ModbusService {
         return null;
     }
     /**
+     * Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
+     */
+    applyHoldingSetmlBomOffset(key, value) {
+        // Check if offset feature is enabled
+        if (!constants_1.HOLDING_SETML_BOM_OFFSETS.ENABLED) {
+            return value;
+        }
+        // Only apply offset to numeric values and specific keys
+        if (typeof value === "number" && key in constants_1.HOLDING_SETML_BOM_OFFSETS.OFFSETS) {
+            const offset = constants_1.HOLDING_SETML_BOM_OFFSETS.OFFSETS[key];
+            const offsetValue = value + offset;
+            this.logger.warn(`[OFFSET] Applied offset to ${key}: ${value} + ${offset} = ${offsetValue}`);
+            return offsetValue;
+        }
+        return value;
+    }
+    /**
      * Write value to Modbus device
      */
     async writeToModbus(key, mapping, value) {
         console.log(`ModbusService.writeToModbus called: key=${key}, address=${mapping.address}, value=${value}, fc=${mapping.fc}`);
         try {
             let writeValue = value;
+            // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
+            writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
             // Apply scaling for numeric values
-            if (typeof value === "number") {
-                writeValue = this.scalingUtils.scaleValue(key, value, "write");
+            if (typeof writeValue === "number") {
+                writeValue = this.scalingUtils.scaleValue(key, writeValue, "write");
                 console.log(`Scaled value for writing: ${value} -> ${writeValue}`);
             }
             // Check if Modbus client is connected
@@ -284,6 +303,30 @@ class ModbusService {
             "TIMEOUT"
         ];
         return connectionErrorPatterns.some(pattern => errorMessage.toLowerCase().includes(pattern.toLowerCase()));
+    }
+    /**
+     * Check if HOLDING_SETML_BOM offset feature is enabled
+     */
+    isHoldingSetmlBomOffsetEnabled() {
+        return constants_1.HOLDING_SETML_BOM_OFFSETS.ENABLED;
+    }
+    /**
+     * Get the offset value for a specific HOLDING_SETML_BOM key
+     */
+    getHoldingSetmlBomOffset(key) {
+        if (!constants_1.HOLDING_SETML_BOM_OFFSETS.ENABLED) {
+            return null;
+        }
+        if (key in constants_1.HOLDING_SETML_BOM_OFFSETS.OFFSETS) {
+            return constants_1.HOLDING_SETML_BOM_OFFSETS.OFFSETS[key];
+        }
+        return null;
+    }
+    /**
+     * Get all HOLDING_SETML_BOM offset configurations
+     */
+    getHoldingSetmlBomOffsetConfig() {
+        return constants_1.HOLDING_SETML_BOM_OFFSETS;
     }
     /**
      * Check Modbus connection and attempt to reconnect if needed

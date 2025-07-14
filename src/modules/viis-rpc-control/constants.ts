@@ -176,3 +176,28 @@ export const DEFAULTS = {
     EMPTY_JSON: "{}",
     EMPTY_ARRAY: "[]",
 } as const;
+
+// Special case offset configuration for HOLDING_SETML_BOM keys
+// This is a decoupled feature that can be easily enabled/disabled
+export const HOLDING_SETML_BOM_OFFSETS = {
+    // Enable/disable the offset feature
+    ENABLED: true,
+    
+    // Offset values for specific keys
+    OFFSETS: {
+        "HOLDING_SETML_BOM_1": 34,
+        "HOLDING_SETML_BOM_2": 55,
+        "HOLDING_SETML_BOM_3": 35,
+        "HOLDING_SETML_BOM_4": 48,
+        "HOLDING_SETML_BOM_5": 31,
+        "HOLDING_SETML_BOM_6": 39,
+        "HOLDING_SETML_BOM_7": 38,
+        "HOLDING_SETML_BOM_8": 39,
+        "HOLDING_SETML_BOM_9": 33,
+        "HOLDING_SETML_BOM_10": 37,
+        "HOLDING_SETML_BOM_11": 33,
+        "HOLDING_SETML_BOM_12": 37,
+        "HOLDING_SETML_BOM_13": 34,
+        "HOLDING_SETML_BOM_14": 56,
+    } as const
+} as const;

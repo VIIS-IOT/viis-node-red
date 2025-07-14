@@ -4,7 +4,7 @@
  * Centralized configuration and magic numbers
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
+exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Flow context keys (node-specific)
@@ -166,4 +166,27 @@ exports.DEFAULTS = {
     DEVICE_ID: "unknown",
     EMPTY_JSON: "{}",
     EMPTY_ARRAY: "[]",
+};
+// Special case offset configuration for HOLDING_SETML_BOM keys
+// This is a decoupled feature that can be easily enabled/disabled
+exports.HOLDING_SETML_BOM_OFFSETS = {
+    // Enable/disable the offset feature
+    ENABLED: true,
+    // Offset values for specific keys
+    OFFSETS: {
+        "HOLDING_SETML_BOM_1": 34,
+        "HOLDING_SETML_BOM_2": 55,
+        "HOLDING_SETML_BOM_3": 35,
+        "HOLDING_SETML_BOM_4": 48,
+        "HOLDING_SETML_BOM_5": 31,
+        "HOLDING_SETML_BOM_6": 39,
+        "HOLDING_SETML_BOM_7": 38,
+        "HOLDING_SETML_BOM_8": 39,
+        "HOLDING_SETML_BOM_9": 33,
+        "HOLDING_SETML_BOM_10": 37,
+        "HOLDING_SETML_BOM_11": 33,
+        "HOLDING_SETML_BOM_12": 37,
+        "HOLDING_SETML_BOM_13": 34,
+        "HOLDING_SETML_BOM_14": 56,
+    }
 };
