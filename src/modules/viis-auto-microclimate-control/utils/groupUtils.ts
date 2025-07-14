@@ -7,6 +7,7 @@ import { FAN_CONFIG } from "../constants";
 
 /**
  * Get fan groups based on group size configuration
+ * Updated to support 5-fan system
  */
 export function getFanGroups(groupSize: number): string[][] {
     switch (groupSize) {
@@ -16,6 +17,8 @@ export function getFanGroups(groupSize: number): string[][] {
             return FAN_CONFIG.GROUPS.TWO_FANS.map(group => [...group]);
         case 4:
             return FAN_CONFIG.GROUPS.FOUR_FANS.map(group => [...group]);
+        case 5:
+            return FAN_CONFIG.GROUPS.FIVE_FANS.map(group => [...group]);
         case 6:
             return FAN_CONFIG.GROUPS.SIX_FANS.map(group => [...group]);
         default:
@@ -298,13 +301,15 @@ export function createDelayedFanGroupActions(
 
 /**
  * Validate fan group configuration
+ * Updated to support 5-fan system
  */
 export function isValidFanGroupSize(groupSize: number): boolean {
-    return [1, 2, 4, 6].includes(groupSize);
+    return [1, 2, 4, 5, 6].includes(groupSize);
 }
 
 /**
  * Get recommended group size based on temperature thresholds with hysteresis
+ * Updated for 5-fan system: K1-K2: 1 fan luân phiên, K2-K3: 2 fans luân phiên, K3-K4: 5 fans, >K4: 5 fans + tường nước
  * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */
 export function getRecommendedGroupSize(
@@ -353,30 +358,30 @@ export function getRecommendedGroupSize(
         }
     };
 
-    // Temperature-only logic with hysteresis (current implementation)
-    const k4Threshold = getEffectiveThreshold(thresholds.k4, 6);
-    const k3Threshold = getEffectiveThreshold(thresholds.k3, 6);
-    const k2Threshold = getEffectiveThreshold(thresholds.k2, 4);
-    const k1Threshold = getEffectiveThreshold(thresholds.k1, 2);
+    // Updated logic for 5-fan system
+    const k4Threshold = getEffectiveThreshold(thresholds.k4, 5);
+    const k3Threshold = getEffectiveThreshold(thresholds.k3, 5);
+    const k2Threshold = getEffectiveThreshold(thresholds.k2, 2);
+    const k1Threshold = getEffectiveThreshold(thresholds.k1, 1);
 
     if (temperature >= k4Threshold) {
-        return 6; // All fans for K4
+        return 5; // 5 fans for K4 (+ water pump will be handled separately)
     } else if (temperature >= k3Threshold) {
-        return 6; // All fans for K3
+        return 5; // 5 fans for K3
     } else if (temperature >= k2Threshold) {
-        return 4; // 4 fans for K2
+        return 2; // 2 fans luân phiên for K2
     } else if (temperature >= k1Threshold) {
-        return 2; // 2 fans for K1
+        return 1; // 1 fan luân phiên for K1
     }
 
     // Future humidity logic (currently disabled)
     if (enableHumidity) {
         if (humidity < humidityThresholds.k4) {
-            return 6; // All fans for low humidity K4
+            return 5; // 5 fans for low humidity K4
         } else if (humidity < humidityThresholds.k3) {
-            return 6; // All fans for low humidity K3
+            return 5; // 5 fans for low humidity K3
         } else if (humidity < humidityThresholds.k2) {
-            return 4; // 4 fans for low humidity K2
+            return 2; // 2 fans for low humidity K2
         }
     }
 

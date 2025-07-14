@@ -38,25 +38,27 @@ exports.CONTROL_CONFIG = {
 };
 // Fan control constants
 exports.FAN_CONFIG = {
-    // Fan grouping configurations
+    // Fan grouping configurations - Updated for 5-fan system
     GROUPS: {
         ONE_FAN: [
             ["quat_1"],
             ["quat_2"],
             ["quat_3"],
             ["quat_4"],
-            ["quat_5"],
-            ["quat_6"]
+            ["quat_5"]
         ],
         TWO_FANS: [
             ["quat_1", "quat_2"],
             ["quat_3", "quat_4"],
-            ["quat_5", "quat_6"]
+            ["quat_5", "quat_1"]
         ],
         FOUR_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4"],
-            ["quat_3", "quat_4", "quat_5", "quat_6"],
-            ["quat_5", "quat_6", "quat_1", "quat_2"]
+            ["quat_2", "quat_3", "quat_4", "quat_5"],
+            ["quat_3", "quat_4", "quat_5", "quat_1"]
+        ],
+        FIVE_FANS: [
+            ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5"]
         ],
         SIX_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
@@ -76,14 +78,13 @@ exports.FAN_CONFIG = {
         K4_HUMIDITY: 75,
         ENABLE_HUMIDITY_CHECK: false // Currently disabled
     },
-    // Modbus mapping for fans
+    // Modbus mapping for fans - Updated for 5-fan system
     COIL_MAPPING: {
         "quat_1": 0,
         "quat_2": 1,
         "quat_3": 2,
         "quat_4": 3,
-        "quat_5": 4,
-        "quat_6": 5
+        "quat_5": 4
     }
 };
 // Fan dao (reverse fan) control constants

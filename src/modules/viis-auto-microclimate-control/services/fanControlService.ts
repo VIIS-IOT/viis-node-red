@@ -251,22 +251,26 @@ export class FanControlService implements IFanControlService {
             // For threshold mode, determine target group based on requirements
             let targetGroup: string[];
 
-            if (requiredGroupSize === 6) {
-                // K3 or K4: Use all 6 fans (no rotation needed)
+            if (requiredGroupSize === 5) {
+                // K3 or K4: Use all 5 fans (no rotation needed)
+                targetGroup = getAllFanKeys().slice(0, 5); // Only use first 5 fans
+                this.logger.debug(`K3/K4 threshold: using all 5 fans [${targetGroup.join(', ')}]`);
+            } else if (requiredGroupSize === 6) {
+                // Legacy support: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
-                this.logger.debug(`K3/K4 threshold: using all fans [${targetGroup.join(', ')}]`);
+                this.logger.debug(`Legacy K3/K4 threshold: using all 6 fans [${targetGroup.join(', ')}]`);
             } else if (requiredGroupSize === 4) {
-                // K2: Use rotation logic for 4-fan groups
+                // Legacy K2: Use rotation logic for 4-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`Legacy K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
             } else if (requiredGroupSize === 2) {
-                // K1: Use rotation logic for 2-fan groups
+                // K2: Use rotation logic for 2-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`K1 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K2 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
             } else if (requiredGroupSize === 1) {
-                // Single fan mode: Use rotation logic for 1-fan groups
+                // K1: Use rotation logic for 1-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`Single fan mode: using 1-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K1 threshold: using 1-fan group [${targetGroup.join(', ')}]`);
             } else {
                 // Fallback: use rotation logic for any other group size
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
