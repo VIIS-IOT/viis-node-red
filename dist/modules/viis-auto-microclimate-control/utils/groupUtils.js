@@ -23,7 +23,7 @@ exports.getRecommendedGroupSize = getRecommendedGroupSize;
 const constants_1 = require("../constants");
 /**
  * Get fan groups based on group size configuration
- * Updated to support 5-fan system
+ * Updated to support 5-fan system with K1, K2, K3 alternating index logic
  */
 function getFanGroups(groupSize) {
     switch (groupSize) {
@@ -31,6 +31,8 @@ function getFanGroups(groupSize) {
             return constants_1.FAN_CONFIG.GROUPS.ONE_FAN.map(group => [...group]);
         case 2:
             return constants_1.FAN_CONFIG.GROUPS.TWO_FANS.map(group => [...group]);
+        case 3:
+            return constants_1.FAN_CONFIG.GROUPS.THREE_FANS.map(group => [...group]);
         case 4:
             return constants_1.FAN_CONFIG.GROUPS.FOUR_FANS.map(group => [...group]);
         case 5:

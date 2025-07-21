@@ -109,6 +109,9 @@ class ModbusService {
         if (constants_1.FAN_DAO_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
             return constants_1.FAN_DAO_CONFIG.COIL_MAPPING[deviceKey];
         }
+        if (constants_1.FAN_TREN_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
+            return constants_1.FAN_TREN_CONFIG.COIL_MAPPING[deviceKey];
+        }
         if (constants_1.WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
             return constants_1.WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey];
         }

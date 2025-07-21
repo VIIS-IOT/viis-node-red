@@ -7,7 +7,7 @@ import { FAN_CONFIG } from "../constants";
 
 /**
  * Get fan groups based on group size configuration
- * Updated to support 5-fan system
+ * Updated to support 5-fan system with K1, K2, K3 alternating index logic
  */
 export function getFanGroups(groupSize: number): string[][] {
     switch (groupSize) {
@@ -15,6 +15,8 @@ export function getFanGroups(groupSize: number): string[][] {
             return FAN_CONFIG.GROUPS.ONE_FAN.map(group => [...group]);
         case 2:
             return FAN_CONFIG.GROUPS.TWO_FANS.map(group => [...group]);
+        case 3:
+            return FAN_CONFIG.GROUPS.THREE_FANS.map(group => [...group]);
         case 4:
             return FAN_CONFIG.GROUPS.FOUR_FANS.map(group => [...group]);
         case 5:

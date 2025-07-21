@@ -17,6 +17,7 @@ import {
     MODBUS_FUNCTION_CODES,
     FAN_CONFIG,
     FAN_DAO_CONFIG,
+    FAN_TREN_CONFIG,
     WATER_PUMP_CONFIG,
     CURTAIN_CONFIG,
     CONTROL_CONFIG
@@ -144,6 +145,10 @@ export class ModbusService implements IModbusService {
 
         if (FAN_DAO_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_DAO_CONFIG.COIL_MAPPING] !== undefined) {
             return FAN_DAO_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_DAO_CONFIG.COIL_MAPPING];
+        }
+
+        if (FAN_TREN_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_TREN_CONFIG.COIL_MAPPING] !== undefined) {
+            return FAN_TREN_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_TREN_CONFIG.COIL_MAPPING];
         }
 
         if (WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey as keyof typeof WATER_PUMP_CONFIG.COIL_MAPPING] !== undefined) {

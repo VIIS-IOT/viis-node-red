@@ -4,7 +4,7 @@
  * Centralized configuration and magic numbers
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MODBUS_CONFIG = exports.MODBUS_FUNCTION_CODES = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.ENV_KEYS = exports.CONFIG_KEYS = exports.CURTAIN_CONFIG = exports.WATER_PUMP_CONFIG = exports.FAN_DAO_CONFIG = exports.FAN_CONFIG = exports.CONTROL_CONFIG = exports.CONTEXT_KEYS = void 0;
+exports.MODBUS_CONFIG = exports.MODBUS_FUNCTION_CODES = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.ENV_KEYS = exports.CONFIG_KEYS = exports.CURTAIN_CONFIG = exports.WATER_PUMP_CONFIG = exports.FAN_DAO_CONFIG = exports.FAN_TREN_CONFIG = exports.FAN_CONFIG = exports.CONTROL_CONFIG = exports.CONTEXT_KEYS = void 0;
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Flow context keys (node-specific)
@@ -38,28 +38,43 @@ exports.CONTROL_CONFIG = {
 };
 // Fan control constants
 exports.FAN_CONFIG = {
-    // Fan grouping configurations - Updated for 5-fan system
+    // Fan grouping configurations - Updated for 5-fan system with alternating index logic
     GROUPS: {
+        // K1: 1 quạt bật luân phiên cách index (quat_1 → quat_3 → quat_5 → quat_2 → quat_4)
         ONE_FAN: [
             ["quat_1"],
-            ["quat_2"],
             ["quat_3"],
-            ["quat_4"],
-            ["quat_5"]
+            ["quat_5"],
+            ["quat_2"],
+            ["quat_4"]
         ],
+        // K2: 2 quạt bật luân phiên cách index (quat_1,quat_3 → quat_2,quat_4 → quat_5,quat_1)
         TWO_FANS: [
-            ["quat_1", "quat_2"],
-            ["quat_3", "quat_4"],
-            ["quat_5", "quat_1"]
+            ["quat_1", "quat_3"],
+            ["quat_2", "quat_4"],
+            ["quat_5", "quat_1"],
+            ["quat_3", "quat_5"],
+            ["quat_4", "quat_2"]
         ],
+        // K3: 3 quạt bật luân phiên cách index (quat_1,quat_3,quat_5 → quat_2,quat_4,quat_1 → quat_3,quat_5,quat_2)
+        THREE_FANS: [
+            ["quat_1", "quat_3", "quat_5"],
+            ["quat_2", "quat_4", "quat_1"],
+            ["quat_3", "quat_5", "quat_2"],
+            ["quat_4", "quat_1", "quat_3"],
+            ["quat_5", "quat_2", "quat_4"]
+        ],
+        // Legacy support for 4-fan groups
         FOUR_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4"],
             ["quat_2", "quat_3", "quat_4", "quat_5"],
             ["quat_3", "quat_4", "quat_5", "quat_1"]
         ],
+        // K4: Tất cả 5 quạt (không luân phiên)
         FIVE_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5"]
         ],
+        // Legacy support for 6-fan groups
         SIX_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
         ]
@@ -87,19 +102,34 @@ exports.FAN_CONFIG = {
         "quat_5": 4
     }
 };
+// Fan trên (ceiling fan) control constants for K4 mode
+exports.FAN_TREN_CONFIG = {
+    COIL_MAPPING: {
+        "quat_tren_1": 7
+    }
+};
 // Fan dao (reverse fan) control constants
 exports.FAN_DAO_CONFIG = {
     COIL_MAPPING: {
         "quat_dao_1": 6,
         "quat_dao_2": 7,
         "quat_dao_3": 8
+    },
+    DEFAULT_THRESHOLDS: {
+        LOW_HUMIDITY: 60,
+        HIGH_HUMIDITY: 80
     }
 };
 // Water pump control constants
 exports.WATER_PUMP_CONFIG = {
     COIL_MAPPING: {
-        "bom_nuoc_1": 9
+        "bom_nuoc_1": 5, // Updated for K4 mode - water wall pump
+        "bom_nuoc_2": 9 // Legacy mapping
     },
+    // K4 water wall configuration
+    WATER_WALL_DURATION: 20000, // 20 seconds in milliseconds
+    // Default water pump configuration
+    DEFAULT_PUMP_DURATION: 5000, // 5 seconds for regular pumps
     DEFAULT_THRESHOLDS: {
         LOW_HUMIDITY: 60,
         HIGH_HUMIDITY: 80
