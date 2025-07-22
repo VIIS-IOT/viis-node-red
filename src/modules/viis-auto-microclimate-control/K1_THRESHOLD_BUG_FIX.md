@@ -107,13 +107,18 @@ if (!this.arraysEqual(rotationState.activeGroup?.sort() || [], currentActiveFans
    - Group 2: [quat_3, quat_4, quat_5, quat_6]
    - Group 3: [quat_5, quat_6, quat_1, quat_2]
 
-### K3 Threshold (35°C) - All 6 Fans (No Rotation)
-1. **Activation**: When temperature reaches 36°C, activate all fans [quat_1, quat_2, quat_3, quat_4, quat_5, quat_6]
-2. **No Rotation**: All fans stay on, no rotation needed
+### K3 Threshold (35°C) - 3 Fans with Rotation
+1. **Activation**: When temperature reaches 36°C, activate 3-fan group with rotation [quat_1, quat_3, quat_5]
+2. **Rotation**: After configured interval, switch to next 3-fan group [quat_2, quat_4, quat_1], then [quat_3, quat_5, quat_2], etc.
+3. **Continuous Rotation**: Continue rotating through all available 3-fan groups
 
-### K4 Threshold (40°C) - All 6 Fans (No Rotation)
-1. **Activation**: When temperature reaches 41°C, activate all fans [quat_1, quat_2, quat_3, quat_4, quat_5, quat_6]
-2. **No Rotation**: All fans stay on, no rotation needed
+### K4 Threshold (40°C) - Water Wall + Quạt Trên Only
+1. **Activation**: When temperature reaches 41°C, activate water wall sequence (NO fans from quat_1 to quat_5)
+2. **Water Wall Sequence**: 
+   - Activate water wall (bom_nuoc_1) for 20 seconds
+   - After 20s, turn off water wall and activate quạt trên (quat_tren_1) continuously
+3. **No Regular Fans**: K4 does NOT use any fans from quat_1 to quat_5
+4. **Continuous Operation**: Only quạt trên continues until temperature drops below 40°C
 
 ### General Behavior
 1. **State Persistence**: Rotation state is maintained across system restarts
@@ -137,10 +142,10 @@ node test-k1-threshold-fix.js
 ```
 
 ### Test Scenarios
-1. **K1 activation**: Temperature 26°C → 2 fans active with rotation
-2. **K2 activation**: Temperature 31°C → 4 fans active with rotation  
-3. **K3 activation**: Temperature 36°C → All 6 fans active (no rotation)
-4. **K4 activation**: Temperature 41°C → All 6 fans active (no rotation)
+1. **K1 activation**: Temperature 26°C → 1 fan active with rotation
+2. **K2 activation**: Temperature 31°C → 2 fans active with rotation  
+3. **K3 activation**: Temperature 36°C → 3 fans active with rotation
+4. **K4 activation**: Temperature 41°C → All 5 fans active + water wall + quạt trên
 5. **Threshold transitions**: Smooth transitions between different thresholds
 6. **Group rotation**: After interval → Switch to different fan groups
 7. **Deactivation**: Temperature 24°C → All fans off
@@ -182,4 +187,4 @@ node test-k1-threshold-fix.js
 
 **Date**: December 2024  
 **Status**: ✅ Fixed and Tested  
-**Priority**: High (Production Issue) 
+**Priority**: High (Production Issue)

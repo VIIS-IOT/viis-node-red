@@ -71,7 +71,7 @@ class ConfigService {
                 config.set_k3_fan === undefined || (config.set_k3_fan >= 0 && config.set_k3_fan <= 100),
                 config.set_k4_fan === undefined || (config.set_k4_fan >= 0 && config.set_k4_fan <= 100),
                 // Group size should be valid
-                config.set_gr_alternate_fan === undefined || [1, 2, 4, 6].includes(config.set_gr_alternate_fan),
+                config.set_gr_alternate_fan === undefined || [1, 2, 3, 4, 5].includes(config.set_gr_alternate_fan),
                 // Time intervals should be positive
                 config.set_time_alternate_fan === undefined || config.set_time_alternate_fan > 0,
                 config.set_time_alternate_fan_dao === undefined || config.set_time_alternate_fan_dao > 0,

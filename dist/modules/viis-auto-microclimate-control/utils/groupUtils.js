@@ -279,7 +279,7 @@ function isValidFanGroupSize(groupSize) {
 }
 /**
  * Get recommended group size based on temperature thresholds with hysteresis
- * Updated for 5-fan system: K1-K2: 1 fan luân phiên, K2-K3: 2 fans luân phiên, K3-K4: 5 fans, >K4: 5 fans + tường nước
+ * Updated for 5-fan system: K1: 1 fan luân phiên, K2: 2 fans luân phiên, K3: 3 fans luân phiên, K4: 5 fans + tường nước + quạt trên
  * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */
 function getRecommendedGroupSize(temperature, humidity, thresholds, options) {
@@ -310,14 +310,14 @@ function getRecommendedGroupSize(temperature, humidity, thresholds, options) {
     };
     // Updated logic for 5-fan system
     const k4Threshold = getEffectiveThreshold(thresholds.k4, 5);
-    const k3Threshold = getEffectiveThreshold(thresholds.k3, 5);
+    const k3Threshold = getEffectiveThreshold(thresholds.k3, 3);
     const k2Threshold = getEffectiveThreshold(thresholds.k2, 2);
     const k1Threshold = getEffectiveThreshold(thresholds.k1, 1);
     if (temperature >= k4Threshold) {
-        return 5; // 5 fans for K4 (+ water pump will be handled separately)
+        return 3; // Special K4 mode: water wall + quat_tren_1 only (NO quat_1 to quat_5)
     }
     else if (temperature >= k3Threshold) {
-        return 5; // 5 fans for K3
+        return 3; // 3 fans luân phiên for K3
     }
     else if (temperature >= k2Threshold) {
         return 2; // 2 fans luân phiên for K2

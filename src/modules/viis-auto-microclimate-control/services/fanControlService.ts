@@ -210,6 +210,7 @@ export class FanControlService implements IFanControlService {
             // For threshold mode, we need to allow rotation even if the fan count matches
             // This is the key difference from the original logic that was causing the rotation bug
             // We should only skip if we're in the exact same group AND it's not time to rotate
+            // IMPORTANT: Never skip K4 (requiredGroupSize === -1) as it has special logic
             if (currentActiveFanCount === requiredGroupSize && requiredGroupSize > 0) {
                 // Check if we need to rotate within the same group size
                 const fanGroups = this.getFanGroups(requiredGroupSize);
@@ -254,22 +255,13 @@ export class FanControlService implements IFanControlService {
             let targetGroup: string[];
             let additionalActions: ControlAction[] = [];
 
-            if (requiredGroupSize === 5) {
-                // Check if this is K4 (temperature >= K4 threshold)
-                const isK4 = tempIndoor >= thresholds.k4;
+            if (requiredGroupSize === -1) {
+                // K4: Only water wall + quạt trên, NO fans from quat_1 to quat_5
+                targetGroup = []; // K4 does not use any fans from quat_1 to quat_5
+                this.logger.debug(`K4 threshold: using water wall + quạt trên only, NO fans from quat_1 to quat_5`);
                 
-                if (isK4) {
-                    // K4: Use all 5 fans + water wall + quạt trên
-                    targetGroup = getAllFanKeys().slice(0, 5); // Only use first 5 fans
-                    this.logger.debug(`K4 threshold: using all 5 fans + water wall + quạt trên [${targetGroup.join(', ')}]`);
-                    
-                    // Add water wall and quạt trên actions for K4
-                    additionalActions = await this.createK4WaterWallActions(config, sensorData);
-                } else {
-                    // K3: Use all 5 fans (no water wall)
-                    targetGroup = getAllFanKeys().slice(0, 5); // Only use first 5 fans
-                    this.logger.debug(`K3 threshold: using all 5 fans [${targetGroup.join(', ')}]`);
-                }
+                // Add water wall and quạt trên actions for K4
+                additionalActions = await this.createK4WaterWallActions(config, sensorData);
             } else if (requiredGroupSize === 6) {
                 // Legacy support: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
@@ -1085,8 +1077,8 @@ export class FanControlService implements IFanControlService {
             const isK4Active = tempIndoor >= k4Threshold;
 
             if (!isK4Active) {
-                // Temperature dropped below K4, turn off water wall components
-                this.logger.debug(`Temperature ${tempIndoor}°C below K4 threshold ${k4Threshold}°C, turning off water wall`);
+                // Temperature dropped below K4, turn off water wall components and all fans
+                this.logger.debug(`Temperature ${tempIndoor}°C below K4 threshold ${k4Threshold}°C, turning off water wall and all fans`);
                 
                 // Turn off water pump
                 const pumpAddress = coilMapping["bom_nuoc_1"];
@@ -1111,6 +1103,21 @@ export class FanControlService implements IFanControlService {
                         reason: `K4 ended: temp=${tempIndoor}°C < ${k4Threshold}°C`
                     });
                 }
+
+                // Turn off all fans from quat_1 to quat_5 (K4 should not use these fans)
+                const fanKeys = ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5"];
+                fanKeys.forEach(fanKey => {
+                    const fanAddress = coilMapping[fanKey];
+                    if (fanAddress !== undefined) {
+                        actions.push({
+                            deviceKey: fanKey,
+                            value: false,
+                            address: fanAddress,
+                            fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                            reason: `K4 ended: turn off ${fanKey} (K4 does not use quat_1 to quat_5)`
+                        });
+                    }
+                });
 
                 // Clear K4 state
                 this.flowContext.set(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_k4_state`, null);
