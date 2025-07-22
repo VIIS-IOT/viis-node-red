@@ -246,6 +246,7 @@ class FanControlService {
             if (config.set_mode_fan_dao !== 1) {
                 this.logger.debug("Fan dao control is disabled");
                 const coilMapping = this.getCoilMapping();
+                return [];
                 return (0, groupUtils_1.createFanDaoActions)(false, "Fan dao control disabled", coilMapping);
             }
             const alternateInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan_dao || 5);

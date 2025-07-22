@@ -111,9 +111,9 @@ exports.FAN_CONFIG = {
 // Fan dao (reverse fan) control constants
 exports.FAN_DAO_CONFIG = {
     COIL_MAPPING: {
-        "quat_dao_1": 6,
-        "quat_dao_2": 7,
-        "quat_dao_3": 8
+    // "quat_dao_1": 6,
+    // "quat_dao_2": 7,
+    // "quat_dao_3": 8
     },
     DEFAULT_THRESHOLDS: {
         LOW_HUMIDITY: 60,

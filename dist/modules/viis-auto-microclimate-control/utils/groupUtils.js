@@ -60,19 +60,20 @@ function getAllFanKeys() {
  * Get all fan dao keys
  */
 function getAllFanDaoKeys() {
-    return ["quat_dao_1", "quat_dao_2", "quat_dao_3"];
+    // return ["quat_dao_1", "quat_dao_2", "quat_dao_3"];
+    return [];
 }
 /**
  * Check if a device key is a fan
  */
 function isFanKey(key) {
-    return key.startsWith("quat_") && !key.includes("dao");
+    return key.startsWith("quat_") && !key.includes("dao") && !key.includes("tren");
 }
 /**
  * Check if a device key is a fan dao
  */
 function isFanDaoKey(key) {
-    return key.startsWith("quat_dao_");
+    return key.startsWith("quat_dao_fuck");
 }
 /**
  * Check if a device key is a water pump
