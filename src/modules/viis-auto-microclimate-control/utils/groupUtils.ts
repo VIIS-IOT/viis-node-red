@@ -47,21 +47,22 @@ export function getAllFanKeys(): string[] {
  * Get all fan dao keys
  */
 export function getAllFanDaoKeys(): string[] {
-    return ["quat_dao_1", "quat_dao_2", "quat_dao_3"];
+    // return ["quat_dao_1", "quat_dao_2", "quat_dao_3"];
+    return []
 }
 
 /**
  * Check if a device key is a fan
  */
 export function isFanKey(key: string): boolean {
-    return key.startsWith("quat_") && !key.includes("dao");
+    return key.startsWith("quat_") && !key.includes("dao") && !key.includes("tren");
 }
 
 /**
  * Check if a device key is a fan dao
  */
 export function isFanDaoKey(key: string): boolean {
-    return key.startsWith("quat_dao_");
+    return key.startsWith("quat_dao_fuck");
 }
 
 /**
