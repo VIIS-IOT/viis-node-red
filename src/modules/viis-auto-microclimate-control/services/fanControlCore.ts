@@ -162,7 +162,8 @@ export class FanControlCore {
             k1: config.set_k1_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K1,
             k2: config.set_k2_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K2,
             k3: config.set_k3_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K3,
-            k4: config.set_k4_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
+            k4: 99
+            // k4: config.set_k4_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
         };
 
         // Determine required group size
@@ -212,7 +213,7 @@ export class FanControlCore {
         // Direct control
         const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
         let actions = createOptimizedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord);
-        
+
         // Handle K4 special case - add water wall actions
         // Note: This is a simplified version. Full K4 logic should be handled by the calling service
         // that has access to createK4WaterWallActions method
@@ -389,7 +390,7 @@ export class FanControlCore {
             // K4 special case: no quat_1 to quat_5 fans, only water wall and quat_tren_1
             return [];
         }
-        
+
         if (requiredGroupSize === 6) {
             return getAllFanKeys();
         }

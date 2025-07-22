@@ -257,7 +257,7 @@ export class FanControlService implements IFanControlService {
             let additionalActions: ControlAction[] = [];
 
             // Always check K4 water wall actions to handle both entering and exiting K4
-            additionalActions = await this.createK4WaterWallActions(config, sensorData);
+            // additionalActions = await this.createK4WaterWallActions(config, sensorData);
 
             // if (requiredGroupSize === -1) {
             //     // K4: Only water wall + quạt trên, NO fans from quat_1 to quat_5

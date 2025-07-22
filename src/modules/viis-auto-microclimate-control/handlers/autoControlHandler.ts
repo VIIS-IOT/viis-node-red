@@ -306,7 +306,8 @@ export class AutoControlHandler implements IAutoControlHandler {
                 k1: config.set_k1_fan || 25,
                 k2: config.set_k2_fan || 30,
                 k3: config.set_k3_fan || 35,
-                k4: config.set_k4_fan || 40
+                // k4: config.set_k4_fan || 40
+                k4: 99
             };
 
             // Determine current threshold level
