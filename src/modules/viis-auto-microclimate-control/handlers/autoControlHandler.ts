@@ -315,16 +315,16 @@ export class AutoControlHandler implements IAutoControlHandler {
 
             if (temperature >= thresholds.k4) {
                 currentThreshold = "K4";
-                requiredFanCount = 6;
+                requiredFanCount = -1; // K4 uses water wall + quat_tren_1 only
             } else if (temperature >= thresholds.k3) {
                 currentThreshold = "K3";
-                requiredFanCount = 6;
+                requiredFanCount = 3; // K3 uses 3 fans rotation
             } else if (temperature >= thresholds.k2) {
                 currentThreshold = "K2";
-                requiredFanCount = 4;
+                requiredFanCount = 2; // K2 uses 2 fans rotation
             } else if (temperature >= thresholds.k1) {
                 currentThreshold = "K1";
-                requiredFanCount = 2;
+                requiredFanCount = 1; // K1 uses 1 fan rotation
             }
 
             // Get current device status
@@ -427,12 +427,20 @@ export class AutoControlHandler implements IAutoControlHandler {
     private getFanGroupInfo(requiredFanCount: number, currentActiveFans: string[]): any {
         try {
             // Define fan group configurations
-            const fanGroupConfigs: Record<number, string[][]> = {
+            const fanGroupConfigs: Record<string, string[][]> = {
+                "-1": [
+                    [] // K4 uses no quat_1 to quat_5 fans, only water wall + quat_tren_1
+                ],
                 1: [
                     ["quat_1"], ["quat_2"], ["quat_3"], ["quat_4"], ["quat_5"], ["quat_6"]
                 ],
                 2: [
                     ["quat_1", "quat_2"], ["quat_3", "quat_4"], ["quat_5", "quat_6"]
+                ],
+                3: [
+                    ["quat_1", "quat_2", "quat_3"], ["quat_2", "quat_3", "quat_4"], 
+                    ["quat_3", "quat_4", "quat_5"], ["quat_4", "quat_5", "quat_6"],
+                    ["quat_5", "quat_6", "quat_1"], ["quat_6", "quat_1", "quat_2"]
                 ],
                 4: [
                     ["quat_1", "quat_2", "quat_3", "quat_4"],
@@ -444,7 +452,7 @@ export class AutoControlHandler implements IAutoControlHandler {
                 ]
             };
 
-            const availableGroups: string[][] = fanGroupConfigs[requiredFanCount] || [];
+            const availableGroups: string[][] = fanGroupConfigs[requiredFanCount.toString()] || [];
 
             // Find which group the current active fans match
             let currentGroupIndex = -1;

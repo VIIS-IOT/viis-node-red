@@ -62,6 +62,10 @@ class FanControlService {
                 if (useTransitions) {
                     const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
                     actions.push(...thresholdActions);
+                    // // Always process K4 water wall actions even during transitions
+                    // // This ensures bom_nuoc_1 and quat_tren_1 work correctly in K4 mode
+                    // const k4Actions = await this.createK4WaterWallActions(config, sensorData);
+                    // actions.push(...k4Actions);
                 }
                 else {
                     const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);
@@ -187,12 +191,12 @@ class FanControlService {
             // For threshold mode, determine target group based on requirements
             let targetGroup;
             let additionalActions = [];
+            // Always check K4 water wall actions to handle both entering and exiting K4
+            additionalActions = await this.createK4WaterWallActions(config, sensorData);
             if (requiredGroupSize === -1) {
                 // K4: Only water wall + quạt trên, NO fans from quat_1 to quat_5
                 targetGroup = []; // K4 does not use any fans from quat_1 to quat_5
                 this.logger.debug(`K4 threshold: using water wall + quạt trên only, NO fans from quat_1 to quat_5`);
-                // Add water wall and quạt trên actions for K4
-                additionalActions = await this.createK4WaterWallActions(config, sensorData);
             }
             else if (requiredGroupSize === 6) {
                 // Legacy support: Use all 6 fans (no rotation needed)
@@ -220,9 +224,16 @@ class FanControlService {
                 this.logger.debug(`K1 threshold: using 1-fan group [${targetGroup.join(', ')}]`);
             }
             else {
-                // Fallback: use rotation logic for any other group size
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`Custom group size ${requiredGroupSize}: using group [${targetGroup.join(', ')}]`);
+                // Fallback: use rotation logic for any other group size (but NOT for K4 which is -1)
+                if (requiredGroupSize === -1) {
+                    // This should never happen as K4 is handled above, but add safety check
+                    this.logger.error(`K4 (requiredGroupSize=-1) should not reach fallback logic!`);
+                    targetGroup = []; // K4 uses no fans from quat_1 to quat_5
+                }
+                else {
+                    targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                    this.logger.debug(`Custom group size ${requiredGroupSize}: using group [${targetGroup.join(', ')}]`);
+                }
             }
             const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
             const coilMapping = this.getCoilMapping();
@@ -441,8 +452,8 @@ class FanControlService {
         else {
             this.logger.debug(`⏳ Threshold rotation: maintaining group [${rotationState.activeGroup.join(',')}]`);
         }
-        // Validate and fix any inconsistencies
-        if (!rotationState.activeGroup || rotationState.activeGroup.length !== requiredGroupSize) {
+        // Validate and fix any inconsistencies (skip validation for K4 which has requiredGroupSize = -1)
+        if (requiredGroupSize !== -1 && (!rotationState.activeGroup || rotationState.activeGroup.length !== requiredGroupSize)) {
             this.logger.warn(`🔧 Fixing invalid group size: expected ${requiredGroupSize}, got ${((_a = rotationState.activeGroup) === null || _a === void 0 ? void 0 : _a.length) || 0}`);
             rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex] || fanGroups[0] || [];
             this.flowContext.set(contextKey, rotationState);
@@ -592,10 +603,15 @@ class FanControlService {
                 return [];
             }
             let targetGroup;
-            if (requiredGroupSize === 6) {
-                // K3 or K4: Use all 6 fans (no rotation needed)
+            if (requiredGroupSize === -1) {
+                // K4: Special case - no fans from quat_1 to quat_5, only water wall + quat_tren_1
+                targetGroup = [];
+                this.logger.debug(`K4 threshold: no fans from quat_1 to quat_5, using water wall + quat_tren_1 only`);
+            }
+            else if (requiredGroupSize === 6) {
+                // K3 or legacy K4: Use all 6 fans (no rotation needed)
                 targetGroup = (0, groupUtils_1.getAllFanKeys)();
-                this.logger.debug(`K3/K4 threshold: using all fans [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K3/legacy K4 threshold: using all fans [${targetGroup.join(', ')}]`);
             }
             else {
                 // K1, K2, or other sizes: Use simplified rotation logic
@@ -617,16 +633,23 @@ class FanControlService {
             }
             // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling
             const isThresholdLevelChange = rotationState && rotationState.requiredGroupSize !== requiredGroupSize;
+            // Handle K4 special case - add water wall actions
+            let additionalActions = [];
+            if (requiredGroupSize === -1) {
+                // K4: Add water wall and quat_tren_1 actions
+                additionalActions = await this.createK4WaterWallActions(config, { temp_indoor: temperature, humi_indoor: humidity, ts: Date.now() });
+            }
             if (isThresholdLevelChange) {
                 // Threshold level changed - use transition for smooth change
                 this.logger.warn(`🔄 Threshold level change: ${rotationState.requiredGroupSize} → ${requiredGroupSize} fans, using transition`);
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
-                return []; // Transition will be handled in next cycle
+                return []; // K4 actions will be handled separately in main control flow
             }
             else {
                 // Normal rotation within same threshold level - use delayed control for smooth operation
                 this.logger.debug(`✅ Normal rotation: delayed control [${targetGroup.join(',')}] with 1s delay`);
-                return (0, groupUtils_1.createDelayedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord, 1000);
+                const fanActions = (0, groupUtils_1.createDelayedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord, 1000);
+                return [...fanActions, ...additionalActions];
             }
         }
         catch (error) {

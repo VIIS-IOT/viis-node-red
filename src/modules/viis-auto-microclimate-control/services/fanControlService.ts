@@ -103,6 +103,11 @@ export class FanControlService implements IFanControlService {
                 if (useTransitions) {
                     const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
                     actions.push(...thresholdActions);
+
+                    // // Always process K4 water wall actions even during transitions
+                    // // This ensures bom_nuoc_1 and quat_tren_1 work correctly in K4 mode
+                    // const k4Actions = await this.createK4WaterWallActions(config, sensorData);
+                    // actions.push(...k4Actions);
                 } else {
                     const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);
                     actions.push(...thresholdActions);
@@ -255,13 +260,13 @@ export class FanControlService implements IFanControlService {
             let targetGroup: string[];
             let additionalActions: ControlAction[] = [];
 
+            // Always check K4 water wall actions to handle both entering and exiting K4
+            additionalActions = await this.createK4WaterWallActions(config, sensorData);
+
             if (requiredGroupSize === -1) {
                 // K4: Only water wall + quạt trên, NO fans from quat_1 to quat_5
                 targetGroup = []; // K4 does not use any fans from quat_1 to quat_5
                 this.logger.debug(`K4 threshold: using water wall + quạt trên only, NO fans from quat_1 to quat_5`);
-                
-                // Add water wall and quạt trên actions for K4
-                additionalActions = await this.createK4WaterWallActions(config, sensorData);
             } else if (requiredGroupSize === 6) {
                 // Legacy support: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
@@ -283,9 +288,15 @@ export class FanControlService implements IFanControlService {
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
                 this.logger.debug(`K1 threshold: using 1-fan group [${targetGroup.join(', ')}]`);
             } else {
-                // Fallback: use rotation logic for any other group size
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`Custom group size ${requiredGroupSize}: using group [${targetGroup.join(', ')}]`);
+                // Fallback: use rotation logic for any other group size (but NOT for K4 which is -1)
+                if (requiredGroupSize === -1) {
+                    // This should never happen as K4 is handled above, but add safety check
+                    this.logger.error(`K4 (requiredGroupSize=-1) should not reach fallback logic!`);
+                    targetGroup = []; // K4 uses no fans from quat_1 to quat_5
+                } else {
+                    targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                    this.logger.debug(`Custom group size ${requiredGroupSize}: using group [${targetGroup.join(', ')}]`);
+                }
             }
 
             const reason = this.getThresholdReason(tempIndoor, humiIndoor, thresholds);
@@ -554,8 +565,8 @@ export class FanControlService implements IFanControlService {
             this.logger.debug(`⏳ Threshold rotation: maintaining group [${rotationState.activeGroup.join(',')}]`);
         }
 
-        // Validate and fix any inconsistencies
-        if (!rotationState.activeGroup || rotationState.activeGroup.length !== requiredGroupSize) {
+        // Validate and fix any inconsistencies (skip validation for K4 which has requiredGroupSize = -1)
+        if (requiredGroupSize !== -1 && (!rotationState.activeGroup || rotationState.activeGroup.length !== requiredGroupSize)) {
             this.logger.warn(`🔧 Fixing invalid group size: expected ${requiredGroupSize}, got ${rotationState.activeGroup?.length || 0}`);
             rotationState.activeGroup = fanGroups[rotationState.currentGroupIndex] || fanGroups[0] || [];
             this.flowContext.set(contextKey, rotationState);
@@ -742,10 +753,14 @@ export class FanControlService implements IFanControlService {
 
             let targetGroup: string[];
 
-            if (requiredGroupSize === 6) {
-                // K3 or K4: Use all 6 fans (no rotation needed)
+            if (requiredGroupSize === -1) {
+                // K4: Special case - no fans from quat_1 to quat_5, only water wall + quat_tren_1
+                targetGroup = [];
+                this.logger.debug(`K4 threshold: no fans from quat_1 to quat_5, using water wall + quat_tren_1 only`);
+            } else if (requiredGroupSize === 6) {
+                // K3 or legacy K4: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
-                this.logger.debug(`K3/K4 threshold: using all fans [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K3/legacy K4 threshold: using all fans [${targetGroup.join(', ')}]`);
             } else {
                 // K1, K2, or other sizes: Use simplified rotation logic
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
@@ -772,15 +787,23 @@ export class FanControlService implements IFanControlService {
             // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling
             const isThresholdLevelChange = rotationState && rotationState.requiredGroupSize !== requiredGroupSize;
 
+            // Handle K4 special case - add water wall actions
+            let additionalActions: ControlAction[] = [];
+            if (requiredGroupSize === -1) {
+                // K4: Add water wall and quat_tren_1 actions
+                additionalActions = await this.createK4WaterWallActions(config, { temp_indoor: temperature, humi_indoor: humidity, ts: Date.now() });
+            }
+
             if (isThresholdLevelChange) {
                 // Threshold level changed - use transition for smooth change
                 this.logger.warn(`🔄 Threshold level change: ${rotationState.requiredGroupSize} → ${requiredGroupSize} fans, using transition`);
                 this.initiateFanGroupTransition(currentActiveFans, targetGroup, reason);
-                return []; // Transition will be handled in next cycle
+                return []; // K4 actions will be handled separately in main control flow
             } else {
                 // Normal rotation within same threshold level - use delayed control for smooth operation
                 this.logger.debug(`✅ Normal rotation: delayed control [${targetGroup.join(',')}] with 1s delay`);
-                return createDelayedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord, 1000);
+                const fanActions = createDelayedFanGroupActions(targetGroup, true, reason, coilMapping, deviceStatusRecord, 1000);
+                return [...fanActions, ...additionalActions];
             }
 
         } catch (error) {
@@ -1079,7 +1102,7 @@ export class FanControlService implements IFanControlService {
             if (!isK4Active) {
                 // Temperature dropped below K4, turn off water wall components and all fans
                 this.logger.debug(`Temperature ${tempIndoor}°C below K4 threshold ${k4Threshold}°C, turning off water wall and all fans`);
-                
+
                 // Turn off water pump
                 const pumpAddress = coilMapping["bom_nuoc_1"];
                 if (pumpAddress !== undefined) {
@@ -1121,7 +1144,7 @@ export class FanControlService implements IFanControlService {
 
                 // Clear K4 state
                 this.flowContext.set(`${CONTEXT_KEYS.FAN_ROTATION_STATE}_k4_state`, null);
-                
+
                 return actions;
             }
 
@@ -1132,7 +1155,7 @@ export class FanControlService implements IFanControlService {
             if (!k4State.waterWallStarted) {
                 // Start water wall sequence
                 this.logger.warn(`K4 activated: temp=${tempIndoor}°C ≥ ${k4Threshold}°C, starting water wall sequence`);
-                
+
                 // Turn on water pump for 20 seconds
                 const pumpAddress = coilMapping["bom_nuoc_1"];
                 if (pumpAddress !== undefined) {
@@ -1155,7 +1178,7 @@ export class FanControlService implements IFanControlService {
             } else if (k4State.pumpRunning && hasTimeElapsed(k4State.pumpStartTime, WATER_PUMP_CONFIG.WATER_WALL_DURATION)) {
                 // 20 seconds elapsed, turn off pump and turn on quạt trên
                 this.logger.warn(`K4 water wall: 20s pump cycle completed, turning on quạt trên`);
-                
+
                 // Turn off water pump
                 const pumpAddress = coilMapping["bom_nuoc_1"];
                 if (pumpAddress !== undefined) {

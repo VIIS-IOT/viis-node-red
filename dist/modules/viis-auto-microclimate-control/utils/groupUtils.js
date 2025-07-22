@@ -314,7 +314,7 @@ function getRecommendedGroupSize(temperature, humidity, thresholds, options) {
     const k2Threshold = getEffectiveThreshold(thresholds.k2, 2);
     const k1Threshold = getEffectiveThreshold(thresholds.k1, 1);
     if (temperature >= k4Threshold) {
-        return 3; // Special K4 mode: water wall + quat_tren_1 only (NO quat_1 to quat_5)
+        return -1; // Special K4 mode: water wall + quat_tren_1 only (NO quat_1 to quat_5)
     }
     else if (temperature >= k3Threshold) {
         return 3; // 3 fans luân phiên for K3

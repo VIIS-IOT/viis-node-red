@@ -137,7 +137,13 @@ class FanControlCore {
         }
         // Direct control
         const deviceStatusRecord = this.convertDeviceStatusToRecord(deviceStatus);
-        const actions = (0, groupUtils_1.createOptimizedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+        let actions = (0, groupUtils_1.createOptimizedFanGroupActions)(targetGroup, true, reason, coilMapping, deviceStatusRecord);
+        // Handle K4 special case - add water wall actions
+        // Note: This is a simplified version. Full K4 logic should be handled by the calling service
+        // that has access to createK4WaterWallActions method
+        if (requiredGroupSize === -1) {
+            logger.warn("K4 threshold detected in FanControlCore - water wall logic should be handled by calling service");
+        }
         return {
             actions,
             targetGroup,
@@ -252,6 +258,10 @@ class FanControlCore {
         return this.requiresGroupTransition(currentGroup, newGroup);
     }
     static getTargetGroupForSize(requiredGroupSize) {
+        if (requiredGroupSize === -1) {
+            // K4 special case: no quat_1 to quat_5 fans, only water wall and quat_tren_1
+            return [];
+        }
         if (requiredGroupSize === 6) {
             return (0, groupUtils_1.getAllFanKeys)();
         }
