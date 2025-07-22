@@ -244,6 +244,9 @@ export class FanControlCore {
         if (config.set_mode_fan_dao !== 1) {
             logger.debug("Fan dao control is disabled");
             return {
+                actions: []
+            }
+            return {
                 actions: createFanDaoActions(false, "Fan dao control disabled", coilMapping)
             };
         }

@@ -312,6 +312,7 @@ export class FanControlService implements IFanControlService {
             if (config.set_mode_fan_dao !== 1) {
                 this.logger.debug("Fan dao control is disabled");
                 const coilMapping = this.getCoilMapping();
+                return []
                 return createFanDaoActions(false, "Fan dao control disabled", coilMapping);
             }
 
