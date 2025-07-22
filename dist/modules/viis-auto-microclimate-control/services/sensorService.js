@@ -91,6 +91,7 @@ class SensorService {
                 quat_dao_2: this.validateBooleanValue(coilRegisterData.quat_dao_2, "quat_dao_2"),
                 quat_dao_3: this.validateBooleanValue(coilRegisterData.quat_dao_3, "quat_dao_3"),
                 bom_nuoc_1: this.validateBooleanValue(coilRegisterData.bom_nuoc_1, "bom_nuoc_1"),
+                quat_tren_1: this.validateBooleanValue(coilRegisterData.quat_tren_1, "quat_tren_1"),
                 lamp_1: this.validateBooleanValue(coilRegisterData.lamp_1, "lamp_1"),
                 lamp_2: this.validateBooleanValue(coilRegisterData.lamp_2, "lamp_2"),
                 luoi_2_thu: this.validateBooleanValue(coilRegisterData.luoi_2_thu, "luoi_2_thu"),

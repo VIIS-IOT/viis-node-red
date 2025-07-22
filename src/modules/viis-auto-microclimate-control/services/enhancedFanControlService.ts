@@ -419,9 +419,8 @@ export class EnhancedFanControlService implements IFanControlService {
      * Get threshold reason string
      */
     private getThresholdReason(temperature: number, humidity: number, thresholds: any): string {
-        if (temperature >= thresholds.k4) {
-            return `K4 threshold: temp=${temperature}°C (≥${thresholds.k4}°C), humidity=${humidity}%`;
-        } else if (temperature >= thresholds.k3) {
+        // K4 logic removed - threshold set to 99°C (never triggers)
+        if (temperature >= thresholds.k3) {
             return `K3 threshold: temp=${temperature}°C (≥${thresholds.k3}°C), humidity=${humidity}%`;
         } else if (temperature >= thresholds.k2) {
             return `K2 threshold: temp=${temperature}°C (≥${thresholds.k2}°C), humidity=${humidity}%`;

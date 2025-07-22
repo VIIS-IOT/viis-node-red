@@ -103,7 +103,8 @@ class FanControlCore {
             k1: config.set_k1_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K1,
             k2: config.set_k2_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K2,
             k3: config.set_k3_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K3,
-            k4: config.set_k4_fan || constants_1.FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
+            k4: 99
+            // k4: config.set_k4_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
         };
         // Determine required group size
         const requiredGroupSize = (0, groupUtils_1.getRecommendedGroupSize)(tempIndoor, humiIndoor, thresholds);
@@ -258,10 +259,7 @@ class FanControlCore {
         return this.requiresGroupTransition(currentGroup, newGroup);
     }
     static getTargetGroupForSize(requiredGroupSize) {
-        if (requiredGroupSize === -1) {
-            // K4 special case: no quat_1 to quat_5 fans, only water wall and quat_tren_1
-            return [];
-        }
+        // K4 logic removed - no special case for -1
         if (requiredGroupSize === 6) {
             return (0, groupUtils_1.getAllFanKeys)();
         }
@@ -294,10 +292,8 @@ class FanControlCore {
         return actions;
     }
     static getThresholdReason(temperature, humidity, thresholds) {
-        if (temperature >= thresholds.k4) {
-            return `K4 threshold: temp=${temperature}°C (≥${thresholds.k4}°C), humidity=${humidity}%`;
-        }
-        else if (temperature >= thresholds.k3) {
+        // K4 logic removed - threshold set to 99°C (never triggers)
+        if (temperature >= thresholds.k3) {
             return `K3 threshold: temp=${temperature}°C (≥${thresholds.k3}°C), humidity=${humidity}%`;
         }
         else if (temperature >= thresholds.k2) {

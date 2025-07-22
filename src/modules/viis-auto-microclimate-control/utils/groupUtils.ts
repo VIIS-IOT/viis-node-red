@@ -360,15 +360,14 @@ export function getRecommendedGroupSize(
         }
     };
 
-    // Updated logic for 5-fan system
-    const k4Threshold = getEffectiveThreshold(thresholds.k4, 5);
+    // Updated logic for 5-fan system - K4 disabled (set to very high threshold)
+    const k4Threshold = 99; // K4 disabled - set to very high temperature
     const k3Threshold = getEffectiveThreshold(thresholds.k3, 3);
     const k2Threshold = getEffectiveThreshold(thresholds.k2, 2);
     const k1Threshold = getEffectiveThreshold(thresholds.k1, 1);
 
-    if (temperature >= k4Threshold) {
-        return -99; // Special K4 mode: water wall + quat_tren_1 only (NO quat_1 to quat_5)
-    } else if (temperature >= k3Threshold) {
+    // K4 logic removed - will never trigger with 99°C threshold
+    if (temperature >= k3Threshold) {
         return 3; // 3 fans luân phiên for K3
     } else if (temperature >= k2Threshold) {
         return 2; // 2 fans luân phiên for K2

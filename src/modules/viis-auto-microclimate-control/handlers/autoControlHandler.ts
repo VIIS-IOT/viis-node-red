@@ -118,7 +118,7 @@ export class AutoControlHandler implements IAutoControlHandler {
             const allActions: ControlAction[] = [];
 
             // // 1. Process water pump control first (K4 priority check)
-            // const k4OverrideActions = this.waterPumpControlService.checkK4PriorityOverride(config, sensorData);
+            // K4 override logic removed - K4 completely disabled
             // if (k4OverrideActions.length > 0) {
             //     // K4 override takes priority
             //     allActions.push(...k4OverrideActions);

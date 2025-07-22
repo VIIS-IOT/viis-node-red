@@ -386,11 +386,7 @@ export class FanControlCore {
     }
 
     private static getTargetGroupForSize(requiredGroupSize: number): string[] {
-        if (requiredGroupSize === -1) {
-            // K4 special case: no quat_1 to quat_5 fans, only water wall and quat_tren_1
-            return [];
-        }
-
+        // K4 logic removed - no special case for -1
         if (requiredGroupSize === 6) {
             return getAllFanKeys();
         }
@@ -429,9 +425,8 @@ export class FanControlCore {
     }
 
     private static getThresholdReason(temperature: number, humidity: number, thresholds: any): string {
-        if (temperature >= thresholds.k4) {
-            return `K4 threshold: temp=${temperature}°C (≥${thresholds.k4}°C), humidity=${humidity}%`;
-        } else if (temperature >= thresholds.k3) {
+        // K4 logic removed - threshold set to 99°C (never triggers)
+        if (temperature >= thresholds.k3) {
             return `K3 threshold: temp=${temperature}°C (≥${thresholds.k3}°C), humidity=${humidity}%`;
         } else if (temperature >= thresholds.k2) {
             return `K2 threshold: temp=${temperature}°C (≥${thresholds.k2}°C), humidity=${humidity}%`;

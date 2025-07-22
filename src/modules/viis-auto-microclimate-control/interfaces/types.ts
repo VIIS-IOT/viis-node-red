@@ -299,7 +299,7 @@ export interface IFanControlService {
 // Water pump control service interface
 export interface IWaterPumpControlService {
     processWaterPumpControl(config: AutoControlConfig, sensorData: SensorData, deviceStatus: DeviceStatus): Promise<ControlAction[]>;
-    checkK4PriorityOverride(config: AutoControlConfig, sensorData: SensorData): ControlAction[];
+    // K4 priority override method removed - K4 logic completely disabled
 }
 
 // Curtain control service interface

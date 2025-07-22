@@ -126,49 +126,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         return currentState;
     }
 
-    /**
-     * Check for K4 priority override (from fan control)
-     * This method can be called by the main control handler to check if K4 conditions
-     * require the water pump to be turned on regardless of humidity thresholds
-     */
-    checkK4PriorityOverride(
-        config: AutoControlConfig,
-        sensorData: SensorData
-    ): ControlAction[] {
-        try {
-            return []
-            const tempIndoor = sensorData.temp_indoor;
-            const humiIndoor = sensorData.humi_indoor;
-
-            if (tempIndoor === undefined || humiIndoor === undefined) {
-                return [];
-            }
-
-            const k4Threshold = config.set_k4_fan || 40;
-            const currentSetModeFan = config.set_mode_fan
-            const currentSetAutoModeFan = config.set_auto_mode_fan
-
-            // Check K4 conditions: temperature >= K4 threshold OR humidity < 75%
-            const k4TempCondition = tempIndoor >= k4Threshold;
-            const k4HumiCondition = humiIndoor < 75;
-
-            if ((k4TempCondition || k4HumiCondition) && currentSetModeFan && !currentSetAutoModeFan) {
-                const reason = `K4 priority override: temp=${tempIndoor}°C${k4TempCondition ? ` (≥${k4Threshold})` : ''}, humidity=${humiIndoor}%${k4HumiCondition ? ' (<75%)' : ''}`;
-                this.logger.warn(`Water pump K4 override: ON - ${reason}`);
-
-                // Update state tracking
-                this.updateWaterPumpState(true, humiIndoor, true);
-
-                return this.createWaterPumpAction(true, reason);
-            }
-
-            return [];
-
-        } catch (error) {
-            this.logger.error(`K4 priority override check error: ${(error as Error).message}`);
-            return [];
-        }
-    }
+    // K4 priority override method removed - K4 logic completely disabled
 
     /**
      * Create water pump control action

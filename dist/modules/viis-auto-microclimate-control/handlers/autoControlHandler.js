@@ -69,18 +69,17 @@ class AutoControlHandler {
             }
             // Collect all control actions
             const allActions = [];
-            // 1. Process water pump control first (K4 priority check)
-            const k4OverrideActions = this.waterPumpControlService.checkK4PriorityOverride(config, sensorData);
-            if (k4OverrideActions.length > 0) {
-                // K4 override takes priority
-                allActions.push(...k4OverrideActions);
-                this.logger.log("K4 priority override activated for water pump");
-            }
-            else {
-                // Normal water pump control
-                const waterPumpActions = await this.waterPumpControlService.processWaterPumpControl(config, sensorData, deviceStatus);
-                allActions.push(...waterPumpActions);
-            }
+            // // 1. Process water pump control first (K4 priority check)
+            // K4 override logic removed - K4 completely disabled
+            // if (k4OverrideActions.length > 0) {
+            //     // K4 override takes priority
+            //     allActions.push(...k4OverrideActions);
+            //     this.logger.log("K4 priority override activated for water pump");
+            // } else {
+            //     // Normal water pump control
+            //     const waterPumpActions = await this.waterPumpControlService.processWaterPumpControl(config, sensorData, deviceStatus);
+            //     allActions.push(...waterPumpActions);
+            // }
             // 2. Process fan control
             const fanActions = await this.fanControlService.processFanControl(config, sensorData, deviceStatus);
             allActions.push(...fanActions);
@@ -232,7 +231,8 @@ class AutoControlHandler {
                 k1: config.set_k1_fan || 25,
                 k2: config.set_k2_fan || 30,
                 k3: config.set_k3_fan || 35,
-                k4: config.set_k4_fan || 40
+                // k4: config.set_k4_fan || 40
+                k4: 99
             };
             // Determine current threshold level
             let currentThreshold = "BELOW_K1";
