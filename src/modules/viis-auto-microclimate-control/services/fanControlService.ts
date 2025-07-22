@@ -19,8 +19,6 @@ import {
     CONTEXT_KEYS,
     FAN_CONFIG,
     FAN_DAO_CONFIG,
-    FAN_TREN_CONFIG,
-    WATER_PUMP_CONFIG,
     MODBUS_FUNCTION_CODES,
     CONTROL_CONFIG
 } from "../constants";

@@ -4,7 +4,7 @@
  * Centralized configuration and magic numbers
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MODBUS_CONFIG = exports.MODBUS_FUNCTION_CODES = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.ENV_KEYS = exports.CONFIG_KEYS = exports.CURTAIN_CONFIG = exports.WATER_PUMP_CONFIG = exports.FAN_DAO_CONFIG = exports.FAN_TREN_CONFIG = exports.FAN_CONFIG = exports.CONTROL_CONFIG = exports.CONTEXT_KEYS = void 0;
+exports.MODBUS_CONFIG = exports.MODBUS_FUNCTION_CODES = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.ENV_KEYS = exports.CONFIG_KEYS = exports.CURTAIN_CONFIG = exports.WATER_PUMP_CONFIG = exports.FAN_DAO_CONFIG = exports.FAN_CONFIG = exports.CONTROL_CONFIG = exports.CONTEXT_KEYS = void 0;
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Flow context keys (node-specific)
@@ -103,11 +103,11 @@ exports.FAN_CONFIG = {
     }
 };
 // Fan trên (ceiling fan) control constants for K4 mode
-exports.FAN_TREN_CONFIG = {
-    COIL_MAPPING: {
-        "quat_tren_1": 7
-    }
-};
+// export const FAN_TREN_CONFIG = {
+//     COIL_MAPPING: {
+//         "quat_tren_1": 77
+//     }
+// } as const;
 // Fan dao (reverse fan) control constants
 exports.FAN_DAO_CONFIG = {
     COIL_MAPPING: {

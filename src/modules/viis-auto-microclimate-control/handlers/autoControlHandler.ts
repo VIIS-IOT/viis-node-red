@@ -314,10 +314,11 @@ export class AutoControlHandler implements IAutoControlHandler {
             let currentThreshold = "BELOW_K1";
             let requiredFanCount = 0;
 
-            if (temperature >= thresholds.k4) {
-                currentThreshold = "K4";
-                requiredFanCount = -1; // K4 uses water wall + quat_tren_1 only
-            } else if (temperature >= thresholds.k3) {
+            // if (temperature >= thresholds.k4) {
+            //     currentThreshold = "K4";
+            //     requiredFanCount = -1; // K4 uses water wall + quat_tren_1 only
+            // } else 
+            if (temperature >= thresholds.k3) {
                 currentThreshold = "K3";
                 requiredFanCount = 3; // K3 uses 3 fans rotation
             } else if (temperature >= thresholds.k2) {

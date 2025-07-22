@@ -108,11 +108,11 @@ export const FAN_CONFIG = {
 } as const;
 
 // Fan trên (ceiling fan) control constants for K4 mode
-export const FAN_TREN_CONFIG = {
-    COIL_MAPPING: {
-        "quat_tren_1": 77
-    }
-} as const;
+// export const FAN_TREN_CONFIG = {
+//     COIL_MAPPING: {
+//         "quat_tren_1": 77
+//     }
+// } as const;
 
 // Fan dao (reverse fan) control constants
 export const FAN_DAO_CONFIG = {
