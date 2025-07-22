@@ -62,10 +62,10 @@ class FanControlService {
                 if (useTransitions) {
                     const thresholdActions = await this.processThresholdModeWithTransition(config, sensorData, deviceStatus);
                     actions.push(...thresholdActions);
-                    // // Always process K4 water wall actions even during transitions
-                    // // This ensures bom_nuoc_1 and quat_tren_1 work correctly in K4 mode
-                    // const k4Actions = await this.createK4WaterWallActions(config, sensorData);
-                    // actions.push(...k4Actions);
+                    // Always process K4 water wall actions even during transitions
+                    // This ensures bom_nuoc_1 and quat_tren_1 work correctly in K4 mode
+                    const k4Actions = await this.createK4WaterWallActions(config, sensorData);
+                    actions.push(...k4Actions);
                 }
                 else {
                     const thresholdActions = await this.processThresholdMode(config, sensorData, deviceStatus);

@@ -117,17 +117,17 @@ export class AutoControlHandler implements IAutoControlHandler {
             // Collect all control actions
             const allActions: ControlAction[] = [];
 
-            // 1. Process water pump control first (K4 priority check)
-            const k4OverrideActions = this.waterPumpControlService.checkK4PriorityOverride(config, sensorData);
-            if (k4OverrideActions.length > 0) {
-                // K4 override takes priority
-                allActions.push(...k4OverrideActions);
-                this.logger.log("K4 priority override activated for water pump");
-            } else {
-                // Normal water pump control
-                const waterPumpActions = await this.waterPumpControlService.processWaterPumpControl(config, sensorData, deviceStatus);
-                allActions.push(...waterPumpActions);
-            }
+            // // 1. Process water pump control first (K4 priority check)
+            // const k4OverrideActions = this.waterPumpControlService.checkK4PriorityOverride(config, sensorData);
+            // if (k4OverrideActions.length > 0) {
+            //     // K4 override takes priority
+            //     allActions.push(...k4OverrideActions);
+            //     this.logger.log("K4 priority override activated for water pump");
+            // } else {
+            //     // Normal water pump control
+            //     const waterPumpActions = await this.waterPumpControlService.processWaterPumpControl(config, sensorData, deviceStatus);
+            //     allActions.push(...waterPumpActions);
+            // }
 
             // 2. Process fan control
             const fanActions = await this.fanControlService.processFanControl(config, sensorData, deviceStatus);
@@ -438,7 +438,7 @@ export class AutoControlHandler implements IAutoControlHandler {
                     ["quat_1", "quat_2"], ["quat_3", "quat_4"], ["quat_5", "quat_6"]
                 ],
                 3: [
-                    ["quat_1", "quat_2", "quat_3"], ["quat_2", "quat_3", "quat_4"], 
+                    ["quat_1", "quat_2", "quat_3"], ["quat_2", "quat_3", "quat_4"],
                     ["quat_3", "quat_4", "quat_5"], ["quat_4", "quat_5", "quat_6"],
                     ["quat_5", "quat_6", "quat_1"], ["quat_6", "quat_1", "quat_2"]
                 ],
