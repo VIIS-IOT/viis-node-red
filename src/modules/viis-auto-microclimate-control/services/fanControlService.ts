@@ -193,7 +193,8 @@ export class FanControlService implements IFanControlService {
                 k1: config.set_k1_fan || 25,
                 k2: config.set_k2_fan || 30,
                 k3: config.set_k3_fan || 35,
-                k4: config.set_k4_fan || 40
+                // k4: config.set_k4_fan || 99
+                k4: 99
             };
 
             // Get current active fan count for hysteresis calculation
@@ -258,11 +259,14 @@ export class FanControlService implements IFanControlService {
             // Always check K4 water wall actions to handle both entering and exiting K4
             additionalActions = await this.createK4WaterWallActions(config, sensorData);
 
-            if (requiredGroupSize === -1) {
-                // K4: Only water wall + quạt trên, NO fans from quat_1 to quat_5
-                targetGroup = []; // K4 does not use any fans from quat_1 to quat_5
-                this.logger.debug(`K4 threshold: using water wall + quạt trên only, NO fans from quat_1 to quat_5`);
-            } else if (requiredGroupSize === 6) {
+            // if (requiredGroupSize === -1) {
+            //     // K4: Only water wall + quạt trên, NO fans from quat_1 to quat_5
+            //     targetGroup = []; // K4 does not use any fans from quat_1 to quat_5
+            //     this.logger.debug(`K4 threshold: using water wall + quạt trên only, NO fans from quat_1 to quat_5`);
+            // } else 
+
+
+            if (requiredGroupSize === 6) {
                 // Legacy support: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
                 this.logger.debug(`Legacy K3/K4 threshold: using all 6 fans [${targetGroup.join(', ')}]`);
@@ -716,7 +720,8 @@ export class FanControlService implements IFanControlService {
                 k1: config.set_k1_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K1,
                 k2: config.set_k2_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K2,
                 k3: config.set_k3_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K3,
-                k4: config.set_k4_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
+                // k4: config.set_k4_fan || FAN_CONFIG.DEFAULT_TEMPERATURE_THRESHOLDS.K4
+                k4: 99
             };
 
             const reason = this.getThresholdReason(temperature, humidity, thresholds);
@@ -748,11 +753,13 @@ export class FanControlService implements IFanControlService {
 
             let targetGroup: string[];
 
-            if (requiredGroupSize === -1) {
-                // K4: Special case - no fans from quat_1 to quat_5, only water wall + quat_tren_1
-                targetGroup = [];
-                this.logger.debug(`K4 threshold: no fans from quat_1 to quat_5, using water wall + quat_tren_1 only`);
-            } else if (requiredGroupSize === 6) {
+            // if (requiredGroupSize === -1) {
+            //     // K4: Special case - no fans from quat_1 to quat_5, only water wall + quat_tren_1
+            //     targetGroup = [];
+            //     this.logger.debug(`K4 threshold: no fans from quat_1 to quat_5, using water wall + quat_tren_1 only`);
+            // } else
+
+            if (requiredGroupSize === 6) {
                 // K3 or legacy K4: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
                 this.logger.debug(`K3/legacy K4 threshold: using all fans [${targetGroup.join(', ')}]`);
@@ -784,11 +791,11 @@ export class FanControlService implements IFanControlService {
 
             // Handle K4 special case - add water wall actions
             let additionalActions: ControlAction[] = [];
-            if (requiredGroupSize === -1) {
-                console.log(`K4 threshold: no fans from quat_1 to quat_5, using water wall + quat_tren_1 only`);
-                // K4: Add water wall and quat_tren_1 actions
-                additionalActions = await this.createK4WaterWallActions(config, { temp_indoor: temperature, humi_indoor: humidity, ts: Date.now() });
-            }
+            // if (requiredGroupSize === -1) {
+            //     console.log(`K4 threshold: no fans from quat_1 to quat_5, using water wall + quat_tren_1 only`);
+            //     // K4: Add water wall and quat_tren_1 actions
+            //     additionalActions = await this.createK4WaterWallActions(config, { temp_indoor: temperature, humi_indoor: humidity, ts: Date.now() });
+            // }
 
             if (isThresholdLevelChange) {
                 // Threshold level changed - use transition for smooth change
