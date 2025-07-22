@@ -177,6 +177,7 @@ class ModbusService {
      */
     async executeControlAction(action) {
         if (action.fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
+            console.log("Executing write coil action: ", action);
             await this.writeCoil(action.address, action.value);
         }
         else if (action.fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {

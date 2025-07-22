@@ -57,12 +57,12 @@ class ClientRegistry {
                 this.thingsboardMqttInstance = null;
                 break;
             }
-            node.warn("[THINGSBOARD-INIT] Another node is initializing ThingsBoard client, waiting...");
+            // node.warn("[THINGSBOARD-INIT] Another node is initializing ThingsBoard client, waiting...");
             await new Promise(resolve => setTimeout(resolve, 100));
         }
         if (!this.thingsboardMqttInstance) {
             this.initializingFlags.thingsboard = true;
-            node.warn(`[THINGSBOARD-INIT] Node ${node.id} starting ThingsBoard MQTT client initialization`);
+            //node.warn("[THINGSBOARD-INIT] Node ${node.id} starting ThingsBoard MQTT client initialization`);
             try {
                 this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
                 node.warn("Created new Thingsboard MqttClientCore instance");
@@ -98,8 +98,8 @@ class ClientRegistry {
         }
         this.referenceCount.thingsboard++;
         this.clientUsers.thingsboard.add(node.id);
-        node.warn(`[THINGSBOARD-INIT] Node ${node.id} got ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
-        node.warn(`[THINGSBOARD-INIT] Active users: ${Array.from(this.clientUsers.thingsboard).join(', ')}`);
+        //node.warn("[THINGSBOARD-INIT] Node ${node.id} got ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
+        //node.warn("[THINGSBOARD-INIT] Active users: ${Array.from(this.clientUsers.thingsboard).join(', ')}`);
         // Start recovery mechanism if this is the first client
         if (this.referenceCount.thingsboard === 1) {
             this.startRecoveryMechanism();

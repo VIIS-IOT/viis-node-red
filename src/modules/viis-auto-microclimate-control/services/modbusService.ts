@@ -11,9 +11,9 @@ import {
     ILogger,
     EnvironmentConfig
 } from "../interfaces/types";
-import { 
-    CONTEXT_KEYS, 
-    ERROR_MESSAGES, 
+import {
+    CONTEXT_KEYS,
+    ERROR_MESSAGES,
     MODBUS_FUNCTION_CODES,
     FAN_CONFIG,
     FAN_DAO_CONFIG,
@@ -53,7 +53,7 @@ export class ModbusService implements IModbusService {
 
             this.logger.debug(`Writing coil: address=${address}, value=${value}`);
             await this.modbusClient.writeCoil(address, value);
-            
+
         } catch (error) {
             this.logger.error(`${ERROR_MESSAGES.MODBUS_WRITE_ERROR}: ${(error as Error).message}`);
             throw error;
@@ -75,7 +75,7 @@ export class ModbusService implements IModbusService {
 
             this.logger.debug(`Writing register: address=${address}, value=${value}`);
             await this.modbusClient.writeRegister(address, value);
-            
+
         } catch (error) {
             this.logger.error(`${ERROR_MESSAGES.MODBUS_WRITE_ERROR}: ${(error as Error).message}`);
             throw error;
@@ -98,7 +98,7 @@ export class ModbusService implements IModbusService {
             this.logger.debug(`Reading coil: address=${address}`);
             const result = await this.modbusClient.readCoils(address, 1);
             return result.data[0];
-            
+
         } catch (error) {
             this.logger.error(`${ERROR_MESSAGES.MODBUS_READ_ERROR}: ${(error as Error).message}`);
             throw error;
@@ -121,7 +121,7 @@ export class ModbusService implements IModbusService {
             this.logger.debug(`Reading register: address=${address}`);
             const result = await this.modbusClient.readHoldingRegisters(address, 1);
             return result.data[0];
-            
+
         } catch (error) {
             this.logger.error(`${ERROR_MESSAGES.MODBUS_READ_ERROR}: ${(error as Error).message}`);
             throw error;
@@ -197,7 +197,7 @@ export class ModbusService implements IModbusService {
                 } catch (error) {
                     lastError = (error as Error).message;
                     this.logger.warn(`Action failed (attempt ${attempt}/${CONTROL_CONFIG.RETRY_ATTEMPTS}): ${action.deviceKey}=${action.value}, error: ${lastError}`);
-                    
+
                     if (attempt < CONTROL_CONFIG.RETRY_ATTEMPTS) {
                         await delay(CONTROL_CONFIG.RETRY_DELAY_MS);
                     }
@@ -228,6 +228,7 @@ export class ModbusService implements IModbusService {
      */
     private async executeControlAction(action: ControlAction): Promise<void> {
         if (action.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
+            console.log("Executing write coil action: ", action);
             await this.writeCoil(action.address, action.value as boolean);
         } else if (action.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {
             await this.writeRegister(action.address, action.value as number);
@@ -250,11 +251,11 @@ export class ModbusService implements IModbusService {
         if (!this.modbusClient) {
             return "Not initialized";
         }
-        
+
         if (!this.modbusClient.isConnected) {
             return "Disconnected";
         }
-        
+
         return "Connected";
     }
 }
