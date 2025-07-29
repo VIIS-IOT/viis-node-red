@@ -161,6 +161,12 @@ export class RpcHandler implements IRpcHandler {
             await this.processParameter(key, rawValue);
         }
         
+        // Add 1 second delay between processing holding registers and coils
+        if (holdingParams.length > 0 && coilParams.length > 0) {
+            this.logger.log('Adding 1 second delay between holding registers and coils processing');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
         for (const [key, rawValue] of coilParams) {
             await this.processParameter(key, rawValue);
         }

@@ -1,7 +1,7 @@
 # RPC Handler Sorting Improvement
 
 ## Tổng quan
-Cải tiến RPC Handler để xử lý payload với nhiều keys theo thứ tự ưu tiên: **Holding Registers trước, sau đó Coils, cuối cùng là Config-only parameters**.
+Cải tiến RPC Handler để xử lý payload với nhiều keys theo thứ tự ưu tiên: **Holding Registers trước, delay 1 giây, sau đó Coils, cuối cùng là Config-only parameters**.
 
 ## Vấn đề trước đây
 - RPC Handler xử lý các parameters theo thứ tự ngẫu nhiên trong `Object.entries(params)`
@@ -18,9 +18,15 @@ private async handleStandardParams(params: Record<string, any>): Promise<void> {
     const coilParams: Array<[string, any]> = [];
     const configParams: Array<[string, any]> = [];
     
-    // Xử lý theo thứ tự: Holding -> Coils -> Config
+    // Xử lý theo thứ tự: Holding -> Delay 1s -> Coils -> Config
     for (const [key, rawValue] of holdingParams) {
         await this.processParameter(key, rawValue);
+    }
+    
+    // Add 1 second delay between processing holding registers and coils
+    if (holdingParams.length > 0 && coilParams.length > 0) {
+        this.logger.log('Adding 1 second delay between holding registers and coils processing');
+        await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     for (const [key, rawValue] of coilParams) {
@@ -78,10 +84,13 @@ export interface IModbusService {
 1. **Holding Registers** (ưu tiên cao nhất)
    - `HOLDING_THOI_GIAN_TRON_TOI_DA`: 200
 
-2. **Coils** (ưu tiên trung bình)
+2. **Delay 1 giây** (nếu có cả holding registers và coils)
+   - Chờ 1 giây để đảm bảo các giá trị holding đã được thiết lập hoàn toàn
+
+3. **Coils** (ưu tiên trung bình)
    - `COIL_AUTO_TRON`: 1
 
-3. **Config-only parameters** (ưu tiên thấp nhất)
+4. **Config-only parameters** (ưu tiên thấp nhất)
    - `schedule_id`: "683d312bdfc82ffc"
 
 ## Lợi ích
@@ -94,10 +103,12 @@ export interface IModbusService {
 ### 2. Tránh xung đột
 - Đảm bảo các giá trị cấu hình được thiết lập trước khi kích hoạt
 - Giảm thiểu khả năng xung đột giữa các lệnh Modbus
+- Delay 1 giây giữa holding và coil giúp đảm bảo các giá trị holding đã được thiết lập hoàn toàn trước khi kích hoạt coils
 
 ### 3. Logging rõ ràng
 ```
 Processing parameters - Holding: 1, Coils: 1, Config: 1
+Adding 1 second delay between holding registers and coils processing
 ```
 
 ### 4. Xử lý đặc biệt cho schedule_id
@@ -139,15 +150,18 @@ Processing parameters - Holding: 1, Coils: 1, Config: 1
 1. `COIL_AUTO_TRON`: 1
 2. `COIL_BOM_TRON`: 0
 
+**Note:** Không có delay 1 giây trong trường hợp này vì không có holding registers.
+
 ## Monitoring
 
 ### Log messages để theo dõi:
 ```
 [INFO] Processing parameters - Holding: 2, Coils: 3, Config: 1
 [INFO] Processing Modbus parameter: key=HOLDING_TEMP_SETPOINT, rawValue=25
+[INFO] Adding 1 second delay between holding registers and coils processing
 [INFO] Processing Modbus parameter: key=COIL_AUTO_MODE, rawValue=1
 [INFO] Config-only parameter validated: schedule_id=abc123
 ```
 
 ## Kết luận
-Cải tiến này đảm bảo RPC Handler xử lý các parameters theo thứ tự logic và an toàn, giảm thiểu xung đột và cải thiện độ tin cậy của hệ thống.
+Cải tiến này đảm bảo RPC Handler xử lý các parameters theo thứ tự logic và an toàn, với delay 1 giây giữa việc xử lý holding registers và coils, giảm thiểu xung đột và cải thiện độ tin cậy của hệ thống.
