@@ -2,6 +2,7 @@ import { Node } from "node-red";
 import { ModbusClientCore, ModbusConfig } from "./modbus-client";
 import { MqttClientCore, MqttConfig } from "./mqtt-client";
 import { MySqlClientCore } from "./mysql-client";
+import { MqttRecoveryManager } from "./mqtt-recovery-manager";
 
 class ClientRegistry {
     private static modbusInstance: ModbusClientCore | null = null;
@@ -40,7 +41,8 @@ class ClientRegistry {
 
     // Recovery mechanism - periodic health check
     private static recoveryTimer: NodeJS.Timeout | null = null;
-    private static readonly RECOVERY_INTERVAL = 60000; // 1 minute
+    private static readonly RECOVERY_INTERVAL = 15000; // 15 seconds - more aggressive
+    private static recoveryManager: MqttRecoveryManager | null = null;
 
     // Start automatic recovery mechanism
     private static startRecoveryMechanism(): void {
@@ -67,6 +69,10 @@ class ClientRegistry {
                 console.warn("[RECOVERY] ThingsBoard MQTT client disconnected, attempting recovery");
                 try {
                     this.thingsboardMqttInstance.resetCircuitBreaker();
+                    // Trigger immediate recovery through manager if available
+                    if (this.recoveryManager) {
+                        this.recoveryManager.forceImmediateRecovery();
+                    }
                 } catch (error) {
                     console.error("[RECOVERY] Failed to reset ThingsBoard circuit breaker:", error);
                 }
@@ -79,6 +85,10 @@ class ClientRegistry {
                 console.warn("[RECOVERY] Local MQTT client disconnected, attempting recovery");
                 try {
                     this.localMqttInstance.resetCircuitBreaker();
+                    // Trigger immediate recovery through manager if available
+                    if (this.recoveryManager) {
+                        this.recoveryManager.forceImmediateRecovery();
+                    }
                 } catch (error) {
                     console.error("[RECOVERY] Failed to reset Local circuit breaker:", error);
                 }
@@ -168,6 +178,21 @@ class ClientRegistry {
             try {
                 this.localMqttInstance = new MqttClientCore(config, node);
                 node.warn("Created new Local MqttClientCore instance");
+
+                // Initialize recovery manager if not exists
+                if (!this.recoveryManager) {
+                    this.recoveryManager = MqttRecoveryManager.getInstance({
+                        aggressiveMode: true,
+                        quickRecoveryInterval: 2000,
+                        normalRecoveryInterval: 10000,
+                        maxQuickRecoveryAttempts: 10,
+                        networkCheckInterval: 5000,
+                        powerOutageDetection: true
+                    });
+                }
+
+                // Register with recovery manager for enhanced recovery
+                this.recoveryManager.registerClient('local-mqtt', this.localMqttInstance, node);
 
                 await this.localMqttInstance.waitForConnection();
                 this.activeConnections.localMqtt++;
@@ -372,6 +397,10 @@ class ClientRegistry {
             this.clientUsers.local.delete(node.id);
             node.warn(`[LOCAL-RELEASE] Node ${node.id} released Local MQTT client, ref count: ${this.referenceCount.local}`);
             if (this.referenceCount.local <= 0) {
+                // Unregister from recovery manager
+                if (this.recoveryManager) {
+                    this.recoveryManager.unregisterClient('local-mqtt');
+                }
                 this.localMqttInstance.disconnect();
                 this.activeConnections.localMqtt--;
                 this.localMqttInstance = null;

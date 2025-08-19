@@ -56,6 +56,13 @@ export class MqttClientCore extends EventEmitter {
     private subscribedTopics: Set<string> = new Set();
 
     // Enhanced state management
+    private readonly RECONNECT_INTERVAL_MIN = 500; // 500ms - more aggressive
+    private readonly RECONNECT_INTERVAL_MAX = 10000; // 10 seconds - faster recovery
+    private readonly RECONNECT_INTERVAL_MULTIPLIER = 1.3; // slower backoff
+    private readonly CIRCUIT_BREAKER_TIMEOUT = 20000; // 20 seconds - quicker recovery
+    private readonly CIRCUIT_BREAKER_MAX_ATTEMPTS = 10; // more attempts before circuit break
+    private readonly HEALTH_CHECK_INTERVAL = 10000; // 10 seconds - more frequent checks instead of 5 minutes
+
     private connectionState: ConnectionState;
     private messageQueue: QueuedMessage[] = [];
     private healthCheckTimer: NodeJS.Timeout | null = null;
@@ -68,13 +75,13 @@ export class MqttClientCore extends EventEmitter {
     constructor(config: MqttConfig, node: Node) {
         super();
         this.config = {
-            reconnectPeriod: 5000,
-            connectTimeout: 30000,
-            keepalive: 60,
-            maxReconnectAttempts: 10,
-            reconnectBackoffMultiplier: 1.5,
-            maxReconnectDelay: 60000,
-            healthCheckInterval: 30000,
+            reconnectPeriod: 0, // Disable auto reconnect (0 = disabled), we'll handle it manually
+            connectTimeout: 10000, // 10 second timeout for faster failure detection
+            keepalive: 30, // 30 second keepalive for quicker disconnection detection
+            maxReconnectAttempts: this.CIRCUIT_BREAKER_MAX_ATTEMPTS,
+            reconnectBackoffMultiplier: this.RECONNECT_INTERVAL_MULTIPLIER,
+            maxReconnectDelay: this.RECONNECT_INTERVAL_MAX,
+            healthCheckInterval: this.HEALTH_CHECK_INTERVAL,
             messageQueueSize: 100,
             enableCircuitBreaker: true,
             ...config,
@@ -271,7 +278,7 @@ export class MqttClientCore extends EventEmitter {
         this.node.status({ fill: "red", shape: "ring", text: "Circuit breaker open - will retry in 30s" });
 
         // Shorter initial timeout with progressive backoff
-        const initialTimeout = 30000; // 30 seconds instead of 5 minutes
+        const initialTimeout = this.CIRCUIT_BREAKER_TIMEOUT; // 20 seconds instead of 5 minutes
         this.circuitBreakerTimer = setTimeout(() => {
             this.connectionState.circuitBreakerOpen = false;
             this.connectionState.reconnectAttempts = 0;

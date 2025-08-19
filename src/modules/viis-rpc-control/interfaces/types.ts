@@ -137,6 +137,7 @@ export interface IMqttService {
     publishResult(key: string, value: number | boolean): void;
     publishResultImmediate(key: string, value: number | boolean): Promise<void>;
     publishConfigUpdate(key: string, value: any, note?: string): Promise<void>;
+    isConnected(): boolean;
     publishError(errorMessage: string): Promise<void>;
 }
 
