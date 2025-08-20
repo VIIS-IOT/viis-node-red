@@ -65,16 +65,21 @@ export class ValidationService implements IValidationService {
      * Auto-detect the type of a value
      */
     private detectValueType(value: any): SupportedDataType {
+        // Check boolean first to avoid Number() conversion confusion
         if (typeof value === "boolean") {
             return "boolean";
         }
         
-        if (typeof value === "number" || (!isNaN(Number(value)) && value !== "" && value !== null)) {
+        if (typeof value === "string" && (value.toLowerCase() === "true" || value.toLowerCase() === "false")) {
+            return "boolean";
+        }
+        
+        if (typeof value === "number" && !isNaN(value) && isFinite(value)) {
             return "number";
         }
         
-        if (typeof value === "string" && (value.toLowerCase() === "true" || value.toLowerCase() === "false")) {
-            return "boolean";
+        if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value.trim())) && isFinite(Number(value.trim()))) {
+            return "number";
         }
         
         return "string";
