@@ -110,6 +110,7 @@ export interface IConfigService {
     validateScaleConfigs(configs: ScaleConfig[]): void;
     validateConfigKeys(keys: ConfigKey): void;
     addConfigKey(key: string, value: any): void;
+    removeConfigKey(key: string): void;
 }
 
 // Validation service interface
