@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const modbus_client_1 = require("./modbus-client");
 const mqtt_client_1 = require("./mqtt-client");
 const mysql_client_1 = require("./mysql-client");
+const mqtt_recovery_manager_1 = require("./mqtt-recovery-manager");
 class ClientRegistry {
     // Start automatic recovery mechanism
     static startRecoveryMechanism() {
@@ -27,6 +28,10 @@ class ClientRegistry {
                 console.warn("[RECOVERY] ThingsBoard MQTT client disconnected, attempting recovery");
                 try {
                     this.thingsboardMqttInstance.resetCircuitBreaker();
+                    // Trigger immediate recovery through manager if available
+                    if (this.recoveryManager) {
+                        this.recoveryManager.forceImmediateRecovery();
+                    }
                 }
                 catch (error) {
                     console.error("[RECOVERY] Failed to reset ThingsBoard circuit breaker:", error);
@@ -39,6 +44,10 @@ class ClientRegistry {
                 console.warn("[RECOVERY] Local MQTT client disconnected, attempting recovery");
                 try {
                     this.localMqttInstance.resetCircuitBreaker();
+                    // Trigger immediate recovery through manager if available
+                    if (this.recoveryManager) {
+                        this.recoveryManager.forceImmediateRecovery();
+                    }
                 }
                 catch (error) {
                     console.error("[RECOVERY] Failed to reset Local circuit breaker:", error);
@@ -118,6 +127,19 @@ class ClientRegistry {
             try {
                 this.localMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
                 node.warn("Created new Local MqttClientCore instance");
+                // Initialize recovery manager if not exists
+                if (!this.recoveryManager) {
+                    this.recoveryManager = mqtt_recovery_manager_1.MqttRecoveryManager.getInstance({
+                        aggressiveMode: true,
+                        quickRecoveryInterval: 2000,
+                        normalRecoveryInterval: 10000,
+                        maxQuickRecoveryAttempts: 10,
+                        networkCheckInterval: 5000,
+                        powerOutageDetection: true
+                    });
+                }
+                // Register with recovery manager for enhanced recovery
+                this.recoveryManager.registerClient('local-mqtt', this.localMqttInstance, node);
                 await this.localMqttInstance.waitForConnection();
                 this.activeConnections.localMqtt++;
                 node.warn("Local MQTT client connected successfully");
@@ -303,6 +325,10 @@ class ClientRegistry {
             this.clientUsers.local.delete(node.id);
             node.warn(`[LOCAL-RELEASE] Node ${node.id} released Local MQTT client, ref count: ${this.referenceCount.local}`);
             if (this.referenceCount.local <= 0) {
+                // Unregister from recovery manager
+                if (this.recoveryManager) {
+                    this.recoveryManager.unregisterClient('local-mqtt');
+                }
                 this.localMqttInstance.disconnect();
                 this.activeConnections.localMqtt--;
                 this.localMqttInstance = null;
@@ -446,5 +472,6 @@ ClientRegistry.clientUsers = {
 };
 // Recovery mechanism - periodic health check
 ClientRegistry.recoveryTimer = null;
-ClientRegistry.RECOVERY_INTERVAL = 60000; // 1 minute
+ClientRegistry.RECOVERY_INTERVAL = 15000; // 15 seconds - more aggressive
+ClientRegistry.recoveryManager = null;
 exports.default = ClientRegistry;

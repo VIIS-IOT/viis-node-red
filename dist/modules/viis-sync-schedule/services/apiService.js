@@ -10,7 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const logger_1 = require("../utils/logger");
-const configs_1 = __importDefault(require("../../../configs"));
+const configs_1 = require("../../../configs");
 const constants_1 = require("../constants");
 const retry_1 = require("../utils/retry");
 /**
@@ -20,10 +20,12 @@ class ApiService {
     /**
      * Creates a new API service instance
      * @param accessToken - Device access token for authentication
+     * @param nodeContext - Optional Node-RED context for hot reload support
      */
-    constructor(accessToken) {
+    constructor(accessToken, nodeContext) {
+        this.configs = (0, configs_1.createConfig)(nodeContext);
         const config = {
-            baseURL: configs_1.default.serverUrl || 'http://localhost:8080',
+            baseURL: this.configs.serverUrl || 'http://localhost:8080',
             timeout: constants_1.SYNC_DEFAULTS.TIMEOUT,
             headers: {
                 'Content-Type': 'application/json',
