@@ -136,16 +136,20 @@ class ConfigService {
      */
     addConfigKey(key, value) {
         const configKeys = this.getConfigKeys();
-        // Auto-detect type
+        // Auto-detect type with proper boolean detection
         let detectedType = "string";
+        // Check boolean first to avoid Number() conversion confusion
         if (typeof value === "boolean") {
             detectedType = "boolean";
         }
-        else if (typeof value === "number" || (!isNaN(Number(value)) && value !== "" && value !== null)) {
-            detectedType = "number";
-        }
         else if (typeof value === "string" && (value.toLowerCase() === "true" || value.toLowerCase() === "false")) {
             detectedType = "boolean";
+        }
+        else if (typeof value === "number" && !isNaN(value) && isFinite(value)) {
+            detectedType = "number";
+        }
+        else if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value.trim())) && isFinite(Number(value.trim()))) {
+            detectedType = "number";
         }
         else {
             detectedType = "string";
@@ -154,6 +158,18 @@ class ConfigService {
         const updatedConfigKeys = Object.assign(Object.assign({}, configKeys), { [key]: detectedType });
         this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_KEYS, updatedConfigKeys);
         this.logger.log(`Auto-added new config key: ${key} with type: ${detectedType}`);
+    }
+    /**
+     * Remove a specific configuration key
+     */
+    removeConfigKey(key) {
+        const configKeys = this.getConfigKeys();
+        if (key in configKeys) {
+            const updatedConfigKeys = Object.assign({}, configKeys);
+            delete updatedConfigKeys[key];
+            this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_KEYS, updatedConfigKeys);
+            this.logger.log(`Removed config key: ${key}`);
+        }
     }
     /**
      * Clear all configurations for this node
