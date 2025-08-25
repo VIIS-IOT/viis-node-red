@@ -181,8 +181,8 @@ export const DEFAULTS = {
 // This is a decoupled feature that can be easily enabled/disabled
 export const HOLDING_SETML_BOM_OFFSETS = {
     // Enable/disable the offset feature
-    ENABLED: true,
-    
+    ENABLED: false,
+
     // Offset values for specific keys
     OFFSETS: {
         "HOLDING_SETML_BOM_1": 34,
