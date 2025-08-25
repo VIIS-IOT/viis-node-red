@@ -46,6 +46,16 @@ export function createConfig(nodeContext?: NodeContext) {
 
     return {
         /**
+         * Device configuration
+         */
+        deviceId: getEnvVar('DEVICE_ID'),
+        deviceAccessToken: getEnvVar('DEVICE_ACCESS_TOKEN'),
+        deviceLabel: getEnvVar('DEVICE_LABEL'),
+        deviceSerial: getEnvVar('DEVICE_SERIAL'),
+        deviceProfileId: getEnvVar('DEVICE_PROFILE_ID'),
+        deviceProfileLabel: getEnvVar('DEVICE_PROFILE_LABEL'),
+        
+        /**
          * Your favorite port
          */
         port: getNumericEnvVar('PORT', 3000),

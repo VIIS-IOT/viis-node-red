@@ -116,8 +116,7 @@ module.exports = function (RED) {
                     logger.log("Initializing Modbus client...");
                     modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
                     // Wait a moment for Modbus connection to establish
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    // Check if Modbus client is actually connected
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for connection
                     if (!modbusClient.isConnectedCheck()) {
                         throw new Error("Modbus client failed to connect - check device connection and configuration");
                     }
@@ -151,6 +150,7 @@ module.exports = function (RED) {
                     const errorMsg = `MQTT initialization failed: ${error.message}`;
                     logger.error(`[MQTT-INIT] ${errorMsg}`);
                     logger.error(`[MQTT-INIT] Error stack: ${error.stack}`);
+                    node.error(errorMsg);
                     node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
                     return;
                 }
@@ -178,30 +178,41 @@ module.exports = function (RED) {
                     }
                     logger.warn(`[MQTT-SUB] MQTT client instance exists: ${!!mqttClient}`);
                     logger.warn(`[MQTT-SUB] MQTT client type: ${mqttClient.constructor.name}`);
-                    // Wait for client to be connected before subscribing
+                    // Wait for connection before subscribing with shorter timeout for faster recovery
                     if (!mqttClient.isConnected()) {
-                        logger.warn("[MQTT-SUB] MQTT client not connected, waiting for connection...");
-                        await new Promise((resolve) => {
-                            mqttClient.once("mqtt-status", ({ status }) => {
-                                logger.warn(`[MQTT-SUB] Received status event: ${status}`);
-                                if (status === "connected") {
-                                    logger.warn("[MQTT-SUB] Connection established, proceeding with subscription");
-                                    resolve();
-                                }
-                            });
-                            // Set a timeout in case connection never happens
-                            setTimeout(() => {
-                                logger.warn("[MQTT-SUB] MQTT connection timeout, proceeding anyway");
-                                resolve();
-                            }, 5000);
-                        });
+                        logger.warn("[MQTT-SUBSCRIBE] Waiting for MQTT connection before subscribing...");
+                        try {
+                            await mqttClient.waitForConnection(10000); // Wait up to 10 seconds for faster failure detection
+                        }
+                        catch (error) {
+                            logger.error(`[MQTT-SUBSCRIBE] Connection timeout: ${error.message}`);
+                            // Trigger circuit breaker reset for immediate recovery
+                            if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
+                                mqttClient.resetCircuitBreaker();
+                            }
+                            throw error;
+                        }
                     }
-                    else {
-                        logger.warn("[MQTT-SUB] MQTT client already connected");
+                    // Subscribe with more aggressive retries
+                    let retryCount = 0;
+                    const maxRetries = 5; // Increased from 3
+                    while (retryCount < maxRetries) {
+                        try {
+                            await mqttClient.subscribe(subscribeTopic);
+                            logger.warn(`[MQTT-SUB] Successfully subscribed to topic: ${subscribeTopic}`);
+                            break;
+                        }
+                        catch (error) {
+                            retryCount++;
+                            logger.error(`[MQTT-SUB] Failed to subscribe to ${subscribeTopic}: ${error.message}`);
+                            logger.error(`[MQTT-SUB] Error stack: ${error.stack}`);
+                            logger.error(`[MQTT-SUB] Retrying subscription in 2 seconds...`);
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        }
                     }
-                    logger.warn(`[MQTT-SUB] Attempting to subscribe to: ${subscribeTopic}`);
-                    await mqttClient.subscribe(subscribeTopic);
-                    logger.warn(`[MQTT-SUB] Successfully subscribed to topic: ${subscribeTopic}`);
+                    if (retryCount >= maxRetries) {
+                        throw new Error(`Failed to subscribe to ${subscribeTopic} after ${maxRetries} retries`);
+                    }
                 }
                 catch (error) {
                     const errorMsg = `Failed to subscribe to ${subscribeTopic}: ${error.message}`;
@@ -224,6 +235,17 @@ module.exports = function (RED) {
                                         await mqttClient.subscribe(subscribeTopic);
                                         logger.log(`Resubscribed on reconnection: ${subscribeTopic}`);
                                         node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                                    }
+                                    else if (status === 'disconnected') {
+                                        logger.warn("[MQTT-STATUS] MQTT disconnected - recovery will be attempted");
+                                        node.status({ fill: "yellow", shape: "ring", text: "Disconnected - recovering" });
+                                        // Trigger immediate recovery attempt
+                                        if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
+                                            setTimeout(() => {
+                                                logger.warn("[MQTT-STATUS] Triggering circuit breaker reset for recovery");
+                                                mqttClient.resetCircuitBreaker();
+                                            }, 1000); // 1 second delay to avoid rapid resets
+                                        }
                                     }
                                 });
                             }

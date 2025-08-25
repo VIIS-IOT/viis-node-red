@@ -8,22 +8,21 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SyncScheduleService = void 0;
 const AxiosService_1 = require("../AxiosService");
-const configs_1 = __importDefault(require("../../configs"));
+const configs_1 = require("../../configs");
 const typedi_1 = require("typedi");
 let SyncScheduleService = class SyncScheduleService extends AxiosService_1.AxiosService {
-    constructor() {
+    constructor(nodeContext) {
+        const configs = (0, configs_1.createConfig)(nodeContext);
         super({
-            baseURL: configs_1.default.serverUrl || "http://localhost:8080", // Default fallback
+            baseURL: configs.serverUrl || "http://localhost:8080", // Default fallback
             withCredentials: true,
         });
-        this.accessToken = process.env.DEVICE_ACCESS_TOKEN || "NA";
-        console.log("SyncScheduleService constructor called with baseURL:", configs_1.default.serverUrl);
+        this.configs = configs;
+        this.accessToken = configs.deviceAccessToken || "NA";
+        console.log("SyncScheduleService constructor called with baseURL:", configs.serverUrl);
     }
     async logSchedule(body) {
         try {
@@ -74,5 +73,5 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
 exports.SyncScheduleService = SyncScheduleService;
 exports.SyncScheduleService = SyncScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [Object])
 ], SyncScheduleService);

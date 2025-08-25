@@ -1,20 +1,24 @@
 import { AxiosService } from '../AxiosService';
-import configs from '../../configs';
+import { createConfig } from '../../configs';
 import { TabiotSchedule } from '../../orm/entities/schedule/TabiotSchedule';
 import { Service } from 'typedi';
 import { TabiotSchedulePlan } from '../../orm/entities/schedulePlan/TabiotSchedulePlan';
+import { NodeContext } from 'node-red';
 
 
 @Service()
 export class SyncScheduleService extends AxiosService {
     private accessToken: string;
+    private configs: any;
 
-    constructor() {
+    constructor(nodeContext?: NodeContext) {
+        const configs = createConfig(nodeContext);
         super({
             baseURL: configs.serverUrl || "http://localhost:8080", // Default fallback
             withCredentials: true,
         });
-        this.accessToken = process.env.DEVICE_ACCESS_TOKEN || "NA";
+        this.configs = configs;
+        this.accessToken = configs.deviceAccessToken || "NA";
         console.log("SyncScheduleService constructor called with baseURL:", configs.serverUrl);
     }
 

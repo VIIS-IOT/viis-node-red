@@ -18,19 +18,60 @@ class RpcHandler {
         this.logger = new logger_1.Logger(options.node, "RPC-HANDLER");
     }
     /**
-     * Handle incoming RPC request
+     * Handle incoming RPC request with retry logic
      */
-    async handleRpcRequest(rpcBody) {
-        try {
-            if (rpcBody.method === "set_state" && rpcBody.params) {
-                this.logger.log(`Processing RPC request: ${JSON.stringify(rpcBody)}`);
-                await this.handleSetStateRequest(rpcBody.params);
+    async handleRpcRequest(rpcBody, maxRetries = 3) {
+        let lastError = null;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                if (rpcBody.method === "set_state" && rpcBody.params) {
+                    this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
+                    await this.handleSetStateRequest(rpcBody.params);
+                    return; // Success
+                }
+                else {
+                    this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
+                    return; // No need to retry for unsupported methods
+                }
             }
-            else {
-                this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
+            catch (error) {
+                lastError = error;
+                // Check if error is retryable
+                if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
+                    this.logger.warn(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+                    continue;
+                }
+                // Non-retryable error or last attempt
+                break;
             }
         }
-        catch (error) {
+        // Handle the final error
+        if (lastError) {
+            await this.handleRpcError(lastError);
+        }
+    }
+    /**
+     * Check if an error is retryable
+     */
+    isRetryableError(errorMessage) {
+        const retryablePatterns = [
+            "timeout",
+            "TIMEOUT",
+            "Port Not Open",
+            "connection lost",
+            "ECONNREFUSED",
+            "ETIMEDOUT",
+            "ECONNRESET",
+            "socket hang up"
+        ];
+        return retryablePatterns.some(pattern => errorMessage.toLowerCase().includes(pattern.toLowerCase()));
+    }
+    /**
+     * Handle RPC error with proper logging and status updates
+     */
+    async handleRpcError(error) {
+        try {
             const err = error;
             let errorMessage = constants_1.ERROR_MESSAGES.RPC_HANDLING_ERROR + `: ${err.message}`;
             // Handle specific timeout errors
@@ -66,15 +107,37 @@ class RpcHandler {
                 this.node.status({ fill: "red", shape: "ring", text: "RPC error" });
             }
             this.logger.error(errorMessage);
-            // Don't re-throw the error to prevent uncaught exceptions
-            // Instead, publish error status via MQTT if possible
+            // Publish error status via MQTT with retry
+            await this.publishErrorWithRetry(errorMessage);
+        }
+        catch (publishError) {
+            this.logger.error(`Failed to handle RPC error: ${publishError.message}`);
+        }
+    }
+    /**
+     * Publish error with retry logic
+     */
+    async publishErrorWithRetry(errorMessage, maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 await this.mqttService.publishError(errorMessage);
+                return; // Success
             }
-            catch (publishError) {
-                this.logger.error(`Failed to publish error status: ${publishError.message}`);
+            catch (error) {
+                this.logger.error(`Failed to publish error (attempt ${attempt}/${maxRetries}): ${error.message}`);
+                if (attempt < maxRetries) {
+                    // Check if MQTT is connected
+                    if (!this.mqttService.isConnected()) {
+                        this.logger.warn("MQTT disconnected, waiting for reconnection...");
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                    else {
+                        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+                    }
+                }
             }
         }
+        this.logger.error("Failed to publish error after all retries");
     }
     /**
      * Handle set_state RPC request
@@ -169,8 +232,8 @@ class RpcHandler {
             this.logger.warn(`Reading back value from Modbus: ${key}`);
             const readValue = await this.readFromModbusWithRetry(key, mapping);
             this.logger.warn(`Read value from Modbus: ${key}=${readValue} (type: ${typeof readValue})`);
-            // Publish the result
-            this.mqttService.publishResult(key, readValue);
+            // Publish the result with retry
+            await this.publishResultWithRetry(key, readValue);
             this.logger.warn(`Successfully processed Modbus parameter: ${key}=${readValue}`);
         }
         catch (error) {
@@ -225,7 +288,31 @@ class RpcHandler {
         if (!this.validateRpcMessage(rpcBody)) {
             throw new Error("Invalid RPC message structure");
         }
-        await this.handleRpcRequest(rpcBody);
+        await this.handleRpcRequest(rpcBody, 3); // Use retry logic
+    }
+    /**
+     * Publish result with retry logic
+     */
+    async publishResultWithRetry(key, value, maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                await this.mqttService.publishResult(key, value);
+                return; // Success
+            }
+            catch (error) {
+                this.logger.error(`Failed to publish result for ${key} (attempt ${attempt}/${maxRetries}): ${error.message}`);
+                if (attempt < maxRetries) {
+                    if (!this.mqttService.isConnected()) {
+                        this.logger.warn("MQTT disconnected, waiting for reconnection...");
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                    else {
+                        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+                    }
+                }
+            }
+        }
+        this.logger.error(`Failed to publish result for ${key} after all retries`);
     }
     /**
      * Handle batch RPC requests

@@ -49,7 +49,7 @@ export class ScheduleSyncHandler {
         this.planRepo = dbService.getSchedulePlanRepository();
         this.scheduleRepo = dbService.getScheduleRepository();
         this.node = node;
-        this.apiService = new ApiService(accessToken);
+        this.apiService = new ApiService(accessToken, (node as any).context());
         this.syncStateService = new SyncStateService(node);
 
         // Initialize sync statistics

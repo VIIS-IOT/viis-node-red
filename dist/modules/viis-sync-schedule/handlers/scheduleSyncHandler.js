@@ -25,7 +25,7 @@ class ScheduleSyncHandler {
         this.planRepo = dbService.getSchedulePlanRepository();
         this.scheduleRepo = dbService.getScheduleRepository();
         this.node = node;
-        this.apiService = new apiService_1.ApiService(accessToken);
+        this.apiService = new apiService_1.ApiService(accessToken, node.context());
         this.syncStateService = new syncStateService_1.SyncStateService(node);
         // Initialize sync statistics
         this.resetSyncStats();
