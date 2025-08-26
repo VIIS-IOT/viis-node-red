@@ -108,21 +108,21 @@ class ClientRegistry {
                 this.thingsboardMqttInstance = null;
                 break;
             }
-            node.warn("[THINGSBOARD-INIT] Another node is initializing ThingsBoard client, waiting...");
+            // node.warn("[THINGSBOARD-INIT] Another node is initializing ThingsBoard client, waiting...");
             await new Promise(resolve => setTimeout(resolve, 100));
         }
 
         if (!this.thingsboardMqttInstance) {
             this.initializingFlags.thingsboard = true;
-            node.warn(`[THINGSBOARD-INIT] Node ${node.id} starting ThingsBoard MQTT client initialization`);
+            // node.warn(`[THINGSBOARD-INIT] Node ${node.id} starting ThingsBoard MQTT client initialization`);
 
             try {
                 this.thingsboardMqttInstance = new MqttClientCore(config, node);
-                node.warn("Created new Thingsboard MqttClientCore instance");
+                // node.warn("Created new Thingsboard MqttClientCore instance");
 
                 await this.thingsboardMqttInstance.waitForConnection();
                 this.activeConnections.thingsboardMqtt++;
-                node.warn("Thingsboard MQTT client connected successfully");
+                // node.warn("Thingsboard MQTT client connected successfully");
                 this.logActiveConnections(node);
             } catch (error) {
                 this.thingsboardMqttInstance = null; // Reset on failure
@@ -130,7 +130,7 @@ class ClientRegistry {
 
                 // Add recovery mechanism - try to reset circuit breaker if it exists
                 if (this.thingsboardMqttInstance && typeof this.thingsboardMqttInstance.resetCircuitBreaker === 'function') {
-                    node.warn("Attempting to reset circuit breaker for recovery");
+                    // node.warn("Attempting to reset circuit breaker for recovery");
                     this.thingsboardMqttInstance.resetCircuitBreaker();
                 }
 
@@ -142,19 +142,19 @@ class ClientRegistry {
 
         // Verify the instance is actually connected before returning
         if (!this.thingsboardMqttInstance.isConnected()) {
-            node.warn("ThingsBoard MQTT instance exists but not connected, attempting recovery");
+            // node.warn("ThingsBoard MQTT instance exists but not connected, attempting recovery");
             try {
                 await this.thingsboardMqttInstance.waitForConnection(10000); // 10 second timeout
             } catch (error) {
-                node.warn(`Recovery attempt failed: ${(error as Error).message}`);
+                // node.warn(`Recovery attempt failed: ${(error as Error).message}`);
                 // Don't throw here, let the node try to use the instance and handle errors
             }
         }
 
         this.referenceCount.thingsboard++;
         this.clientUsers.thingsboard.add(node.id);
-        node.warn(`[THINGSBOARD-INIT] Node ${node.id} got ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
-        node.warn(`[THINGSBOARD-INIT] Active users: ${Array.from(this.clientUsers.thingsboard).join(', ')}`);
+        // node.warn(`[THINGSBOARD-INIT] Node ${node.id} got ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
+        // node.warn(`[THINGSBOARD-INIT] Active users: ${Array.from(this.clientUsers.thingsboard).join(', ')}`);
 
         // Start recovery mechanism if this is the first client
         if (this.referenceCount.thingsboard === 1) {
@@ -167,17 +167,17 @@ class ClientRegistry {
     static async getLocalMqttClient(config: MqttConfig, node: Node): Promise<MqttClientCore> {
         // Wait if another node is already initializing
         while (this.initializingFlags.local) {
-            node.warn("[LOCAL-INIT] Another node is initializing Local MQTT client, waiting...");
+            // node.warn("[LOCAL-INIT] Another node is initializing Local MQTT client, waiting...");
             await new Promise(resolve => setTimeout(resolve, 100));
         }
 
         if (!this.localMqttInstance) {
             this.initializingFlags.local = true;
-            node.warn(`[LOCAL-INIT] Node ${node.id} starting Local MQTT client initialization`);
+            // node.warn(`[LOCAL-INIT] Node ${node.id} starting Local MQTT client initialization`);
 
             try {
                 this.localMqttInstance = new MqttClientCore(config, node);
-                node.warn("Created new Local MqttClientCore instance");
+                // node.warn("Created new Local MqttClientCore instance");
 
                 // Initialize recovery manager if not exists
                 if (!this.recoveryManager) {
@@ -196,7 +196,7 @@ class ClientRegistry {
 
                 await this.localMqttInstance.waitForConnection();
                 this.activeConnections.localMqtt++;
-                node.warn("Local MQTT client connected successfully");
+                // node.warn("Local MQTT client connected successfully");
                 this.logActiveConnections(node);
             } catch (error) {
                 this.localMqttInstance = null; // Reset on failure
@@ -208,8 +208,8 @@ class ClientRegistry {
         }
         this.referenceCount.local++;
         this.clientUsers.local.add(node.id);
-        node.warn(`[LOCAL-INIT] Node ${node.id} got Local MQTT client, ref count: ${this.referenceCount.local}`);
-        node.warn(`[LOCAL-INIT] Active users: ${Array.from(this.clientUsers.local).join(', ')}`);
+        // node.warn(`[LOCAL-INIT] Node ${node.id} got Local MQTT client, ref count: ${this.referenceCount.local}`);
+        // node.warn(`[LOCAL-INIT] Active users: ${Array.from(this.clientUsers.local).join(', ')}`);
         return this.localMqttInstance;
     }
 
@@ -233,11 +233,11 @@ class ClientRegistry {
         );
 
         if (!configMatches) {
-            node.warn(`[MODBUS-SINGLE-CONNECTION-ENFORCED] Node ${node.id} config differs from shared config:`);
-            node.warn(`  Existing shared config: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
-            node.warn(`  Requested config: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
-            node.warn(`  ENFORCING SINGLE CONNECTION: Using existing shared connection to prevent multiple modbus connections.`);
-            node.warn(`  All VIIS nodes MUST use the same modbus connection for proper resource management.`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION-ENFORCED] Node ${node.id} config differs from shared config:`);
+            // node.warn(`  Existing shared config: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
+            // node.warn(`  Requested config: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
+            // node.warn(`  ENFORCING SINGLE CONNECTION: Using existing shared connection to prevent multiple modbus connections.`);
+            // node.warn(`  All VIIS nodes MUST use the same modbus connection for proper resource management.`);
         }
 
         return configMatches;
@@ -246,7 +246,7 @@ class ClientRegistry {
     static getModbusClient(config: ModbusConfig, node: Node): ModbusClientCore {
         // Wait if another node is already initializing
         while (this.initializingFlags.modbus) {
-            node.warn("[MODBUS-SINGLE-CONNECTION] Another node is initializing Modbus client, waiting...");
+            // node.warn("[MODBUS-SINGLE-CONNECTION] Another node is initializing Modbus client, waiting...");
             // Use synchronous wait to avoid async issues in this method
             const start = Date.now();
             while (Date.now() - start < 100) { /* busy wait */ }
@@ -257,7 +257,7 @@ class ClientRegistry {
 
         if (!this.modbusInstance || !this.modbusInstance.isConnectedCheck()) {
             this.initializingFlags.modbus = true;
-            node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} creating THE ONLY modbus connection for all VIIS nodes`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} creating THE ONLY modbus connection for all VIIS nodes`);
 
             try {
                 if (this.modbusInstance) {
@@ -269,13 +269,13 @@ class ClientRegistry {
                 // Store the config from the first node that creates the connection
                 if (!this.modbusConfig) {
                     this.modbusConfig = { ...config };
-                    node.warn(`[MODBUS-SINGLE-CONNECTION] Storing shared config for ALL nodes: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
+                    // node.warn(`[MODBUS-SINGLE-CONNECTION] Storing shared config for ALL nodes: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
                 }
 
                 // Always use the stored config to ensure consistency - SINGLE CONNECTION ENFORCED
                 this.modbusInstance = new ModbusClientCore(this.modbusConfig, node);
                 this.activeConnections.modbus++;
-                node.warn(`[MODBUS-SINGLE-CONNECTION] Created THE ONLY ModbusClientCore instance - all nodes will share this connection`);
+                // node.warn(`[MODBUS-SINGLE-CONNECTION] Created THE ONLY ModbusClientCore instance - all nodes will share this connection`);
                 this.logActiveConnections(node);
             } finally {
                 this.initializingFlags.modbus = false;
@@ -283,9 +283,9 @@ class ClientRegistry {
         }
         this.referenceCount.modbus++;
         this.clientUsers.modbus.add(node.id);
-        node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} got shared Modbus client, ref count: ${this.referenceCount.modbus}`);
-        node.warn(`[MODBUS-SINGLE-CONNECTION] Active users sharing THE SAME connection: ${Array.from(this.clientUsers.modbus).join(', ')}`);
-        node.warn(`[MODBUS-SINGLE-CONNECTION] Shared connection config: ${this.modbusConfig?.type} ${this.modbusConfig?.host}:${this.modbusConfig?.tcpPort}`);
+        // node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} got shared Modbus client, ref count: ${this.referenceCount.modbus}`);
+        // node.warn(`[MODBUS-SINGLE-CONNECTION] Active users sharing THE SAME connection: ${Array.from(this.clientUsers.modbus).join(', ')}`);
+        // node.warn(`[MODBUS-SINGLE-CONNECTION] Shared connection config: ${this.modbusConfig?.type} ${this.modbusConfig?.host}:${this.modbusConfig?.tcpPort}`);
         return this.modbusInstance;
     }
 
@@ -307,11 +307,11 @@ class ClientRegistry {
         );
 
         if (!configMatches) {
-            node.warn(`[MYSQL-SINGLE-CONNECTION-ENFORCED] Node ${node.id} config differs from shared config:`);
-            node.warn(`  Existing shared config: ${this.mysqlConfig.host}:${this.mysqlConfig.port}/${this.mysqlConfig.database} user=${this.mysqlConfig.user}`);
-            node.warn(`  Requested config: ${config.host}:${config.port}/${config.database} user=${config.user}`);
-            node.warn(`  ENFORCING SINGLE CONNECTION: Using existing shared connection to prevent multiple MySQL connections.`);
-            node.warn(`  All VIIS nodes MUST use the same MySQL connection for proper resource management.`);
+            // node.warn(`[MYSQL-SINGLE-CONNECTION-ENFORCED] Node ${node.id} config differs from shared config:`);
+            // node.warn(`  Existing shared config: ${this.mysqlConfig.host}:${this.mysqlConfig.port}/${this.mysqlConfig.database} user=${this.mysqlConfig.user}`);
+            // node.warn(`  Requested config: ${config.host}:${config.port}/${config.database} user=${config.user}`);
+            // node.warn(`  ENFORCING SINGLE CONNECTION: Using existing shared connection to prevent multiple MySQL connections.`);
+            // node.warn(`  All VIIS nodes MUST use the same MySQL connection for proper resource management.`);
         }
 
         return configMatches;
@@ -320,7 +320,7 @@ class ClientRegistry {
     static async getMySqlClient(config: any, node: Node): Promise<MySqlClientCore> {
         // Wait if another node is already initializing
         while (this.initializingFlags.mysql) {
-            node.warn("[MYSQL-INIT] Another node is initializing MySQL client, waiting...");
+            // node.warn("[MYSQL-INIT] Another node is initializing MySQL client, waiting...");
             await new Promise(resolve => setTimeout(resolve, 100));
         }
 
@@ -329,7 +329,7 @@ class ClientRegistry {
 
         if (!this.mysqlInstance || !this.mysqlInstance.isConnectedCheck()) {
             this.initializingFlags.mysql = true;
-            node.warn(`[MYSQL-INIT] Node ${node.id} starting MySQL client initialization`);
+            // node.warn(`[MYSQL-INIT] Node ${node.id} starting MySQL client initialization`);
 
             try {
                 if (this.mysqlInstance) {
@@ -341,13 +341,13 @@ class ClientRegistry {
                 // Store the config from the first node that creates the connection
                 if (!this.mysqlConfig) {
                     this.mysqlConfig = { ...config };
-                    node.warn(`[MYSQL-INIT] Storing shared config for ALL nodes: ${config.host}:${config.port}/${config.database} user=${config.user}`);
+                    // node.warn(`[MYSQL-INIT] Storing shared config for ALL nodes: ${config.host}:${config.port}/${config.database} user=${config.user}`);
                 }
 
                 // Always use the stored config to ensure consistency - SINGLE CONNECTION ENFORCED
                 this.mysqlInstance = new MySqlClientCore(this.mysqlConfig, node);
                 this.activeConnections.mysql++;
-                node.warn(`[MYSQL-INIT] Created new MySQL client instance - all nodes will share this connection`);
+                // node.warn(`[MYSQL-INIT] Created new MySQL client instance - all nodes will share this connection`);
                 this.logActiveConnections(node);
             } catch (error) {
                 this.mysqlInstance = null; // Reset on failure
@@ -360,8 +360,8 @@ class ClientRegistry {
 
         this.referenceCount.mysql++;
         this.clientUsers.mysql.add(node.id);
-        node.warn(`[MYSQL-INIT] Node ${node.id} got MySQL client, ref count: ${this.referenceCount.mysql}`);
-        node.warn(`[MYSQL-INIT] Active users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
+        // node.warn(`[MYSQL-INIT] Node ${node.id} got MySQL client, ref count: ${this.referenceCount.mysql}`);
+        // node.warn(`[MYSQL-INIT] Active users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
         return this.mysqlInstance;
     }
 
@@ -369,21 +369,21 @@ class ClientRegistry {
         if (type === "modbus" && this.modbusInstance) {
             this.referenceCount.modbus--;
             this.clientUsers.modbus.delete(node.id);
-            node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} released shared Modbus client, ref count: ${this.referenceCount.modbus}`);
-            node.warn(`[MODBUS-SINGLE-CONNECTION] Remaining users: ${Array.from(this.clientUsers.modbus).join(', ')}`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} released shared Modbus client, ref count: ${this.referenceCount.modbus}`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION] Remaining users: ${Array.from(this.clientUsers.modbus).join(', ')}`);
             if (this.referenceCount.modbus <= 0) {
                 this.modbusInstance.disconnect();
                 this.activeConnections.modbus--;
                 this.modbusInstance = null;
                 this.modbusConfig = null; // Reset config when no nodes are using the client
                 this.clientUsers.modbus.clear();
-                node.warn("[MODBUS-SINGLE-CONNECTION] THE ONLY modbus connection has been disconnected - no more users");
+                // node.warn("[MODBUS-SINGLE-CONNECTION] THE ONLY modbus connection has been disconnected - no more users");
                 this.logActiveConnections(node);
             }
         } else if (type === "thingsboard" && this.thingsboardMqttInstance) {
             this.referenceCount.thingsboard--;
             this.clientUsers.thingsboard.delete(node.id);
-            node.warn(`[THINGSBOARD-RELEASE] Node ${node.id} released ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
+            // node.warn(`[THINGSBOARD-RELEASE] Node ${node.id} released ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
             if (this.referenceCount.thingsboard <= 0) {
                 this.thingsboardMqttInstance.disconnect();
                 this.activeConnections.thingsboardMqtt--;
@@ -395,7 +395,7 @@ class ClientRegistry {
         } else if (type === "local" && this.localMqttInstance) {
             this.referenceCount.local--;
             this.clientUsers.local.delete(node.id);
-            node.warn(`[LOCAL-RELEASE] Node ${node.id} released Local MQTT client, ref count: ${this.referenceCount.local}`);
+            // node.warn(`[LOCAL-RELEASE] Node ${node.id} released Local MQTT client, ref count: ${this.referenceCount.local}`);
             if (this.referenceCount.local <= 0) {
                 // Unregister from recovery manager
                 if (this.recoveryManager) {
@@ -411,52 +411,52 @@ class ClientRegistry {
         } else if (type === "mysql" && this.mysqlInstance) {
             this.referenceCount.mysql--;
             this.clientUsers.mysql.delete(node.id);
-            node.warn(`[MYSQL-RELEASE] Node ${node.id} released MySQL client, ref count: ${this.referenceCount.mysql}`);
-            node.warn(`[MYSQL-RELEASE] Remaining users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
+            // node.warn(`[MYSQL-RELEASE] Node ${node.id} released MySQL client, ref count: ${this.referenceCount.mysql}`);
+            // node.warn(`[MYSQL-RELEASE] Remaining users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
             if (this.referenceCount.mysql <= 0) {
                 this.mysqlInstance.disconnect();
                 this.activeConnections.mysql--;
                 this.mysqlInstance = null;
                 this.mysqlConfig = null; // Reset config when no nodes are using the client
                 this.clientUsers.mysql.clear();
-                node.warn("[MYSQL-RELEASE] MySQL connection has been disconnected - no more users");
+                // node.warn("[MYSQL-RELEASE] MySQL connection has been disconnected - no more users");
                 this.logActiveConnections(node);
             }
         }
     }
 
     static logActiveConnections(node: Node) {
-        node.warn(`[CONNECTION-STATUS] Active server connections - Modbus: ${this.activeConnections.modbus}, ThingsBoard MQTT: ${this.activeConnections.thingsboardMqtt}, Local MQTT: ${this.activeConnections.localMqtt}, MySQL: ${this.activeConnections.mysql}`);
+        // node.warn(`[CONNECTION-STATUS] Active server connections - Modbus: ${this.activeConnections.modbus}, ThingsBoard MQTT: ${this.activeConnections.thingsboardMqtt}, Local MQTT: ${this.activeConnections.localMqtt}, MySQL: ${this.activeConnections.mysql}`);
 
         // Enforce single connection validation for Modbus
         if (this.activeConnections.modbus > 1) {
             node.error(`[CRITICAL-ERROR] MULTIPLE MODBUS CONNECTIONS DETECTED! Count: ${this.activeConnections.modbus}. This should NEVER happen!`);
         } else if (this.activeConnections.modbus === 1) {
-            node.warn(`[MODBUS-SINGLE-CONNECTION] ✓ Correctly using SINGLE modbus connection as designed`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION] ✓ Correctly using SINGLE modbus connection as designed`);
         }
 
         // Enforce single connection validation for MySQL
         if (this.activeConnections.mysql > 1) {
             node.error(`[CRITICAL-ERROR] MULTIPLE MYSQL CONNECTIONS DETECTED! Count: ${this.activeConnections.mysql}. This should NEVER happen!`);
         } else if (this.activeConnections.mysql === 1) {
-            node.warn(`[MYSQL-SINGLE-CONNECTION] ✓ Correctly using SINGLE MySQL connection as designed`);
+            // node.warn(`[MYSQL-SINGLE-CONNECTION] ✓ Correctly using SINGLE MySQL connection as designed`);
         }
     }
 
     static logConnectionCounts(node: Node) {
-        node.warn(`[CONNECTION-COUNTS] Reference counts - Modbus: ${this.referenceCount.modbus}, ThingsBoard: ${this.referenceCount.thingsboard}, Local MQTT: ${this.referenceCount.local}, MySQL: ${this.referenceCount.mysql}`);
+        // node.warn(`[CONNECTION-COUNTS] Reference counts - Modbus: ${this.referenceCount.modbus}, ThingsBoard: ${this.referenceCount.thingsboard}, Local MQTT: ${this.referenceCount.local}, MySQL: ${this.referenceCount.mysql}`);
         this.logActiveConnections(node);
 
         // Log shared modbus config if exists
         if (this.modbusConfig && this.referenceCount.modbus > 0) {
-            node.warn(`[MODBUS-SINGLE-CONNECTION] Shared config used by ALL nodes: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
-            node.warn(`[MODBUS-SINGLE-CONNECTION] All nodes sharing THE SAME connection: ${Array.from(this.clientUsers.modbus).join(', ')}`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION] Shared config used by ALL nodes: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
+            // node.warn(`[MODBUS-SINGLE-CONNECTION] All nodes sharing THE SAME connection: ${Array.from(this.clientUsers.modbus).join(', ')}`);
         }
 
         // Log shared mysql config if exists
         if (this.mysqlConfig && this.referenceCount.mysql > 0) {
-            node.warn(`[MYSQL-SINGLE-CONNECTION] Shared config used by ALL nodes: ${this.mysqlConfig.host}:${this.mysqlConfig.port}/${this.mysqlConfig.database} user=${this.mysqlConfig.user}`);
-            node.warn(`[MYSQL-SINGLE-CONNECTION] All nodes sharing THE SAME connection: ${Array.from(this.clientUsers.mysql).join(', ')}`);
+            // node.warn(`[MYSQL-SINGLE-CONNECTION] Shared config used by ALL nodes: ${this.mysqlConfig.host}:${this.mysqlConfig.port}/${this.mysqlConfig.database} user=${this.mysqlConfig.user}`);
+            // node.warn(`[MYSQL-SINGLE-CONNECTION] All nodes sharing THE SAME connection: ${Array.from(this.clientUsers.mysql).join(', ')}`);
         }
     }
 

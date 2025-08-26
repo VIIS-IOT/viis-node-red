@@ -26,7 +26,7 @@ export class Logger implements ILogger {
      * Log warning message
      */
     warn(message: string): void {
-        this.node.warn(`[${this.prefix}] ${message}`);
+        // this.node.warn(`[${this.prefix}] ${message}`);
     }
 
     /**

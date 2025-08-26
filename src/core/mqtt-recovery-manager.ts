@@ -53,7 +53,7 @@ export class MqttRecoveryManager extends EventEmitter {
 
     private constructor(options: RecoveryOptions = {}) {
         super();
-        
+
         // Aggressive recovery settings for production stability
         this.AGGRESSIVE_MODE = options.aggressiveMode ?? true;
         this.QUICK_RECOVERY_INTERVAL = options.quickRecoveryInterval ?? 2000; // 2 seconds
@@ -106,8 +106,8 @@ export class MqttRecoveryManager extends EventEmitter {
                 clientInfo.disconnectTime = Date.now();
                 clientInfo.inQuickRecovery = true;
                 clientInfo.recoveryAttempts = 0;
-                
-                node.warn(`[RECOVERY-MANAGER] Client ${clientId} disconnected - initiating quick recovery`);
+
+                // node.warn(`[RECOVERY-MANAGER] Client ${clientId} disconnected - initiating quick recovery`);
                 this.handleDisconnection(clientId);
             }
         });
@@ -120,10 +120,10 @@ export class MqttRecoveryManager extends EventEmitter {
                 clientInfo.disconnectTime = undefined;
                 clientInfo.recoveryAttempts = 0;
                 clientInfo.inQuickRecovery = false;
-                
+
                 node.log(`[RECOVERY-MANAGER] Client ${clientId} connected successfully`);
                 this.emit('clientConnected', clientId);
-                
+
                 // If recovering from power outage, reset the flag
                 if (this.isInPowerOutageRecovery) {
                     this.handlePowerRestoration();
@@ -175,7 +175,7 @@ export class MqttRecoveryManager extends EventEmitter {
      */
     private performQuickRecoveryCheck(): void {
         const now = Date.now();
-        
+
         for (const [clientId, clientInfo] of this.clients.entries()) {
             if (!clientInfo.client.isConnected() && clientInfo.inQuickRecovery) {
                 if (clientInfo.recoveryAttempts < this.MAX_QUICK_RECOVERY_ATTEMPTS) {
@@ -261,7 +261,7 @@ export class MqttRecoveryManager extends EventEmitter {
 
         if (allDisconnected && this.clients.size > 0) {
             this.consecutiveDisconnections++;
-            
+
             // Check if this might be an internet disruption (longer time between checks)
             if (timeSinceLastCheck > 30000) { // More than 30 seconds since last check
                 this.isNetworkDisrupted = true;
@@ -273,7 +273,7 @@ export class MqttRecoveryManager extends EventEmitter {
                     }
                 });
             }
-            
+
             if (this.consecutiveDisconnections >= this.POWER_OUTAGE_THRESHOLD) {
                 if (!this.isPowerOutage) {
                     this.isPowerOutage = true;
@@ -293,7 +293,7 @@ export class MqttRecoveryManager extends EventEmitter {
             this.isNetworkDisrupted = false;
             this.consecutiveDisconnections = 0;
             this.networkRecoveryAttempts = 0;
-            
+
             if (wasNetworkDisruption) {
                 this.emit('networkRestored');
                 Array.from(this.clients.keys()).forEach(clientId => {
@@ -305,7 +305,7 @@ export class MqttRecoveryManager extends EventEmitter {
             } else {
                 this.emit('powerRestored');
             }
-            
+
             // Force immediate recovery on all clients
             this.forceImmediateRecovery();
         } else {
@@ -335,7 +335,7 @@ export class MqttRecoveryManager extends EventEmitter {
         for (const [clientId, clientInfo] of this.clients.entries()) {
             clientInfo.inQuickRecovery = true;
             clientInfo.recoveryAttempts = 0;
-            
+
             // Immediate recovery attempt
             this.attemptQuickRecovery(clientId);
         }
@@ -360,20 +360,20 @@ export class MqttRecoveryManager extends EventEmitter {
         Array.from(this.clients.keys()).forEach(clientId => {
             const clientInfo = this.clients.get(clientId);
             if (clientInfo && !clientInfo.client.isConnected()) {
-                const reason = this.isPowerOutage ? 'power outage' : 
-                              this.isNetworkDisrupted ? 'network disruption' : 'manual trigger';
+                const reason = this.isPowerOutage ? 'power outage' :
+                    this.isNetworkDisrupted ? 'network disruption' : 'manual trigger';
                 clientInfo.node.warn(`[RECOVERY-MANAGER] Forcing immediate recovery for ${clientId} due to ${reason}`);
-                
+
                 // Reset recovery attempts to allow quick recovery
                 clientInfo.recoveryAttempts = 0;
-                
+
                 // Reset circuit breaker immediately for network issues
                 if (this.isNetworkDisrupted || this.isPowerOutage) {
                     if (typeof clientInfo.client.resetCircuitBreaker === 'function') {
                         clientInfo.client.resetCircuitBreaker();
                     }
                 }
-                
+
                 // Trigger immediate recovery
                 this.attemptQuickRecovery(clientId);
             }
@@ -395,7 +395,7 @@ export class MqttRecoveryManager extends EventEmitter {
 
         for (const [clientId, clientInfo] of this.clients.entries()) {
             const isConnected = clientInfo.client.isConnected();
-            
+
             if (isConnected) {
                 stats.connectedClients++;
             } else {
@@ -411,7 +411,7 @@ export class MqttRecoveryManager extends EventEmitter {
                 recoveryAttempts: clientInfo.recoveryAttempts,
                 inQuickRecovery: clientInfo.inQuickRecovery,
                 lastConnected: new Date(clientInfo.lastConnected).toISOString(),
-                disconnectTime: clientInfo.disconnectTime ? 
+                disconnectTime: clientInfo.disconnectTime ?
                     new Date(clientInfo.disconnectTime).toISOString() : null
             });
         }
