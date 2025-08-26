@@ -166,15 +166,24 @@ export class ConfigService implements IConfigService {
         // Auto-detect type with proper boolean detection
         let detectedType: "number" | "boolean" | "string" = "string";
 
+        // Special handling for env_enum - always treat as string
+        if (key === "env_enum") {
+            detectedType = "string";
+        }
         // Check boolean first to avoid Number() conversion confusion
-        if (typeof value === "boolean") {
+        else if (typeof value === "boolean") {
             detectedType = "boolean";
         } else if (typeof value === "string" && (value.toLowerCase() === "true" || value.toLowerCase() === "false")) {
             detectedType = "boolean";
         } else if (typeof value === "number" && !isNaN(value) && isFinite(value)) {
             detectedType = "number";
         } else if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value.trim())) && isFinite(Number(value.trim()))) {
-            detectedType = "number";
+            // Additional check: if string contains letters, treat as string
+            if (/[a-zA-Z]/.test(value.trim())) {
+                detectedType = "string";
+            } else {
+                detectedType = "number";
+            }
         } else {
             detectedType = "string";
         }

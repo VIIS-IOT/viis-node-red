@@ -144,16 +144,30 @@ class RpcHandler {
      */
     async handleSetStateRequest(params) {
         try {
-            // Try luoi mapping handler first - it now handles actual Modbus writes
+            // First, process luoi mapping parameters (luoi_1, luoi_2, luoi_3)
             const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
-            if (hasLuoiMapping) {
-                // Luoi mapping was processed, set success status
+            // Create a copy of params without luoi parameters for standard processing
+            const standardParams = Object.assign({}, params);
+            Object.keys(this.luoiHandler['luoiMapping'] || {}).forEach(key => {
+                delete standardParams[key];
+            });
+            // Process remaining parameters with standard handler
+            if (Object.keys(standardParams).length > 0) {
+                await this.handleStandardParams(standardParams);
+            }
+            // Set success status
+            if (hasLuoiMapping && Object.keys(standardParams).length > 0) {
+                this.node.status({ fill: "green", shape: "dot", text: "Luoi + standard commands processed" });
+                this.logger.log("Both luoi and standard commands processed successfully");
+            }
+            else if (hasLuoiMapping) {
                 this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
                 this.logger.log("Luoi commands processed successfully");
-                return;
             }
-            // Fallback to standard processing for non-luoi cases
-            await this.handleStandardParams(params);
+            else {
+                this.node.status({ fill: "green", shape: "dot", text: "Standard commands processed" });
+                this.logger.log("Standard commands processed successfully");
+            }
         }
         catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${error.message}`);
@@ -188,6 +202,10 @@ class RpcHandler {
         // Process in order: holding registers first, then coils, then config-only
         for (const [key, rawValue] of holdingParams) {
             await this.processParameter(key, rawValue);
+            // Small delay between each holding register write
+            if (holdingParams.length > 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
         // Add 1 second delay between processing holding registers and coils
         if (holdingParams.length > 0 && coilParams.length > 0) {
@@ -196,6 +214,10 @@ class RpcHandler {
         }
         for (const [key, rawValue] of coilParams) {
             await this.processParameter(key, rawValue);
+            // Small delay between each coil write to ensure proper sequencing
+            if (coilParams.length > 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
         for (const [key, rawValue] of configParams) {
             await this.processParameter(key, rawValue);

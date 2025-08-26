@@ -68,7 +68,7 @@ class MqttRecoveryManager extends events_1.EventEmitter {
                 clientInfo.disconnectTime = Date.now();
                 clientInfo.inQuickRecovery = true;
                 clientInfo.recoveryAttempts = 0;
-                node.warn(`[RECOVERY-MANAGER] Client ${clientId} disconnected - initiating quick recovery`);
+                // node.warn(`[RECOVERY-MANAGER] Client ${clientId} disconnected - initiating quick recovery`);
                 this.handleDisconnection(clientId);
             }
         });

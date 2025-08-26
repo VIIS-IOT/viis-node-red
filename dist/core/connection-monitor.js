@@ -85,7 +85,7 @@ class ConnectionMonitor {
                 else {
                     // Client is disconnected
                     clientInfo.failedChecks++;
-                    node.warn(`[CONNECTION-MONITOR] Client ${clientId} disconnected (failed checks: ${clientInfo.failedChecks})`);
+                    // node.warn(`[CONNECTION-MONITOR] Client ${clientId} disconnected (failed checks: ${clientInfo.failedChecks})`);
                     // Attempt recovery if failed checks exceed threshold
                     if (clientInfo.failedChecks >= this.MAX_FAILED_CHECKS) {
                         this.attemptRecovery(clientId, clientInfo);
@@ -103,7 +103,7 @@ class ConnectionMonitor {
      */
     attemptRecovery(clientId, clientInfo) {
         const { client, node } = clientInfo;
-        node.warn(`[CONNECTION-MONITOR] Attempting recovery for client ${clientId}`);
+        // node.warn(`[CONNECTION-MONITOR] Attempting recovery for client ${clientId}`);
         try {
             // Reset circuit breaker if available
             if (typeof client.resetCircuitBreaker === 'function') {

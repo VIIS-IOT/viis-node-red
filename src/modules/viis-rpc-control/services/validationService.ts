@@ -79,6 +79,10 @@ export class ValidationService implements IValidationService {
         }
         
         if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value.trim())) && isFinite(Number(value.trim()))) {
+            // Additional check: if string contains letters, treat as string
+            if (/[a-zA-Z]/.test(value.trim())) {
+                return "string";
+            }
             return "number";
         }
         

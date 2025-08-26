@@ -181,18 +181,31 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleSetStateRequest(params: Record<string, any>): Promise<void> {
         try {
-            // Try luoi mapping handler first - it now handles actual Modbus writes
+            // First, process luoi mapping parameters (luoi_1, luoi_2, luoi_3)
             const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
 
-            if (hasLuoiMapping) {
-                // Luoi mapping was processed, set success status
-                this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
-                this.logger.log("Luoi commands processed successfully");
-                return;
+            // Create a copy of params without luoi parameters for standard processing
+            const standardParams = { ...params };
+            Object.keys(this.luoiHandler['luoiMapping'] || {}).forEach(key => {
+                delete standardParams[key];
+            });
+
+            // Process remaining parameters with standard handler
+            if (Object.keys(standardParams).length > 0) {
+                await this.handleStandardParams(standardParams);
             }
 
-            // Fallback to standard processing for non-luoi cases
-            await this.handleStandardParams(params);
+            // Set success status
+            if (hasLuoiMapping && Object.keys(standardParams).length > 0) {
+                this.node.status({ fill: "green", shape: "dot", text: "Luoi + standard commands processed" });
+                this.logger.log("Both luoi and standard commands processed successfully");
+            } else if (hasLuoiMapping) {
+                this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
+                this.logger.log("Luoi commands processed successfully");
+            } else {
+                this.node.status({ fill: "green", shape: "dot", text: "Standard commands processed" });
+                this.logger.log("Standard commands processed successfully");
+            }
         } catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${(error as Error).message}`);
             throw error;
@@ -232,6 +245,10 @@ export class RpcHandler implements IRpcHandler {
         // Process in order: holding registers first, then coils, then config-only
         for (const [key, rawValue] of holdingParams) {
             await this.processParameter(key, rawValue);
+            // Small delay between each holding register write
+            if (holdingParams.length > 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
         
         // Add 1 second delay between processing holding registers and coils
@@ -242,6 +259,10 @@ export class RpcHandler implements IRpcHandler {
         
         for (const [key, rawValue] of coilParams) {
             await this.processParameter(key, rawValue);
+            // Small delay between each coil write to ensure proper sequencing
+            if (coilParams.length > 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
         
         for (const [key, rawValue] of configParams) {
