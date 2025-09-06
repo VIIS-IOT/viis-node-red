@@ -181,8 +181,17 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleSetStateRequest(params: Record<string, any>): Promise<void> {
         try {
+            // Filter out parameters with "undefined" values
+            const filteredParams = this.filterUndefinedParams(params);
+            
+            if (Object.keys(filteredParams).length === 0) {
+                this.logger.warn("All parameters were filtered out due to undefined values");
+                this.node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
+                return;
+            }
+
             // Try luoi mapping handler first - it now handles actual Modbus writes
-            const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
+            const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
 
             if (hasLuoiMapping) {
                 // Luoi mapping was processed, set success status
@@ -192,7 +201,7 @@ export class RpcHandler implements IRpcHandler {
             }
 
             // Fallback to standard processing for non-luoi cases
-            await this.handleStandardParams(params);
+            await this.handleStandardParams(filteredParams);
         } catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${(error as Error).message}`);
             throw error;
@@ -200,6 +209,29 @@ export class RpcHandler implements IRpcHandler {
     }
 
 
+
+    /**
+     * Filter out parameters with "undefined" values (string or actual undefined)
+     */
+    private filterUndefinedParams(params: Record<string, any>): Record<string, any> {
+        const filteredParams: Record<string, any> = {};
+        const filteredKeys: string[] = [];
+        
+        for (const [key, value] of Object.entries(params)) {
+            // Filter out "undefined" string values and actual undefined values
+            if (value === "undefined" || value === undefined) {
+                filteredKeys.push(key);
+                continue;
+            }
+            filteredParams[key] = value;
+        }
+        
+        if (filteredKeys.length > 0) {
+            this.logger.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+        }
+        
+        return filteredParams;
+    }
 
     /**
      * Handle standard parameter processing

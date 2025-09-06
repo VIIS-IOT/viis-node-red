@@ -285,10 +285,40 @@ module.exports = function (RED: NodeAPI) {
             }
         }
         
+        // Filter out parameters with "undefined" values (string or actual undefined)
+        function filterUndefinedParams(params: Record<string, any>): Record<string, any> {
+            const filteredParams: Record<string, any> = {};
+            const filteredKeys: string[] = [];
+            
+            for (const [key, value] of Object.entries(params)) {
+                // Filter out "undefined" string values and actual undefined values
+                if (value === "undefined" || value === undefined) {
+                    filteredKeys.push(key);
+                    continue;
+                }
+                filteredParams[key] = value;
+            }
+            
+            if (filteredKeys.length > 0) {
+                node.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+            }
+            
+            return filteredParams;
+        }
+
         async function handleRpcRequest(rpcBody: RpcMessage): Promise<void> {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
-                    for (const [key, rawValue] of Object.entries(rpcBody.params)) {
+                    // Filter out undefined parameters
+                    const filteredParams = filterUndefinedParams(rpcBody.params);
+                    
+                    if (Object.keys(filteredParams).length === 0) {
+                        node.warn("All parameters were filtered out due to undefined values");
+                        node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
+                        return;
+                    }
+                    
+                    for (const [key, rawValue] of Object.entries(filteredParams)) {
                         const mapping = findModbusMapping(key);
                         if (mapping) {
                             const value = validateAndConvertValue(key, rawValue);
