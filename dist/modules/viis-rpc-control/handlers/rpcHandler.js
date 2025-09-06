@@ -144,21 +144,50 @@ class RpcHandler {
      */
     async handleSetStateRequest(params) {
         try {
-            // Try luoi mapping handler first - it now handles actual Modbus writes
-            const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
-            if (hasLuoiMapping) {
-                // Luoi mapping was processed, set success status
-                this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
-                this.logger.log("Luoi commands processed successfully");
+            // Filter out parameters with "undefined" values
+            const filteredParams = this.filterUndefinedParams(params);
+            if (Object.keys(filteredParams).length === 0) {
+                this.logger.warn("All parameters were filtered out due to undefined values");
+                this.node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
                 return;
             }
+            // Try luoi mapping handler first - it now handles actual Modbus writes
+            const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
+            // Create a copy of params without luoi parameters for standard processing
+            const standardParams = Object.assign({}, params);
+            Object.keys(this.luoiHandler['luoiMapping'] || {}).forEach(key => {
+                delete standardParams[key];
+            });
+            // Process remaining parameters with standard handler
+            if (Object.keys(standardParams).length > 0) {
+                await this.handleStandardParams(standardParams);
+            }
             // Fallback to standard processing for non-luoi cases
-            await this.handleStandardParams(params);
+            await this.handleStandardParams(filteredParams);
         }
         catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${error.message}`);
             throw error;
         }
+    }
+    /**
+     * Filter out parameters with "undefined" values (string or actual undefined)
+     */
+    filterUndefinedParams(params) {
+        const filteredParams = {};
+        const filteredKeys = [];
+        for (const [key, value] of Object.entries(params)) {
+            // Filter out "undefined" string values and actual undefined values
+            if (value === "undefined" || value === undefined) {
+                filteredKeys.push(key);
+                continue;
+            }
+            filteredParams[key] = value;
+        }
+        if (filteredKeys.length > 0) {
+            this.logger.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+        }
+        return filteredParams;
     }
     /**
      * Handle standard parameter processing
@@ -188,6 +217,10 @@ class RpcHandler {
         // Process in order: holding registers first, then coils, then config-only
         for (const [key, rawValue] of holdingParams) {
             await this.processParameter(key, rawValue);
+            // Small delay between each holding register write
+            if (holdingParams.length > 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
         // Add 1 second delay between processing holding registers and coils
         if (holdingParams.length > 0 && coilParams.length > 0) {
@@ -196,6 +229,10 @@ class RpcHandler {
         }
         for (const [key, rawValue] of coilParams) {
             await this.processParameter(key, rawValue);
+            // Small delay between each coil write to ensure proper sequencing
+            if (coilParams.length > 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
         for (const [key, rawValue] of configParams) {
             await this.processParameter(key, rawValue);

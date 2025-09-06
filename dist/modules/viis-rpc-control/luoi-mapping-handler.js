@@ -26,45 +26,23 @@ class LuoiMappingHandler {
         this.logger = new logger_1.Logger(node, "LUOI-HANDLER");
     }
     /**
-     * Process RPC body and handle luoi mapping logic with actual Modbus write operations
+     * Process RPC body and handle ONLY luoi mapping logic with actual Modbus write operations
+     * Returns true if any luoi parameters were processed
      */
     async processRpcBody(rpcBody) {
-        this.logger.debug("Processing RPC body with Modbus write operations");
+        this.logger.debug("Processing RPC body for luoi mapping only");
         this.flowContext.set("rpcBody", rpcBody);
-        const modbusHoldingRegisters = this.globalContext.get("modbusHoldingRegisters") || {};
-        const modbusInputRegisters = this.globalContext.get("modbusInputRegisters") || {};
         const modbusCoils = this.globalContext.get("modbusCoils") || {};
-        const coilRegisterData = this.globalContext.get("coilRegisterData") || {};
         let hasLuoiMapping = false;
+        // Only process luoi_1, luoi_2, luoi_3 parameters
         for (let key in rpcBody) {
             if (!rpcBody.hasOwnProperty(key))
                 continue;
-            let rawValue = rpcBody[key];
-            // Xử lý đặc biệt cho luoi_1, luoi_2, luoi_3
+            // Only handle luoi mapping - let standard processing handle everything else
             if (this.luoiMapping[key]) {
+                let rawValue = rpcBody[key];
                 await this.handleLuoiMappingWithModbusWrite(key, rawValue, modbusCoils);
                 hasLuoiMapping = true;
-                continue; // Bỏ qua xử lý tiếp theo cho key này
-            }
-            // Xử lý scaling
-            rawValue = this.applyScaling(key, rawValue);
-            // Xử lý coils với validation
-            if (modbusCoils.hasOwnProperty(key)) {
-                const coilResult = this.handleCoilMapping(key, rawValue, modbusCoils, coilRegisterData);
-                if (coilResult === null)
-                    continue;
-                await this.writeToModbusAndPublish(key, coilResult.address, coilResult.value, coilResult.fc);
-                continue;
-            }
-            // Xử lý holding registers
-            else if (modbusHoldingRegisters.hasOwnProperty(key)) {
-                await this.writeToModbusAndPublish(key, modbusHoldingRegisters[key], rawValue, 6);
-                continue;
-            }
-            // Xử lý input registers (read-only, skip write)
-            else if (modbusInputRegisters.hasOwnProperty(key)) {
-                this.logger.warn(`Skipping read-only input register: ${key}`);
-                continue;
             }
         }
         return hasLuoiMapping;
