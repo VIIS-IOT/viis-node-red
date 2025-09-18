@@ -144,8 +144,15 @@ class RpcHandler {
      */
     async handleSetStateRequest(params) {
         try {
-            // First, process luoi mapping parameters (luoi_1, luoi_2, luoi_3)
-            const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
+            // Filter out parameters with "undefined" values
+            const filteredParams = this.filterUndefinedParams(params);
+            if (Object.keys(filteredParams).length === 0) {
+                this.logger.warn("All parameters were filtered out due to undefined values");
+                this.node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
+                return;
+            }
+            // Try luoi mapping handler first - it now handles actual Modbus writes
+            const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
             // Create a copy of params without luoi parameters for standard processing
             const standardParams = Object.assign({}, params);
             Object.keys(this.luoiHandler['luoiMapping'] || {}).forEach(key => {
@@ -155,24 +162,32 @@ class RpcHandler {
             if (Object.keys(standardParams).length > 0) {
                 await this.handleStandardParams(standardParams);
             }
-            // Set success status
-            if (hasLuoiMapping && Object.keys(standardParams).length > 0) {
-                this.node.status({ fill: "green", shape: "dot", text: "Luoi + standard commands processed" });
-                this.logger.log("Both luoi and standard commands processed successfully");
-            }
-            else if (hasLuoiMapping) {
-                this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
-                this.logger.log("Luoi commands processed successfully");
-            }
-            else {
-                this.node.status({ fill: "green", shape: "dot", text: "Standard commands processed" });
-                this.logger.log("Standard commands processed successfully");
-            }
+            // Fallback to standard processing for non-luoi cases
+            await this.handleStandardParams(filteredParams);
         }
         catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${error.message}`);
             throw error;
         }
+    }
+    /**
+     * Filter out parameters with "undefined" values (string or actual undefined)
+     */
+    filterUndefinedParams(params) {
+        const filteredParams = {};
+        const filteredKeys = [];
+        for (const [key, value] of Object.entries(params)) {
+            // Filter out "undefined" string values and actual undefined values
+            if (value === "undefined" || value === undefined) {
+                filteredKeys.push(key);
+                continue;
+            }
+            filteredParams[key] = value;
+        }
+        if (filteredKeys.length > 0) {
+            this.logger.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+        }
+        return filteredParams;
     }
     /**
      * Handle standard parameter processing

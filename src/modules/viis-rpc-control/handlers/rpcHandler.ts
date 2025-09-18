@@ -47,7 +47,7 @@ export class RpcHandler implements IRpcHandler {
      */
     async handleRpcRequest(rpcBody: RpcMessage, maxRetries: number = 3): Promise<void> {
         let lastError: Error | null = null;
-        
+
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
@@ -60,25 +60,25 @@ export class RpcHandler implements IRpcHandler {
                 }
             } catch (error) {
                 lastError = error as Error;
-                
+
                 // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
                     this.logger.warn(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
                     await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
                     continue;
                 }
-                
+
                 // Non-retryable error or last attempt
                 break;
             }
         }
-        
+
         // Handle the final error
         if (lastError) {
             await this.handleRpcError(lastError);
         }
     }
-    
+
     /**
      * Check if an error is retryable
      */
@@ -93,12 +93,12 @@ export class RpcHandler implements IRpcHandler {
             "ECONNRESET",
             "socket hang up"
         ];
-        
-        return retryablePatterns.some(pattern => 
+
+        return retryablePatterns.some(pattern =>
             errorMessage.toLowerCase().includes(pattern.toLowerCase())
         );
     }
-    
+
     /**
      * Handle RPC error with proper logging and status updates
      */
@@ -149,7 +149,7 @@ export class RpcHandler implements IRpcHandler {
             this.logger.error(`Failed to handle RPC error: ${(publishError as Error).message}`);
         }
     }
-    
+
     /**
      * Publish error with retry logic
      */
@@ -160,7 +160,7 @@ export class RpcHandler implements IRpcHandler {
                 return; // Success
             } catch (error) {
                 this.logger.error(`Failed to publish error (attempt ${attempt}/${maxRetries}): ${(error as Error).message}`);
-                
+
                 if (attempt < maxRetries) {
                     // Check if MQTT is connected
                     if (!this.mqttService.isConnected()) {
@@ -172,7 +172,7 @@ export class RpcHandler implements IRpcHandler {
                 }
             }
         }
-        
+
         this.logger.error("Failed to publish error after all retries");
     }
 
@@ -181,8 +181,17 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleSetStateRequest(params: Record<string, any>): Promise<void> {
         try {
-            // First, process luoi mapping parameters (luoi_1, luoi_2, luoi_3)
-            const hasLuoiMapping = await this.luoiHandler.processRpcBody(params);
+            // Filter out parameters with "undefined" values
+            const filteredParams = this.filterUndefinedParams(params);
+
+            if (Object.keys(filteredParams).length === 0) {
+                this.logger.warn("All parameters were filtered out due to undefined values");
+                this.node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
+                return;
+            }
+
+            // Try luoi mapping handler first - it now handles actual Modbus writes
+            const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
 
             // Create a copy of params without luoi parameters for standard processing
             const standardParams = { ...params };
@@ -195,17 +204,8 @@ export class RpcHandler implements IRpcHandler {
                 await this.handleStandardParams(standardParams);
             }
 
-            // Set success status
-            if (hasLuoiMapping && Object.keys(standardParams).length > 0) {
-                this.node.status({ fill: "green", shape: "dot", text: "Luoi + standard commands processed" });
-                this.logger.log("Both luoi and standard commands processed successfully");
-            } else if (hasLuoiMapping) {
-                this.node.status({ fill: "green", shape: "dot", text: "Luoi commands processed" });
-                this.logger.log("Luoi commands processed successfully");
-            } else {
-                this.node.status({ fill: "green", shape: "dot", text: "Standard commands processed" });
-                this.logger.log("Standard commands processed successfully");
-            }
+            // Fallback to standard processing for non-luoi cases
+            await this.handleStandardParams(filteredParams);
         } catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${(error as Error).message}`);
             throw error;
@@ -215,21 +215,44 @@ export class RpcHandler implements IRpcHandler {
 
 
     /**
+     * Filter out parameters with "undefined" values (string or actual undefined)
+     */
+    private filterUndefinedParams(params: Record<string, any>): Record<string, any> {
+        const filteredParams: Record<string, any> = {};
+        const filteredKeys: string[] = [];
+
+        for (const [key, value] of Object.entries(params)) {
+            // Filter out "undefined" string values and actual undefined values
+            if (value === "undefined" || value === undefined) {
+                filteredKeys.push(key);
+                continue;
+            }
+            filteredParams[key] = value;
+        }
+
+        if (filteredKeys.length > 0) {
+            this.logger.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+        }
+
+        return filteredParams;
+    }
+
+    /**
      * Handle standard parameter processing
      * Sort to process holding registers first, then coils
      */
     private async handleStandardParams(params: Record<string, any>): Promise<void> {
         console.log("handleStandardParams", params);
-        
+
         // Get modbus mappings from global variables
         const modbusHoldingRegisters = this.modbusService.getModbusHoldingRegisters() || {};
         const modbusCoils = this.modbusService.getModbusCoils() || {};
-        
+
         // Separate parameters into holding registers, coils, and config-only
         const holdingParams: Array<[string, any]> = [];
         const coilParams: Array<[string, any]> = [];
         const configParams: Array<[string, any]> = [];
-        
+
         for (const [key, rawValue] of Object.entries(params)) {
             if (modbusHoldingRegisters.hasOwnProperty(key)) {
                 holdingParams.push([key, rawValue]);
@@ -239,9 +262,9 @@ export class RpcHandler implements IRpcHandler {
                 configParams.push([key, rawValue]);
             }
         }
-        
+
         this.logger.log(`Processing parameters - Holding: ${holdingParams.length}, Coils: ${coilParams.length}, Config: ${configParams.length}`);
-        
+
         // Process in order: holding registers first, then coils, then config-only
         for (const [key, rawValue] of holdingParams) {
             await this.processParameter(key, rawValue);
@@ -250,13 +273,13 @@ export class RpcHandler implements IRpcHandler {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
-        
+
         // Add 1 second delay between processing holding registers and coils
         if (holdingParams.length > 0 && coilParams.length > 0) {
             this.logger.log('Adding 1 second delay between holding registers and coils processing');
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        
+
         for (const [key, rawValue] of coilParams) {
             await this.processParameter(key, rawValue);
             // Small delay between each coil write to ensure proper sequencing
@@ -264,7 +287,7 @@ export class RpcHandler implements IRpcHandler {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
-        
+
         for (const [key, rawValue] of configParams) {
             await this.processParameter(key, rawValue);
         }
@@ -372,7 +395,7 @@ export class RpcHandler implements IRpcHandler {
 
         await this.handleRpcRequest(rpcBody, 3); // Use retry logic
     }
-    
+
     /**
      * Publish result with retry logic
      */
@@ -383,7 +406,7 @@ export class RpcHandler implements IRpcHandler {
                 return; // Success
             } catch (error) {
                 this.logger.error(`Failed to publish result for ${key} (attempt ${attempt}/${maxRetries}): ${(error as Error).message}`);
-                
+
                 if (attempt < maxRetries) {
                     if (!this.mqttService.isConnected()) {
                         this.logger.warn("MQTT disconnected, waiting for reconnection...");
@@ -394,7 +417,7 @@ export class RpcHandler implements IRpcHandler {
                 }
             }
         }
-        
+
         this.logger.error(`Failed to publish result for ${key} after all retries`);
     }
 
@@ -436,7 +459,7 @@ export class RpcHandler implements IRpcHandler {
      */
     private async writeToModbusWithRetry(key: string, mapping: any, value: any, maxRetries: number = 2): Promise<void> {
         let lastError: Error | null = null;
-        
+
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 await this.modbusService.writeToModbus(key, mapping, value);
@@ -444,14 +467,14 @@ export class RpcHandler implements IRpcHandler {
             } catch (error) {
                 lastError = error as Error;
                 const errorMessage = lastError.message;
-                
+
                 // Check if this is a connection-related error
                 if (this.isConnectionError(errorMessage)) {
                     this.logger.error(`[RPC-HANDLER] Modbus connection lost: ${errorMessage}`);
-                    
+
                     if (attempt < maxRetries) {
                         this.logger.warn(`[RPC-HANDLER] Attempting reconnection (${attempt}/${maxRetries})...`);
-                        
+
                         try {
                             await this.modbusService.checkConnection();
                             this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying operation...`);
@@ -460,7 +483,7 @@ export class RpcHandler implements IRpcHandler {
                             this.logger.error(`[RPC-HANDLER] Reconnection attempt failed: ${(reconnectError as Error).message}`);
                             // Continue to next iteration anyway, maybe the connection will work
                         }
-                        
+
                         // Wait before retry
                         await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
                     }
@@ -470,40 +493,40 @@ export class RpcHandler implements IRpcHandler {
                 }
             }
         }
-        
+
         // All retries failed
         const finalError = `[RPC-HANDLER] Modbus connection error: ${lastError?.message}. Please check device connection and configuration.`;
         this.logger.error(finalError);
         throw new Error(finalError);
     }
-    
+
     /**
      * Read from Modbus with connection error handling and retry logic
      */
     private async readFromModbusWithRetry(key: string, mapping: any, maxRetries: number = 2): Promise<number | boolean> {
         let lastError: Error | null = null;
-        
+
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 return await this.modbusService.readFromModbus(key, mapping);
             } catch (error) {
                 lastError = error as Error;
                 const errorMessage = lastError.message;
-                
+
                 // Check if this is a connection-related error
                 if (this.isConnectionError(errorMessage)) {
                     this.logger.error(`[RPC-HANDLER] Modbus connection lost during read: ${errorMessage}`);
-                    
+
                     if (attempt < maxRetries) {
                         this.logger.warn(`[RPC-HANDLER] Attempting reconnection for read (${attempt}/${maxRetries})...`);
-                        
+
                         try {
                             await this.modbusService.checkConnection();
                             this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying read operation...`);
                         } catch (reconnectError) {
                             this.logger.error(`[RPC-HANDLER] Reconnection attempt failed: ${(reconnectError as Error).message}`);
                         }
-                        
+
                         // Wait before retry
                         await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
                     }
@@ -513,13 +536,13 @@ export class RpcHandler implements IRpcHandler {
                 }
             }
         }
-        
+
         // All retries failed
         const finalError = `[RPC-HANDLER] Modbus read error: ${lastError?.message}. Please check device connection and configuration.`;
         this.logger.error(finalError);
         throw new Error(finalError);
     }
-    
+
     /**
      * Check if an error is related to connection issues
      */
@@ -539,8 +562,8 @@ export class RpcHandler implements IRpcHandler {
             "timeout",
             "TIMEOUT"
         ];
-        
-        return connectionErrorPatterns.some(pattern => 
+
+        return connectionErrorPatterns.some(pattern =>
             errorMessage.toLowerCase().includes(pattern.toLowerCase())
         );
     }
