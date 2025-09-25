@@ -22,7 +22,7 @@ const ENV_TO_GLOBAL_MAPPING = {
     'DEVICE_SERIAL': 'device_serial',
     'DEVICE_PROFILE_ID': 'device_profile_id',
     'DEVICE_PROFILE_LABEL': 'device_profile_label',
-    'VIIS_BACKEND': 'backend_url',
+    'VIIS_BACKEND': 'server_url',
     'BACKEND_URL': 'server_url',
     // Modbus configuration
     'MODBUS_HOST': 'modbus_host',

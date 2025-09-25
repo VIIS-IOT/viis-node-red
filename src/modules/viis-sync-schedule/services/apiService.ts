@@ -49,7 +49,7 @@ export class ApiService {
      */
     async getAllSchedulePlans(): Promise<ServerResponse<ServerSchedulePlan[]>> {
         logger.info(null, 'Fetching all schedule plans from server');
-        const url = `api/v2/${API_PATHS.SCHEDULE_PLAN_ALL}/${this.accessToken}`;
+        const url = `/api/v2${API_PATHS.SCHEDULE_PLAN_ALL}/${this.accessToken}`;
         
         return withRetry(async () => {
             try {

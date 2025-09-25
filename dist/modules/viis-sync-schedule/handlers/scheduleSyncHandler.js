@@ -139,7 +139,7 @@ class ScheduleSyncHandler {
             newPlan.creation = new Date(serverPlan.creation);
             newPlan.modified = new Date(serverPlan.modified);
             newPlan.schedule_count = serverPlan.schedule_count;
-            newPlan.status = serverPlan.status || 'active'; // Ensure default value
+            newPlan.status = serverPlan.status || 'active'; // Default to 'active' if null/empty
             newPlan.is_deleted = serverPlan.is_deleted;
             newPlan.enable = serverPlan.enable;
             // Skip customer_id as it's not in the entity
@@ -179,7 +179,7 @@ class ScheduleSyncHandler {
                 label: serverPlan.label,
                 modified: serverModified,
                 schedule_count: serverPlan.schedule_count,
-                status: serverPlan.status || 'active', // Ensure default value
+                status: serverPlan.status || 'active', // Default to 'active' if null/empty
                 is_deleted: serverPlan.is_deleted,
                 enable: serverPlan.enable,
                 is_synced: 1, // Mark as synced
@@ -233,7 +233,7 @@ class ScheduleSyncHandler {
         try {
             logger_1.logger.info(this.node, `Syncing schedule: ${serverSchedule.name}`);
             // Check if schedule exists locally
-            const localSchedule = await this.scheduleRepo.findOneBy({ name: serverSchedule.name });
+            const localSchedule = await this.scheduleRepo.findOneBy({ name: serverSchedule.id });
             if (!localSchedule) {
                 // Schedule doesn't exist locally, create it
                 await this.createSchedule(serverSchedule, planName);
@@ -261,10 +261,10 @@ class ScheduleSyncHandler {
             logger_1.logger.info(this.node, `Creating new schedule: ${serverSchedule.name}`);
             // Create a new TabiotSchedule entity
             const newSchedule = new TabiotSchedule_1.TabiotSchedule();
-            newSchedule.name = serverSchedule.name;
+            newSchedule.name = serverSchedule.id;
             newSchedule.label = serverSchedule.label;
             newSchedule.device_id = serverSchedule.device_id;
-            newSchedule.status = serverSchedule.status;
+            newSchedule.status = serverSchedule.status || 'finished'; // Default to 'finished' if null/empty
             newSchedule.action = typeof serverSchedule.action === 'object'
                 ? JSON.stringify(serverSchedule.action)
                 : serverSchedule.action;
@@ -274,7 +274,7 @@ class ScheduleSyncHandler {
             newSchedule.end_time = serverSchedule.end_time;
             newSchedule.start_date = serverSchedule.start_date || null;
             newSchedule.end_date = serverSchedule.end_date || null;
-            newSchedule.type = serverSchedule.type;
+            newSchedule.type = (serverSchedule.type || '');
             newSchedule.interval = serverSchedule.interval;
             newSchedule.is_synced = 1; // Mark as synced since it came from server
             newSchedule.is_from_local = 0; // Not from local
@@ -316,7 +316,7 @@ class ScheduleSyncHandler {
             Object.assign(localSchedule, {
                 label: serverSchedule.label,
                 modified: serverSchedule.modified || localSchedule.modified,
-                status: serverSchedule.status || 'finished',
+                status: serverSchedule.status || 'finished', // Default to 'finished' if null/empty
                 action: typeof serverSchedule.action === 'object'
                     ? JSON.stringify(serverSchedule.action)
                     : serverSchedule.action,
@@ -326,7 +326,7 @@ class ScheduleSyncHandler {
                 end_time: serverSchedule.end_time,
                 start_date: serverSchedule.start_date ? new Date(serverSchedule.start_date) : null,
                 end_date: serverSchedule.end_date ? new Date(serverSchedule.end_date) : null,
-                type: serverSchedule.type || '', // Changed from 'default' to '' which is a valid enum value
+                type: (serverSchedule.type || ''), // Ensure empty string instead of null
                 interval: serverSchedule.interval,
                 is_synced: 1, // Mark as synced
                 is_deleted: serverSchedule.is_deleted,
