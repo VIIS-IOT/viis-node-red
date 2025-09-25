@@ -41,7 +41,7 @@ class ApiService {
      */
     async getAllSchedulePlans() {
         logger_1.logger.info(null, 'Fetching all schedule plans from server');
-        const url = `api/v2/schedulePlan/device/all/${this.accessToken}`;
+        const url = `api/v2/${constants_1.API_PATHS.SCHEDULE_PLAN_ALL}/${this.accessToken}`;
         return (0, retry_1.withRetry)(async () => {
             try {
                 logger_1.logger.debug(null, `Making GET request to: ${url}`);

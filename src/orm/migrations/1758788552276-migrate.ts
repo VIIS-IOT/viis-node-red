@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class Migrate1751514513883 implements MigrationInterface {
-    name = 'Migrate1751514513883'
+export class Migrate1758788552276 implements MigrationInterface {
+    name = 'Migrate1758788552276'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await queryRunner.query(`CREATE TABLE \`tabiot_device_profile\` (\`creation\` datetime(6) NULL DEFAULT CURRENT_TIMESTAMP(6), \`modified\` datetime(6) NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \`_user_tags\` text NULL, \`_comments\` text NULL, \`_assign\` text NULL, \`_liked_by\` text NULL, \`modified_by\` varchar(140) NULL, \`owner\` varchar(140) NULL, \`docstatus\` smallint NOT NULL DEFAULT '0', \`idx\` bigint NOT NULL DEFAULT '0', \`deleted\` datetime(6) NULL, \`name\` varchar(255) NOT NULL, \`tb_device_profile_id\` varchar(255) NULL, \`label\` varchar(255) NULL, \`type\` varchar(255) NULL, \`image\` varchar(255) NULL, \`transport_type\` enum ('DEFAULT', 'MQTT', 'CoAP', 'LWM2M', 'SNMP') NULL, \`provision_type\` enum ('DISABLED', 'ALLOW_CREATE_NEW_DEVICES') NULL, \`profile_data\` json NULL, \`description\` varchar(255) NULL, \`is_default\` tinyint NULL, \`firmware_id\` varchar(255) NULL, \`software_id\` varchar(255) NULL, \`default_rule_chain_id\` varchar(255) NULL, \`default_dashboard_id\` varchar(255) NULL, \`default_queue\` varchar(255) NULL, \`provision_device_key\` varchar(255) NULL, PRIMARY KEY (\`name\`)) ENGINE=InnoDB`);

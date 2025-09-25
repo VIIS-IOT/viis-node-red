@@ -7,7 +7,7 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 import { ServerResponse, ServerSchedulePlan } from '../interfaces/types';
 import { logger } from '../utils/logger';
 import { createConfig } from '../../../configs';
-import { SYNC_DEFAULTS } from '../constants';
+import { API_PATHS, SYNC_DEFAULTS } from '../constants';
 import { withRetry } from '../utils/retry';
 import { NodeContext } from 'node-red';
 
@@ -49,7 +49,7 @@ export class ApiService {
      */
     async getAllSchedulePlans(): Promise<ServerResponse<ServerSchedulePlan[]>> {
         logger.info(null, 'Fetching all schedule plans from server');
-        const url = `api/v2/schedulePlan/device/all/${this.accessToken}`;
+        const url = `api/v2/${API_PATHS.SCHEDULE_PLAN_ALL}/${this.accessToken}`;
         
         return withRetry(async () => {
             try {
