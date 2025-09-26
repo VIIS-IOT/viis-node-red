@@ -30,7 +30,7 @@ export class ApiService {
     constructor(accessToken: string, nodeContext?: NodeContext) {
         this.configs = createConfig(nodeContext);
         const config: AxiosRequestConfig = {
-            baseURL: this.configs.serverUrl || 'http://localhost:8080',
+            baseURL: 'https://iot.viis.tech',
             timeout: SYNC_DEFAULTS.TIMEOUT,
             headers: {
                 'Content-Type': 'application/json',
