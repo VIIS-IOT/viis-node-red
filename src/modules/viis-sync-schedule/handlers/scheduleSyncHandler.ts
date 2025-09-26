@@ -392,7 +392,7 @@ export class ScheduleSyncHandler {
 
             // Update local schedule with server data
             Object.assign(localSchedule, {
-                label: serverSchedule.label,
+                label: serverSchedule.name,
                 modified: serverSchedule.modified || localSchedule.modified,
                 status: (serverSchedule.status as 'running' | 'stopped' | 'finished' | '') || 'finished', // Default to 'finished' if null/empty
                 action: typeof serverSchedule.action === 'object'
