@@ -333,7 +333,7 @@ export class ScheduleSyncHandler {
             // Create a new TabiotSchedule entity
             const newSchedule = new TabiotSchedule();
             newSchedule.name = serverSchedule.id;
-            newSchedule.label = serverSchedule.label;
+            newSchedule.label = serverSchedule.name;
             newSchedule.device_id = serverSchedule.device_id;
             newSchedule.status = (serverSchedule.status as 'running' | 'stopped' | 'finished' | '') || 'finished'; // Default to 'finished' if null/empty
             newSchedule.action = typeof serverSchedule.action === 'object'
