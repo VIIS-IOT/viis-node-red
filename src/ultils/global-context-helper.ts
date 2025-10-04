@@ -2,7 +2,7 @@
  * Global Context Helper for VIIS Node-RED Custom Nodes
  * Provides utilities to access environment variables from Node-RED global context
  * with fallback to process.env for backward compatibility
- * 
+ *
  * @author VIIS Team
  * @version 1.0.0
  */
@@ -20,7 +20,7 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'DEVICE_PROFILE_ID': 'device_profile_id',
   'DEVICE_PROFILE_LABEL': 'device_profile_label',
   'VIIS_BACKEND': 'server_url',
-  'BACKEND_URL': 'server_url',
+  'BACKEND_URL': 'backend_url',
   // Modbus configuration
   'MODBUS_HOST': 'modbus_host',
   'MODBUS_TCP_PORT': 'modbus_tcp_port',

@@ -1,14 +1,23 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import { Service } from 'typedi';
+import { NodeContext } from "node-red";
+import { GlobalContextHelper } from "../ultils/global-context-helper";
 
-@Service()
-export class HttpService {
+class HttpService {
     private axiosInstance: AxiosInstance;
+    private nodeContext?: NodeContext;
 
-    constructor() {
+    constructor(nodeContext?: NodeContext) {
+        this.nodeContext = nodeContext;
+        
+        // Use GlobalContextHelper if nodeContext is available
+        const helper = nodeContext ? new GlobalContextHelper(nodeContext) : null;
+        const baseURL = helper ? 
+            helper.getEnvVar('API_BASE_URL', '') : 
+            (process.env.API_BASE_URL || '');
+        
         // Tạo instance của axios với các cấu hình mặc định
         this.axiosInstance = axios.create({
-            baseURL: process.env.API_BASE_URL || '', // Có thể cấu hình từ biến môi trường
+            baseURL: baseURL, // Có thể cấu hình từ global context hoặc biến môi trường
             timeout: 10000, // timeout 10 giây
             headers: {
                 'Content-Type': 'application/json',

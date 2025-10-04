@@ -1,35 +1,34 @@
-import "reflect-metadata";
-import { DataSource } from "typeorm";
-import { NodeContext } from "node-red";
-import { GlobalContextHelper } from "../ultils/global-context-helper";
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AppDataSource = void 0;
+exports.createDataSource = createDataSource;
+require("reflect-metadata");
+const typeorm_1 = require("typeorm");
+const global_context_helper_1 = require("../ultils/global-context-helper");
 /**
  * Factory function to create DataSource with proper configuration
  * Can use NodeContext for global context access or fallback to process.env
- * 
+ *
  * @param nodeContext - Optional Node-RED context for accessing global variables
  * @returns DataSource instance
  */
-export function createDataSource(nodeContext?: NodeContext): DataSource {
+function createDataSource(nodeContext) {
     // Use GlobalContextHelper if nodeContext is available
-    const helper = nodeContext ? new GlobalContextHelper(nodeContext) : null;
-    
+    const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
     // Helper function to get config value with fallback
-    const getConfigValue = (envKey: string, defaultValue: any): any => {
+    const getConfigValue = (envKey, defaultValue) => {
         if (helper) {
             return helper.getEnvVar(envKey, defaultValue);
         }
         return process.env[envKey] || defaultValue;
     };
-    
-    const getNumericValue = (envKey: string, defaultValue: number): number => {
+    const getNumericValue = (envKey, defaultValue) => {
         if (helper) {
             return helper.getNumericEnvVar(envKey, defaultValue);
         }
         return parseInt(process.env[envKey] || String(defaultValue));
     };
-    
-    return new DataSource({
+    return new typeorm_1.DataSource({
         type: "mysql",
         host: getConfigValue('DB_HOST', 'viis-local-mysql'), // Use container name by default
         port: getNumericValue('DB_PORT', 3306),
@@ -44,6 +43,5 @@ export function createDataSource(nodeContext?: NodeContext): DataSource {
         logging: false,
     });
 }
-
 // Default instance for backward compatibility (uses process.env)
-export const AppDataSource = createDataSource();
+exports.AppDataSource = createDataSource();
