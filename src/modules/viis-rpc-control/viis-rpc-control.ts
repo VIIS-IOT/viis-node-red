@@ -48,6 +48,31 @@ module.exports = function (RED: NodeAPI) {
             globalContext,
         };
 
+        // Track current Modbus config for hot-reload detection
+        let currentModbusConfig: any = null;
+        let configCheckInterval: NodeJS.Timeout | null = null;
+
+        // Helper function to read fresh Modbus config from global context
+        const readModbusConfig = () => {
+            return {
+                type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
+                host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
+                tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
+                unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
+                // Board-specific configuration
+                boardType: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_BOARD_TYPE, MODBUS_CONFIG.DEFAULT_BOARD_TYPE) as "STM32" | "ATMEGA" | "GENERIC"),
+                writeTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_WRITE_TIMEOUT, MODBUS_CONFIG.DEFAULT_WRITE_TIMEOUT),
+                readTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_READ_TIMEOUT, MODBUS_CONFIG.DEFAULT_READ_TIMEOUT),
+                connectionTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_CONNECTION_TIMEOUT, MODBUS_CONFIG.DEFAULT_CONNECTION_TIMEOUT),
+                maxRetries: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_MAX_RETRIES, MODBUS_CONFIG.DEFAULT_MAX_RETRIES),
+            };
+        };
+
         // Wrap async initialization in IIFE
         (async () => {
             try {
@@ -73,23 +98,8 @@ module.exports = function (RED: NodeAPI) {
                 const deviceId = globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, DEFAULTS.DEVICE_ID);
 
                 // Initialize Modbus client configuration with board-specific settings
-                const modbusConfig = {
-                    type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
-                    host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
-                    tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
-                    serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
-                    baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
-                    parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
-                    unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
-                    timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
-                    reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
-                    // Board-specific configuration
-                    boardType: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_BOARD_TYPE, MODBUS_CONFIG.DEFAULT_BOARD_TYPE) as "STM32" | "ATMEGA" | "GENERIC"),
-                    writeTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_WRITE_TIMEOUT, MODBUS_CONFIG.DEFAULT_WRITE_TIMEOUT),
-                    readTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_READ_TIMEOUT, MODBUS_CONFIG.DEFAULT_READ_TIMEOUT),
-                    connectionTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_CONNECTION_TIMEOUT, MODBUS_CONFIG.DEFAULT_CONNECTION_TIMEOUT),
-                    maxRetries: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_MAX_RETRIES, MODBUS_CONFIG.DEFAULT_MAX_RETRIES),
-                };
+                const modbusConfig = readModbusConfig();
+                currentModbusConfig = { ...modbusConfig }; // Store for hot-reload detection
 
                 // Log Modbus configuration for debugging
                 logger.log(`Modbus Configuration: ${JSON.stringify(modbusConfig, null, 2)}`);
@@ -337,6 +347,77 @@ module.exports = function (RED: NodeAPI) {
                 });
                 logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
 
+                // Helper function to reconnect Modbus with new config
+                const reconnectModbus = async (newConfig: any) => {
+                    try {
+                        logger.warn("[HOT-RELOAD] Starting Modbus reconnection...");
+                        logger.warn(`[HOT-RELOAD] Old config: ${JSON.stringify(currentModbusConfig)}`);
+                        logger.warn(`[HOT-RELOAD] New config: ${JSON.stringify(newConfig)}`);
+
+                        // Release old Modbus client
+                        if (modbusClient) {
+                            ClientRegistry.releaseClient("modbus", node);
+                            logger.warn("[HOT-RELOAD] Old Modbus client released");
+                        }
+
+                        // Create new Modbus client with new config
+                        modbusClient = ClientRegistry.getModbusClient(newConfig, node);
+                        logger.warn("[HOT-RELOAD] New Modbus client created");
+
+                        // Wait for connection to establish
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+
+                        if (modbusClient.isConnectedCheck()) {
+                            // Update ModbusService with new client
+                            (modbusService as any).modbusClient = modbusClient;
+
+                            // Update current config
+                            currentModbusConfig = { ...newConfig };
+
+                            logger.warn("[HOT-RELOAD] Modbus reconnected successfully");
+                            node.status({ fill: "green", shape: "dot", text: `Modbus reloaded: ${newConfig.host}` });
+                            
+                            // Reset status after 5 seconds
+                            setTimeout(() => {
+                                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                            }, 5000);
+                        } else {
+                            throw new Error("Failed to establish Modbus connection with new config");
+                        }
+                    } catch (error) {
+                        logger.error(`[HOT-RELOAD] Modbus reconnection failed: ${(error as Error).message}`);
+                        node.status({ fill: "yellow", shape: "ring", text: "Hot-reload failed" });
+                        
+                        // Reset status after 5 seconds
+                        setTimeout(() => {
+                            node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                        }, 5000);
+                    }
+                };
+
+                // Auto-detect config changes every 30 seconds
+                configCheckInterval = setInterval(() => {
+                    try {
+                        const newConfig = readModbusConfig();
+                        
+                        // Check if critical Modbus config has changed
+                        const hasChanged = 
+                            currentModbusConfig.host !== newConfig.host ||
+                            currentModbusConfig.tcpPort !== newConfig.tcpPort ||
+                            currentModbusConfig.serialPort !== newConfig.serialPort ||
+                            currentModbusConfig.type !== newConfig.type;
+
+                        if (hasChanged) {
+                            logger.warn("[HOT-RELOAD] Config change detected, triggering Modbus reconnection...");
+                            reconnectModbus(newConfig).catch(err => {
+                                logger.error(`[HOT-RELOAD] Auto-reconnect failed: ${err.message}`);
+                            });
+                        }
+                    } catch (error) {
+                        logger.error(`[HOT-RELOAD] Config check error: ${(error as Error).message}`);
+                    }
+                }, 30000); // Check every 30 seconds
+
                 // Node initialization completed successfully
                 logger.warn("[INIT] ===== VIIS RPC Control Node initialization completed successfully =====");
                 logger.warn(`[INIT] Node ID: ${node.id}`);
@@ -345,12 +426,27 @@ module.exports = function (RED: NodeAPI) {
                 logger.warn(`[INIT] Publish Topic: ${publishTopic}`);
                 logger.warn(`[INIT] MQTT Connected: ${mqttClient.isConnected()}`);
                 logger.warn(`[INIT] Modbus Connected: ${modbusClient.isConnectedCheck()}`);
+                logger.warn(`[INIT] Hot-reload enabled: Checking config every 30s`);
                 node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
 
                 // Handle input messages for dynamic configuration updates and RPC commands
-                node.on('input', (msg: any) => {
+                node.on('input', async (msg: any) => {
                     logger.log('Input message received');
                     node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.MESSAGE_RECEIVED });
+
+                    // Handle manual Modbus config reload command
+                    if (msg.topic === 'reload-modbus-config' || msg.payload === 'reload-modbus-config') {
+                        logger.warn("[MANUAL-RELOAD] Manual Modbus config reload requested");
+                        
+                        try {
+                            const newConfig = readModbusConfig();
+                            await reconnectModbus(newConfig);
+                            logger.warn("[MANUAL-RELOAD] Manual reload completed successfully");
+                        } catch (error) {
+                            logger.error(`[MANUAL-RELOAD] Manual reload failed: ${(error as Error).message}`);
+                        }
+                        return;
+                    }
 
                     // Handle RPC commands from input
                     if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
@@ -386,6 +482,13 @@ module.exports = function (RED: NodeAPI) {
                 // Cleanup when node is removed
                 node.on('close', async (done: () => void) => {
                     try {
+                        // Stop config check interval
+                        if (configCheckInterval) {
+                            clearInterval(configCheckInterval);
+                            configCheckInterval = null;
+                            logger.log("[CLEANUP] Config check interval stopped");
+                        }
+
                         // Clear all timeouts and caches
                         mqttService.clearAllTimeouts();
                         messageHandler.clearProcessedMessages();
