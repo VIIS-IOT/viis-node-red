@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
+const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     function ViisRpcControlFromInputNode(config) {
         RED.nodes.createNode(this, config);
@@ -11,6 +12,8 @@ module.exports = function (RED) {
         // Log when node is initialized
         node.warn("VIIS RPC Control From Input Node initialized");
         console.log("VIIS RPC Control From Input Node initialized");
+        // Initialize GlobalContextHelper for environment variables
+        const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
         // Flow context cho config
         const flowContext = node.context().flow;
         const SCALE_CONFIG_KEY = `scaleConfigs_${node.id}`;
@@ -56,46 +59,54 @@ module.exports = function (RED) {
         function setConfigKeyValues(values) {
             flowContext.set(CONFIG_VALUES_KEY, values);
         }
-        // Environment variables
-        const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-        const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
-        const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-        // Initialize modbus client
-        // Environment variables
-        const deviceId = process.env.DEVICE_ID || "unknown";
-        // Modbus config
-        const modbusConfig = {
-            type: process.env.MODBUS_TYPE || "TCP",
-            host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
-            serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
-            baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
-            parity: process.env.MODBUS_PARITY || "none",
-            unitId: parseInt(process.env.MODBUS_UNIT_ID || "1", 10),
-            timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
-            reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
+        // Helper function to read fresh config from global context (for hot-reload)
+        const readEnvConfig = () => {
+            return {
+                modbusCoils: globalHelper.getJsonEnvVar('MODBUS_COILS', {}),
+                modbusInputRegisters: globalHelper.getJsonEnvVar('MODBUS_INPUT_REGISTERS', {}),
+                modbusHoldingRegisters: globalHelper.getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {}),
+                deviceId: globalHelper.getEnvVar('DEVICE_ID', 'unknown'),
+                modbusConfig: {
+                    type: globalHelper.getEnvVar('MODBUS_TYPE', 'TCP'),
+                    host: globalHelper.getEnvVar('MODBUS_HOST', 'localhost'),
+                    tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
+                    serialPort: globalHelper.getEnvVar('MODBUS_SERIAL_PORT', '/dev/ttyUSB0'),
+                    baudRate: globalHelper.getNumericEnvVar('MODBUS_BAUD_RATE', 9600),
+                    parity: globalHelper.getEnvVar('MODBUS_PARITY', 'none'),
+                    unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1),
+                    timeout: globalHelper.getNumericEnvVar('MODBUS_TIMEOUT', 5000),
+                    reconnectInterval: globalHelper.getNumericEnvVar('MODBUS_RECONNECT_INTERVAL', 5000),
+                }
+            };
         };
-        // MQTT config
+        // Read initial config
+        let currentEnvConfig = readEnvConfig();
+        let modbusCoils = currentEnvConfig.modbusCoils;
+        let modbusInputRegisters = currentEnvConfig.modbusInputRegisters;
+        let modbusHoldingRegisters = currentEnvConfig.modbusHoldingRegisters;
+        let deviceId = currentEnvConfig.deviceId;
+        const modbusConfig = currentEnvConfig.modbusConfig;
+        // MQTT config from global context
         const mqttConfig = config.mqttBroker === "thingsboard"
             ? {
-                broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
+                broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech')}:${globalHelper.getNumericEnvVar('THINGSBOARD_PORT', 1883)}`,
                 clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substr(2, 8)}`,
-                username: process.env.DEVICE_ACCESS_TOKEN || "",
-                password: process.env.THINGSBOARD_PASSWORD || "",
+                username: globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', ''),
+                password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
                 qos: 1,
             }
             : {
-                broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
+                broker: `mqtt://${globalHelper.getEnvVar('EMQX_HOST', 'emqx')}:${globalHelper.getNumericEnvVar('EMQX_PORT', 1883)}`,
                 clientId: `node-red-local-rpc-${Math.random().toString(16).substr(2, 8)}`,
-                username: process.env.EMQX_USERNAME || "",
-                password: process.env.EMQX_PASSWORD || "",
+                username: globalHelper.getEnvVar('EMQX_USERNAME', ''),
+                password: globalHelper.getEnvVar('EMQX_PASSWORD', ''),
                 qos: 1,
             };
         const publishTopic = config.mqttBroker === "thingsboard"
             ? "v1/devices/me/telemetry"
             : `v1/devices/me/telemetry/${deviceId}`;
         // Lấy clients
-        const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
+        let modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
         let mqttClient = null;
         // Khởi tạo MQTT client nếu cần (async/sync)
         if (config.mqttBroker) {
@@ -131,6 +142,44 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "Modbus client initialization failed" });
             return;
         }
+        // Hot-reload: Check for config changes every 30 seconds
+        const configCheckInterval = setInterval(async () => {
+            try {
+                const newEnvConfig = readEnvConfig();
+                // Check if Modbus config changed
+                const modbusChanged = currentEnvConfig.modbusConfig.host !== newEnvConfig.modbusConfig.host ||
+                    currentEnvConfig.modbusConfig.tcpPort !== newEnvConfig.modbusConfig.tcpPort ||
+                    currentEnvConfig.modbusConfig.serialPort !== newEnvConfig.modbusConfig.serialPort ||
+                    currentEnvConfig.modbusConfig.type !== newEnvConfig.modbusConfig.type;
+                if (modbusChanged) {
+                    node.warn(`[HOT-RELOAD] Modbus config changed: ${currentEnvConfig.modbusConfig.host}:${currentEnvConfig.modbusConfig.tcpPort} -> ${newEnvConfig.modbusConfig.host}:${newEnvConfig.modbusConfig.tcpPort}`);
+                    // Use ClientRegistry's centralized reload method
+                    const reloaded = await client_registry_1.default.reloadModbusConfig(newEnvConfig.modbusConfig, node);
+                    if (reloaded) {
+                        // Get updated client from registry
+                        modbusClient = client_registry_1.default.getModbusClient(newEnvConfig.modbusConfig, node);
+                        node.warn("[HOT-RELOAD] Modbus client reconnected successfully");
+                        node.status({ fill: "green", shape: "dot", text: `Reloaded: ${newEnvConfig.modbusConfig.host}` });
+                        setTimeout(() => {
+                            node.status({ fill: "green", shape: "dot", text: "Ready" });
+                        }, 3000);
+                    }
+                }
+                // Update all env variables
+                if (currentEnvConfig.deviceId !== newEnvConfig.deviceId) {
+                    node.warn(`[HOT-RELOAD] Device ID changed: ${currentEnvConfig.deviceId} -> ${newEnvConfig.deviceId}`);
+                    deviceId = newEnvConfig.deviceId;
+                }
+                modbusCoils = newEnvConfig.modbusCoils;
+                modbusInputRegisters = newEnvConfig.modbusInputRegisters;
+                modbusHoldingRegisters = newEnvConfig.modbusHoldingRegisters;
+                currentEnvConfig = newEnvConfig;
+            }
+            catch (error) {
+                node.error(`[HOT-RELOAD] Config check error: ${error.message}`);
+            }
+        }, 30000); // Check every 30 seconds
+        node.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
         // Utility functions
         function scaleValue(key, value, direction) {
             const config = getScaleConfigs().find((c) => c.key === key && c.direction === direction);
@@ -398,6 +447,11 @@ module.exports = function (RED) {
         // Cleanup on close
         node.on('close', function () {
             try {
+                // Stop config check interval
+                if (configCheckInterval) {
+                    clearInterval(configCheckInterval);
+                    node.log("[CLEANUP] Config check interval stopped");
+                }
                 flowContext.set(SCALE_CONFIG_KEY, []);
                 flowContext.set(CONFIG_KEYS_KEY, {});
                 flowContext.set(CONFIG_VALUES_KEY, {});

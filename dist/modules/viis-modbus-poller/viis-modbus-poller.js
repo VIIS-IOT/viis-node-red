@@ -16,6 +16,8 @@ module.exports = function (RED) {
         const node = this;
         let modbusPollerService = null;
         let logger = null;
+        let configCheckInterval = null;
+        let currentModbusConfig = null;
         // Initialize node
         (async () => {
             try {
@@ -32,6 +34,7 @@ module.exports = function (RED) {
                 const thresholdConfig = parseThresholdConfig(config.thresholdConfig, logger);
                 // Create Modbus client configuration
                 const modbusConfig = createModbusConfig(globalHelper);
+                currentModbusConfig = Object.assign({}, modbusConfig); // Store for hot-reload detection
                 logger.debug(`Modbus config: ${modbusConfig.type} ${modbusConfig.host}:${modbusConfig.tcpPort}`);
                 // Create MQTT client configurations
                 const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
@@ -39,7 +42,7 @@ module.exports = function (RED) {
                 // Get shared clients from registry
                 logger.log("Getting shared clients from ClientRegistry...");
                 client_registry_1.default.logConnectionCounts(node);
-                const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
+                let modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
                 if (!modbusClient) {
                     throw new Error(constants_1.ERROR_MESSAGES.MODBUS_CLIENT_INIT_FAILED);
                 }
@@ -78,6 +81,37 @@ module.exports = function (RED) {
                 // Start polling
                 modbusPollerService.startPolling();
                 logger.log("VIIS Modbus Poller Node initialized successfully");
+                // Auto-detect config changes every 30 seconds
+                configCheckInterval = setInterval(async () => {
+                    try {
+                        const newConfig = createModbusConfig(globalHelper);
+                        // Check if critical Modbus config has changed
+                        const hasChanged = currentModbusConfig.host !== newConfig.host ||
+                            currentModbusConfig.tcpPort !== newConfig.tcpPort ||
+                            currentModbusConfig.serialPort !== newConfig.serialPort ||
+                            currentModbusConfig.type !== newConfig.type;
+                        if (hasChanged) {
+                            logger.log("[HOT-RELOAD] Config change detected, triggering Modbus reconnection...");
+                            const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig, node);
+                            if (reloaded && modbusPollerService) {
+                                // Get updated client and update service
+                                modbusClient = client_registry_1.default.getModbusClient(newConfig, node);
+                                modbusPollerService.modbusClient = modbusClient;
+                                currentModbusConfig = Object.assign({}, newConfig);
+                                logger.log(`[HOT-RELOAD] Modbus reloaded: ${newConfig.host}:${newConfig.tcpPort}`);
+                                // Show brief reload notification
+                                node.status({ fill: "green", shape: "dot", text: `Reloaded: ${newConfig.host}` });
+                                setTimeout(() => {
+                                    node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.READY });
+                                }, 3000);
+                            }
+                        }
+                    }
+                    catch (error) {
+                        logger.error(`[HOT-RELOAD] Config check error: ${error.message}`);
+                    }
+                }, 30000); // Check every 30 seconds
+                logger.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
             }
             catch (error) {
                 const errorMessage = `Initialization failed: ${error.message}`;
@@ -95,6 +129,14 @@ module.exports = function (RED) {
             try {
                 if (logger) {
                     logger.log("Closing VIIS Modbus Poller Node");
+                }
+                // Stop config check interval
+                if (configCheckInterval) {
+                    clearInterval(configCheckInterval);
+                    configCheckInterval = null;
+                    if (logger) {
+                        logger.log("[CLEANUP] Config check interval stopped");
+                    }
                 }
                 // Stop polling service
                 if (modbusPollerService) {

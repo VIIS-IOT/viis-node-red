@@ -12,25 +12,31 @@ module.exports = function (RED: NodeAPI) {
         // Initialize GlobalContextHelper
         const globalHelper = new GlobalContextHelper(node.context());
 
-        // Environment variables for Modbus mappings
-        const modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
-        const modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-        const modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
-
-        // Modbus client configuration
-        const modbusConfig = {
-            type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
-            host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
-            tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
-            serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
-            baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
-            parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
-            unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
-            timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
-            reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+        // Helper function to read fresh config from global context
+        const readModbusConfig = () => {
+            return {
+                type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
+                host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
+                tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
+                serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
+                baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
+                parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
+                unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
+                timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
+                reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+            };
         };
 
-        const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+        // Environment variables for Modbus mappings
+        let modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
+        let modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+        let modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
+
+        // Modbus client configuration
+        const modbusConfig = readModbusConfig();
+        let currentModbusConfig = { ...modbusConfig };
+
+        let modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
         if (!modbusClient) {
             node.error("Failed to initialize Modbus client");
             node.status({ fill: "red", shape: "ring", text: "Modbus client failed" });
@@ -124,9 +130,49 @@ module.exports = function (RED: NodeAPI) {
         // Chạy kiểm tra định kỳ mỗi 1 giây
         const interval = setInterval(checkProtection, 1000);
 
+        // Auto-detect config changes every 30 seconds
+        const configCheckInterval = setInterval(async () => {
+            try {
+                const newConfig = readModbusConfig();
+                
+                // Check if critical Modbus config has changed
+                const hasChanged = 
+                    currentModbusConfig.host !== newConfig.host ||
+                    currentModbusConfig.tcpPort !== newConfig.tcpPort ||
+                    currentModbusConfig.serialPort !== newConfig.serialPort ||
+                    currentModbusConfig.type !== newConfig.type;
+
+                if (hasChanged) {
+                    node.warn("[HOT-RELOAD] Config change detected, triggering Modbus reconnection...");
+                    
+                    const reloaded = await ClientRegistry.reloadModbusConfig(newConfig, node);
+                    
+                    if (reloaded) {
+                        // Get updated client
+                        modbusClient = ClientRegistry.getModbusClient(newConfig, node);
+                        currentModbusConfig = { ...newConfig };
+                        node.warn(`[HOT-RELOAD] Modbus reloaded: ${newConfig.host}:${newConfig.tcpPort}`);
+                    }
+                }
+
+                // Update Modbus mappings
+                modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
+                modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
+            } catch (error) {
+                node.error(`[HOT-RELOAD] Config check error: ${(error as Error).message}`);
+            }
+        }, 30000); // Check every 30 seconds
+
+        node.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
+
         // Cleanup khi node bị xóa hoặc đóng
         node.on("close", (done: any) => {
             clearInterval(interval);
+            if (configCheckInterval) {
+                clearInterval(configCheckInterval);
+                node.log("[CLEANUP] Config check interval stopped");
+            }
             ClientRegistry.releaseClient("modbus", node);
             node.log("Protection node closed and Modbus client released");
             done();

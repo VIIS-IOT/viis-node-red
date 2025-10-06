@@ -1,7 +1,13 @@
 import "reflect-metadata";
+import { config } from "dotenv";
 import { DataSource } from "typeorm";
 import { NodeContext } from "node-red";
 import { GlobalContextHelper } from "../ultils/global-context-helper";
+import * as path from "path";
+
+// Load common.env from centralized env directory
+// Provides DB_* variables for migrations from host (localhost:3308)
+config({ path: path.resolve(__dirname, "../../../../../env/common.env") });
 
 /**
  * Factory function to create DataSource with proper configuration

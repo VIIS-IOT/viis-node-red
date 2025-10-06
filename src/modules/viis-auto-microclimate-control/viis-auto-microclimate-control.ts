@@ -26,6 +26,7 @@ import {
     ERROR_MESSAGES
 } from "./constants";
 import { FanControlService } from "./services/fanControlService";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 module.exports = function (RED: NodeAPI) {
     function ViisAutoMicroclimateControlNode(this: Node, config: ViisAutoMicroclimateControlNodeDef) {
@@ -51,29 +52,39 @@ module.exports = function (RED: NodeAPI) {
                 // Get context references
                 const flowContext = node.context().flow;
                 const globalContext = node.context().global;
+                
+                // Initialize GlobalContextHelper for environment variables
+                const globalHelper = new GlobalContextHelper(node.context());
 
-                // Read environment configuration
-                const environmentConfig: EnvironmentConfig = {
-                    deviceId: process.env[ENV_KEYS.DEVICE_ID] || "unknown",
-                    modbusCoils: JSON.parse(process.env[ENV_KEYS.MODBUS_COILS] || "{}"),
-                    modbusInputRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_INPUT_REGISTERS] || "{}"),
-                    modbusHoldingRegisters: JSON.parse(process.env[ENV_KEYS.MODBUS_HOLDING_REGISTERS] || "{}")
+                // Helper function to read fresh config from global context (for hot-reload)
+                const readEnvironmentConfig = (): EnvironmentConfig => {
+                    return {
+                        deviceId: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, "unknown"),
+                        modbusCoils: globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_COILS, {}),
+                        modbusInputRegisters: globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_INPUT_REGISTERS, {}),
+                        modbusHoldingRegisters: globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_HOLDING_REGISTERS, {})
+                    };
                 };
+
+                const readModbusConfig = () => {
+                    return {
+                        type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
+                        host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
+                        tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                        serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                        baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                        parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
+                        unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                        timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                        reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL)
+                    };
+                };
+
+                // Read initial configuration
+                let environmentConfig = readEnvironmentConfig();
+                let currentModbusConfig = readModbusConfig();
 
                 logger.log(`Environment config loaded: device=${environmentConfig.deviceId}`);
-
-                // Initialize Modbus client configuration
-                const modbusConfig = {
-                    type: (process.env[ENV_KEYS.MODBUS_TYPE] as "TCP" | "RTU") || MODBUS_CONFIG.DEFAULT_TYPE,
-                    host: process.env[ENV_KEYS.MODBUS_HOST] || MODBUS_CONFIG.DEFAULT_HOST,
-                    tcpPort: parseInt(process.env[ENV_KEYS.MODBUS_TCP_PORT] || MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
-                    serialPort: process.env[ENV_KEYS.MODBUS_SERIAL_PORT] || MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
-                    baudRate: parseInt(process.env[ENV_KEYS.MODBUS_BAUD_RATE] || MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
-                    parity: (process.env[ENV_KEYS.MODBUS_PARITY] as "none" | "even" | "odd") || MODBUS_CONFIG.DEFAULT_PARITY,
-                    unitId: parseInt(process.env[ENV_KEYS.MODBUS_UNIT_ID] || MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
-                    timeout: parseInt(process.env[ENV_KEYS.MODBUS_TIMEOUT] || MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
-                    reconnectInterval: parseInt(process.env[ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10)
-                };
 
                 // Get or create Modbus client
                 logger.log(`[AUTO-CONTROL-INIT] Node ID: ${node.id} - Initializing Modbus client...`);
@@ -81,13 +92,13 @@ module.exports = function (RED: NodeAPI) {
                 // Log current client registry state before getting Modbus client
                 ClientRegistry.logConnectionCounts(node);
 
-                const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+                let modbusClient = ClientRegistry.getModbusClient(currentModbusConfig, node);
 
                 if (!modbusClient) {
                     throw new Error("Failed to initialize Modbus client");
                 }
 
-                logger.log(`[AUTO-CONTROL-INIT] Modbus client initialized: ${modbusConfig.type} ${modbusConfig.host}:${modbusConfig.tcpPort}`);
+                logger.log(`[AUTO-CONTROL-INIT] Modbus client initialized: ${currentModbusConfig.type} ${currentModbusConfig.host}:${currentModbusConfig.tcpPort}`);
 
                 // Log final client registry state after getting Modbus client
                 ClientRegistry.logConnectionCounts(node);
@@ -127,6 +138,52 @@ module.exports = function (RED: NodeAPI) {
                 // Start control loop
                 autoControlHandler.startControlLoop();
                 logger.log("Auto control loop started");
+
+                // Hot-reload: Check for config changes every 30 seconds
+                const configCheckInterval = setInterval(async () => {
+                    try {
+                        const newEnvConfig = readEnvironmentConfig();
+                        const newModbusConfig = readModbusConfig();
+                        
+                        // Check if Modbus config changed
+                        const modbusChanged = 
+                            currentModbusConfig.host !== newModbusConfig.host ||
+                            currentModbusConfig.tcpPort !== newModbusConfig.tcpPort ||
+                            currentModbusConfig.serialPort !== newModbusConfig.serialPort ||
+                            currentModbusConfig.type !== newModbusConfig.type;
+                        
+                        if (modbusChanged) {
+                            logger.warn(`[HOT-RELOAD] Modbus config changed: ${currentModbusConfig.host}:${currentModbusConfig.tcpPort} -> ${newModbusConfig.host}:${newModbusConfig.tcpPort}`);
+                            
+                            const reloaded = await ClientRegistry.reloadModbusConfig(newModbusConfig, node);
+                            
+                            if (reloaded) {
+                                // Get updated client and update service
+                                modbusClient = ClientRegistry.getModbusClient(newModbusConfig, node);
+                                (modbusService as any).modbusClient = modbusClient;
+                                
+                                currentModbusConfig = { ...newModbusConfig };
+                                logger.warn(`[HOT-RELOAD] Modbus reloaded successfully: ${newModbusConfig.host}:${newModbusConfig.tcpPort}`);
+                                
+                                node.status({ fill: "green", shape: "dot", text: `Reloaded: ${newModbusConfig.host}` });
+                                setTimeout(() => {
+                                    node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
+                                }, 3000);
+                            }
+                        }
+                        
+                        // Update environment config (mapping changes etc)
+                        if (environmentConfig.deviceId !== newEnvConfig.deviceId) {
+                            logger.warn(`[HOT-RELOAD] Device ID changed: ${environmentConfig.deviceId} -> ${newEnvConfig.deviceId}`);
+                        }
+                        environmentConfig = newEnvConfig;
+                        
+                    } catch (error) {
+                        logger.error(`[HOT-RELOAD] Config check error: ${(error as Error).message}`);
+                    }
+                }, 30000); // Check every 30 seconds
+
+                logger.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
 
                 // Handle input messages for manual control or configuration updates
                 node.on('input', (msg: any) => {
@@ -204,6 +261,12 @@ module.exports = function (RED: NodeAPI) {
                 node.on('close', (done: () => void) => {
                     try {
                         logger.log("Shutting down auto control node");
+
+                        // Stop config check interval
+                        if (configCheckInterval) {
+                            clearInterval(configCheckInterval);
+                            logger.log("[CLEANUP] Config check interval stopped");
+                        }
 
                         // Stop control loop
                         if (autoControlHandler.isControlActive()) {

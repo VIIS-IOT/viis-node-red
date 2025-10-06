@@ -289,23 +289,17 @@ module.exports = function (RED) {
                     }
                 });
                 logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
-                // Helper function to reconnect Modbus with new config
+                // Helper function to reconnect Modbus with new config using ClientRegistry
                 const reconnectModbus = async (newConfig) => {
                     try {
                         logger.warn("[HOT-RELOAD] Starting Modbus reconnection...");
                         logger.warn(`[HOT-RELOAD] Old config: ${JSON.stringify(currentModbusConfig)}`);
                         logger.warn(`[HOT-RELOAD] New config: ${JSON.stringify(newConfig)}`);
-                        // Release old Modbus client
-                        if (modbusClient) {
-                            client_registry_1.default.releaseClient("modbus", node);
-                            logger.warn("[HOT-RELOAD] Old Modbus client released");
-                        }
-                        // Create new Modbus client with new config
-                        modbusClient = client_registry_1.default.getModbusClient(newConfig, node);
-                        logger.warn("[HOT-RELOAD] New Modbus client created");
-                        // Wait for connection to establish
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        if (modbusClient.isConnectedCheck()) {
+                        // Use ClientRegistry's centralized reload method
+                        const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig, node);
+                        if (reloaded) {
+                            // Get the updated client from registry
+                            modbusClient = client_registry_1.default.getModbusClient(newConfig, node);
                             // Update ModbusService with new client
                             modbusService.modbusClient = modbusClient;
                             // Update current config
@@ -318,7 +312,7 @@ module.exports = function (RED) {
                             }, 5000);
                         }
                         else {
-                            throw new Error("Failed to establish Modbus connection with new config");
+                            logger.warn("[HOT-RELOAD] Config unchanged or reload skipped");
                         }
                     }
                     catch (error) {

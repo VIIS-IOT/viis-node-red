@@ -347,27 +347,20 @@ module.exports = function (RED: NodeAPI) {
                 });
                 logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
 
-                // Helper function to reconnect Modbus with new config
+                // Helper function to reconnect Modbus with new config using ClientRegistry
                 const reconnectModbus = async (newConfig: any) => {
                     try {
                         logger.warn("[HOT-RELOAD] Starting Modbus reconnection...");
                         logger.warn(`[HOT-RELOAD] Old config: ${JSON.stringify(currentModbusConfig)}`);
                         logger.warn(`[HOT-RELOAD] New config: ${JSON.stringify(newConfig)}`);
 
-                        // Release old Modbus client
-                        if (modbusClient) {
-                            ClientRegistry.releaseClient("modbus", node);
-                            logger.warn("[HOT-RELOAD] Old Modbus client released");
-                        }
+                        // Use ClientRegistry's centralized reload method
+                        const reloaded = await ClientRegistry.reloadModbusConfig(newConfig, node);
 
-                        // Create new Modbus client with new config
-                        modbusClient = ClientRegistry.getModbusClient(newConfig, node);
-                        logger.warn("[HOT-RELOAD] New Modbus client created");
-
-                        // Wait for connection to establish
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-
-                        if (modbusClient.isConnectedCheck()) {
+                        if (reloaded) {
+                            // Get the updated client from registry
+                            modbusClient = ClientRegistry.getModbusClient(newConfig, node);
+                            
                             // Update ModbusService with new client
                             (modbusService as any).modbusClient = modbusClient;
 
@@ -382,7 +375,7 @@ module.exports = function (RED: NodeAPI) {
                                 node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
                             }, 5000);
                         } else {
-                            throw new Error("Failed to establish Modbus connection with new config");
+                            logger.warn("[HOT-RELOAD] Config unchanged or reload skipped");
                         }
                     } catch (error) {
                         logger.error(`[HOT-RELOAD] Modbus reconnection failed: ${(error as Error).message}`);

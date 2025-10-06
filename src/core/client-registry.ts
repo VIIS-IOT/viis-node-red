@@ -498,6 +498,70 @@ class ClientRegistry {
     }
 
     /**
+     * Force reload Modbus config and reconnect all clients
+     * This is used for hot-reload when environment config changes
+     */
+    static async reloadModbusConfig(newConfig: ModbusConfig, node: Node): Promise<boolean> {
+        try {
+            node.warn("[MODBUS-RELOAD] Starting Modbus config reload...");
+            node.warn(`[MODBUS-RELOAD] Current config: ${JSON.stringify(this.modbusConfig)}`);
+            node.warn(`[MODBUS-RELOAD] New config: ${JSON.stringify(newConfig)}`);
+
+            // Check if config actually changed
+            if (this.modbusConfig && 
+                this.modbusConfig.type === newConfig.type &&
+                this.modbusConfig.host === newConfig.host &&
+                this.modbusConfig.tcpPort === newConfig.tcpPort &&
+                this.modbusConfig.serialPort === newConfig.serialPort &&
+                this.modbusConfig.baudRate === newConfig.baudRate &&
+                this.modbusConfig.parity === newConfig.parity &&
+                this.modbusConfig.unitId === newConfig.unitId) {
+                node.warn("[MODBUS-RELOAD] Config unchanged, skipping reload");
+                return false;
+            }
+
+            // Store active users before reload
+            const activeUsers = Array.from(this.clientUsers.modbus);
+            const refCount = this.referenceCount.modbus;
+            
+            node.warn(`[MODBUS-RELOAD] Active users before reload: ${activeUsers.join(', ')}`);
+            node.warn(`[MODBUS-RELOAD] Reference count before reload: ${refCount}`);
+
+            // Disconnect old client
+            if (this.modbusInstance) {
+                node.warn("[MODBUS-RELOAD] Disconnecting old Modbus client...");
+                this.modbusInstance.disconnect();
+                this.activeConnections.modbus--;
+                this.modbusInstance = null;
+            }
+
+            // Update config
+            this.modbusConfig = { ...newConfig };
+            node.warn("[MODBUS-RELOAD] Config updated");
+
+            // Create new client with new config
+            node.warn("[MODBUS-RELOAD] Creating new Modbus client with updated config...");
+            this.modbusInstance = new ModbusClientCore(this.modbusConfig, node);
+            this.activeConnections.modbus++;
+
+            // Wait for connection to establish
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            if (this.modbusInstance.isConnectedCheck()) {
+                node.warn("[MODBUS-RELOAD] New Modbus client connected successfully");
+                node.warn(`[MODBUS-RELOAD] Updated config: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort}`);
+                node.warn(`[MODBUS-RELOAD] All ${activeUsers.length} nodes will use new config on next operation`);
+                return true;
+            } else {
+                throw new Error("Failed to establish Modbus connection with new config");
+            }
+        } catch (error) {
+            node.error(`[MODBUS-RELOAD] Failed to reload Modbus config: ${(error as Error).message}`);
+            return false;
+        }
+    }
+
+    /**
      * Validate that only one MySQL connection exists
      * This method should be called periodically to ensure system integrity
      */
