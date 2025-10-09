@@ -68,7 +68,7 @@ class ScheduleHandler {
             throw new Error('Invalid GET endpoint');
         }
         const page = parseInt(query === null || query === void 0 ? void 0 : query.page) || 1;
-        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 10;
+        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 1000;
         const orderBy = (query === null || query === void 0 ? void 0 : query.order_by) || 'name ASC';
         const [field, direction] = orderBy.split(' ');
         try {
@@ -162,6 +162,7 @@ class ScheduleHandler {
             const schedule = this.scheduleRepo.create(scheduleData);
             const savedSchedule = await this.scheduleRepo.save(schedule);
             logger_1.logger.info(this.node, `Schedule saved successfully`);
+            this.node.warn(`✓ CREATE LOCAL: Schedule "${dto.name}" created successfully in local database`);
             // Sync to server
             try {
                 logger_1.logger.info(this.node, 'Starting schedule sync to server');
@@ -175,9 +176,11 @@ class ScheduleHandler {
                 if (updatedSchedule) {
                     Object.assign(savedSchedule, updatedSchedule);
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule "${dto.name}" synced successfully to server`);
             }
             catch (syncError) {
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule "${dto.name}" - ${syncError.message}`);
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             // Create a response object with all necessary fields
@@ -208,6 +211,7 @@ class ScheduleHandler {
         }
         catch (error) {
             logger_1.logger.error(this.node, `POST request failed: ${error.message}`);
+            this.node.warn(`✗ CREATE LOCAL FAILED: ${error.message}`);
             throw error; // Let handleRequest catch and handle it
         }
     }
@@ -269,6 +273,7 @@ class ScheduleHandler {
             if (!updated) {
                 throw new Error(`Failed to retrieve updated schedule`);
             }
+            this.node.warn(`✓ UPDATE LOCAL: Schedule "${dto.name}" updated successfully in local database`);
             // Sync to server
             try {
                 logger_1.logger.info(this.node, 'Starting schedule sync to server');
@@ -281,9 +286,11 @@ class ScheduleHandler {
                 if (refreshedUpdated) {
                     Object.assign(updated, refreshedUpdated);
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule "${dto.name}" synced successfully to server`);
             }
             catch (syncError) {
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule "${dto.name}" - ${syncError.message}`);
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             // Create a response object with all necessary fields
@@ -314,6 +321,7 @@ class ScheduleHandler {
         }
         catch (error) {
             logger_1.logger.error(this.node, `PUT request failed: ${error.message}`);
+            this.node.warn(`✗ UPDATE LOCAL FAILED: ${error.message}`);
             throw error; // Let handleRequest catch and handle it
         }
     }
@@ -478,6 +486,7 @@ class ScheduleHandler {
             if (!updatedSchedule) {
                 throw new Error(`Failed to retrieve updated schedule for syncing`);
             }
+            this.node.warn(`✓ DELETE LOCAL: Schedule "${name}" marked as deleted in local database`);
             // Sync to server
             try {
                 logger_1.logger.info(this.node, 'Starting schedule sync to server');
@@ -485,9 +494,11 @@ class ScheduleHandler {
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             }
             catch (syncError) {
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule "${name}" - ${syncError.message}`);
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             msg.payload = { result: { message: 'Schedule marked as deleted' } };
@@ -496,6 +507,7 @@ class ScheduleHandler {
             return msg;
         }
         catch (error) {
+            this.node.warn(`✗ DELETE LOCAL FAILED: Schedule "${name}" - ${error.message}`);
             throw new Error(`DELETE request failed: ${error.message}`);
         }
     }

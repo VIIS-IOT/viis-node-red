@@ -416,13 +416,13 @@ export function parseFilterParams(filterParams: any[]): string {
         }
 
         // Thêm prefix của bảng nếu có doctypeName
-        let tablePrefix = doctypeName ? `"tab${doctypeName}".` : '';
+        let tablePrefix = doctypeName ? `tab${doctypeName}.` : '';
 
         // Thêm điều kiện vào chuỗi SQL
         if (operator === 'like') {
-            sqlCondition += ` AND LOWER(${tablePrefix}"${fieldName}") LIKE LOWER(${value})`;
+            sqlCondition += ` AND LOWER(${tablePrefix}${fieldName}) LIKE LOWER(${value})`;
         } else {
-            sqlCondition += ` AND ${tablePrefix}"${fieldName}" ${operator} ${value}`;
+            sqlCondition += ` AND ${tablePrefix}${fieldName} ${operator} ${value}`;
         }
     });
 

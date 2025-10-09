@@ -69,7 +69,7 @@ class SchedulePlanHandler {
             throw new Error('Invalid GET endpoint');
         }
         const page = parseInt(query === null || query === void 0 ? void 0 : query.page) || 1;
-        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 10;
+        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 1000;
         const orderBy = (query === null || query === void 0 ? void 0 : query.order_by) || 'tabiot_schedule_plan.name';
         const offset = (page - 1) * size;
         console.log('Parsed query parameters', { page, size, orderBy, offset });
@@ -145,6 +145,7 @@ class SchedulePlanHandler {
                 WHERE TRUE
                   AND tabiot_schedule_plan.is_deleted = 0
                   AND tabiot_schedule_plan.deleted IS NULL
+                  ${sqlConditionStr}
                 ORDER BY 
                   ${orderBy}
                 LIMIT ? OFFSET ?
@@ -163,6 +164,7 @@ class SchedulePlanHandler {
                   tabiot_schedule ON tabiot_schedule_plan.name = tabiot_schedule.schedule_plan_id
                 WHERE TRUE
                   AND tabiot_schedule_plan.is_deleted = 0
+                  ${sqlConditionStr}
             `;
             console.log('Executing count query', { countQuery });
             const countResult = await this.planRepo.query(countQuery);
@@ -225,6 +227,7 @@ class SchedulePlanHandler {
             console.log('Created plan entity', { plan });
             const savedPlan = await this.planRepo.save(plan);
             console.log('Saved plan', { savedPlan });
+            this.node.warn(`✓ CREATE LOCAL: Schedule Plan "${dto.label}" created successfully in local database`);
             try {
                 console.log('Attempting to sync plan to server', { planName: savedPlan.name });
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([savedPlan]);
@@ -237,10 +240,12 @@ class SchedulePlanHandler {
                     Object.assign(savedPlan, refreshedUpdated);
                     console.log('Updated savedPlan with refreshed data', { savedPlan });
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${dto.label}" synced successfully to server`);
             }
             catch (syncError) {
                 console.error('Sync to server failed', { error: syncError.message, stack: syncError.stack });
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule Plan "${dto.label}" - ${syncError.message}`);
             }
             // Create a response object with all necessary fields
             const responseData = {
@@ -268,6 +273,7 @@ class SchedulePlanHandler {
         }
         catch (error) {
             console.error('Error in handlePost', { error: error.message, stack: error.stack });
+            this.node.warn(`✗ CREATE LOCAL FAILED: ${error.message}`);
             throw error;
         }
     }
@@ -333,6 +339,7 @@ class SchedulePlanHandler {
                 throw new Error(`Failed to retrieve updated schedule plan ${name}`);
             }
             console.log('Retrieved updated plan', { updated });
+            this.node.warn(`✓ UPDATE LOCAL: Schedule Plan "${dto.label}" updated successfully in local database`);
             try {
                 console.log('Attempting to sync updated plan to server', { planName: updated.name });
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updated]);
@@ -345,10 +352,12 @@ class SchedulePlanHandler {
                     Object.assign(updated, refreshedUpdated);
                     console.log('Updated plan with refreshed data', { updated });
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${dto.label}" synced successfully to server`);
             }
             catch (syncError) {
                 console.error('Sync to server failed', { error: syncError.message });
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule Plan "${dto.label}" - ${syncError.message}`);
             }
             // Create a response object with all necessary fields
             const responseData = {
@@ -377,6 +386,7 @@ class SchedulePlanHandler {
         catch (error) {
             console.error('Error in handlePut', { error: error.message, stack: error.stack });
             logger_1.logger.error(this.node, `PUT error: ${error.message}`);
+            this.node.warn(`✗ UPDATE LOCAL FAILED: ${error.message}`);
             throw new Error(`PUT request failed: ${error.message}`);
         }
     }
@@ -410,6 +420,7 @@ class SchedulePlanHandler {
                 console.error('Schedule plan not found for deletion', { name });
                 throw new Error(`Schedule plan with name ${name} not found`);
             }
+            this.node.warn(`✓ DELETE LOCAL: Schedule Plan "${name}" marked as deleted in local database`);
             msg.payload = { result: { message: 'Schedule plan marked as deleted' } };
             if ('statusCode' in msg)
                 msg.statusCode = 200;
@@ -418,6 +429,7 @@ class SchedulePlanHandler {
         }
         catch (error) {
             console.error('Error in handleDelete', { error: error.message, stack: error.stack });
+            this.node.warn(`✗ DELETE LOCAL FAILED: Schedule Plan "${name}" - ${error.message}`);
             throw new Error(`DELETE request failed: ${error.message}`);
         }
     }
