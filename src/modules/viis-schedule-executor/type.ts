@@ -26,6 +26,8 @@ export interface ScheduleExecutorNodeDef extends NodeDef {
     scheduleInterval: number;
     description: string;
     debugEnable: boolean; // Add debugEnable property
+    boardMode?: 'auto' | 'single' | 'multi';
+    boardId?: string;
 }
 
 

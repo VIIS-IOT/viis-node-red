@@ -3,7 +3,7 @@ import { NodeAPI, Node } from "node-red";
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore, MqttConfig } from "../../core/mqtt-client";
 import { ScheduleService } from "./viis-schedule-executor-service";
-import ClientRegistry from "../../core/client-registry";
+import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
 import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, RpcControlResult, ScheduleExecutorNodeDef } from "./type";
@@ -37,6 +37,11 @@ module.exports = function (RED: NodeAPI) {
         node.name = config.name;
         const scheduleInterval = config.scheduleInterval;
         const debugEnable = config.debugEnable; // Read debugEnable from config
+        
+        // Multi-board state variables
+        let currentBoardId: string | undefined = config.boardId;
+        let isMultiBoardMode: boolean = false;
+        let currentModbusConfig: any = null;
 
         // Helper function for conditional logging
         const debugLog = (message: string) => {
@@ -76,18 +81,60 @@ module.exports = function (RED: NodeAPI) {
             return;
         }
 
-        // Modbus configuration
-        const modbusConfig = {
-            type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
-            host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
-            tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
-            serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
-            baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
-            parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
-            unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
-            timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
-            reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+        // Helper function to read Modbus config
+        const readModbusConfig = () => {
+            const boardsConfigStr = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+            
+            if (boardsConfigStr) {
+                try {
+                    const boards = JSON.parse(boardsConfigStr);
+                    if (Array.isArray(boards) && boards.length > 0) {
+                        return {
+                            mode: 'multi',
+                            boards: boards,
+                            defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                        };
+                    }
+                } catch (e) {
+                    node.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                }
+            }
+            
+            return {
+                mode: 'single',
+                config: {
+                    type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
+                    host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
+                    tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
+                    serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
+                    baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
+                    parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
+                    unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
+                    timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
+                    reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+                }
+            };
         };
+        
+        // Initialize Modbus configuration
+        const configData = readModbusConfig();
+        currentModbusConfig = { ...configData };
+        
+        // Auto-detect mode
+        if (configData.mode === 'multi') {
+            isMultiBoardMode = true;
+            debugLog(`Multi-board mode detected with ${configData.boards.length} boards`);
+            
+            const multiConfig: MultiModbusConfig = {
+                mode: 'multi',
+                defaultBoard: configData.defaultBoard,
+                boards: configData.boards
+            };
+            ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+        } else {
+            isMultiBoardMode = false;
+            debugLog(`Single-board mode: ${configData.config.type} ${configData.config.host}:${configData.config.tcpPort}`);
+        }
 
         // ThingsBoard MQTT configuration
         const thingsboardConfig: MqttConfig = {
@@ -107,7 +154,20 @@ module.exports = function (RED: NodeAPI) {
             qos: 1 as 0 | 1 | 2,
         };
 
-        const modbusClient: ModbusClientCore = ClientRegistry.getModbusClient(modbusConfig, node);
+        // Get Modbus client
+        let modbusClient: ModbusClientCore;
+        let modbusUnitId: number;
+        if (isMultiBoardMode) {
+            const boardToUse = currentBoardId || configData.defaultBoard;
+            debugLog(`Getting client for board: ${boardToUse}`);
+            modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
+            // Get unitId from board config
+            const boardConfig = configData.boards.find((b: any) => b.id === boardToUse);
+            modbusUnitId = boardConfig?.unitId || 1;
+        } else {
+            modbusClient = ClientRegistry.getModbusClientV2(configData.config, node);
+            modbusUnitId = configData.config.unitId;
+        }
 
         node.on("input", async function (msg, send, done) {
             try {
@@ -184,7 +244,7 @@ module.exports = function (RED: NodeAPI) {
                                 key,
                                 value: 0,
                                 fc: 6,
-                                unitid: modbusConfig.unitId,
+                                unitid: modbusUnitId,
                                 address: Number(address),
                                 quantity: 1
                             }));
@@ -304,7 +364,7 @@ module.exports = function (RED: NodeAPI) {
                                 key,
                                 value: 0,
                                 fc: 6,
-                                unitid: modbusConfig.unitId,
+                                unitid: modbusUnitId,
                                 address: Number(address),
                                 quantity: 1
                             }));
@@ -378,7 +438,7 @@ module.exports = function (RED: NodeAPI) {
                                 key,
                                 value: 0,
                                 fc: 6,
-                                unitid: modbusConfig.unitId,
+                                unitid: modbusUnitId,
                                 address: Number(address),
                                 quantity: 1
                             }));
@@ -434,7 +494,13 @@ module.exports = function (RED: NodeAPI) {
         });
 
         node.on("close", function (done: () => void) {
-            ClientRegistry.releaseClient("modbus", node);
+            // Release Modbus client (multi-board aware)
+            if (isMultiBoardMode && currentBoardId) {
+                ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+            } else {
+                ClientRegistry.releaseClientV2("modbus", node);
+            }
+            
             ClientRegistry.releaseClient("thingsboard", node);
             ClientRegistry.releaseClient("local", node);
             done();

@@ -9,6 +9,8 @@ export interface ViisRpcControlNodeDef extends NodeDef {
     mqttBroker: string;
     configKeys: string;
     scaleConfigs: string;
+    boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
+    boardId?: string; // Board ID for multi-board mode
 }
 
 // Scale configuration for value transformation

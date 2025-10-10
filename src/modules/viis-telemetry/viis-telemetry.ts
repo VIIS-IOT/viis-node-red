@@ -4,7 +4,7 @@
  */
 
 import { NodeAPI, Node, NodeContext } from "node-red";
-import ClientRegistry from "../../core/client-registry";
+import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { MySqlConfig } from "../../core/mysql-client";
 import { MqttConfig, MqttClientCore } from "../../core/mqtt-client";
 import {
@@ -85,6 +85,14 @@ module.exports = function (RED: NodeAPI) {
 
     // Initialize GlobalContextHelper
     const globalHelper = new GlobalContextHelper(this.context());
+    
+    // Multi-board state variables (declared at function scope for cleanup access)
+    let currentBoardId: string | undefined = config.boardId;
+    let isMultiBoardMode: boolean = false;
+    let currentModbusConfig: any;
+    
+    // Variables to store clients for cleanup
+    let thingsboardMqttClient: MqttClientCore | null = null;
 
     // Wrap async initialization in IIFE to avoid Node-RED registration issues
     (async () => {
@@ -109,15 +117,39 @@ module.exports = function (RED: NodeAPI) {
         flowContext.set(thresholdConfigKey, configManager.getThresholdConfig());
 
         // Create client configurations
-        const modbusConfig = createModbusConfig(globalHelper);
+        const configData = readModbusConfig(globalHelper);
+        currentModbusConfig = { ...configData };
+        
+        // Auto-detect mode
+        if (configData.mode === 'multi') {
+            isMultiBoardMode = true;
+            node.log(`Multi-board mode detected with ${configData.boards.length} boards`);
+            
+            const multiConfig: MultiModbusConfig = {
+                mode: 'multi',
+                defaultBoard: configData.defaultBoard,
+                boards: configData.boards
+            };
+            ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+        } else {
+            isMultiBoardMode = false;
+            node.log(`Single-board mode`);
+        }
         const localMqttConfig = createLocalMqttConfig(globalHelper, envConfig.deviceId);
         const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
         const mysqlConfig = createMySqlConfig(globalHelper);
 
         // Get clients from registry
-        const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+        let modbusClient;
+        if (isMultiBoardMode) {
+            const boardToUse = currentBoardId || configData.defaultBoard;
+            node.log(`Getting client for board: ${boardToUse}`);
+            modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
+        } else {
+            modbusClient = ClientRegistry.getModbusClientV2(configData.config, node);
+        }
         const localMqttClient = await ClientRegistry.getLocalMqttClient(localMqttConfig, node);
-        const thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
+        thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
         const mysqlClient = await ClientRegistry.getMySqlClient(mysqlConfig, node);
 
         if (!modbusClient || !localMqttClient || !thingsboardMqttClient || !mysqlClient) {
@@ -187,7 +219,9 @@ module.exports = function (RED: NodeAPI) {
           thingsboardMqttClient,
           flowContext,
           debugLogKey,
-          thresholdConfigKey
+          thresholdConfigKey,
+          isMultiBoardMode,
+          currentBoardId
         );
 
         // Start polling if all clients are connected
@@ -209,19 +243,39 @@ module.exports = function (RED: NodeAPI) {
   }
 
   /**
-   * Create Modbus configuration from environment variables
+   * Read Modbus configuration with multi-board support
    */
-  function createModbusConfig(globalHelper: GlobalContextHelper) {
+  function readModbusConfig(globalHelper: GlobalContextHelper) {
+    const boardsConfigStr = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+    
+    if (boardsConfigStr) {
+      try {
+        const boards = JSON.parse(boardsConfigStr);
+        if (Array.isArray(boards) && boards.length > 0) {
+          return {
+            mode: 'multi',
+            boards: boards,
+            defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+          };
+        }
+      } catch (e) {
+        // Ignore parse errors, fall through to single mode
+      }
+    }
+    
     return {
-      type: (globalHelper.getEnvVar('MODBUS_TYPE', 'TCP') as "TCP" | "RTU"),
-      host: globalHelper.getEnvVar('MODBUS_HOST', 'localhost'),
-      tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
-      serialPort: globalHelper.getEnvVar('MODBUS_SERIAL_PORT', '/dev/ttyUSB0'),
-      baudRate: globalHelper.getNumericEnvVar('MODBUS_BAUD_RATE', 9600),
-      parity: (globalHelper.getEnvVar('MODBUS_PARITY', 'none') as "none" | "even" | "odd"),
-      unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1),
-      timeout: globalHelper.getNumericEnvVar('MODBUS_TIMEOUT', 5000),
-      reconnectInterval: globalHelper.getNumericEnvVar('MODBUS_RECONNECT_INTERVAL', 5000),
+      mode: 'single',
+      config: {
+        type: (globalHelper.getEnvVar('MODBUS_TYPE', 'TCP') as "TCP" | "RTU"),
+        host: globalHelper.getEnvVar('MODBUS_HOST', 'localhost'),
+        tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
+        serialPort: globalHelper.getEnvVar('MODBUS_SERIAL_PORT', '/dev/ttyUSB0'),
+        baudRate: globalHelper.getNumericEnvVar('MODBUS_BAUD_RATE', 9600),
+        parity: (globalHelper.getEnvVar('MODBUS_PARITY', 'none') as "none" | "even" | "odd"),
+        unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1),
+        timeout: globalHelper.getNumericEnvVar('MODBUS_TIMEOUT', 5000),
+        reconnectInterval: globalHelper.getNumericEnvVar('MODBUS_RECONNECT_INTERVAL', 5000),
+      }
     };
   }
 
@@ -386,7 +440,9 @@ module.exports = function (RED: NodeAPI) {
     thingsboardMqttClient: MqttClientCore,
     flowContext: NodeContext,
     debugLogKey: string,
-    thresholdConfigKey: string
+    thresholdConfigKey: string,
+    isMultiBoardMode: boolean,
+    currentBoardId: string | undefined
   ): void {
     node.on('close', async (done: () => void) => {
       try {
@@ -401,7 +457,11 @@ module.exports = function (RED: NodeAPI) {
         flowContext.set(thresholdConfigKey, {});
 
         // Release clients
-        ClientRegistry.releaseClient('modbus', node);
+        if (isMultiBoardMode && currentBoardId) {
+            ClientRegistry.releaseClientV2('modbus-board', node, currentBoardId);
+        } else {
+            ClientRegistry.releaseClientV2('modbus', node);
+        }
         ClientRegistry.releaseClient('local', node);
         ClientRegistry.releaseClient('mysql', node);
 

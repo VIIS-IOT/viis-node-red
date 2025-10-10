@@ -10,6 +10,8 @@ export interface ViisAutoMicroclimateControlNodeDef extends NodeDef {
     enableFanControl: boolean;
     enableWaterPumpControl: boolean;
     enableCurtainControl: boolean;
+    boardMode?: 'auto' | 'single' | 'multi';
+    boardId?: string;
 }
 
 // Configuration interface for all control settings

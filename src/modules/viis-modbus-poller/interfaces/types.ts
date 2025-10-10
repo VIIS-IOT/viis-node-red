@@ -14,6 +14,8 @@ export interface ViisModbusPollerNodeDef extends NodeDef {
     enableDebugLog: boolean;
     thresholdConfig: string; // JSON string
     periodicSnapshotInterval: number;
+    boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
+    boardId?: string; // Board ID for multi-board mode
 }
 
 /**
@@ -81,6 +83,7 @@ export interface EnvironmentConfig {
     modbusCoils: Record<string, number>;
     modbusInputRegisters: Record<string, number>;
     modbusHoldingRegisters: Record<string, number>;
+    boardId?: string; // Optional board ID for multi-board mode
 }
 
 /**

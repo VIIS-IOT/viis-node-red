@@ -28,6 +28,8 @@ export interface ViisTelemetryNodeDef extends NodeDef {
   pollingInterval: string;
   periodicSnapshotIntervalCoil: string;
   periodicSnapshotIntervalInput: string;
+  boardMode?: 'auto' | 'single' | 'multi';
+  boardId?: string;
   periodicSnapshotIntervalHolding: string;
 }
 
