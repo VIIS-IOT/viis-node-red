@@ -6,7 +6,8 @@ import { NodeDef, Node } from "node-red";
 export interface ViisModbusGetterNodeDef extends NodeDef {
     name: string;
     enableLogging: boolean; // Add logging enable/disable option
-
+    boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
+    boardId?: string; // Board ID for multi-board mode
 }
 
 /**
@@ -17,6 +18,7 @@ export interface ModbusRequestPayload {
     unitid: number;      // Unit ID
     address: number;     // Starting address
     quantity: number;    // Number of registers/coils to read
+    boardId?: string;    // Optional board ID for multi-board mode
 }
 
 /**

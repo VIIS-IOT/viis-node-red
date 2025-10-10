@@ -4,17 +4,44 @@ import { MqttClientCore, MqttConfig } from "./mqtt-client";
 import { MySqlClientCore } from "./mysql-client";
 import { MqttRecoveryManager } from "./mqtt-recovery-manager";
 
+// Multi-board configuration interface
+export interface ModbusBoardConfig extends ModbusConfig {
+    id: string;
+    name?: string;
+    description?: string;
+}
+
+export interface MultiModbusConfig {
+    mode: 'single' | 'multi';
+    defaultBoard?: string;
+    boards?: ModbusBoardConfig[];
+}
+
 class ClientRegistry {
+    // Single connection for backward compatibility
     private static modbusInstance: ModbusClientCore | null = null;
+    
+    // Multi-board connection pool
+    private static modbusBoardPool: Map<string, ModbusClientCore> = new Map();
+    private static modbusBoardConfigs: Map<string, ModbusBoardConfig> = new Map();
+    private static modbusMode: 'single' | 'multi' = 'single';
+    private static defaultBoardId: string | null = null;
+    
+    // Other client instances
     private static thingsboardMqttInstance: MqttClientCore | null = null;
     private static localMqttInstance: MqttClientCore | null = null;
     private static mysqlInstance: MySqlClientCore | null = null;
+    
+    // Reference counting with board support
     private static referenceCount = { modbus: 0, thingsboard: 0, local: 0, mysql: 0 };
+    private static boardReferenceCount: Map<string, number> = new Map();
+    
     private static activeConnections = {
         modbus: 0,
         thingsboardMqtt: 0,
         localMqtt: 0,
-        mysql: 0
+        mysql: 0,
+        modbusBoards: new Map<string, number>()
     };
 
     // Store the config used for the shared modbus client
@@ -36,7 +63,8 @@ class ClientRegistry {
         modbus: new Set<string>(),
         thingsboard: new Set<string>(),
         local: new Set<string>(),
-        mysql: new Set<string>()
+        mysql: new Set<string>(),
+        modbusBoards: new Map<string, Set<string>>() // board -> Set of node IDs
     };
 
     // Recovery mechanism - periodic health check
@@ -290,6 +318,174 @@ class ClientRegistry {
     }
 
     /**
+     * Initialize multi-board configuration
+     */
+    static initializeMultiBoardConfig(config: MultiModbusConfig, node: Node): void {
+        if (!config.boards || config.boards.length === 0) {
+            node.error("[MODBUS-MULTI] No boards configured in multi-board mode");
+            return;
+        }
+
+        this.modbusMode = config.mode || 'multi';
+        this.defaultBoardId = config.defaultBoard || config.boards[0].id;
+        
+        // Store board configurations
+        for (const board of config.boards) {
+            this.modbusBoardConfigs.set(board.id, board);
+            node.warn(`[MODBUS-MULTI] Registered board: ${board.id} - ${board.name || 'Unnamed'} (${board.host}:${board.tcpPort})`);
+        }
+        
+        node.warn(`[MODBUS-MULTI] Initialized ${config.boards.length} boards, default: ${this.defaultBoardId}`);
+    }
+
+    /**
+     * Get Modbus client with multi-board support
+     * @param config - ModbusConfig for single mode, board ID string for multi mode, or object with boardId
+     * @param node - Node-RED node instance
+     * @returns ModbusClientCore instance
+     */
+    static getModbusClientV2(
+        config: ModbusConfig | string | { boardId?: string; config?: ModbusConfig },
+        node: Node
+    ): ModbusClientCore {
+        // Handle different input types
+        if (typeof config === 'string') {
+            // Board ID provided - multi-board mode
+            return this.getModbusBoardClient(config, node);
+        } else if (typeof config === 'object' && 'boardId' in config && config.boardId) {
+            // Object with boardId - multi-board mode
+            return this.getModbusBoardClient(config.boardId, node);
+        } else if (typeof config === 'object' && 'config' in config && config.config) {
+            // Object with config - single mode
+            return this.getModbusClient(config.config, node);
+        } else {
+            // Direct ModbusConfig - single mode (backward compatible)
+            return this.getModbusClient(config as ModbusConfig, node);
+        }
+    }
+
+    /**
+     * Get client for specific board in multi-board mode
+     */
+    private static getModbusBoardClient(boardId: string, node: Node): ModbusClientCore {
+        // Use default board if not specified
+        const targetBoardId = boardId || this.defaultBoardId;
+        
+        if (!targetBoardId) {
+            throw new Error("[MODBUS-MULTI] No board ID specified and no default board configured");
+        }
+
+        // Initialize board users tracking if needed
+        if (!this.clientUsers.modbusBoards.has(targetBoardId)) {
+            this.clientUsers.modbusBoards.set(targetBoardId, new Set());
+        }
+
+        // Check if board exists in pool
+        if (!this.modbusBoardPool.has(targetBoardId)) {
+            const boardConfig = this.modbusBoardConfigs.get(targetBoardId);
+            if (!boardConfig) {
+                throw new Error(`[MODBUS-MULTI] Board config not found for ID: ${targetBoardId}`);
+            }
+
+            try {
+                // Create new connection for this board
+                const client = new ModbusClientCore(boardConfig, node);
+                this.modbusBoardPool.set(targetBoardId, client);
+                
+                // Track connections
+                if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
+                    this.activeConnections.modbusBoards.set(targetBoardId, 0);
+                }
+                this.activeConnections.modbusBoards.set(
+                    targetBoardId,
+                    (this.activeConnections.modbusBoards.get(targetBoardId) || 0) + 1
+                );
+                
+                node.warn(`[MODBUS-MULTI] Created connection for board: ${targetBoardId} (${boardConfig.host}:${boardConfig.tcpPort})`);
+            } catch (error) {
+                node.error(`[MODBUS-MULTI] Failed to create connection for board ${targetBoardId}: ${(error as Error).message}`);
+                throw error;
+            }
+        }
+
+        // Update reference counting
+        if (!this.boardReferenceCount.has(targetBoardId)) {
+            this.boardReferenceCount.set(targetBoardId, 0);
+        }
+        this.boardReferenceCount.set(
+            targetBoardId,
+            (this.boardReferenceCount.get(targetBoardId) || 0) + 1
+        );
+        
+        // Track node usage
+        this.clientUsers.modbusBoards.get(targetBoardId)?.add(node.id);
+        
+        const refCount = this.boardReferenceCount.get(targetBoardId) || 0;
+        const users = Array.from(this.clientUsers.modbusBoards.get(targetBoardId) || []);
+        node.warn(`[MODBUS-MULTI] Node ${node.id} got board ${targetBoardId} client, ref count: ${refCount}, users: ${users.join(', ')}`);
+
+        return this.modbusBoardPool.get(targetBoardId)!;
+    }
+
+    /**
+     * Get multi-board status for monitoring
+     */
+    static getMultiBoardStatus(): {
+        mode: string;
+        defaultBoard: string | null;
+        boards: Array<{
+            id: string;
+            name?: string;
+            host: string;
+            port: number;
+            connected: boolean;
+            referenceCount: number;
+            users: string[];
+        }>;
+    } {
+        const boards = Array.from(this.modbusBoardConfigs.entries()).map(([id, config]) => {
+            const client = this.modbusBoardPool.get(id);
+            return {
+                id,
+                name: config.name,
+                host: config.host || 'unknown',
+                port: config.tcpPort || 502,
+                connected: client ? client.isConnectedCheck() : false,
+                referenceCount: this.boardReferenceCount.get(id) || 0,
+                users: Array.from(this.clientUsers.modbusBoards.get(id) || [])
+            };
+        });
+
+        return {
+            mode: this.modbusMode,
+            defaultBoard: this.defaultBoardId,
+            boards
+        };
+    }
+
+    /**
+     * Auto-detect and initialize mode from environment config
+     */
+    static autoDetectModbusMode(config: any, node: Node): void {
+        // Check if multi-board config exists
+        if (config.modbusBoards && Array.isArray(config.modbusBoards) && config.modbusBoards.length > 0) {
+            node.warn("[MODBUS-AUTO] Detected multi-board configuration");
+            const multiConfig: MultiModbusConfig = {
+                mode: 'multi',
+                defaultBoard: config.modbusDefaultBoard || config.modbusBoards[0].id,
+                boards: config.modbusBoards
+            };
+            this.initializeMultiBoardConfig(multiConfig, node);
+        } else if (config.modbusHost && config.modbusPort) {
+            node.warn("[MODBUS-AUTO] Detected single-board configuration");
+            this.modbusMode = 'single';
+            // Single mode will use existing getModbusClient method
+        } else {
+            node.warn("[MODBUS-AUTO] No Modbus configuration detected");
+        }
+    }
+
+    /**
      * Validate if the provided config matches the existing shared MySQL config
      * This ensures only ONE MySQL connection is used across all nodes
      */
@@ -422,6 +618,41 @@ class ClientRegistry {
                 // node.warn("[MYSQL-RELEASE] MySQL connection has been disconnected - no more users");
                 this.logActiveConnections(node);
             }
+        }
+    }
+
+    /**
+     * Release client for multi-board support
+     */
+    static releaseClientV2(
+        type: "modbus" | "thingsboard" | "local" | "mysql" | "modbus-board",
+        node: Node,
+        boardId?: string
+    ): void {
+        if (type === "modbus-board" && boardId) {
+            const refCount = this.boardReferenceCount.get(boardId) || 0;
+            if (refCount > 0) {
+                this.boardReferenceCount.set(boardId, refCount - 1);
+                this.clientUsers.modbusBoards.get(boardId)?.delete(node.id);
+                
+                node.warn(`[MODBUS-MULTI] Node ${node.id} released board ${boardId} client, ref count: ${refCount - 1}`);
+                
+                if (refCount - 1 <= 0) {
+                    // Disconnect and remove board connection
+                    const client = this.modbusBoardPool.get(boardId);
+                    if (client) {
+                        client.disconnect();
+                        this.modbusBoardPool.delete(boardId);
+                        this.activeConnections.modbusBoards.delete(boardId);
+                        this.boardReferenceCount.delete(boardId);
+                        this.clientUsers.modbusBoards.delete(boardId);
+                        node.warn(`[MODBUS-MULTI] Board ${boardId} connection closed - no more users`);
+                    }
+                }
+            }
+        } else {
+            // Use existing releaseClient for backward compatibility
+            this.releaseClient(type as any, node);
         }
     }
 
