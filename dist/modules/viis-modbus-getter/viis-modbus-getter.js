@@ -201,8 +201,10 @@ module.exports = function (RED) {
                         throw new Error("ModbusGetterService not initialized");
                     }
                     // Check if a different board is requested in the payload (multi-board mode)
-                    if (isMultiBoardMode && msg.payload && msg.payload.boardId && msg.payload.boardId !== currentBoardId) {
-                        const requestedBoardId = msg.payload.boardId;
+                    // Priority: msg.payload.boardId > config.boardId > defaultBoard
+                    const targetBoardId = (msg.payload && msg.payload.boardId) || currentBoardId;
+                    if (isMultiBoardMode && targetBoardId && targetBoardId !== currentBoardId) {
+                        const requestedBoardId = targetBoardId;
                         logger.log(`Switching to board: ${requestedBoardId}`);
                         // Release current board connection
                         if (currentBoardId) {

@@ -3,14 +3,19 @@
  * Modbus Service for VIIS RPC Control Node
  * Handles Modbus operations including read/write and mapping
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ModbusService = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const client_registry_1 = __importDefault(require("../../../core/client-registry"));
 class ModbusService {
     constructor(options, modbusClient, scalingUtils) {
-        this.modbusClient = modbusClient;
+        this.defaultModbusClient = modbusClient;
+        this.node = options.node;
         this.scalingUtils = scalingUtils;
         this.flowContext = options.flowContext;
         this.nodeId = options.node.id;
@@ -18,21 +23,80 @@ class ModbusService {
         this.globalHelper = new global_context_helper_1.GlobalContextHelper(options.node.context());
         this.environmentConfig = this.loadEnvironmentConfig();
         // Log Modbus client state during initialization
-        this.logger.warn(`ModbusService initialized with client: ${modbusClient ? 'provided' : 'missing'}`);
+        this.logger.warn(`ModbusService initialized with default client: ${modbusClient ? 'provided' : 'missing'}`);
         if (modbusClient) {
-            this.logger.warn(`Modbus client connection state: ${modbusClient.isConnected ? 'connected' : 'disconnected'}`);
+            this.logger.warn(`Default Modbus client connection state: ${modbusClient.isConnected ? 'connected' : 'disconnected'}`);
         }
     }
     /**
+     * Get the appropriate Modbus client for a given boardId
+     * In multi-board mode, gets client from ClientRegistry
+     * In single-board mode, returns default client
+     */
+    getModbusClient(boardId) {
+        if (boardId) {
+            // Multi-board mode: Get client for specific board
+            this.logger.warn(`[GET-CLIENT] Getting Modbus client for board: ${boardId}`);
+            try {
+                const client = client_registry_1.default.getModbusClientV2(boardId, this.node);
+                this.logger.warn(`[GET-CLIENT] Successfully got client for board: ${boardId}`);
+                return client;
+            }
+            catch (error) {
+                this.logger.error(`[GET-CLIENT] Failed to get client for board ${boardId}: ${error}`);
+                this.logger.warn(`[GET-CLIENT] Falling back to default client`);
+                return this.defaultModbusClient;
+            }
+        }
+        // Single-board mode: Use default client
+        return this.defaultModbusClient;
+    }
+    /**
      * Load Modbus configuration from environment variables
+     * Supports both single-board and multi-board modes
      */
     loadEnvironmentConfig() {
         try {
+            // Check if multi-board mode
+            const boardsConfigStr = this.globalHelper.getEnvVar('MODBUS_BOARDS', null);
+            let allCoils = {};
+            let allHolding = {};
+            let allInput = {};
+            if (boardsConfigStr) {
+                // Multi-board mode: Load per-board mappings
+                try {
+                    const boards = JSON.parse(boardsConfigStr);
+                    if (Array.isArray(boards) && boards.length > 0) {
+                        this.logger.warn(`[LOAD-CONFIG] Multi-board mode detected with ${boards.length} boards`);
+                        // Load mappings for each board
+                        boards.forEach((board) => {
+                            const boardId = board.id.toUpperCase();
+                            // Load board-specific mappings
+                            const boardCoils = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_COILS`, {});
+                            const boardHolding = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_HOLDING_REGISTERS`, {});
+                            const boardInput = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_INPUT_REGISTERS`, {});
+                            this.logger.warn(`[LOAD-CONFIG] Board ${board.id}: ${Object.keys(boardCoils).length} coils, ${Object.keys(boardHolding).length} holding, ${Object.keys(boardInput).length} input`);
+                            // Merge all mappings (will be used for findModbusMapping)
+                            allCoils = Object.assign(Object.assign({}, allCoils), boardCoils);
+                            allHolding = Object.assign(Object.assign({}, allHolding), boardHolding);
+                            allInput = Object.assign(Object.assign({}, allInput), boardInput);
+                        });
+                    }
+                }
+                catch (e) {
+                    this.logger.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                }
+            }
+            // Single-board mode OR fallback: Load common mappings
+            const commonCoils = this.globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_COILS, {});
+            const commonHolding = this.globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_HOLDING_REGISTERS, {});
+            const commonInput = this.globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_INPUT_REGISTERS, {});
+            // Merge: Common mappings + per-board mappings (per-board takes priority)
             return {
                 deviceId: this.globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ID, constants_1.DEFAULTS.DEVICE_ID),
-                modbusCoils: this.globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_COILS, {}),
-                modbusInputRegisters: this.globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_INPUT_REGISTERS, {}),
-                modbusHoldingRegisters: this.globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_HOLDING_REGISTERS, {}),
+                modbusCoils: Object.assign(Object.assign({}, commonCoils), allCoils),
+                modbusInputRegisters: Object.assign(Object.assign({}, commonInput), allInput),
+                modbusHoldingRegisters: Object.assign(Object.assign({}, commonHolding), allHolding),
             };
         }
         catch (error) {
@@ -46,16 +110,67 @@ class ModbusService {
         }
     }
     /**
+     * Find which board contains the given key
+     * Returns boardId or null if not found in any board-specific mapping
+     */
+    findBoardIdForKey(key) {
+        const boardsConfigStr = this.globalHelper.getEnvVar('MODBUS_BOARDS', null);
+        if (!boardsConfigStr) {
+            return null; // Single-board mode
+        }
+        try {
+            const boards = JSON.parse(boardsConfigStr);
+            if (!Array.isArray(boards) || boards.length === 0) {
+                return null;
+            }
+            // Search each board's mappings
+            for (const board of boards) {
+                const boardId = board.id.toUpperCase();
+                // Check coils
+                const boardCoils = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_COILS`, {});
+                if (boardCoils[key] !== undefined) {
+                    this.logger.warn(`[FIND-BOARD] Key "${key}" found in ${board.id} COILS`);
+                    return board.id; // Return original case boardId
+                }
+                // Check holding registers
+                const boardHolding = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_HOLDING_REGISTERS`, {});
+                if (boardHolding[key] !== undefined) {
+                    this.logger.warn(`[FIND-BOARD] Key "${key}" found in ${board.id} HOLDING_REGISTERS`);
+                    return board.id;
+                }
+                // Check input registers
+                const boardInput = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_INPUT_REGISTERS`, {});
+                if (boardInput[key] !== undefined) {
+                    this.logger.warn(`[FIND-BOARD] Key "${key}" found in ${board.id} INPUT_REGISTERS`);
+                    return board.id;
+                }
+            }
+            this.logger.warn(`[FIND-BOARD] Key "${key}" not found in any board-specific mappings`);
+            return null;
+        }
+        catch (e) {
+            this.logger.error(`[FIND-BOARD] Error finding board for key "${key}": ${e}`);
+            return null;
+        }
+    }
+    /**
      * Find Modbus mapping for a given key
+     * In multi-board mode, automatically detects which board the key belongs to
      */
     findModbusMapping(key) {
         const { modbusHoldingRegisters, modbusCoils, modbusInputRegisters } = this.environmentConfig;
+        // Auto-detect boardId in multi-board mode
+        const boardId = this.findBoardIdForKey(key);
+        if (boardId) {
+            this.logger.warn(`[FIND-MAPPING] Key "${key}" belongs to board: ${boardId}`);
+        }
         // Check holding registers first (read/write)
         if (modbusHoldingRegisters[key] !== undefined) {
             return {
                 address: modbusHoldingRegisters[key],
                 fc: constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER,
-                value: 0
+                value: 0,
+                boardId: boardId || undefined // Include boardId if found
             };
         }
         // Check coils (read/write)
@@ -63,7 +178,8 @@ class ModbusService {
             return {
                 address: modbusCoils[key],
                 fc: constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
-                value: false
+                value: false,
+                boardId: boardId || undefined // Include boardId if found
             };
         }
         // Check input registers (read-only)
@@ -71,7 +187,8 @@ class ModbusService {
             return {
                 address: modbusInputRegisters[key],
                 fc: constants_1.MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS,
-                value: 0
+                value: 0,
+                boardId: boardId || undefined // Include boardId if found
             };
         }
         return null;
@@ -95,9 +212,10 @@ class ModbusService {
     }
     /**
      * Write value to Modbus device
+     * Automatically uses correct board client in multi-board mode
      */
     async writeToModbus(key, mapping, value) {
-        console.log(`ModbusService.writeToModbus called: key=${key}, address=${mapping.address}, value=${value}, fc=${mapping.fc}`);
+        console.log(`ModbusService.writeToModbus called: key=${key}, address=${mapping.address}, value=${value}, fc=${mapping.fc}, boardId=${mapping.boardId || 'default'}`);
         try {
             let writeValue = value;
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
@@ -107,25 +225,27 @@ class ModbusService {
                 writeValue = this.scalingUtils.scaleValue(key, writeValue, "write");
                 console.log(`Scaled value for writing: ${value} -> ${writeValue}`);
             }
+            // Get appropriate Modbus client (auto-selects board in multi-board mode)
+            const modbusClient = this.getModbusClient(mapping.boardId);
             // Check if Modbus client is connected
-            if (!this.modbusClient) {
+            if (!modbusClient) {
                 console.error("Modbus client is null or undefined");
                 throw new Error("Modbus client is not initialized");
             }
-            if (!this.modbusClient.isConnected) {
+            if (!modbusClient.isConnected) {
                 console.error("Modbus client is not connected");
                 throw new Error("Modbus client not connected");
             }
-            console.log(`Executing Modbus write: key=${key}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
+            console.log(`Executing Modbus write: key=${key}, board=${mapping.boardId || 'default'}, address=${mapping.address}, value=${writeValue}, fc=${mapping.fc}`);
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
                 console.log(`Writing to register: address=${mapping.address}, value=${writeValue}`);
-                const result = await this.modbusClient.writeRegister(mapping.address, writeValue);
+                const result = await modbusClient.writeRegister(mapping.address, writeValue);
                 console.log(`Register write result:`, result);
             }
             else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
                 console.log(`Writing to coil: address=${mapping.address}, value=${writeValue}`);
-                const result = await this.modbusClient.writeCoil(mapping.address, writeValue);
+                const result = await modbusClient.writeCoil(mapping.address, writeValue);
                 console.log(`Coil write result:`, result);
             }
             else {
@@ -134,7 +254,7 @@ class ModbusService {
             }
             // Store manual override information
             this.storeManualOverride(mapping.address, mapping.fc, writeValue);
-            console.log(`MODBUS WRITE SUCCESS: key=${key}, address=${mapping.address}, value=${writeValue}`);
+            console.log(`MODBUS WRITE SUCCESS: key=${key}, board=${mapping.boardId || 'default'}, address=${mapping.address}, value=${writeValue}`);
         }
         catch (error) {
             const errorMsg = error.message;
@@ -152,21 +272,24 @@ class ModbusService {
     }
     /**
      * Read value from Modbus device
+     * Automatically uses correct board client in multi-board mode
      */
     async readFromModbus(key, mapping) {
         try {
+            // Get appropriate Modbus client (auto-selects board in multi-board mode)
+            const modbusClient = this.getModbusClient(mapping.boardId);
             const readFc = this.getReadFunctionCode(mapping.fc);
             let result;
             // Perform the read operation based on function code
             switch (readFc) {
                 case constants_1.MODBUS_FUNCTION_CODES.READ_COILS:
-                    result = await this.modbusClient.readCoils(mapping.address, 1);
+                    result = await modbusClient.readCoils(mapping.address, 1);
                     break;
                 case constants_1.MODBUS_FUNCTION_CODES.READ_HOLDING_REGISTERS:
-                    result = await this.modbusClient.readHoldingRegisters(mapping.address, 1);
+                    result = await modbusClient.readHoldingRegisters(mapping.address, 1);
                     break;
                 case constants_1.MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS:
-                    result = await this.modbusClient.readInputRegisters(mapping.address, 1);
+                    result = await modbusClient.readInputRegisters(mapping.address, 1);
                     break;
                 default:
                     throw new Error(`Unsupported read function code: ${readFc}`);
@@ -176,7 +299,7 @@ class ModbusService {
             if (typeof readValue === "number") {
                 readValue = this.scalingUtils.scaleValue(key, readValue, "read");
             }
-            this.logger.debug(`Read from Modbus: key=${key}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
+            this.logger.debug(`Read from Modbus: key=${key}, board=${mapping.boardId || 'default'}, address=${mapping.address}, value=${readValue}, fc=${readFc}`);
             return readValue;
         }
         catch (error) {
@@ -330,17 +453,20 @@ class ModbusService {
     }
     /**
      * Check Modbus connection and attempt to reconnect if needed
+     * Checks default client (for single-board) or all board clients (for multi-board)
      */
     async checkConnection() {
         try {
-            if (!this.modbusClient) {
+            // Use default client for connection check
+            const modbusClient = this.defaultModbusClient;
+            if (!modbusClient) {
                 throw new Error("Modbus client is not initialized");
             }
             // Check if client reports as connected
-            if (!this.modbusClient.isConnectedCheck()) {
+            if (!modbusClient.isConnectedCheck()) {
                 this.logger.warn("[MODBUS-SERVICE] Modbus client reports as disconnected, attempting to reconnect...");
                 try {
-                    await this.modbusClient.reconnect();
+                    await modbusClient.reconnect();
                     this.logger.warn("[MODBUS-SERVICE] Reconnection successful");
                     // Wait a moment for connection to stabilize
                     await new Promise(resolve => setTimeout(resolve, 1000));

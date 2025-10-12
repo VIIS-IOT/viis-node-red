@@ -6,11 +6,12 @@ import { NodeDef } from "node-red";
 
 // Node configuration interface
 export interface ViisRpcControlNodeDef extends NodeDef {
-    mqttBroker: string;
+    name: string;
+    mqttBroker: "thingsboard" | "local";
     configKeys: string;
     scaleConfigs: string;
     boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
-    boardId?: string; // Board ID for multi-board mode
+    boardId?: string; // Board ID for multi-board mode (Note: auto-detected from key mapping in most cases)
 }
 
 // Scale configuration for value transformation
@@ -44,6 +45,7 @@ export interface ModbusMappingResult {
     address: number;
     fc: number;
     value: number | boolean;
+    boardId?: string; // Optional: Board ID in multi-board mode (auto-detected)
 }
 
 // Manual override storage

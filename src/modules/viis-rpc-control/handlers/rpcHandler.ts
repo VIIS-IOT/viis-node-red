@@ -313,6 +313,13 @@ export class RpcHandler implements IRpcHandler {
         try {
             // Add debug log at the start
             this.logger.warn(`Processing Modbus parameter: key=${key}, rawValue=${rawValue}, mapping=${JSON.stringify(mapping)}`);
+            
+            // Log auto-detected board ID (if multi-board mode)
+            if (mapping.boardId) {
+                this.logger.warn(`[AUTO-DETECT] Key "${key}" → Board: ${mapping.boardId} (Address: ${mapping.address})`);
+            } else {
+                this.logger.warn(`[SINGLE-BOARD] Key "${key}" → Address: ${mapping.address}`);
+            }
 
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);

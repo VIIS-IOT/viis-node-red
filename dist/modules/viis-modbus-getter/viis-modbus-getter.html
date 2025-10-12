@@ -4,7 +4,8 @@
         color: '#3FADB5',
         defaults: {
             name: { value: "" },
-            enableLogging: { value: false } // Add logging enable/disable option
+            enableLogging: { value: false }, // Add logging enable/disable option
+            boardId: { value: "" } // Board ID for multi-board mode
         },
         inputs: 1,
         outputs: 1,
@@ -16,7 +17,34 @@
             return this.name ? "node_label_italic" : "";
         },
         oneditprepare: function () {
-            // Initialize any UI components if needed
+            // Initialize board selector dropdown
+            var boardSelect = $("#node-input-boardId");
+            
+            // Try to get MODBUS_BOARDS from global context
+            // This would need to be populated from server-side
+            // For now, we'll provide manual options
+            boardSelect.append('<option value="">Auto (Default Board)</option>');
+            
+            // In production, these would be populated dynamically from MODBUS_BOARDS env
+            // Example static options for demonstration
+            var exampleBoards = [
+                { id: "board1", name: "Main Controller" },
+                { id: "board2", name: "Sensor Board" },
+                { id: "board3", name: "Actuator Board" }
+            ];
+            
+            // Check if we have boards configured
+            RED.nodes.eachConfig(function(config) {
+                // This is a placeholder for dynamic board loading
+                // In production, boards would come from backend
+            });
+            
+            // Add example boards if in multi-board environment
+            exampleBoards.forEach(function(board) {
+                var selected = (board.id === this.boardId) ? ' selected' : '';
+                boardSelect.append('<option value="' + board.id + '"' + selected + '>' + 
+                                 board.name + ' (' + board.id + ')</option>');
+            }.bind(this));
         },
         oneditsave: function () {
             // Save any additional configuration if needed
@@ -31,6 +59,17 @@
     </div>
     
     <div class="form-row">
+        <label for="node-input-boardId"><i class="fa fa-microchip"></i> Board</label>
+        <select id="node-input-boardId" style="width: 70%;">
+            <!-- Options populated dynamically in oneditprepare -->
+        </select>
+        <div class="form-tips" style="margin-top: 5px; margin-bottom: 10px;">
+            <small><i class="fa fa-info-circle"></i> Select a specific board or leave as "Auto" to use the default board. 
+            You can also override this dynamically using <code>msg.payload.boardId</code></small>
+        </div>
+    </div>
+    
+    <div class="form-row">
         <label for="node-input-enableLogging"><i class="fa fa-file-text-o"></i> Enable Logging</label>
         <input type="checkbox" id="node-input-enableLogging" style="display: inline-block; width: auto; vertical-align: top;">
         <label for="node-input-enableLogging" style="width: auto; margin-left: 5px;">Enable detailed logging (terminal & debug)</label>
@@ -42,7 +81,8 @@
   "fc": 3,        // Function code (1=Coils, 2=Discrete, 3=Holding, 4=Input)
   "unitid": 1,    // Unit ID
   "address": 0,   // Starting address
-  "quantity": 10  // Number of registers/coils to read
+  "quantity": 10, // Number of registers/coils to read
+  "boardId": "board2"  // Optional: specific board (overrides node config)
 }</pre>
         <p><strong>Output:</strong> Array of values read from modbus or error object</p>
         <p><strong>Note:</strong> Uses shared modbus connection from environment variables</p>
@@ -62,6 +102,7 @@
                 <li><code>unitid</code> (number): Modbus unit ID</li>
                 <li><code>address</code> (number): Starting address to read from</li>
                 <li><code>quantity</code> (number): Number of registers/coils to read</li>
+                <li><code>boardId</code> (string): Optional - Specific board ID for multi-board mode (overrides node configuration)</li>
             </ul>
         </dd>
     </dl>
