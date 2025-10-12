@@ -65,7 +65,18 @@ class ModbusService {
             if (boardsConfigStr) {
                 // Multi-board mode: Load per-board mappings
                 try {
-                    const boards = JSON.parse(boardsConfigStr);
+                    let boards;
+                    // Handle both already-parsed array and JSON string
+                    if (Array.isArray(boardsConfigStr)) {
+                        boards = boardsConfigStr;
+                    }
+                    else if (typeof boardsConfigStr === 'string') {
+                        boards = JSON.parse(boardsConfigStr);
+                    }
+                    else {
+                        this.logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
+                        boards = null;
+                    }
                     if (Array.isArray(boards) && boards.length > 0) {
                         this.logger.warn(`[LOAD-CONFIG] Multi-board mode detected with ${boards.length} boards`);
                         // Load mappings for each board
@@ -119,7 +130,18 @@ class ModbusService {
             return null; // Single-board mode
         }
         try {
-            const boards = JSON.parse(boardsConfigStr);
+            let boards;
+            // Handle both already-parsed array and JSON string
+            if (Array.isArray(boardsConfigStr)) {
+                boards = boardsConfigStr;
+            }
+            else if (typeof boardsConfigStr === 'string') {
+                boards = JSON.parse(boardsConfigStr);
+            }
+            else {
+                this.logger.error(`[FIND-BOARD] Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
+                return null;
+            }
             if (!Array.isArray(boards) || boards.length === 0) {
                 return null;
             }

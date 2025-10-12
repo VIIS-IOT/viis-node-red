@@ -34,6 +34,16 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'MODBUS_HOLDING_REGISTERS': 'modbusHoldingRegisters',
   'MODBUS_INPUT_REGISTERS': 'modbusInputRegisters',
   'MODBUS_COILS': 'modbusCoils',
+  // Multi-board configuration
+  'MODBUS_BOARDS': 'modbus_boards',
+  'MODBUS_DEFAULT_BOARD': 'modbus_default_board',
+  // Board-specific mappings (for per-board coils/registers)
+  'MODBUS_BOARD1_COILS': 'modbus_board1_coils',
+  'MODBUS_BOARD2_COILS': 'modbus_board2_coils',
+  'MODBUS_BOARD1_HOLDING_REGISTERS': 'modbus_board1_holding_registers',
+  'MODBUS_BOARD2_HOLDING_REGISTERS': 'modbus_board2_holding_registers',
+  'MODBUS_BOARD1_INPUT_REGISTERS': 'modbus_board1_input_registers',
+  'MODBUS_BOARD2_INPUT_REGISTERS': 'modbus_board2_input_registers',
   // ThingsBoard configuration
   'THINGSBOARD_HOST': 'thingsboard_host',
   'THINGSBOARD_PORT': 'thingsboard_port',
