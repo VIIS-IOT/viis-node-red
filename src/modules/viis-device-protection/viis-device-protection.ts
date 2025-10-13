@@ -22,11 +22,22 @@ module.exports = function (RED: NodeAPI) {
 
         // Helper function to read fresh config from global context
         const readModbusConfig = () => {
-            const boardsConfigStr = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+            const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
             
-            if (boardsConfigStr) {
+            if (boardsConfig) {
                 try {
-                    const boards = JSON.parse(boardsConfigStr);
+                    let boards;
+                    
+                    // Handle both already-parsed array and JSON string
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    } else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    } else {
+                        node.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                        boards = null;
+                    }
+                    
                     if (Array.isArray(boards) && boards.length > 0) {
                         return {
                             mode: 'multi',
