@@ -33,10 +33,21 @@ module.exports = function (RED) {
             // Helper function to read fresh Modbus config from global context
             const readModbusConfig = () => {
                 // Check for multi-board configuration
-                const boardsConfigStr = globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_BOARDS, null);
-                if (boardsConfigStr) {
+                const boardsConfig = globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_BOARDS, null);
+                if (boardsConfig) {
                     try {
-                        const boards = JSON.parse(boardsConfigStr);
+                        let boards;
+                        // Handle both already-parsed array and JSON string
+                        if (Array.isArray(boardsConfig)) {
+                            boards = boardsConfig;
+                        }
+                        else if (typeof boardsConfig === 'string') {
+                            boards = JSON.parse(boardsConfig);
+                        }
+                        else {
+                            logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                            boards = null;
+                        }
                         if (Array.isArray(boards) && boards.length > 0) {
                             // Multi-board mode
                             return {

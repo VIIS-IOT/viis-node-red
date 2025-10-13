@@ -53,10 +53,21 @@ module.exports = function (RED) {
                     };
                 };
                 const readModbusConfig = () => {
-                    const boardsConfigStr = globalHelper.getEnvVar('MODBUS_BOARDS', null);
-                    if (boardsConfigStr) {
+                    const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+                    if (boardsConfig) {
                         try {
-                            const boards = JSON.parse(boardsConfigStr);
+                            let boards;
+                            // Handle both already-parsed array and JSON string
+                            if (Array.isArray(boardsConfig)) {
+                                boards = boardsConfig;
+                            }
+                            else if (typeof boardsConfig === 'string') {
+                                boards = JSON.parse(boardsConfig);
+                            }
+                            else {
+                                logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                                boards = null;
+                            }
                             if (Array.isArray(boards) && boards.length > 0) {
                                 return {
                                     mode: 'multi',

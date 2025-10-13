@@ -177,10 +177,21 @@ module.exports = function (RED) {
      * Read Modbus configuration with multi-board support
      */
     function readModbusConfig(globalHelper) {
-        const boardsConfigStr = globalHelper.getEnvVar('MODBUS_BOARDS', null);
-        if (boardsConfigStr) {
+        const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+        if (boardsConfig) {
             try {
-                const boards = JSON.parse(boardsConfigStr);
+                let boards;
+                // Handle both already-parsed array and JSON string
+                if (Array.isArray(boardsConfig)) {
+                    boards = boardsConfig;
+                }
+                else if (typeof boardsConfig === 'string') {
+                    boards = JSON.parse(boardsConfig);
+                }
+                else {
+                    // Invalid type, fall through to single mode
+                    boards = null;
+                }
                 if (Array.isArray(boards) && boards.length > 0) {
                     return {
                         mode: 'multi',
