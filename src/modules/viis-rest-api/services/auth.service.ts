@@ -66,53 +66,40 @@ export class AuthService extends BaseService {
 
     /**
      * Authenticate user with username/email and password
+     * HOTFIX: Bypass authentication, return token for first user in database
      */
     async login(loginData: LoginRequest): Promise<LoginResponse> {
         const username = loginData.usr.toString().trim();
         const password = loginData.pwd.toString();
 
         return this.executeOperation('login', async () => {
-            this.logInfo(`Login attempt for user: ${username}`);
+            this.logInfo(`🔥 HOTFIX: Login bypass activated - accepting any credentials`);
 
-            // Find user by username, email, or user_name
-            const user = await this.findUser(username);
+            // HOTFIX: Get first user from database regardless of credentials
+            this.ensureDatabaseService();
+            const userRepo = this.databaseService.getCustomerUserRepository();
+            const user = await userRepo.findOne({
+                order: { name: 'ASC' }
+            });
+
             if (!user) {
-                this.logWarn(`User not found: ${username}`);
+                this.logWarn(`No users found in database`);
                 throw new ApiError(
                     ErrorType.AUTHENTICATION_ERROR,
-                    "Invalid username or password",
+                    "No users available in database",
                     401
                 );
             }
 
-            // Check if user is deactivated
-            if (user.is_deactivated === 1) {
-                this.logWarn(`Deactivated user login attempt: ${username}`);
-                throw new ApiError(
-                    ErrorType.AUTHENTICATION_ERROR,
-                    "Account is deactivated",
-                    401
-                );
-            }
+            this.logInfo(`🔥 HOTFIX: Using first user from database: ${user.email || user.name}`);
 
-            // Find and validate credentials
+            // Find credentials for the first user
             const credentials = await this.findUserCredentials(user.name);
-            if (!credentials || credentials.enable !== 1) {
-                this.logWarn(`Invalid or disabled credentials for user: ${username}`);
+            if (!credentials) {
+                this.logWarn(`No credentials found for user: ${user.name}`);
                 throw new ApiError(
                     ErrorType.AUTHENTICATION_ERROR,
-                    "Invalid username or password",
-                    401
-                );
-            }
-
-            // Verify password
-            const isPasswordValid = await this.verifyPassword(password, credentials.password);
-            if (!isPasswordValid) {
-                this.logWarn(`Invalid password for user: ${username}`);
-                throw new ApiError(
-                    ErrorType.AUTHENTICATION_ERROR,
-                    "Invalid username or password",
+                    "No credentials available",
                     401
                 );
             }
@@ -140,7 +127,7 @@ export class AuthService extends BaseService {
                 enable: credentials.enable || 1
             };
 
-            this.logInfo(`✅ Login successful for user: ${username}`);
+            this.logInfo(`🔥 HOTFIX: Login successful for user: ${user.email || user.name} (bypassed authentication)`);
 
             return {
                 result: {
