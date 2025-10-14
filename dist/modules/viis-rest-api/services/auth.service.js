@@ -67,13 +67,15 @@ let AuthService = class AuthService extends base_service_1.BaseService {
             // HOTFIX: Get first user from database regardless of credentials
             this.ensureDatabaseService();
             const userRepo = this.databaseService.getCustomerUserRepository();
-            const user = await userRepo.findOne({
-                order: { name: 'ASC' }
+            const users = await userRepo.find({
+                order: { name: 'ASC' },
+                take: 1
             });
-            if (!user) {
+            if (!users || users.length === 0) {
                 this.logWarn(`No users found in database`);
                 throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "No users available in database", 401);
             }
+            const user = users[0];
             this.logInfo(`🔥 HOTFIX: Using first user from database: ${user.email || user.name}`);
             // Find credentials for the first user
             const credentials = await this.findUserCredentials(user.name);
