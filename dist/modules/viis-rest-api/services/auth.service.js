@@ -57,34 +57,29 @@ let AuthService = class AuthService extends base_service_1.BaseService {
     }
     /**
      * Authenticate user with username/email and password
+     * HOTFIX: Bypass authentication, return token for first user in database
      */
     async login(loginData) {
         const username = loginData.usr.toString().trim();
         const password = loginData.pwd.toString();
         return this.executeOperation('login', async () => {
-            this.logInfo(`Login attempt for user: ${username}`);
-            // Find user by username, email, or user_name
-            const user = await this.findUser(username);
+            this.logInfo(`🔥 HOTFIX: Login bypass activated - accepting any credentials`);
+            // HOTFIX: Get first user from database regardless of credentials
+            this.ensureDatabaseService();
+            const userRepo = this.databaseService.getCustomerUserRepository();
+            const user = await userRepo.findOne({
+                order: { name: 'ASC' }
+            });
             if (!user) {
-                this.logWarn(`User not found: ${username}`);
-                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid username or password", 401);
+                this.logWarn(`No users found in database`);
+                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "No users available in database", 401);
             }
-            // Check if user is deactivated
-            if (user.is_deactivated === 1) {
-                this.logWarn(`Deactivated user login attempt: ${username}`);
-                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Account is deactivated", 401);
-            }
-            // Find and validate credentials
+            this.logInfo(`🔥 HOTFIX: Using first user from database: ${user.email || user.name}`);
+            // Find credentials for the first user
             const credentials = await this.findUserCredentials(user.name);
-            if (!credentials || credentials.enable !== 1) {
-                this.logWarn(`Invalid or disabled credentials for user: ${username}`);
-                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid username or password", 401);
-            }
-            // Verify password
-            const isPasswordValid = await this.verifyPassword(password, credentials.password);
-            if (!isPasswordValid) {
-                this.logWarn(`Invalid password for user: ${username}`);
-                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "Invalid username or password", 401);
+            if (!credentials) {
+                this.logWarn(`No credentials found for user: ${user.name}`);
+                throw new common_types_1.ApiError(common_types_1.ErrorType.AUTHENTICATION_ERROR, "No credentials available", 401);
             }
             // Generate session ID
             const sessionId = this.generateSessionId();
@@ -105,7 +100,7 @@ let AuthService = class AuthService extends base_service_1.BaseService {
                 credential_id: credentials.id || '',
                 enable: credentials.enable || 1
             };
-            this.logInfo(`✅ Login successful for user: ${username}`);
+            this.logInfo(`🔥 HOTFIX: Login successful for user: ${user.email || user.name} (bypassed authentication)`);
             return {
                 result: {
                     token,
