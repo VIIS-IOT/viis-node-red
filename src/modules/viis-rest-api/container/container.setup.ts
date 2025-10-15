@@ -150,12 +150,14 @@ export class ContainerSetup {
         Container.set(NotificationService, notificationService);
 
         // Register ScheduleCompletionMonitorService
+        // DISABLED: Automatic schedule monitoring causes continuous MQTT publishing
+        // To enable, uncomment the following lines
         const scheduleCompletionMonitor = new ScheduleCompletionMonitorService(
             serviceContext,
             databaseService,
             notificationService
         );
-        await scheduleCompletionMonitor.initialize();
+        // await scheduleCompletionMonitor.initialize(); // ← DISABLED: This starts the 5-second interval
         Container.set(ScheduleCompletionMonitorService, scheduleCompletionMonitor);
 
         // Register ScheduleActivationService

@@ -139,8 +139,10 @@ class ContainerSetup {
         await notificationService.initialize();
         typedi_1.default.set(notification_service_1.NotificationService, notificationService);
         // Register ScheduleCompletionMonitorService
+        // DISABLED: Automatic schedule monitoring causes continuous MQTT publishing
+        // To enable, uncomment the following lines
         const scheduleCompletionMonitor = new schedule_completion_monitor_service_1.ScheduleCompletionMonitorService(serviceContext, databaseService, notificationService);
-        await scheduleCompletionMonitor.initialize();
+        // await scheduleCompletionMonitor.initialize(); // ← DISABLED: This starts the 5-second interval
         typedi_1.default.set(schedule_completion_monitor_service_1.ScheduleCompletionMonitorService, scheduleCompletionMonitor);
         // Register ScheduleActivationService
         const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService, databaseService, scheduleCompletionMonitor);
