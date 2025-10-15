@@ -17,6 +17,9 @@ import { log } from 'console';
 import Container from 'typedi';
 import moment from 'moment-timezone';
 import { ILike } from 'typeorm';
+import { ScheduleService } from '../../viis-schedule-executor/viis-schedule-executor-service';
+import ClientRegistry from '../../../core/client-registry';
+import { GlobalContextHelper } from '../../../ultils/global-context-helper';
 
 export class ScheduleHandler {
     private scheduleRepo: Repository<TabiotSchedule>;
@@ -271,17 +274,86 @@ export class ScheduleHandler {
 
         // Get existing schedule to check current status
         const existingSchedule = await this.scheduleRepo.findOne({
-            where: { name },
-            select: ['status']
+            where: { name }
         });
 
         if (!existingSchedule) {
             throw new Error(`Schedule with name ${name} not found`);
         }
 
-        // Prevent changing status from running to finished
-        if (existingSchedule.status === 'running' && payload.status === 'finished') {
-            throw new Error('Cannot change schedule status from running to finished directly');
+        // Check if we need to finish a running schedule
+        // Case 1: Explicitly changing status from 'running' to 'finished'
+        // Case 2: Disabling a running schedule (enable: 0)
+        const isExplicitFinish = existingSchedule.status === 'running' && payload.status === 'finished';
+        const isDisablingRunning = existingSchedule.status === 'running' && payload.enable === 0;
+        const shouldFinishSchedule = isExplicitFinish || isDisablingRunning;
+        
+        if (shouldFinishSchedule) {
+            try {
+                const action = isExplicitFinish ? 'FINISHING' : 'DISABLING';
+                this.node.warn(`🛑 ${action} RUNNING SCHEDULE: ${existingSchedule.label || name} | Executing finish sequence...`);
+                
+                // Initialize helpers and get Modbus client
+                const globalHelper = new GlobalContextHelper(this.node.context());
+                const scheduleService = new ScheduleService(this.node, false);
+                
+                // Read Modbus config to determine if multi-board mode
+                const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+                let modbusClient;
+                
+                if (boardsConfig) {
+                    // Multi-board mode
+                    let boards;
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    } else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    }
+                    
+                    if (boards && boards.length > 0) {
+                        const defaultBoard = globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id);
+                        modbusClient = ClientRegistry.getModbusClientV2(defaultBoard, this.node);
+                        this.node.warn(`Using multi-board mode with board: ${defaultBoard}`);
+                    }
+                } else {
+                    // Single-board mode - try to get default client
+                    const modbusHost = globalHelper.getEnvVar('MODBUS_HOST');
+                    if (modbusHost) {
+                        const config = {
+                            host: modbusHost,
+                            tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
+                            type: globalHelper.getEnvVar('MODBUS_TYPE', 'TCP'),
+                            unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1)
+                        };
+                        modbusClient = ClientRegistry.getModbusClientV2(config, this.node);
+                    }
+                }
+                
+                if (!modbusClient) {
+                    this.node.warn(`⚠️ No Modbus client available, skipping finish sequence for ${name}`);
+                } else {
+                    // Create a finish schedule object with status = 'finished'
+                    const finishSchedule = { ...existingSchedule, status: 'finished' as const };
+                    
+                    // Get commands to reset all coils/registers
+                    const commands = scheduleService.mapScheduleToModbus(finishSchedule);
+                    
+                    // Execute finish sequence (pumps/power off first, then valves)
+                    await scheduleService.executeModbusCommands(modbusClient, commands, finishSchedule);
+                    
+                    this.node.warn(`✅ FINISH SEQUENCE COMPLETE: ${existingSchedule.label || name} | All Modbus commands reset`);
+                }
+                
+                // Force status to 'finished' and disable schedule
+                payload.status = 'finished';
+                payload.enable = 0;
+                
+            } catch (modbusError) {
+                this.node.warn(`❌ MODBUS FINISH ERROR: ${name} | ${(modbusError as Error).message}`);
+                // Continue with the update even if Modbus fails
+                payload.status = 'finished';
+                payload.enable = 0;
+            }
         }
 
         try {
