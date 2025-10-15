@@ -291,6 +291,40 @@ class ScheduleHandler {
                     // Execute finish sequence (pumps/power off first, then valves)
                     await scheduleService.executeModbusCommands(modbusClient, commands, finishSchedule);
                     this.node.warn(`✅ FINISH SEQUENCE COMPLETE: ${existingSchedule.label || name} | All Modbus commands reset`);
+                    // Publish MQTT notification and sync log (same as viis-schedule-executor)
+                    try {
+                        // Create MQTT configs
+                        const thingsboardConfig = {
+                            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+                            clientId: `node-red-tb-api-${Math.random().toString(16).substring(2, 10)}`,
+                            username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
+                            password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),
+                            qos: 1,
+                        };
+                        const emqxConfig = {
+                            broker: `mqtt://${globalHelper.getEnvVar("EMQX_HOST", "emqx")}:${globalHelper.getEnvVar("EMQX_PORT", "1883")}`,
+                            clientId: `node-red-emqx-api-${Math.random().toString(16).substring(2, 10)}`,
+                            username: globalHelper.getEnvVar("EMQX_USERNAME", ""),
+                            password: globalHelper.getEnvVar("EMQX_PASSWORD", ""),
+                            qos: 1,
+                        };
+                        // Get MQTT clients from ClientRegistry
+                        const thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, this.node);
+                        const emqxClient = await client_registry_1.default.getLocalMqttClient(emqxConfig, this.node);
+                        if (thingsboardClient && emqxClient) {
+                            // Publish MQTT notification with 'finished' status
+                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, finishSchedule, true);
+                            // Sync schedule log
+                            await scheduleService.syncScheduleLog(finishSchedule, true);
+                        }
+                        else {
+                            this.node.warn(`⚠️ MQTT clients not available, skipping MQTT publish for ${name}`);
+                        }
+                    }
+                    catch (mqttError) {
+                        this.node.warn(`⚠️ MQTT/LOG ERROR: ${name} | ${mqttError.message}`);
+                        // Don't fail the whole operation if MQTT fails
+                    }
                 }
                 // Force status to 'finished' and disable schedule
                 payload.status = 'finished';
