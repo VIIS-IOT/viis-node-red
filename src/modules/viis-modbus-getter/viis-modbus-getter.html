@@ -5,7 +5,7 @@
         defaults: {
             name: { value: "" },
             enableLogging: { value: false }, // Add logging enable/disable option
-            boardId: { value: "" } // Board ID for multi-board mode
+            boardId: { value: "board1" } // Board ID for multi-board mode
         },
         inputs: 1,
         outputs: 1,
@@ -20,17 +20,11 @@
             // Initialize board selector dropdown
             var boardSelect = $("#node-input-boardId");
             
-            // Try to get MODBUS_BOARDS from global context
-            // This would need to be populated from server-side
-            // For now, we'll provide manual options
-            boardSelect.append('<option value="">Auto (Default Board)</option>');
-            
-            // In production, these would be populated dynamically from MODBUS_BOARDS env
-            // Example static options for demonstration
+            // Default 3 board options
             var exampleBoards = [
-                { id: "board1", name: "Main Controller" },
-                { id: "board2", name: "Sensor Board" },
-                { id: "board3", name: "Actuator Board" }
+                { id: "board1", name: "Board 1" },
+                { id: "board2", name: "Board 2" },
+                { id: "board3", name: "Board 3" }
             ];
             
             // Check if we have boards configured
@@ -39,11 +33,11 @@
                 // In production, boards would come from backend
             });
             
-            // Add example boards if in multi-board environment
+            // Add board options
             exampleBoards.forEach(function(board) {
                 var selected = (board.id === this.boardId) ? ' selected' : '';
                 boardSelect.append('<option value="' + board.id + '"' + selected + '>' + 
-                                 board.name + ' (' + board.id + ')</option>');
+                                 board.name + '</option>');
             }.bind(this));
         },
         oneditsave: function () {
@@ -64,8 +58,8 @@
             <!-- Options populated dynamically in oneditprepare -->
         </select>
         <div class="form-tips" style="margin-top: 5px; margin-bottom: 10px;">
-            <small><i class="fa fa-info-circle"></i> Select a specific board or leave as "Auto" to use the default board. 
-            You can also override this dynamically using <code>msg.payload.boardId</code></small>
+            <small><i class="fa fa-info-circle"></i> Select a board (default: Board 1). 
+            You can override dynamically using <code>msg.payload.boardId</code></small>
         </div>
     </div>
     

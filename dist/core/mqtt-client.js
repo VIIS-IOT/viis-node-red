@@ -20,7 +20,7 @@ class MqttClientCore extends events_1.EventEmitter {
         this.RECONNECT_INTERVAL_MULTIPLIER = 1.3; // slower backoff
         this.CIRCUIT_BREAKER_TIMEOUT = 20000; // 20 seconds - quicker recovery
         this.CIRCUIT_BREAKER_MAX_ATTEMPTS = 10; // more attempts before circuit break
-        this.HEALTH_CHECK_INTERVAL = 10000; // 10 seconds - more frequent checks instead of 5 minutes
+        this.HEALTH_CHECK_INTERVAL = 300000; // 5 minutes - health check interval
         this.messageQueue = [];
         this.healthCheckTimer = null;
         this.reconnectTimer = null;
@@ -428,7 +428,22 @@ class MqttClientCore extends events_1.EventEmitter {
                     reject(err);
                 }
                 else {
-                    this.node.log(`Published to topic: ${topic}`);
+                    // Format message for logging
+                    const messageStr = Buffer.isBuffer(message) ? message.toString('utf8') : message;
+                    const truncatedMsg = messageStr.length > 200 ? messageStr.substring(0, 200) + '...' : messageStr;
+                    // Try to parse as JSON for better readability
+                    let displayMsg = truncatedMsg;
+                    try {
+                        const parsed = JSON.parse(messageStr);
+                        displayMsg = JSON.stringify(parsed);
+                        if (displayMsg.length > 200) {
+                            displayMsg = displayMsg.substring(0, 200) + '...';
+                        }
+                    }
+                    catch (_a) {
+                        // Not JSON, use as is
+                    }
+                    // this.node.log(`Published to topic: ${topic} | Message: ${displayMsg}`);
                     resolve();
                 }
             });

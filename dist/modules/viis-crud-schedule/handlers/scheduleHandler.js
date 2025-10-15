@@ -10,15 +10,14 @@ const constants_1 = require("../constants");
 const scheduleValidator_1 = require("../utils/scheduleValidator");
 const helper_1 = require("../../../ultils/helper");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
-const typedi_1 = __importDefault(require("typedi"));
 const moment_timezone_1 = __importDefault(require("moment-timezone"));
 const typeorm_1 = require("typeorm");
 class ScheduleHandler {
     constructor(dbService, node) {
-        this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
+        this.node = node;
+        this.syncScheduleService = new SyncScheduleService_1.SyncScheduleService(node.context());
         this.dbService = dbService;
         this.scheduleRepo = dbService.getScheduleRepository();
-        this.node = node;
     }
     async handleRequest(msg) {
         try {

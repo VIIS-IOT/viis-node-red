@@ -25,7 +25,10 @@ export class ScheduleService {
         this.debugEnable = debugEnable; // Store debugEnable
         this.globalHelper = node ? new GlobalContextHelper(node.context()) : null;
         try {
-            this.syncScheduleService = Container.get(SyncScheduleService);
+            // Initialize SyncScheduleService with node context to get proper access token
+            this.syncScheduleService = node 
+                ? new SyncScheduleService(node.context())
+                : Container.get(SyncScheduleService);
             this.debugLog("SyncScheduleService initialized successfully");
         } catch (error) {
             console.error(`Failed to initialize SyncScheduleService: ${(error as Error).message}`);
@@ -292,6 +295,10 @@ export class ScheduleService {
                 this.debugLog(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
                 await this.delay(100);
             } catch (error) {
+                // CRITICAL LOG: Modbus holding register error
+                if (this.node && schedule) {
+                    this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write holding register ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
+                }
                 console.error(`Error executing modbus holding command ${cmd.key}: ${(error as Error).message}`);
             }
         }
@@ -308,6 +315,14 @@ export class ScheduleService {
         const isFinishing = schedule && schedule.status === 'finished';
 
         if (isStarting) {
+            // CRITICAL LOG: START sequence
+            if (this.node && schedule) {
+                this.node.warn(`🔧 MODBUS START SEQUENCE: ${schedule.name}`);
+                this.node.warn(`  ├─ Step 1: Writing ${valveCoils.length} VALVE coils`);
+                this.node.warn(`  ├─ Step 2: Delay 5 seconds`);
+                this.node.warn(`  └─ Step 3: Writing ${controlCoils.length} PUMP/POWER coils`);
+            }
+            
             // Khi start: ghi valve trước, delay 5s, sau đó ghi pump/power
             this.debugLog(`Starting schedule ${schedule?.name}: executing valve coils first`);
 
@@ -318,6 +333,10 @@ export class ScheduleService {
                     this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 } catch (error) {
+                    // CRITICAL LOG: Modbus valve coil error
+                    if (this.node && schedule) {
+                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write valve coil ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
+                    }
                     console.error(`Error executing modbus valve coil command ${cmd.key}: ${(error as Error).message}`);
                 }
             }
@@ -350,6 +369,14 @@ export class ScheduleService {
                 }
             }
         } else if (isFinishing) {
+            // CRITICAL LOG: FINISH sequence
+            if (this.node && schedule) {
+                this.node.warn(`🛑 MODBUS FINISH SEQUENCE: ${schedule.name}`);
+                this.node.warn(`  ├─ Step 1: Turning OFF ${controlCoils.length} PUMP/POWER coils`);
+                this.node.warn(`  ├─ Step 2: Delay 5 seconds`);
+                this.node.warn(`  └─ Step 3: Closing ${valveCoils.length} VALVE coils`);
+            }
+            
             // Khi finish: ghi tắt pump/power trước, delay 5s, sau đó tắt valve
             this.debugLog(`Finishing schedule ${schedule?.name}: executing pump/power coils first`);
 
@@ -360,6 +387,10 @@ export class ScheduleService {
                     this.debugLog(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 } catch (error) {
+                    // CRITICAL LOG: Modbus control coil error
+                    if (this.node && schedule) {
+                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write control coil ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
+                    }
                     console.error(`Error executing modbus control coil command ${cmd.key}: ${(error as Error).message}`);
                 }
             }
@@ -434,14 +465,27 @@ export class ScheduleService {
                 this.debugLog(`Verifying ${cmd.key}: readValue = ${readValue} (${typeof readValue}), expected = ${cmd.value} (${typeof cmd.value})`);
 
                 if (readValue !== cmd.value) {
+                    // CRITICAL LOG: Verification failed
+                    if (this.node) {
+                        this.node.warn(`❌ VERIFICATION FAILED: ${cmd.key} at address ${cmd.address} | Expected: ${cmd.value}, Got: ${readValue}`);
+                    }
                     console.warn(`Verification failed for ${cmd.key} at ${cmd.address}: expected ${cmd.value}, got ${readValue}`);
                     return false;
                 }
                 this.debugLog(`Verified ${cmd.key} at ${cmd.address} successfully`);
             } catch (error) {
+                // CRITICAL LOG: Verification error
+                if (this.node) {
+                    this.node.warn(`❌ VERIFICATION ERROR: ${cmd.key} | ${(error as Error).message}`);
+                }
                 console.error(`Error verifying modbus write for ${cmd.key}: ${(error as Error).message}`);
                 return false;
             }
+        }
+        
+        // CRITICAL LOG: All verifications passed
+        if (this.node && commands.length > 0) {
+            this.node.warn(`✅ VERIFICATION SUCCESS: All ${commands.length} commands verified`);
         }
         return true;
     }
@@ -478,8 +522,17 @@ export class ScheduleService {
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published MQTT notification to EMQX local for ${schedule.name}`);
+            
+            // CRITICAL LOG: MQTT published successfully
+            if (this.node) {
+                this.node.warn(`📡 MQTT PUBLISHED: ${schedule.name} | Status: ${schedule.status} | Topics: ThingsBoard + EMQX`);
+            }
 
         } catch (error) {
+            // CRITICAL LOG: MQTT error
+            if (this.node) {
+                this.node.warn(`❌ MQTT ERROR: ${schedule.name} | ${(error as Error).message}`);
+            }
             console.error(`Error publishing MQTT for ${schedule.name}: ${(error as Error).message}`);
             throw error;
         }
@@ -512,10 +565,23 @@ export class ScheduleService {
 
                 await this.syncScheduleService.logSchedule(scheduleLogBody);
                 this.debugLog(`Logged schedule ${schedule.name} successfully`);
+                
+                // CRITICAL LOG: Schedule log synced successfully
+                if (this.node) {
+                    this.node.warn(`📝 SCHEDULE LOG SYNCED: ${schedule.name} | ${success ? 'Success' : 'Failed'}`);
+                }
             } else {
+                // CRITICAL LOG: Sync service unavailable
+                if (this.node) {
+                    this.node.warn(`⚠️ SCHEDULE LOG SKIPPED: ${schedule.name} | SyncScheduleService not available`);
+                }
                 console.warn("SyncScheduleService is not available, skipping log");
             }
         } catch (error) {
+            // CRITICAL LOG: Schedule log sync error
+            if (this.node) {
+                this.node.warn(`❌ SCHEDULE LOG ERROR: ${schedule.name} | ${(error as Error).message}`);
+            }
             console.error(`Error syncing log for ${schedule.name}: ${(error as Error).message}`);
         }
     }
@@ -532,8 +598,16 @@ export class ScheduleService {
             }
             const repository = AppDataSource.getRepository(TabiotSchedule);
 
+            const previousStatus = schedule.status;
+            
             // Cập nhật trạng thái
             schedule.status = status;
+
+            // CRITICAL LOG: Status Change
+            const statusIcon = status === 'running' ? '▶️' : '⏹️';
+            if (this.node) {
+                this.node.warn(`${statusIcon} STATUS CHANGE: ${schedule.name} | ${previousStatus || 'none'} → ${status} | Label: ${schedule.label}`);
+            }
 
             // Override giá trị modified, cộng thêm 7 giờ
             const nowPlus7 = moment().utc().add(7, 'hours').toDate();
@@ -543,13 +617,29 @@ export class ScheduleService {
             await repository.save(schedule);
             this.debugLog(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
 
+            // CRITICAL LOG: Server Sync Status
             if (this.syncScheduleService) {
-                await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
-                this.debugLog(`Synced ${schedule.name} to server`);
+                try {
+                    await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                    if (this.node) {
+                        this.node.warn(`✅ SERVER SYNC SUCCESS: ${schedule.name} | Status: ${status}`);
+                    }
+                    this.debugLog(`Synced ${schedule.name} to server`);
+                } catch (syncError) {
+                    if (this.node) {
+                        this.node.warn(`❌ SERVER SYNC FAILED: ${schedule.name} | Error: ${(syncError as Error).message}`);
+                    }
+                    throw syncError;
+                }
             } else {
-                console.warn("SyncScheduleService is not available, skipping sync");
+                if (this.node) {
+                    this.node.warn(`⚠️ SERVER SYNC SKIPPED: ${schedule.name} | SyncScheduleService not available`);
+                }
             }
         } catch (error) {
+            if (this.node) {
+                this.node.warn(`❌ DATABASE ERROR: ${schedule.name} | Failed to update status | ${(error as Error).message}`);
+            }
             console.error(`Error updating status for ${schedule.name}: ${(error as Error).message}`);
         }
     }
@@ -657,6 +747,10 @@ export class ScheduleService {
                 if (scheduleId === currentScheduleId) continue;
                 const activeCmds: ModbusCmd[] = activeModbusCommands[scheduleId];
                 if (activeCmds.some(ac => ac.address === cmd.address && ac.fc === cmd.fc)) {
+                    // CRITICAL LOG: Command overlap detected
+                    if (this.node) {
+                        this.node.warn(`⚠️ COMMAND OVERLAP: Schedule ${currentScheduleId} conflicts with ${scheduleId} | Address: ${cmd.address} (FC: ${cmd.fc}) | Key: ${cmd.key}`);
+                    }
                     console.warn(`Command overlap detected with schedule ${scheduleId} at address ${cmd.address} (fc: ${cmd.fc})`);
                     return false;
                 }
@@ -925,12 +1019,16 @@ export class ScheduleService {
             if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
                 // Key found in modbus mapping - should be handled by modbus logic
                 this.debugLog(`RPC control key ${key} found in modbus mapping, should be handled by modbus`);
+                
+                const isCoil = modbusCoils.hasOwnProperty(key);
+                const address = isCoil ? modbusCoils[key] : modbusHolding[key];
+                
                 return {
                     success: true,
                     action: 'modbus',
                     result: {
-                        address: modbusCoils[key] || modbusHolding[key],
-                        type: modbusCoils.hasOwnProperty(key) ? 'coil' : 'holding'
+                        address: address,
+                        type: isCoil ? 'coil' : 'holding'
                     }
                 };
             } else {

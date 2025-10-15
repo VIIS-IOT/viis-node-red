@@ -22,12 +22,13 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         });
         this.configs = configs;
         this.accessToken = configs.deviceAccessToken || "NA";
-        console.log("SyncScheduleService constructor called with baseURL:", configs.serverUrl);
+        // Only warn if token is missing
+        if (this.accessToken === "NA") {
+            console.warn("⚠️ SyncScheduleService: Access token is 'NA' - check if env-loader is running and nodeContext is passed!");
+        }
     }
     async logSchedule(body) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleLog/v2?access_token=${this.accessToken}`;
-            console.debug("Calling API logSchedule:", fullPath, "with body:", body);
             const response = await this.instance.post(`/api/v2/scheduleLog`, body, {
                 withCredentials: true,
             });
@@ -35,14 +36,11 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         }
         catch (error) {
             console.error(`Error in logSchedule: ${error.message}`);
-            // console.log(error)
             throw error;
         }
     }
     async syncScheduleFromLocalToServer(body) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
-            console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
             const response = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
                 withCredentials: true,
             });
@@ -50,14 +48,11 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         }
         catch (error) {
             console.error(`Error in syncLocalToServer: ${error.message}`);
-            console.log(error);
             throw error;
         }
     }
     async syncSchedulePlanFromLocalToServer(body) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
-            console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
             const response = await this.instance.post(`/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
                 withCredentials: true,
             });
@@ -65,7 +60,6 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         }
         catch (error) {
             console.error(`Error in syncLocalToServer: ${error.message}`);
-            console.log(error);
             throw error;
         }
     }

@@ -25,10 +25,10 @@ export class ScheduleHandler {
     private syncScheduleService: SyncScheduleService;
 
     constructor(dbService: DatabaseService, node: Node) {
-        this.syncScheduleService = Container.get(SyncScheduleService);
+        this.node = node;
+        this.syncScheduleService = new SyncScheduleService(node.context());
         this.dbService = dbService;
         this.scheduleRepo = dbService.getScheduleRepository();
-        this.node = node;
     }
 
 

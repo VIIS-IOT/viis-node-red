@@ -17,16 +17,13 @@ export = function (RED: NodeAPI) {
         RED.nodes.createNode(this, config);
         const node = this;
 
-        node.warn("start to 1");
         const dbService = new DatabaseService();
-        node.warn("start to 2");
 
         // Khởi tạo database đồng bộ
         (async () => {
             try {
-                node.warn("start to init DB");
                 await dbService.initialize();
-                node.warn("Database initialized successfully");
+                logger.info(node, "Database initialized successfully");
 
                 const scheduleHandler = new ScheduleHandler(dbService, node);
                 const schedulePlanHandler = new SchedulePlanHandler(dbService, node);
@@ -36,7 +33,6 @@ export = function (RED: NodeAPI) {
                         const url = msg.req?.url || '';
                         const method = msg.req?.method || 'GET';
                         const path = parseUrl(url);
-                        node.warn("Processing input");
                         logger.info(node, `Received request: ${method} ${path}`);
 
                         let responseMsg: ExtendedNodeMessage;

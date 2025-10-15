@@ -46,11 +46,14 @@ describe('RPC Control Commands Logic', () => {
     describe('processRpcControlCommand', () => {
         it('should write to configKeyValues when key is not found in modbus mapping', () => {
             // Setup: No modbus mapping for the key
-            mockGlobalHelper.getJsonEnvVar = jest.fn().mockImplementation((envKey) => {
-                if (envKey === 'MODBUS_COILS')
+            // GlobalContextHelper uses mapping: MODBUS_COILS -> modbusCoils, MODBUS_HOLDING_REGISTERS -> modbusHoldingRegisters
+            mockGlobalContext.get.mockImplementation((key) => {
+                if (key === 'modbusCoils')
                     return { pump_1: 0, valve_A1: 1 };
-                if (envKey === 'MODBUS_HOLDING_REGISTERS')
+                if (key === 'modbusHoldingRegisters')
                     return { set_flow_A1: 10, temperature: 12 };
+                if (key === 'configKeyValues')
+                    return {};
                 return {};
             });
             // Test: Process RPC control command with unmapped key
@@ -64,11 +67,14 @@ describe('RPC Control Commands Logic', () => {
         });
         it('should return modbus action when key is found in coil mapping', () => {
             // Setup: Key exists in modbus coil mapping
-            mockGlobalHelper.getJsonEnvVar = jest.fn().mockImplementation((envKey) => {
-                if (envKey === 'MODBUS_COILS')
+            // GlobalContextHelper uses mapping: MODBUS_COILS -> modbusCoils, MODBUS_HOLDING_REGISTERS -> modbusHoldingRegisters
+            mockGlobalContext.get.mockImplementation((key) => {
+                if (key === 'modbusCoils')
                     return { pump_1: 0, valve_A1: 1 };
-                if (envKey === 'MODBUS_HOLDING_REGISTERS')
+                if (key === 'modbusHoldingRegisters')
                     return { set_flow_A1: 10, temperature: 12 };
+                if (key === 'configKeyValues')
+                    return {};
                 return {};
             });
             // Test: Process RPC control command with mapped key
@@ -82,11 +88,14 @@ describe('RPC Control Commands Logic', () => {
         });
         it('should return modbus action when key is found in holding register mapping', () => {
             // Setup: Key exists in modbus holding register mapping
-            mockGlobalHelper.getJsonEnvVar = jest.fn().mockImplementation((envKey) => {
-                if (envKey === 'MODBUS_COILS')
+            // GlobalContextHelper uses mapping: MODBUS_COILS -> modbusCoils, MODBUS_HOLDING_REGISTERS -> modbusHoldingRegisters
+            mockGlobalContext.get.mockImplementation((key) => {
+                if (key === 'modbusCoils')
                     return { pump_1: 0, valve_A1: 1 };
-                if (envKey === 'MODBUS_HOLDING_REGISTERS')
+                if (key === 'modbusHoldingRegisters')
                     return { set_flow_A1: 10, temperature: 12 };
+                if (key === 'configKeyValues')
+                    return {};
                 return {};
             });
             // Test: Process RPC control command with mapped key
