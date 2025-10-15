@@ -62,6 +62,124 @@ export class ScheduleService {
     }
 
     /**
+     * Load all Modbus coils from both legacy single-board and multi-board configurations
+     * Returns a merged object with all coil mappings
+     */
+    private loadAllModbusCoils(): Record<string, number> {
+        let allCoils: Record<string, number> = {};
+
+        // Try to load legacy single-board coils first
+        const legacyCoils = this.globalHelper 
+            ? this.globalHelper.getJsonEnvVar("MODBUS_COILS", {}) 
+            : JSON.parse(process.env.MODBUS_COILS || "{}");
+        
+        if (Object.keys(legacyCoils).length > 0) {
+            this.debugLog(`Loaded ${Object.keys(legacyCoils).length} legacy coil mappings`);
+            allCoils = { ...allCoils, ...legacyCoils };
+        }
+
+        // Check if we're in multi-board mode
+        const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : process.env.MODBUS_BOARDS;
+        
+        if (boardsConfigStr) {
+            try {
+                let boards;
+                
+                // Handle both already-parsed array and JSON string
+                if (Array.isArray(boardsConfigStr)) {
+                    boards = boardsConfigStr;
+                } else if (typeof boardsConfigStr === 'string') {
+                    boards = JSON.parse(boardsConfigStr);
+                } else {
+                    this.debugLog(`Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
+                    return allCoils;
+                }
+                
+                if (Array.isArray(boards) && boards.length > 0) {
+                    this.debugLog(`Multi-board mode detected with ${boards.length} boards`);
+                    
+                    // Load coils from each board
+                    for (const board of boards) {
+                        const boardId = board.id.toUpperCase();
+                        const boardCoils = this.globalHelper 
+                            ? this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_COILS`, {})
+                            : {};
+                        
+                        if (Object.keys(boardCoils).length > 0) {
+                            this.debugLog(`Loaded ${Object.keys(boardCoils).length} coil mappings from board ${board.id}`);
+                            allCoils = { ...allCoils, ...boardCoils };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(`Error parsing MODBUS_BOARDS: ${e}`);
+            }
+        }
+
+        this.debugLog(`Total coil mappings loaded: ${Object.keys(allCoils).length}`);
+        return allCoils;
+    }
+
+    /**
+     * Load all Modbus holding registers from both legacy single-board and multi-board configurations
+     * Returns a merged object with all holding register mappings
+     */
+    private loadAllModbusHoldingRegisters(): Record<string, number> {
+        let allHolding: Record<string, number> = {};
+
+        // Try to load legacy single-board holding registers first
+        const legacyHolding = this.globalHelper 
+            ? this.globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) 
+            : JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+        
+        if (Object.keys(legacyHolding).length > 0) {
+            this.debugLog(`Loaded ${Object.keys(legacyHolding).length} legacy holding register mappings`);
+            allHolding = { ...allHolding, ...legacyHolding };
+        }
+
+        // Check if we're in multi-board mode
+        const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : process.env.MODBUS_BOARDS;
+        
+        if (boardsConfigStr) {
+            try {
+                let boards;
+                
+                // Handle both already-parsed array and JSON string
+                if (Array.isArray(boardsConfigStr)) {
+                    boards = boardsConfigStr;
+                } else if (typeof boardsConfigStr === 'string') {
+                    boards = JSON.parse(boardsConfigStr);
+                } else {
+                    this.debugLog(`Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
+                    return allHolding;
+                }
+                
+                if (Array.isArray(boards) && boards.length > 0) {
+                    this.debugLog(`Multi-board mode detected with ${boards.length} boards`);
+                    
+                    // Load holding registers from each board
+                    for (const board of boards) {
+                        const boardId = board.id.toUpperCase();
+                        const boardHolding = this.globalHelper 
+                            ? this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_HOLDING_REGISTERS`, {})
+                            : {};
+                        
+                        if (Object.keys(boardHolding).length > 0) {
+                            this.debugLog(`Loaded ${Object.keys(boardHolding).length} holding register mappings from board ${board.id}`);
+                            allHolding = { ...allHolding, ...boardHolding };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(`Error parsing MODBUS_BOARDS: ${e}`);
+            }
+        }
+
+        this.debugLog(`Total holding register mappings loaded: ${Object.keys(allHolding).length}`);
+        return allHolding;
+    }
+
+    /**
      * Lấy danh sách schedule từ DB
      */
     async getDueSchedules(): Promise<TabiotSchedule[]> {
@@ -220,8 +338,9 @@ export class ScheduleService {
                     }
                 }
             }
-            const modbusCoils = this.globalHelper ? this.globalHelper.getJsonEnvVar("MODBUS_COILS", {}) : JSON.parse(process.env.MODBUS_COILS || "{}");
-            const modbusHolding = this.globalHelper ? this.globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) : JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+            // Load Modbus mappings with multi-board support
+            const modbusCoils = this.loadAllModbusCoils();
+            const modbusHolding = this.loadAllModbusHoldingRegisters();
 
             for (const key in actionObj) {
                 if (actionObj.hasOwnProperty(key)) {
