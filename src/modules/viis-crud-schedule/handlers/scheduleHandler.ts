@@ -73,7 +73,18 @@ export class ScheduleHandler {
         } catch (error) {
             logger.error(this.node, `Request handling failed: ${(error as Error).message}`);
             msg.payload = { error: (error as Error).message };
-            if ('statusCode' in msg) (msg as any).statusCode = error instanceof Error && error.message.includes('Validation failed') ? 400 : 500;
+            
+            // Set appropriate status code
+            if ('statusCode' in msg) {
+                const errorMsg = (error as Error).message;
+                // Business logic errors should return 400
+                const isBadRequest = errorMsg.includes('Validation failed') || 
+                                   errorMsg.includes('Cannot change') ||
+                                   errorMsg.includes('Cannot disable') ||
+                                   errorMsg.includes('not found') ||
+                                   errorMsg.includes('Invalid');
+                (msg as any).statusCode = isBadRequest ? 400 : 500;
+            }
             return msg;
         }
     }

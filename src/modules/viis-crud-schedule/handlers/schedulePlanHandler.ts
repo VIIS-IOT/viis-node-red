@@ -6,6 +6,7 @@ import { parseUrl } from '../utils/urlParser';
 import { logger } from '../utils/logger';
 import { API_PATHS } from '../constants';
 import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSchedulePlan';
+import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { generateHashKey, parseFilterParams } from '../../../ultils/helper';
 import { plainToInstance } from 'class-transformer';
 import { validateDto } from '../utils/validation';
@@ -16,6 +17,7 @@ import { adjustToUTC7 } from '../../../ultils/helper'
 
 export class SchedulePlanHandler {
     private planRepo: Repository<TabiotSchedulePlan>;
+    private scheduleRepo: Repository<TabiotSchedule>;
     private node: Node;
     private syncScheduleService: SyncScheduleService;
 
@@ -23,6 +25,7 @@ export class SchedulePlanHandler {
         this.node = node;
         this.syncScheduleService = new SyncScheduleService(node.context());
         this.planRepo = dbService.getSchedulePlanRepository();
+        this.scheduleRepo = dbService.getScheduleRepository();
     }
 
     async handleRequest(msg: ExtendedNodeMessage): Promise<ExtendedNodeMessage> {
@@ -47,9 +50,16 @@ export class SchedulePlanHandler {
         } catch (error) {
             logger.error(this.node, `Request handling failed: ${(error as Error).message}`);
             msg.payload = { error: (error as Error).message };
-            if ('statusCode' in msg) {
-                (msg as any).statusCode = error instanceof Error && error.message.includes('Validation failed') ? 400 : 500;
-            }
+            
+            // Set appropriate status code
+            const errorMsg = (error as Error).message;
+            // Business logic errors should return 400
+            const isBadRequest = errorMsg.includes('Validation failed') || 
+                               errorMsg.includes('Cannot disable') ||
+                               errorMsg.includes('not found') ||
+                               errorMsg.includes('Invalid');
+            (msg as any).statusCode = isBadRequest ? 400 : 500;
+            
             return msg;
         }
     }
@@ -290,6 +300,26 @@ export class SchedulePlanHandler {
 
             if (!existingPlan) {
                 throw new Error(`Schedule plan with name ${name} not found`);
+            }
+
+            // Check if trying to disable a schedule plan with running schedules
+            const isDisabling = dto.enable === 0;
+            if (isDisabling) {
+                const runningSchedules = await this.scheduleRepo.count({
+                    where: {
+                        schedule_plan_id: name,
+                        status: 'running',
+                        is_deleted: 0
+                    }
+                });
+
+                if (runningSchedules > 0) {
+                    const errorMsg = `Cannot disable schedule plan "${dto.label || name}": ${runningSchedules} schedule(s) are currently running. Please finish or disable all running schedules first.`;
+                    this.node.warn(`❌ DISABLE BLOCKED: ${errorMsg}`);
+                    throw new Error(errorMsg);
+                }
+
+                this.node.warn(`✓ VALIDATION PASSED: No running schedules found for plan "${dto.label || name}", proceeding with disable`);
             }
 
             const updateData: Partial<TabiotSchedulePlan> = {
