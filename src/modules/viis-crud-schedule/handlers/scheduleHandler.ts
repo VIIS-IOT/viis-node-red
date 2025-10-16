@@ -16,7 +16,7 @@ import { SyncScheduleService } from '../../../services/syncSchedule/SyncSchedule
 import { log } from 'console';
 import Container from 'typedi';
 import moment from 'moment-timezone';
-import { ILike } from 'typeorm';
+import { ILike, In } from 'typeorm';
 import { ScheduleService } from '../../viis-schedule-executor/viis-schedule-executor-service';
 import ClientRegistry from '../../../core/client-registry';
 import { GlobalContextHelper } from '../../../ultils/global-context-helper';
@@ -547,7 +547,7 @@ export class ScheduleHandler {
 
             // Apply device filter
             if (deviceIds.length > 0) {
-                whereOptions.device_id = deviceIds;
+                whereOptions.device_id = In(deviceIds);
             }
 
             // Query for schedules
@@ -576,6 +576,7 @@ export class ScheduleHandler {
 
                 return {
                     id: schedule.name,
+                    status: schedule.status,
                     device_id: schedule.device_id,
                     device_name: schedule.device_label || schedule.device_id,
                     action: JSON.parse(schedule.action || '{}'),

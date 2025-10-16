@@ -477,7 +477,7 @@ class ScheduleHandler {
             const deviceIds = deviceQuery.map(item => item.device_id).filter(Boolean);
             // Apply device filter
             if (deviceIds.length > 0) {
-                whereOptions.device_id = deviceIds;
+                whereOptions.device_id = (0, typeorm_1.In)(deviceIds);
             }
             // Query for schedules
             const [schedules, totalCount] = await this.scheduleRepo.findAndCount({
@@ -502,6 +502,7 @@ class ScheduleHandler {
                         .utc().valueOf() : null;
                 return {
                     id: schedule.name,
+                    status: schedule.status,
                     device_id: schedule.device_id,
                     device_name: schedule.device_label || schedule.device_id,
                     action: JSON.parse(schedule.action || '{}'),
