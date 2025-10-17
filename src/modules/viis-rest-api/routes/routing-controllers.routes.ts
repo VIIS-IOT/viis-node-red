@@ -25,6 +25,7 @@ import { ThingsBoardController } from '../controllers/thingsboard.controller';
 import { ScheduleMonitorController } from '../controllers/schedule-monitor.controller';
 import { IotNotificationController } from '../controllers/iot-notification.controller';
 import { IotScheduleLogController } from '../controllers/iot-schedule-log.controller';
+import { ErrorNotificationController } from '../controllers/error-notification.controller';
 
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -166,7 +167,8 @@ export class RoutingControllersRoutes {
             ThingsBoardController,
             ScheduleMonitorController,
             IotNotificationController,
-            IotScheduleLogController
+            IotScheduleLogController,
+            ErrorNotificationController
         ];
 
         logger.info(this.node, 'Using fallback manual controller registration', {

@@ -53,6 +53,7 @@ const thingsboard_controller_1 = require("../controllers/thingsboard.controller"
 const schedule_monitor_controller_1 = require("../controllers/schedule-monitor.controller");
 const iot_notification_controller_1 = require("../controllers/iot-notification.controller");
 const iot_schedule_log_controller_1 = require("../controllers/iot-schedule-log.controller");
+const error_notification_controller_1 = require("../controllers/error-notification.controller");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
  *
@@ -163,7 +164,8 @@ class RoutingControllersRoutes {
             thingsboard_controller_1.ThingsBoardController,
             schedule_monitor_controller_1.ScheduleMonitorController,
             iot_notification_controller_1.IotNotificationController,
-            iot_schedule_log_controller_1.IotScheduleLogController
+            iot_schedule_log_controller_1.IotScheduleLogController,
+            error_notification_controller_1.ErrorNotificationController
         ];
         logger_1.logger.info(this.node, 'Using fallback manual controller registration', {
             controllersCount: fallbackControllers.length,

@@ -9,6 +9,7 @@ module.exports = {
   // Separate test patterns
   testMatch: [
     "**/__tests__/**/*.test.ts",
-    "**/__tests__/**/*.integration.test.ts"
+    "**/__tests__/**/*.integration.test.ts",
+    "**/tests/**/*.test.ts"
   ],
 };
