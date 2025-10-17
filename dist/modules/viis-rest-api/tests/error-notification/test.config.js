@@ -9,7 +9,7 @@ exports.testConfig = {
         type: 'mysql',
         host: 'localhost',
         port: 3308, // External port mapped from docker
-        username: 'admin',
+        username: 'root',
         password: 'admin@123',
         database: 'viis_local',
         synchronize: false,

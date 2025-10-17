@@ -18,7 +18,7 @@ jest.mock('../../../../orm/dataSource', () => ({
 describe('ErrorNotificationApiService - Unit Tests', () => {
     let service;
     let mockRepository;
-    beforeEach(() => {
+    beforeEach(async () => {
         // Create mock repository
         mockRepository = {
             create: jest.fn(),
@@ -28,10 +28,13 @@ describe('ErrorNotificationApiService - Unit Tests', () => {
             findAndCount: jest.fn(),
             remove: jest.fn(),
             count: jest.fn(),
-            createQueryBuilder: jest.fn()
+            createQueryBuilder: jest.fn(),
+            metadata: {} // Add metadata to pass checks
         };
         // Initialize service
         service = new error_notification_api_service_1.ErrorNotificationApiService();
+        // Wait a bit for async initialization
+        await new Promise(resolve => setTimeout(resolve, 100));
         // Inject mock repository
         service.notificationRepo = mockRepository;
         service.initialized = true;
