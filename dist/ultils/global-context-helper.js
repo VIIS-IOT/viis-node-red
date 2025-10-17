@@ -249,6 +249,39 @@ class GlobalContextHelper {
         return result;
     }
     /**
+     * Gets error code mappings from global context
+     * @returns Error code mappings object
+     */
+    getErrorCodeMappings() {
+        const mappings = this.globalContext.get('errorCodeMappings');
+        return mappings || {};
+    }
+    /**
+     * Gets error code mapping for a specific device type
+     * @param deviceType - Device type name (e.g., 'Climate_Controller')
+     * @returns Error code mapping or null if not found
+     */
+    getErrorCodeMappingForDevice(deviceType) {
+        const allMappings = this.getErrorCodeMappings();
+        return allMappings[deviceType] || allMappings['default'] || null;
+    }
+    /**
+     * Gets all available device types with error code mappings
+     * @returns Array of device type names
+     */
+    getAvailableErrorDeviceTypes() {
+        const allMappings = this.getErrorCodeMappings();
+        return Object.keys(allMappings);
+    }
+    /**
+     * Checks if error code mappings are loaded
+     * @returns True if mappings exist in global context
+     */
+    hasErrorCodeMappings() {
+        const mappings = this.globalContext.get('errorCodeMappings');
+        return mappings !== undefined && mappings !== null && Object.keys(mappings).length > 0;
+    }
+    /**
      * Gets debug information about the helper state
      * @returns Debug information object
      */

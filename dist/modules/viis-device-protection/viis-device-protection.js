@@ -5,12 +5,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const error_notification_service_1 = require("../../services/error-notification.service");
 module.exports = function (RED) {
     function ViisDeviceProtectionNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
-        // Initialize GlobalContextHelper
+        // Initialize GlobalContextHelper and ErrorNotificationService
         const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+        const errorNotificationService = new error_notification_service_1.ErrorNotificationService(node.context());
         // Multi-board state variables
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
@@ -157,6 +159,29 @@ module.exports = function (RED) {
                         const elapsedTime = Date.now() - coilTimers[coilKey].startTime;
                         if (elapsedTime > coilTimers[coilKey].maxTime) {
                             node.warn(`Coil ${coilKey} exceeded max time (${maxTime}s). Turning off.`);
+                            // Create error notification for protection timeout
+                            try {
+                                await errorNotificationService.createFromBusinessLogic({
+                                    err_code: `PROTECTION_${coilKey}_TIMEOUT`,
+                                    message: `Device protection: ${coilKey} exceeded maximum runtime of ${maxTime} seconds`,
+                                    severity: 'high',
+                                    type: 'alert',
+                                    entity: node.id,
+                                    metadata: {
+                                        coil_key: coilKey,
+                                        max_time_seconds: maxTime,
+                                        elapsed_time_ms: elapsedTime,
+                                        coil_address: modbusCoils[coilKey],
+                                        action_taken: 'coil_turned_off',
+                                        board_id: currentBoardId || 'default',
+                                        timestamp: new Date().toISOString()
+                                    }
+                                });
+                                node.log(`Created protection timeout notification for ${coilKey}`);
+                            }
+                            catch (notifError) {
+                                node.error(`Failed to create notification: ${notifError.message}`);
+                            }
                             // Giữ lại thao tác tắt coil qua Modbus nếu cần (ví dụ khi cần gửi lệnh về PLC)
                             await writeCoil(modbusCoils[coilKey], false);
                             delete coilTimers[coilKey];

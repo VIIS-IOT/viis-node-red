@@ -43,14 +43,21 @@ const path = __importStar(require("path"));
 // Load common.env from centralized env directory
 // Provides DB_* variables for migrations from host (localhost:3308)
 (0, dotenv_1.config)({ path: path.resolve(__dirname, "../../../../../env/common.env") });
+// Shared DataSource instance (singleton pattern)
+let sharedDataSource = null;
 /**
- * Factory function to create DataSource with proper configuration
+ * Factory function to create or get shared DataSource with proper configuration
  * Can use NodeContext for global context access or fallback to process.env
  *
  * @param nodeContext - Optional Node-RED context for accessing global variables
- * @returns DataSource instance
+ * @returns DataSource instance (shared singleton)
  */
 function createDataSource(nodeContext) {
+    // Return existing instance if available
+    if (sharedDataSource) {
+        return sharedDataSource;
+    }
+    // Create new instance
     // Use GlobalContextHelper if nodeContext is available
     const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
     // Helper function to get config value with fallback
@@ -66,7 +73,8 @@ function createDataSource(nodeContext) {
         }
         return parseInt(process.env[envKey] || String(defaultValue));
     };
-    return new typeorm_1.DataSource({
+    // Create and cache the shared instance
+    sharedDataSource = new typeorm_1.DataSource({
         type: "mysql",
         host: getConfigValue('DB_HOST', 'viis-local-mysql'), // Use container name by default
         port: getNumericValue('DB_PORT', 3306),
@@ -80,6 +88,7 @@ function createDataSource(nodeContext) {
         synchronize: false, // Sử dụng false trong production, dùng migration thay cho synchronize
         logging: false,
     });
+    return sharedDataSource;
 }
 // Default instance for backward compatibility (uses process.env)
 exports.AppDataSource = createDataSource();

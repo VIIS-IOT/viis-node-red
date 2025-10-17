@@ -4,7 +4,9 @@
   "description": "",
   "main": "./dist/viis-automation-node.js",
   "scripts": {
-    "test": "jest",
+    "test": "jest --testPathIgnorePatterns=integration",
+    "test:integration": "jest --testPathPattern=integration",
+    "test:all": "jest",
     "build": "rimraf dist && npx tsc && copyfiles -u 2 \"src/icons/**/*\" dist && copyfiles -u 1 \"src/**/*.html\" dist",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "migration:generate": "npm run typeorm -- migration:generate src/orm/migrations/migrate -d src/orm/dataSource.ts",
@@ -51,7 +53,10 @@
       "viis-auto-microclimate-control": "dist/modules/viis-auto-microclimate-control/viis-auto-microclimate-control.js",
       "viis-modbus-getter": "dist/modules/viis-modbus-getter/viis-modbus-getter.js",
       "viis-modbus-poller": "dist/modules/viis-modbus-poller/viis-modbus-poller.js",
-      "viis-rest-api": "dist/modules/viis-rest-api/viis-rest-api.js"
+      "viis-rest-api": "dist/modules/viis-rest-api/viis-rest-api.js",
+      "viis-modbus-error-monitor": "dist/modules/viis-modbus-error-monitor/viis-modbus-error-monitor.js",
+      "viis-error-monitor": "dist/modules/viis-error-monitor/viis-error-monitor.js",
+      "viis-error-trigger": "dist/modules/viis-error-trigger/viis-error-trigger.js"
     }
   },
   "dependencies": {

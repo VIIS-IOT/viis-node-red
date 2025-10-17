@@ -41,6 +41,9 @@ export class TabiotNotification extends CustomBaseEntity {
     @Column({ type: 'varchar', length: 140, nullable: true })
     severity?: string;
 
+    @Column({ type: 'text', nullable: true })
+    metadata?: string;
+
     // Relationship with TabiotCustomer
     @ManyToOne(() => TabiotCustomer, customer => customer.notifications, {
         nullable: true,
