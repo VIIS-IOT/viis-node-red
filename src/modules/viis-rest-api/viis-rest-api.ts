@@ -9,6 +9,7 @@ import { logger } from "./utils/logger";
 import { AuthService } from "./services/auth.service";
 import { ApiRoutes } from "./routes/api.routes";
 import { DatabaseService } from "./services/database.service";
+import { DefaultUserSeedService } from "./services/default-user-seed.service";
 import { ContainerSetup } from "./container/container.setup";
 import { ApiConfigManager } from "./config/api.config";
 import "reflect-metadata";
@@ -84,6 +85,15 @@ export = function (RED: NodeAPI) {
                 databaseService = ContainerSetup.getService(DatabaseService);
                 authService = ContainerSetup.getService(AuthService);
                 logger.info(node, "Services resolved from container using proper DI");
+
+                // Seed default admin user if not exists
+                try {
+                    const seedService = new DefaultUserSeedService(databaseService, node);
+                    await seedService.seedDefaultUser();
+                } catch (error) {
+                    logger.warn(node, `Failed to seed default user: ${(error as Error).message}`);
+                    // Continue execution even if seeding fails
+                }
 
                 // Initialize and register API routes
                 apiRoutes = new ApiRoutes(databaseService, authService, node, configManager);

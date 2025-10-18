@@ -8,6 +8,7 @@ const logger_1 = require("./utils/logger");
 const auth_service_1 = require("./services/auth.service");
 const api_routes_1 = require("./routes/api.routes");
 const database_service_1 = require("./services/database.service");
+const default_user_seed_service_1 = require("./services/default-user-seed.service");
 const container_setup_1 = require("./container/container.setup");
 const api_config_1 = require("./config/api.config");
 require("reflect-metadata");
@@ -54,6 +55,15 @@ module.exports = function (RED) {
                 databaseService = container_setup_1.ContainerSetup.getService(database_service_1.DatabaseService);
                 authService = container_setup_1.ContainerSetup.getService(auth_service_1.AuthService);
                 logger_1.logger.info(node, "Services resolved from container using proper DI");
+                // Seed default admin user if not exists
+                try {
+                    const seedService = new default_user_seed_service_1.DefaultUserSeedService(databaseService, node);
+                    await seedService.seedDefaultUser();
+                }
+                catch (error) {
+                    logger_1.logger.warn(node, `Failed to seed default user: ${error.message}`);
+                    // Continue execution even if seeding fails
+                }
                 // Initialize and register API routes
                 apiRoutes = new api_routes_1.ApiRoutes(databaseService, authService, node, configManager);
                 await apiRoutes.registerRoutes(RED, configManager.getAll());
