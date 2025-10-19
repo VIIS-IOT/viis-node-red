@@ -23,6 +23,7 @@ const dynamicRole_1 = require("../../../orm/entities/dynamicRole/dynamicRole");
 const TabiotDevice_1 = require("../../../orm/entities/device/TabiotDevice");
 const TabiotDeviceTelemetry_1 = require("../../../orm/entities/device-telemetry/TabiotDeviceTelemetry");
 const TabiotDeviceTelemetryLatest_1 = require("../../../orm/entities/device-telemetry/TabiotDeviceTelemetryLatest");
+const TabiotThingsboardTelemetryQueue_1 = require("../../../orm/entities/device-telemetry/TabiotThingsboardTelemetryQueue");
 const TabiotSchedule_1 = require("../../../orm/entities/schedule/TabiotSchedule");
 const TabiotSchedulePlan_1 = require("../../../orm/entities/schedulePlan/TabiotSchedulePlan");
 const TabiotNotification_1 = require("../../../orm/entities/notification/TabiotNotification");
@@ -170,6 +171,13 @@ let DatabaseService = class DatabaseService {
     getNotificationRepository() {
         this.ensureInitialized();
         return this.dataSource.getRepository(TabiotNotification_1.TabiotNotification);
+    }
+    /**
+     * Get ThingsBoard telemetry queue repository
+     */
+    getThingsboardTelemetryQueueRepository() {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotThingsboardTelemetryQueue_1.TabiotThingsboardTelemetryQueue);
     }
     /**
      * Execute raw SQL query

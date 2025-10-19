@@ -14,6 +14,7 @@ import { IotDynamicRole } from '../../../orm/entities/dynamicRole/dynamicRole';
 import { TabiotDevice } from '../../../orm/entities/device/TabiotDevice';
 import { TabiotDeviceTelemetry } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetry';
 import { TabiotDeviceTelemetryLatest } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetryLatest';
+import { TabiotThingsboardTelemetryQueue } from '../../../orm/entities/device-telemetry/TabiotThingsboardTelemetryQueue';
 import { TabiotSchedule, TabiotScheduleLog } from '../../../orm/entities/schedule/TabiotSchedule';
 import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSchedulePlan';
 import { TabiotNotification } from '../../../orm/entities/notification/TabiotNotification';
@@ -191,6 +192,14 @@ export class DatabaseService implements IService {
     getNotificationRepository(): Repository<TabiotNotification> {
         this.ensureInitialized();
         return this.dataSource.getRepository(TabiotNotification);
+    }
+
+    /**
+     * Get ThingsBoard telemetry queue repository
+     */
+    getThingsboardTelemetryQueueRepository(): Repository<TabiotThingsboardTelemetryQueue> {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotThingsboardTelemetryQueue);
     }
 
     /**
