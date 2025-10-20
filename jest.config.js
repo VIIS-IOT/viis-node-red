@@ -12,4 +12,10 @@ module.exports = {
     "**/__tests__/**/*.integration.test.ts",
     "**/tests/**/*.test.ts"
   ],
+  // Setup files to run before tests
+  setupFilesAfterEnv: ["<rootDir>/src/services/MarineIoT/__tests__/setup.ts"],
+  // Module path aliases
+  moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1"
+  },
 };

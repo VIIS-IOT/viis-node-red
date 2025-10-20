@@ -38,6 +38,21 @@ export class TabiotDeviceTelemetry {
     @Column({ type: 'json', nullable: true })
     json_value?: object;
 
+    @Column({ 
+        type: 'varchar', 
+        length: 255, 
+        nullable: true,
+        comment: 'Oil profile ID at time of reading (for Marine IoT)'
+    })
+    oil_profile_id?: string;
+
+    @Column({ 
+        type: 'float', 
+        nullable: true,
+        comment: 'Density snapshot at time of reading (for flow conversion)'
+    })
+    density_snapshot?: number;
+
     @ManyToOne(() => TabiotDevice)
     @JoinColumn({ name: 'device_id' })
     device?: TabiotDevice;

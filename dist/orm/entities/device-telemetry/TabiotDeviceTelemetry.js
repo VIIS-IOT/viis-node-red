@@ -59,6 +59,23 @@ __decorate([
     __metadata("design:type", Object)
 ], TabiotDeviceTelemetry.prototype, "json_value", void 0);
 __decorate([
+    (0, typeorm_1.Column)({
+        type: 'varchar',
+        length: 255,
+        nullable: true,
+        comment: 'Oil profile ID at time of reading (for Marine IoT)'
+    }),
+    __metadata("design:type", String)
+], TabiotDeviceTelemetry.prototype, "oil_profile_id", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        type: 'float',
+        nullable: true,
+        comment: 'Density snapshot at time of reading (for flow conversion)'
+    }),
+    __metadata("design:type", Number)
+], TabiotDeviceTelemetry.prototype, "density_snapshot", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => TabiotDevice_1.TabiotDevice),
     (0, typeorm_1.JoinColumn)({ name: 'device_id' }),
     __metadata("design:type", TabiotDevice_1.TabiotDevice)

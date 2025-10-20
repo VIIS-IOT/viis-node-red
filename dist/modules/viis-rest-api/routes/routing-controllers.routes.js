@@ -54,6 +54,7 @@ const schedule_monitor_controller_1 = require("../controllers/schedule-monitor.c
 const iot_notification_controller_1 = require("../controllers/iot-notification.controller");
 const iot_schedule_log_controller_1 = require("../controllers/iot-schedule-log.controller");
 const error_notification_controller_1 = require("../controllers/error-notification.controller");
+const oil_profile_controller_1 = require("../controllers/oil-profile.controller");
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
  *
@@ -165,7 +166,8 @@ class RoutingControllersRoutes {
             schedule_monitor_controller_1.ScheduleMonitorController,
             iot_notification_controller_1.IotNotificationController,
             iot_schedule_log_controller_1.IotScheduleLogController,
-            error_notification_controller_1.ErrorNotificationController
+            error_notification_controller_1.ErrorNotificationController,
+            oil_profile_controller_1.OilProfileController
         ];
         logger_1.logger.info(this.node, 'Using fallback manual controller registration', {
             controllersCount: fallbackControllers.length,

@@ -1,0 +1,444 @@
+<script type="text/html" data-template-name="viis-marine-telemetry">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Marine IoT Telemetry">
+    </div>
+
+    <!-- Marine IoT Specific Section -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #4169E1; padding-bottom: 5px;">
+            <i class="fa fa-ship"></i> <strong>Marine IoT Configuration</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableMarineIoT"><i class="fa fa-toggle-on"></i> Enable Marine IoT</label>
+        <input type="checkbox" id="node-input-enableMarineIoT" style="width:auto;" checked>
+    </div>
+    <div class="form-row">
+        <label for="node-input-flowSensorKeys"><i class="fa fa-tachometer"></i> Flow Sensor Keys</label>
+        <input type="text" id="node-input-flowSensorKeys" placeholder="fs01,fs02,fs03,fs04,fs05,fs06">
+        <span class="form-tips">Comma-separated list of flow sensor keys</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-profileCacheDuration"><i class="fa fa-clock-o"></i> Profile Cache Duration (ms)</label>
+        <input type="text" id="node-input-profileCacheDuration" placeholder="300000">
+        <span class="form-tips">Oil profile cache duration (default: 300000 = 5 min)</span>
+    </div>
+
+    <!-- Standard Telemetry Configuration -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #99BC85; padding-bottom: 5px;">
+            <i class="fa fa-cog"></i> <strong>Modbus Polling Configuration</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalCoil"><i class="fa fa-clock-o"></i> Coil Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalCoil" placeholder="1000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalInput"><i class="fa fa-clock-o"></i> Input Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalInput" placeholder="1000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalHolding"><i class="fa fa-clock-o"></i> Holding Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalHolding" placeholder="5000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-coilStartAddress"><i class="fa fa-map-marker"></i> Coil Start Address</label>
+        <input type="text" id="node-input-coilStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-coilQuantity"><i class="fa fa-list"></i> Coil Quantity</label>
+        <input type="text" id="node-input-coilQuantity" placeholder="32">
+    </div>
+    <div class="form-row">
+        <label for="node-input-inputStartAddress"><i class="fa fa-map-marker"></i> Input Start Address</label>
+        <input type="text" id="node-input-inputStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-inputQuantity"><i class="fa fa-list"></i> Input Quantity</label>
+        <input type="text" id="node-input-inputQuantity" placeholder="26">
+    </div>
+    <div class="form-row">
+        <label for="node-input-holdingStartAddress"><i class="fa fa-map-marker"></i> Holding Start Address</label>
+        <input type="text" id="node-input-holdingStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-holdingQuantity"><i class="fa fa-list"></i> Holding Quantity</label>
+        <input type="text" id="node-input-holdingQuantity" placeholder="29">
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableDebugLog"><i class="fa fa-bug"></i> Enable Debug Log</label>
+        <input type="checkbox" id="node-input-enableDebugLog" style="width:auto;">
+    </div>
+
+    <!-- Threshold Configuration (inherit from viis-telemetry) -->
+    <div class="form-row">
+        <label><i class="fa fa-sliders"></i> Threshold Configuration</label>
+        <div class="threshold-config-section">
+            <div class="threshold-header">
+                <span class="threshold-description">Configure change thresholds for telemetry publishing</span>
+            </div>
+            <div id="threshold-config-container" class="threshold-container"></div>
+            <div class="threshold-actions">
+                <button id="add-threshold-config" type="button" class="red-ui-button red-ui-button-small">
+                    <i class="fa fa-plus"></i> Add Threshold
+                </button>
+            </div>
+            <input type="hidden" id="node-input-thresholdConfig">
+        </div>
+    </div>
+
+    <!-- Periodic Snapshot Configuration -->
+    <div class="form-row">
+        <label><i class="fa fa-camera"></i> Periodic Snapshot Configuration</label>
+        <div class="snapshot-config-section">
+            <div class="snapshot-description">
+                Set intervals for periodic data snapshots (0 = disabled)
+            </div>
+            <div class="snapshot-grid">
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalCoil" class="snapshot-label">
+                        <i class="fa fa-circle-o"></i> Coil Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalCoil" placeholder="0" class="snapshot-input">
+                </div>
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalInput" class="snapshot-label">
+                        <i class="fa fa-sign-in"></i> Input Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalInput" placeholder="0" class="snapshot-input">
+                </div>
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalHolding" class="snapshot-label">
+                        <i class="fa fa-database"></i> Holding Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalHolding" placeholder="0" class="snapshot-input">
+                </div>
+            </div>
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-marine-telemetry">
+    <p>Marine IoT telemetry node - polls Modbus data and enriches flow sensor readings with oil profile information.</p>
+    
+    <h3>Marine IoT Features</h3>
+    <ul>
+        <li><strong>Oil Profile Tracking:</strong> Automatically tracks active oil profile (BO/DO)</li>
+        <li><strong>Density Snapshot:</strong> Records density at time of reading</li>
+        <li><strong>Flow Sensor Data:</strong> Enriches fs01-fs06 data with profile context</li>
+        <li><strong>Database Integration:</strong> Saves to tabiot_device_telemetry with oil_profile_id</li>
+    </ul>
+
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Enable Marine IoT</dt>
+        <dd>Enable/disable Marine IoT oil profile tracking</dd>
+        
+        <dt>Flow Sensor Keys</dt>
+        <dd>Comma-separated list of flow sensor keys (default: fs01-fs06)</dd>
+        
+        <dt>Profile Cache Duration</dt>
+        <dd>How long to cache active profile (ms, default: 300000 = 5 min)</dd>
+    </dl>
+
+    <h3>Input Messages</h3>
+    <dl class="message-properties">
+        <dt>clearProfileCache <span class="property-type">boolean</span></dt>
+        <dd>Set to true to clear oil profile cache</dd>
+        
+        <dt>getCacheStatus <span class="property-type">boolean</span></dt>
+        <dd>Set to true to get current cache status</dd>
+    </dl>
+
+    <h3>Database Schema</h3>
+    <p>Saves flow sensor data to <code>tabiot_device_telemetry</code> with:</p>
+    <ul>
+        <li><code>oil_profile_id</code>: Active profile at time of reading</li>
+        <li><code>density_snapshot</code>: Density value for m3→tons conversion</li>
+    </ul>
+
+    <h3>Details</h3>
+    <p>This node extends viis-telemetry with Marine IoT capabilities. It queries the active oil profile periodically and enriches flow sensor data with profile information before saving to database.</p>
+    
+    <p>Profile data is cached to reduce database queries. The cache refreshes automatically based on configured duration.</p>
+</script>
+
+<style>
+    /* Marine IoT specific styling */
+    .form-tips {
+        display: block;
+        font-size: 11px;
+        color: #666;
+        font-style: italic;
+        margin-top: 2px;
+    }
+
+    /* Reuse styles from viis-telemetry */
+    .threshold-config-section {
+        background: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 12px;
+        margin-top: 5px;
+    }
+
+    .threshold-header {
+        margin-bottom: 10px;
+    }
+
+    .threshold-description {
+        font-size: 12px;
+        color: #666;
+        font-style: italic;
+    }
+
+    .threshold-container {
+        margin-bottom: 10px;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 3px;
+        padding: 5px;
+        background: white;
+    }
+
+    .threshold-row {
+        display: flex;
+        margin-bottom: 8px;
+        align-items: center;
+        padding: 5px;
+        background: #fafafa;
+        border-radius: 3px;
+        border: 1px solid #eee;
+    }
+
+    .threshold-row:last-child {
+        margin-bottom: 0;
+    }
+
+    .threshold-key {
+        flex: 2;
+        margin-right: 8px;
+    }
+
+    .threshold-value {
+        flex: 1;
+        margin-right: 8px;
+    }
+
+    .threshold-button {
+        flex: 0 0 auto;
+        min-width: 30px;
+    }
+
+    .threshold-row select,
+    .threshold-row input {
+        width: 100%;
+        padding: 4px 6px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 12px;
+    }
+
+    .threshold-actions {
+        text-align: center;
+        padding-top: 5px;
+        border-top: 1px solid #eee;
+    }
+
+    .snapshot-config-section {
+        background: #f0f8ff;
+        border: 1px solid #b0d4f1;
+        border-radius: 4px;
+        padding: 12px;
+        margin-top: 5px;
+    }
+
+    .snapshot-description {
+        font-size: 12px;
+        color: #2c5aa0;
+        font-style: italic;
+        margin-bottom: 12px;
+        text-align: center;
+    }
+
+    .snapshot-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+    }
+
+    .snapshot-item {
+        background: white;
+        border: 1px solid #d0e7ff;
+        border-radius: 4px;
+        padding: 10px;
+        text-align: center;
+    }
+
+    .snapshot-label {
+        display: block;
+        font-size: 11px;
+        font-weight: bold;
+        color: #2c5aa0;
+        margin-bottom: 6px;
+        text-align: center;
+    }
+
+    .snapshot-label i {
+        margin-right: 4px;
+    }
+
+    .snapshot-input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 12px;
+        text-align: center;
+    }
+
+    .snapshot-input:focus {
+        border-color: #2c5aa0;
+        outline: none;
+        box-shadow: 0 0 3px rgba(44, 90, 160, 0.3);
+    }
+
+    @media (max-width: 600px) {
+        .snapshot-grid {
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .threshold-row {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .threshold-key,
+        .threshold-value,
+        .threshold-button {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        .threshold-button {
+            align-self: center;
+            margin-bottom: 0;
+        }
+    }
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-marine-telemetry", {
+        category: "function",
+        color: "#4169E1",  // Royal Blue for Marine IoT
+        defaults: {
+            name: { value: "" },
+            enableMarineIoT: { value: true },
+            flowSensorKeys: { value: "fs01,fs02,fs03,fs04,fs05,fs06" },
+            profileCacheDuration: { value: "300000", validate: RED.validators.number() },
+            pollIntervalCoil: { value: "1000", required: true, validate: RED.validators.number() },
+            pollIntervalInput: { value: "1000", required: true, validate: RED.validators.number() },
+            pollIntervalHolding: { value: "5000", required: true, validate: RED.validators.number() },
+            coilStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            coilQuantity: { value: "32", required: true, validate: RED.validators.number() },
+            inputStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            inputQuantity: { value: "26", required: true, validate: RED.validators.number() },
+            holdingStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            holdingQuantity: { value: "29", required: true, validate: RED.validators.number() },
+            enableDebugLog: { value: false },
+            thresholdConfig: { value: "{}" },
+            periodicSnapshotIntervalCoil: { value: "0" },
+            periodicSnapshotIntervalInput: { value: "0" },
+            periodicSnapshotIntervalHolding: { value: "0" },
+        },
+        inputs: 0,
+        outputs: 1,
+        icon: "ship.png",
+        label: function () {
+            return this.name || "marine-telemetry";
+        },
+        oneditprepare: function () {
+            // Marine IoT specific
+            $("#node-input-enableMarineIoT").prop("checked", this.enableMarineIoT !== false);
+            
+            // Standard telemetry (reuse from viis-telemetry)
+            $("#node-input-enableDebugLog").prop("checked", this.enableDebugLog === true);
+            
+            // Threshold configuration (reuse logic from viis-telemetry)
+            const thresholdConfigField = $("#node-input-thresholdConfig");
+            const thresholdConfigContainer = $("#threshold-config-container");
+            let thresholdConfig = {};
+
+            try {
+                const thresholdConfigValue = thresholdConfigField.val();
+                if (thresholdConfigValue) {
+                    thresholdConfig = JSON.parse(thresholdConfigValue);
+                }
+            } catch (e) {
+                console.error("Failed to parse thresholdConfig", e);
+                thresholdConfig = {};
+            }
+
+            const addThresholdRow = function (key = "", value = 0.1) {
+                const row = $("<div>").addClass("threshold-row");
+                
+                const keyInput = $("<input>")
+                    .attr("type", "text")
+                    .attr("placeholder", "Key (e.g., fs01, all)")
+                    .addClass("threshold-key")
+                    .val(key);
+                
+                const valueInput = $("<input>")
+                    .attr("type", "number")
+                    .attr("step", "0.01")
+                    .attr("min", "0")
+                    .addClass("threshold-value")
+                    .val(value);
+                
+                const removeBtn = $("<button>")
+                    .addClass("red-ui-button threshold-button")
+                    .html('<i class="fa fa-trash"></i>')
+                    .on("click", function () {
+                        row.remove();
+                    });
+                
+                row.append(keyInput).append(valueInput).append(removeBtn);
+                thresholdConfigContainer.append(row);
+            };
+
+            Object.entries(thresholdConfig).forEach(([key, value]) => {
+                addThresholdRow(key, value);
+            });
+
+            if (Object.keys(thresholdConfig).length === 0) {
+                addThresholdRow("all", 0.1);
+            }
+
+            $("#add-threshold-config").on("click", function () {
+                addThresholdRow();
+            });
+        },
+        oneditsave: function () {
+            this.enableMarineIoT = $("#node-input-enableMarineIoT").is(":checked");
+            this.enableDebugLog = $("#node-input-enableDebugLog").is(":checked");
+
+            const thresholdConfig = {};
+            $(".threshold-row").each(function () {
+                const key = $(this).find("input.threshold-key").val();
+                const value = parseFloat($(this).find("input.threshold-value").val());
+                if (key && !isNaN(value)) {
+                    thresholdConfig[key] = value;
+                }
+            });
+            $("#node-input-thresholdConfig").val(JSON.stringify(thresholdConfig));
+
+            this.periodicSnapshotIntervalCoil = $("#node-input-periodicSnapshotIntervalCoil").val() || "0";
+            this.periodicSnapshotIntervalInput = $("#node-input-periodicSnapshotIntervalInput").val() || "0";
+            this.periodicSnapshotIntervalHolding = $("#node-input-periodicSnapshotIntervalHolding").val() || "0";
+        }
+    });
+</script>

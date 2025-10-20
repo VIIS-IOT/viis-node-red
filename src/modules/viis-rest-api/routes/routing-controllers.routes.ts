@@ -26,6 +26,7 @@ import { ScheduleMonitorController } from '../controllers/schedule-monitor.contr
 import { IotNotificationController } from '../controllers/iot-notification.controller';
 import { IotScheduleLogController } from '../controllers/iot-schedule-log.controller';
 import { ErrorNotificationController } from '../controllers/error-notification.controller';
+import { OilProfileController } from '../controllers/oil-profile.controller';
 
 /**
  * Routing Controllers Routes - Main routing system using routing-controllers
@@ -168,7 +169,8 @@ export class RoutingControllersRoutes {
             ScheduleMonitorController,
             IotNotificationController,
             IotScheduleLogController,
-            ErrorNotificationController
+            ErrorNotificationController,
+            OilProfileController
         ];
 
         logger.info(this.node, 'Using fallback manual controller registration', {
