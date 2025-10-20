@@ -44,6 +44,7 @@ const createTestSchedule = (name: string, action: any): TabiotSchedule => ({
     enable: 1,
     is_deleted: 0,
     device_id: 'test-device-001',
+                machine_type: 'MAIN_ENGINE',
     created: new Date(),
     modified: new Date(),
     type: 'fixed',

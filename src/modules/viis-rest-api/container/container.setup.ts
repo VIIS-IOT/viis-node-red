@@ -4,6 +4,7 @@
  */
 
 import Container, { Token } from "typedi";
+import { DataSource } from "typeorm";
 import { Node } from "node-red";
 import { DatabaseService } from "../services/database.service";
 import { AuthService } from "../services/auth.service";
@@ -12,6 +13,8 @@ import { NotificationService } from "../services/notification.service";
 import { ScheduleActivationService } from "../services/schedule-activation.service";
 import { ScheduleCompletionMonitorService } from "../services/schedule-completion-monitor.service";
 import { DeviceService } from "../services/device.service";
+import { MarineTelemetryService } from "../services/marine-telemetry.service";
+import { MarineWebSocketService } from "../services/marine-websocket.service";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
 import { HealthController } from "../controllers/health.controller";
@@ -92,6 +95,11 @@ export class ContainerSetup {
             const databaseService = new DatabaseService(node);
             await databaseService.initialize();
             Container.set(DatabaseService, databaseService);
+
+            // Register DataSource for services that need direct access
+            // This fixes the "DataSource not found in container" error
+            const dataSource = databaseService.getDataSource();
+            Container.set(DataSource, dataSource);
 
             // Create service context for base services
             const serviceContext: ServiceContext = {
@@ -177,6 +185,19 @@ export class ContainerSetup {
         const thingsBoardService = new ThingsBoardService(serviceContext, scheduleActivationService);
         await thingsBoardService.initialize();
         Container.set(ThingsBoardService, thingsBoardService);
+
+        // Register MarineTelemetryService
+        const dataSource = databaseService.getDataSource();
+        const marineTelemetryService = new MarineTelemetryService(dataSource);
+        Container.set(MarineTelemetryService, marineTelemetryService);
+
+        // Register MarineWebSocketService (will be initialized later with HTTP server)
+        const marineWebSocketService = new MarineWebSocketService(
+            marineTelemetryService,
+            authService,
+            node
+        );
+        Container.set(MarineWebSocketService, marineWebSocketService);
 
         // Note: DeviceService is decorated with @Service()
         // It will be automatically instantiated by TypeDI when needed

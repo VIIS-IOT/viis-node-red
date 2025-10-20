@@ -59,6 +59,7 @@ describe('OilProfileController', () => {
         it('should create BO profile successfully', async () => {
             const createDto = {
                 device_id: 'device_001',
+                machine_type: oil_profile_dto_1.MachineType.MAIN_ENGINE,
                 oil_type: oil_profile_dto_1.OilType.BO,
                 operating_temperature: 85,
                 density: 0.95,
@@ -82,6 +83,7 @@ describe('OilProfileController', () => {
         it('should create DO profile successfully', async () => {
             const createDto = {
                 device_id: 'device_001',
+                machine_type: oil_profile_dto_1.MachineType.GENERATOR,
                 oil_type: oil_profile_dto_1.OilType.DO,
                 operating_temperature: 40,
                 density: 0.85,
@@ -98,6 +100,7 @@ describe('OilProfileController', () => {
             const createDto = {
                 name: 'custom_profile_name',
                 device_id: 'device_001',
+                machine_type: oil_profile_dto_1.MachineType.BOILER,
                 oil_type: oil_profile_dto_1.OilType.BO,
                 operating_temperature: 85,
                 density: 0.95
@@ -110,6 +113,7 @@ describe('OilProfileController', () => {
         it('should throw NotFoundError if device not found', async () => {
             const createDto = {
                 device_id: 'non_existent_device',
+                machine_type: oil_profile_dto_1.MachineType.MAIN_ENGINE,
                 oil_type: oil_profile_dto_1.OilType.BO,
                 operating_temperature: 85,
                 density: 0.95
@@ -121,6 +125,7 @@ describe('OilProfileController', () => {
         it('should throw InternalServerError on other errors', async () => {
             const createDto = {
                 device_id: 'device_001',
+                machine_type: oil_profile_dto_1.MachineType.MAIN_ENGINE,
                 oil_type: oil_profile_dto_1.OilType.BO,
                 operating_temperature: 85,
                 density: 0.95

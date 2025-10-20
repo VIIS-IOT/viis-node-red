@@ -15,7 +15,8 @@ import {
     UpdateOilProfileDto,
     ActivateProfileDto,
     QueryOilProfileDto,
-    OilType
+    OilType,
+    MachineType
 } from '../dto/oil-profile.dto';
 import {
     BadRequestError,
@@ -83,6 +84,7 @@ describe('OilProfileController', () => {
         it('should create BO profile successfully', async () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'device_001',
+                machine_type: MachineType.MAIN_ENGINE,
                 oil_type: OilType.BO,
                 operating_temperature: 85,
                 density: 0.95,
@@ -118,6 +120,7 @@ describe('OilProfileController', () => {
         it('should create DO profile successfully', async () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'device_001',
+                machine_type: MachineType.GENERATOR,
                 oil_type: OilType.DO,
                 operating_temperature: 40,
                 density: 0.85,
@@ -145,6 +148,7 @@ describe('OilProfileController', () => {
             const createDto: CreateOilProfileDto = {
                 name: 'custom_profile_name',
                 device_id: 'device_001',
+                machine_type: MachineType.BOILER,
                 oil_type: OilType.BO,
                 operating_temperature: 85,
                 density: 0.95
@@ -167,6 +171,7 @@ describe('OilProfileController', () => {
         it('should throw NotFoundError if device not found', async () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'non_existent_device',
+                machine_type: MachineType.MAIN_ENGINE,
                 oil_type: OilType.BO,
                 operating_temperature: 85,
                 density: 0.95
@@ -183,6 +188,7 @@ describe('OilProfileController', () => {
         it('should throw InternalServerError on other errors', async () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'device_001',
+                machine_type: MachineType.MAIN_ENGINE,
                 oil_type: OilType.BO,
                 operating_temperature: 85,
                 density: 0.95

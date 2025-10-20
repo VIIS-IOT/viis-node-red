@@ -139,11 +139,13 @@ curl -X GET "http://localhost:1880/api/v2/oil-profiles?device_id=device_001&limi
 
 ---
 
-### 3. Get Active Profile
+### 3. Get Active Profile (Deprecated)
 
-Get the currently active oil profile for a device.
+Get the currently active oil profile for a device (any machine).
 
 **Endpoint**: `GET /api/v2/oil-profiles/active/:device_id`
+
+**⚠️ Deprecated**: Use the machine-specific endpoint below for better control.
 
 **Path Parameters**:
 - `device_id`: Device ID
@@ -153,6 +155,7 @@ Get the currently active oil profile for a device.
 {
   "name": "profile_bo_001",
   "device_id": "device_001",
+  "machine_type": "GENERATOR",
   "oil_type": "BO",
   "operating_temperature": 85,
   "density": 950,
@@ -171,6 +174,57 @@ null
 **Example**:
 ```bash
 curl -X GET http://localhost:1880/api/v2/oil-profiles/active/device_001 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+### 3b. Get Active Profile by Machine (Recommended)
+
+Get the currently active oil profile for a specific machine on a device.
+
+**Endpoint**: `GET /api/v2/oil-profiles/active/:device_id/:machine_type`
+
+**Path Parameters**:
+- `device_id`: Device ID
+- `machine_type`: Machine type (`GENERATOR`, `MAIN_ENGINE`, or `BOILER`)
+
+**Response** (200 OK):
+```json
+{
+  "name": "generator_do_001",
+  "device_id": "ship_001",
+  "machine_type": "GENERATOR",
+  "oil_type": "DO",
+  "operating_temperature": 40,
+  "density": 850,
+  "label": "Generator Diesel Oil",
+  "is_active": true,
+  "creation": "2025-01-20T03:00:00.000Z",
+  "modified": "2025-01-20T03:00:00.000Z"
+}
+```
+
+**Response** (200 OK - No active profile):
+```json
+null
+```
+
+**Errors**:
+- `400 Bad Request`: Invalid machine_type
+
+**Examples**:
+```bash
+# Get active profile for Generator
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/GENERATOR \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Get active profile for Main Engine
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/MAIN_ENGINE \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Get active profile for Boiler
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/BOILER \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -298,58 +352,105 @@ curl -X DELETE http://localhost:1880/api/v2/oil-profiles/profile_old_001 \
 
 ## Usage Scenarios
 
-### Scenario 1: Initial Setup
+### Scenario 1: Initial Setup (Multi-Machine)
 
 ```bash
-# 1. Create BO profile and set as active
+# 1. Create DO profile for Generator and set as active
 curl -X POST http://localhost:1880/api/v2/oil-profiles \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "device_id": "ship_001",
-    "oil_type": "BO",
-    "operating_temperature": 85,
-    "density": 950,
-    "label": "Bunker Oil Standard",
-    "is_active": true
-  }'
-
-# 2. Create DO profile (inactive)
-curl -X POST http://localhost:1880/api/v2/oil-profiles \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "device_id": "ship_001",
+    "machine_type": "GENERATOR",
     "oil_type": "DO",
     "operating_temperature": 40,
     "density": 850,
-    "label": "Diesel Oil Standard",
-    "is_active": false
+    "label": "Generator Diesel Oil",
+    "is_active": true
   }'
 
-# 3. Verify active profile
-curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001 \
+# 2. Create HFO profile for Main Engine and set as active
+curl -X POST http://localhost:1880/api/v2/oil-profiles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "ship_001",
+    "machine_type": "MAIN_ENGINE",
+    "oil_type": "HFO",
+    "operating_temperature": 150,
+    "density": 950,
+    "label": "Main Engine Heavy Fuel Oil",
+    "is_active": true
+  }'
+
+# 3. Create BO profile for Boiler and set as active
+curl -X POST http://localhost:1880/api/v2/oil-profiles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "ship_001",
+    "machine_type": "BOILER",
+    "oil_type": "BO",
+    "operating_temperature": 100,
+    "density": 940,
+    "label": "Boiler Bunker Oil",
+    "is_active": true
+  }'
+
+# 4. Verify active profiles for each machine
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/GENERATOR \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/MAIN_ENGINE \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/BOILER \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### Scenario 2: Switch from BO to DO
+### Scenario 2: Switch Generator from DO to HFO (Other Machines Unaffected)
 
 ```bash
-# Get active profile (BO)
-curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001 \
+# 1. Check current active profile for Generator
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/GENERATOR \
   -H "Authorization: Bearer $TOKEN"
+# Returns: generator_do_001 (DO, 850 kg/m³)
 
-# Switch to DO profile
+# 2. Create new HFO profile for Generator
+curl -X POST http://localhost:1880/api/v2/oil-profiles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "ship_001",
+    "machine_type": "GENERATOR",
+    "oil_type": "HFO",
+    "operating_temperature": 150,
+    "density": 950,
+    "label": "Generator Heavy Fuel Oil",
+    "is_active": false
+  }'
+
+# 3. Activate the new HFO profile for Generator
 curl -X POST http://localhost:1880/api/v2/oil-profiles/activate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "profile_name": "profile_do_001"
+    "profile_name": "generator_hfo_001"
   }'
 
-# Verify switch
-curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001 \
+# 4. Verify Generator switched to HFO
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/GENERATOR \
   -H "Authorization: Bearer $TOKEN"
+# Returns: generator_hfo_001 (HFO, 950 kg/m³)
+
+# 5. Verify Main Engine and Boiler are unaffected
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/MAIN_ENGINE \
+  -H "Authorization: Bearer $TOKEN"
+# Still returns: main_engine_hfo_001 (unchanged)
+
+curl -X GET http://localhost:1880/api/v2/oil-profiles/active/ship_001/BOILER \
+  -H "Authorization: Bearer $TOKEN"
+# Still returns: boiler_bo_001 (unchanged)
 ```
 
 ### Scenario 3: Update Density

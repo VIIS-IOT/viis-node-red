@@ -15,7 +15,8 @@ const TabiotDevice_1 = require("../device/TabiotDevice");
 const Base_1 = require("../base/Base");
 /**
  * Oil Profile Entity for Marine IoT System
- * Stores oil type configurations (BO/DO) with density and temperature
+ * Stores oil type configurations for different machines (Generator, Main Engine, Boiler)
+ * Each machine can have different oil types (BO/DO/HFO) with specific density and temperature
  */
 let TabiotOilProfile = class TabiotOilProfile extends Base_1.CustomBaseEntity {
 };
@@ -31,8 +32,16 @@ __decorate([
 __decorate([
     (0, typeorm_1.Column)({
         type: 'enum',
-        enum: ['BO', 'DO'],
-        comment: 'Oil type: BO (Bunker Oil) or DO (Diesel Oil)'
+        enum: ['GENERATOR', 'MAIN_ENGINE', 'BOILER'],
+        comment: 'Machine type: GENERATOR (fs01-02), MAIN_ENGINE (fs03-04), BOILER (fs05-06)'
+    }),
+    __metadata("design:type", String)
+], TabiotOilProfile.prototype, "machine_type", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        type: 'enum',
+        enum: ['BO', 'DO', 'HFO'],
+        comment: 'Oil type: BO (Bunker Oil), DO (Diesel Oil), HFO (Heavy Fuel Oil)'
     }),
     __metadata("design:type", String)
 ], TabiotOilProfile.prototype, "oil_type", void 0);
@@ -73,5 +82,5 @@ __decorate([
 ], TabiotOilProfile.prototype, "device", void 0);
 exports.TabiotOilProfile = TabiotOilProfile = __decorate([
     (0, typeorm_1.Entity)('tabiot_oil_profile'),
-    (0, typeorm_1.Index)(['device_id', 'is_active'])
+    (0, typeorm_1.Index)(['device_id', 'machine_type', 'is_active'])
 ], TabiotOilProfile);

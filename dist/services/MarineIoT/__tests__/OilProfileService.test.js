@@ -50,6 +50,7 @@ describe('OilProfileService', () => {
             const profileData = {
                 name: 'test_profile_bo',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -68,6 +69,7 @@ describe('OilProfileService', () => {
             const profile1 = await service.createProfile({
                 name: 'profile_1',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -78,6 +80,7 @@ describe('OilProfileService', () => {
             const profile2 = await service.createProfile({
                 name: 'profile_2',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -94,6 +97,7 @@ describe('OilProfileService', () => {
             await expect(service.createProfile({
                 name: 'test_profile',
                 device_id: 'non_existent_device',
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -106,6 +110,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'profile_1',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -114,6 +119,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'profile_2',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -139,6 +145,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'active_profile',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -159,6 +166,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'profile_1',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -166,6 +174,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'profile_2',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -181,6 +190,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'update_test',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -198,6 +208,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'profile_1',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -206,6 +217,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'profile_2',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -223,6 +235,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'to_delete',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,
@@ -238,6 +251,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'active_profile',
                 device_id: testDeviceId,
+                machine_type: 'MAIN_ENGINE',
                 oil_type: 'BO',
                 operating_temperature: 85,
                 density: 950,

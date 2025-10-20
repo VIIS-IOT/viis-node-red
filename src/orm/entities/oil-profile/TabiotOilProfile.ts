@@ -4,10 +4,11 @@ import { CustomBaseEntity } from '../base/Base';
 
 /**
  * Oil Profile Entity for Marine IoT System
- * Stores oil type configurations (BO/DO) with density and temperature
+ * Stores oil type configurations for different machines (Generator, Main Engine, Boiler)
+ * Each machine can have different oil types (BO/DO/HFO) with specific density and temperature
  */
 @Entity('tabiot_oil_profile')
-@Index(['device_id', 'is_active'])
+@Index(['device_id', 'machine_type', 'is_active'])
 export class TabiotOilProfile extends CustomBaseEntity {
 
     @PrimaryColumn({ type: 'varchar', length: 255 })
@@ -18,10 +19,17 @@ export class TabiotOilProfile extends CustomBaseEntity {
 
     @Column({
         type: 'enum',
-        enum: ['BO', 'DO'],
-        comment: 'Oil type: BO (Bunker Oil) or DO (Diesel Oil)'
+        enum: ['GENERATOR', 'MAIN_ENGINE', 'BOILER'],
+        comment: 'Machine type: GENERATOR (fs01-02), MAIN_ENGINE (fs03-04), BOILER (fs05-06)'
     })
-    oil_type!: 'BO' | 'DO';
+    machine_type!: 'GENERATOR' | 'MAIN_ENGINE' | 'BOILER';
+
+    @Column({
+        type: 'enum',
+        enum: ['BO', 'DO', 'HFO'],
+        comment: 'Oil type: BO (Bunker Oil), DO (Diesel Oil), HFO (Heavy Fuel Oil)'
+    })
+    oil_type!: 'BO' | 'DO' | 'HFO';
 
     @Column({ 
         type: 'float', 

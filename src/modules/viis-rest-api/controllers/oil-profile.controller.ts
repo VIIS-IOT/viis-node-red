@@ -91,6 +91,7 @@ export class OilProfileController {
             const profile = await this.oilProfileService.createProfile({
                 name: profileName,
                 device_id: createDto.device_id,
+                machine_type: createDto.machine_type,
                 oil_type: createDto.oil_type,
                 operating_temperature: createDto.operating_temperature,
                 density: createDto.density,
@@ -175,9 +176,10 @@ export class OilProfileController {
     }
 
     /**
-     * Get active profile for a device
+     * Get active profile for a device (any machine)
      * GET /api/v2/oil-profiles/active/:device_id
      * 
+     * @deprecated Use getActiveProfileByMachine for machine-specific profiles
      * @param deviceId - Device ID
      * @returns Active oil profile or null
      */
@@ -202,6 +204,76 @@ export class OilProfileController {
                 error: (error as Error).message,
                 device_id: deviceId
             });
+
+            throw new InternalServerError(`Failed to fetch active profile: ${(error as Error).message}`);
+        }
+    }
+
+    /**
+     * Get active profile for a specific machine on a device
+     * GET /api/v2/oil-profiles/active/:device_id/:machine_type
+     * 
+     * @param deviceId - Device ID
+     * @param machineType - Machine type (GENERATOR, MAIN_ENGINE, or BOILER)
+     * @returns Active oil profile for the machine or null
+     * 
+     * @example
+     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR
+     * GET /api/v2/oil-profiles/active/ship_001/MAIN_ENGINE
+     * GET /api/v2/oil-profiles/active/ship_001/BOILER
+     */
+    @Get('/active/:device_id/:machine_type')
+    @Authorized()
+    async getActiveProfileByMachine(
+        @Param('device_id') deviceId: string,
+        @Param('machine_type') machineType: string
+    ): Promise<OilProfileResponseDto | null> {
+        try {
+            // Validate machine type
+            const validMachineTypes = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+            if (!validMachineTypes.includes(machineType)) {
+                throw new BadRequestError(
+                    `Invalid machine_type. Must be one of: ${validMachineTypes.join(', ')}`
+                );
+            }
+
+            logger.debug(this.node, 'Fetching active profile by machine', {
+                device_id: deviceId,
+                machine_type: machineType
+            });
+
+            const profile = await this.oilProfileService.getActiveProfileForMachine(
+                deviceId,
+                machineType as any
+            );
+
+            if (!profile) {
+                logger.warn(this.node, 'No active profile found for machine', {
+                    device_id: deviceId,
+                    machine_type: machineType
+                });
+                return null;
+            }
+
+            logger.debug(this.node, 'Active profile found', {
+                device_id: deviceId,
+                machine_type: machineType,
+                profile_name: profile.name,
+                oil_type: profile.oil_type,
+                density: profile.density
+            });
+
+            return this.mapToResponseDto(profile);
+        } catch (error) {
+            logger.error(this.node, 'Error fetching active profile by machine', {
+                error: (error as Error).message,
+                device_id: deviceId,
+                machine_type: machineType
+            });
+
+            if (error instanceof BadRequestError) {
+                throw error;
+            }
 
             throw new InternalServerError(`Failed to fetch active profile: ${(error as Error).message}`);
         }
@@ -357,6 +429,7 @@ export class OilProfileController {
         return {
             name: profile.name,
             device_id: profile.device_id,
+            machine_type: profile.machine_type,
             oil_type: profile.oil_type as OilType,
             operating_temperature: profile.operating_temperature,
             density: profile.density,

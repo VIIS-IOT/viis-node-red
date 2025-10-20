@@ -24,11 +24,21 @@ import {
 import { Transform } from 'class-transformer';
 
 /**
+ * Machine type enumeration
+ */
+export enum MachineType {
+    GENERATOR = 'GENERATOR',      // Generator (fs01-02)
+    MAIN_ENGINE = 'MAIN_ENGINE',  // Main Engine (fs03-04)
+    BOILER = 'BOILER'             // Boiler (fs05-06)
+}
+
+/**
  * Oil type enumeration
  */
 export enum OilType {
-    BO = 'BO',  // Bunker Oil
-    DO = 'DO'   // Diesel Oil
+    BO = 'BO',    // Bunker Oil
+    DO = 'DO',    // Diesel Oil
+    HFO = 'HFO'   // Heavy Fuel Oil
 }
 
 /**
@@ -46,8 +56,12 @@ export class CreateOilProfileDto {
     @MaxLength(255)
     device_id!: string;
 
+    @IsNotEmpty({ message: 'machine_type is required' })
+    @IsEnum(MachineType, { message: 'machine_type must be GENERATOR, MAIN_ENGINE, or BOILER' })
+    machine_type!: MachineType;
+
     @IsNotEmpty({ message: 'oil_type is required' })
-    @IsEnum(OilType, { message: 'oil_type must be either BO or DO' })
+    @IsEnum(OilType, { message: 'oil_type must be BO, DO, or HFO' })
     oil_type!: OilType;
 
     @IsNotEmpty({ message: 'operating_temperature is required' })
@@ -82,7 +96,11 @@ export class CreateOilProfileDto {
  */
 export class UpdateOilProfileDto {
     @IsOptional()
-    @IsEnum(OilType, { message: 'oil_type must be either BO or DO' })
+    @IsEnum(MachineType, { message: 'machine_type must be GENERATOR, MAIN_ENGINE, or BOILER' })
+    machine_type?: MachineType;
+
+    @IsOptional()
+    @IsEnum(OilType, { message: 'oil_type must be BO, DO, or HFO' })
     oil_type?: OilType;
 
     @IsOptional()
@@ -132,6 +150,10 @@ export class QueryOilProfileDto {
     device_id?: string;
 
     @IsOptional()
+    @IsEnum(MachineType)
+    machine_type?: MachineType;
+
+    @IsOptional()
     @IsEnum(OilType)
     oil_type?: OilType;
 
@@ -160,6 +182,7 @@ export class QueryOilProfileDto {
 export interface OilProfileResponseDto {
     name: string;
     device_id: string;
+    machine_type: MachineType;
     oil_type: OilType;
     operating_temperature: number;
     density: number;

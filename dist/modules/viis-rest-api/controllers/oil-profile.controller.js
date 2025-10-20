@@ -67,6 +67,7 @@ let OilProfileController = class OilProfileController {
             const profile = await this.oilProfileService.createProfile({
                 name: profileName,
                 device_id: createDto.device_id,
+                machine_type: createDto.machine_type,
                 oil_type: createDto.oil_type,
                 operating_temperature: createDto.operating_temperature,
                 density: createDto.density,
@@ -137,9 +138,10 @@ let OilProfileController = class OilProfileController {
         }
     }
     /**
-     * Get active profile for a device
+     * Get active profile for a device (any machine)
      * GET /api/v2/oil-profiles/active/:device_id
      *
+     * @deprecated Use getActiveProfileByMachine for machine-specific profiles
      * @param deviceId - Device ID
      * @returns Active oil profile or null
      */
@@ -158,6 +160,59 @@ let OilProfileController = class OilProfileController {
                 error: error.message,
                 device_id: deviceId
             });
+            throw new routing_controllers_1.InternalServerError(`Failed to fetch active profile: ${error.message}`);
+        }
+    }
+    /**
+     * Get active profile for a specific machine on a device
+     * GET /api/v2/oil-profiles/active/:device_id/:machine_type
+     *
+     * @param deviceId - Device ID
+     * @param machineType - Machine type (GENERATOR, MAIN_ENGINE, or BOILER)
+     * @returns Active oil profile for the machine or null
+     *
+     * @example
+     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR
+     * GET /api/v2/oil-profiles/active/ship_001/MAIN_ENGINE
+     * GET /api/v2/oil-profiles/active/ship_001/BOILER
+     */
+    async getActiveProfileByMachine(deviceId, machineType) {
+        try {
+            // Validate machine type
+            const validMachineTypes = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+            if (!validMachineTypes.includes(machineType)) {
+                throw new routing_controllers_1.BadRequestError(`Invalid machine_type. Must be one of: ${validMachineTypes.join(', ')}`);
+            }
+            logger_1.logger.debug(this.node, 'Fetching active profile by machine', {
+                device_id: deviceId,
+                machine_type: machineType
+            });
+            const profile = await this.oilProfileService.getActiveProfileForMachine(deviceId, machineType);
+            if (!profile) {
+                logger_1.logger.warn(this.node, 'No active profile found for machine', {
+                    device_id: deviceId,
+                    machine_type: machineType
+                });
+                return null;
+            }
+            logger_1.logger.debug(this.node, 'Active profile found', {
+                device_id: deviceId,
+                machine_type: machineType,
+                profile_name: profile.name,
+                oil_type: profile.oil_type,
+                density: profile.density
+            });
+            return this.mapToResponseDto(profile);
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error fetching active profile by machine', {
+                error: error.message,
+                device_id: deviceId,
+                machine_type: machineType
+            });
+            if (error instanceof routing_controllers_1.BadRequestError) {
+                throw error;
+            }
             throw new routing_controllers_1.InternalServerError(`Failed to fetch active profile: ${error.message}`);
         }
     }
@@ -275,6 +330,7 @@ let OilProfileController = class OilProfileController {
         return {
             name: profile.name,
             device_id: profile.device_id,
+            machine_type: profile.machine_type,
             oil_type: profile.oil_type,
             operating_temperature: profile.operating_temperature,
             density: profile.density,
@@ -312,6 +368,15 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], OilProfileController.prototype, "getActiveProfile", null);
+__decorate([
+    (0, routing_controllers_1.Get)('/active/:device_id/:machine_type'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('device_id')),
+    __param(1, (0, routing_controllers_1.Param)('machine_type')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], OilProfileController.prototype, "getActiveProfileByMachine", null);
 __decorate([
     (0, routing_controllers_1.Get)('/:name'),
     (0, routing_controllers_1.Authorized)(),

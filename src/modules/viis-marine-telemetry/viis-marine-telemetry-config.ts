@@ -25,7 +25,8 @@ export interface OilProfileCache {
 export interface OilProfile {
     name: string;
     device_id: string;
-    oil_type: 'BO' | 'DO';
+    machine_type: 'GENERATOR' | 'MAIN_ENGINE' | 'BOILER';
+    oil_type: 'BO' | 'DO' | 'HFO';
     operating_temperature: number;
     density: number; // kg/m³ (SI unit)
     label?: string;

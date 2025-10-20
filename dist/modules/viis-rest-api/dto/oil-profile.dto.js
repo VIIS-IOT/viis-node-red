@@ -18,16 +18,26 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.QueryOilProfileDto = exports.ActivateProfileDto = exports.UpdateOilProfileDto = exports.CreateOilProfileDto = exports.OilType = void 0;
+exports.QueryOilProfileDto = exports.ActivateProfileDto = exports.UpdateOilProfileDto = exports.CreateOilProfileDto = exports.OilType = exports.MachineType = void 0;
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
+/**
+ * Machine type enumeration
+ */
+var MachineType;
+(function (MachineType) {
+    MachineType["GENERATOR"] = "GENERATOR";
+    MachineType["MAIN_ENGINE"] = "MAIN_ENGINE";
+    MachineType["BOILER"] = "BOILER"; // Boiler (fs05-06)
+})(MachineType || (exports.MachineType = MachineType = {}));
 /**
  * Oil type enumeration
  */
 var OilType;
 (function (OilType) {
     OilType["BO"] = "BO";
-    OilType["DO"] = "DO"; // Diesel Oil
+    OilType["DO"] = "DO";
+    OilType["HFO"] = "HFO"; // Heavy Fuel Oil
 })(OilType || (exports.OilType = OilType = {}));
 /**
  * DTO for creating a new oil profile
@@ -49,8 +59,13 @@ __decorate([
     __metadata("design:type", String)
 ], CreateOilProfileDto.prototype, "device_id", void 0);
 __decorate([
+    (0, class_validator_1.IsNotEmpty)({ message: 'machine_type is required' }),
+    (0, class_validator_1.IsEnum)(MachineType, { message: 'machine_type must be GENERATOR, MAIN_ENGINE, or BOILER' }),
+    __metadata("design:type", String)
+], CreateOilProfileDto.prototype, "machine_type", void 0);
+__decorate([
     (0, class_validator_1.IsNotEmpty)({ message: 'oil_type is required' }),
-    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be either BO or DO' }),
+    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be BO, DO, or HFO' }),
     __metadata("design:type", String)
 ], CreateOilProfileDto.prototype, "oil_type", void 0);
 __decorate([
@@ -92,7 +107,12 @@ class UpdateOilProfileDto {
 exports.UpdateOilProfileDto = UpdateOilProfileDto;
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be either BO or DO' }),
+    (0, class_validator_1.IsEnum)(MachineType, { message: 'machine_type must be GENERATOR, MAIN_ENGINE, or BOILER' }),
+    __metadata("design:type", String)
+], UpdateOilProfileDto.prototype, "machine_type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be BO, DO, or HFO' }),
     __metadata("design:type", String)
 ], UpdateOilProfileDto.prototype, "oil_type", void 0);
 __decorate([
@@ -150,6 +170,11 @@ __decorate([
     (0, class_validator_1.MaxLength)(255),
     __metadata("design:type", String)
 ], QueryOilProfileDto.prototype, "device_id", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEnum)(MachineType),
+    __metadata("design:type", String)
+], QueryOilProfileDto.prototype, "machine_type", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsEnum)(OilType),

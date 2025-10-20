@@ -10,6 +10,7 @@ import { AuthService } from "./services/auth.service";
 import { ApiRoutes } from "./routes/api.routes";
 import { DatabaseService } from "./services/database.service";
 import { DefaultUserSeedService } from "./services/default-user-seed.service";
+import { MarineWebSocketService } from "./services/marine-websocket.service";
 import { ContainerSetup } from "./container/container.setup";
 import { ApiConfigManager } from "./config/api.config";
 import "reflect-metadata";
@@ -50,6 +51,7 @@ export = function (RED: NodeAPI) {
         let databaseService: DatabaseService;
         let authService: AuthService;
         let apiRoutes: ApiRoutes;
+        let marineWebSocketService: MarineWebSocketService | null = null;
 
         try {
             configManager = new ApiConfigManager(config, node);
@@ -100,6 +102,23 @@ export = function (RED: NodeAPI) {
                 await apiRoutes.registerRoutes(RED, configManager.getAll());
                 logger.info(node, `API routes registered with prefix: ${configManager.get('apiPrefix')}`);
 
+                // Initialize WebSocket for Marine IoT real-time telemetry
+                try {
+                    marineWebSocketService = ContainerSetup.getService(MarineWebSocketService);
+                    
+                    // Access Node-RED's HTTP server
+                    const httpServer = (RED as any).server;
+                    if (httpServer) {
+                        await marineWebSocketService.initializeWithServer(httpServer);
+                        logger.info(node, "🌐 WebSocket service initialized for Marine IoT real-time telemetry");
+                    } else {
+                        logger.warn(node, "HTTP server not found - WebSocket disabled");
+                    }
+                } catch (error) {
+                    logger.warn(node, `Failed to initialize WebSocket: ${(error as Error).message}`);
+                    // Continue without WebSocket - REST API still works
+                }
+
                 node.status({ fill: "green", shape: "dot", text: "API server running" });
                 logger.info(node, `✅ VIIS REST API server is running on ${configManager.get('apiPrefix')}`);
 
@@ -122,6 +141,9 @@ export = function (RED: NodeAPI) {
                 logger.info(node, "Shutting down VIIS REST API...");
 
                 // Cleanup services
+                if (marineWebSocketService) {
+                    await marineWebSocketService.cleanup();
+                }
                 if (authService) {
                     await authService.cleanup();
                 }

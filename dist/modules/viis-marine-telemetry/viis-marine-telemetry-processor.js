@@ -19,6 +19,7 @@ class ViisMarinetTelemetryProcessor {
             profile: null,
             timestamp: 0
         };
+        this.profileCacheByMachine = new Map();
     }
     /**
      * Get active oil profile with caching
@@ -39,6 +40,7 @@ class ViisMarinetTelemetryProcessor {
                     profile: {
                         name: profile.name,
                         device_id: profile.device_id,
+                        machine_type: profile.machine_type,
                         oil_type: profile.oil_type,
                         operating_temperature: profile.operating_temperature,
                         density: profile.density,
@@ -47,7 +49,7 @@ class ViisMarinetTelemetryProcessor {
                     },
                     timestamp: now
                 };
-                this.node.log(`[Marine] Loaded active profile: ${profile.name} (${profile.oil_type}, density: ${profile.density})`);
+                this.node.log(`[Marine] Loaded active profile: ${profile.name} (${profile.machine_type}, ${profile.oil_type}, density: ${profile.density})`);
             }
             else {
                 this.node.warn('[Marine] No active oil profile found');
@@ -61,6 +63,53 @@ class ViisMarinetTelemetryProcessor {
         }
     }
     /**
+     * Get active profile for a specific sensor (with caching)
+     */
+    async getProfileForSensor(sensorKey) {
+        const machineType = OilProfileService_1.OilProfileService.getMachineTypeBySensor(sensorKey);
+        if (!machineType) {
+            this.node.warn(`[Marine] Unknown sensor key: ${sensorKey}`);
+            return null;
+        }
+        const now = Date.now();
+        const cachedProfile = this.profileCacheByMachine.get(machineType);
+        // Return cached if valid
+        if (cachedProfile && cachedProfile.profile && (now - cachedProfile.timestamp) < this.marineConfig.profileCacheDuration) {
+            return cachedProfile.profile;
+        }
+        // Query fresh profile
+        try {
+            const profile = await this.oilProfileService.getActiveProfileForMachine(this.deviceId, machineType);
+            if (profile) {
+                const oilProfile = {
+                    name: profile.name,
+                    device_id: profile.device_id,
+                    machine_type: profile.machine_type,
+                    oil_type: profile.oil_type,
+                    operating_temperature: profile.operating_temperature,
+                    density: profile.density,
+                    label: profile.label,
+                    is_active: profile.is_active
+                };
+                this.profileCacheByMachine.set(machineType, {
+                    profile: oilProfile,
+                    timestamp: now
+                });
+                this.node.log(`[Marine] Loaded profile for ${machineType}: ${profile.name} (${profile.oil_type}, ${profile.density} kg/m³)`);
+                return oilProfile;
+            }
+            else {
+                this.profileCacheByMachine.set(machineType, { profile: null, timestamp: now });
+                this.node.warn(`[Marine] No active profile for ${machineType}`);
+                return null;
+            }
+        }
+        catch (error) {
+            this.node.error(`[Marine] Failed to get profile for ${machineType}: ${error.message}`);
+            return null;
+        }
+    }
+    /**
      * Process flow sensor data and enrich with oil profile information
      */
     async processFlowSensorData(telemetryData) {
@@ -68,26 +117,28 @@ class ViisMarinetTelemetryProcessor {
             return [];
         }
         const timestamp = Date.now();
-        const activeProfile = await this.getActiveProfile();
         const flowSensorData = [];
-        // Extract flow sensor values
+        // Extract flow sensor values with machine-specific profiles
         for (const sensorKey of this.marineConfig.flowSensorKeys) {
             if (telemetryData[sensorKey] !== undefined && telemetryData[sensorKey] !== null) {
                 const value = parseFloat(telemetryData[sensorKey]);
                 if (!isNaN(value)) {
+                    // Get profile specific to this sensor's machine
+                    const profile = await this.getProfileForSensor(sensorKey);
                     flowSensorData.push({
                         device_id: this.deviceId,
                         timestamp: timestamp,
                         key_name: sensorKey,
                         float_value: value,
-                        oil_profile_id: (activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.name) || null,
-                        density_snapshot: (activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.density) || null
+                        oil_profile_id: (profile === null || profile === void 0 ? void 0 : profile.name) || null,
+                        density_snapshot: (profile === null || profile === void 0 ? void 0 : profile.density) || null
                     });
                 }
             }
         }
         if (flowSensorData.length > 0) {
-            this.node.log(`[Marine] Processed ${flowSensorData.length} flow sensor readings with profile: ${(activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.name) || 'none'}`);
+            const profileSummary = [...new Set(flowSensorData.map(d => d.oil_profile_id))].join(', ');
+            this.node.log(`[Marine] Processed ${flowSensorData.length} flow sensor readings with profiles: ${profileSummary || 'none'}`);
         }
         return flowSensorData;
     }

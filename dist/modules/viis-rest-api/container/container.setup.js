@@ -39,12 +39,15 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContainerSetup = exports.SERVICE_CONTEXT_TOKEN = exports.GLOBAL_HELPER_TOKEN = exports.CONFIG_MANAGER_TOKEN = exports.JWT_SECRET_TOKEN = exports.NODE_TOKEN = void 0;
 const typedi_1 = __importStar(require("typedi"));
+const typeorm_1 = require("typeorm");
 const database_service_1 = require("../services/database.service");
 const auth_service_1 = require("../services/auth.service");
 const schedule_log_service_1 = require("../services/schedule-log.service");
 const notification_service_1 = require("../services/notification.service");
 const schedule_activation_service_1 = require("../services/schedule-activation.service");
 const schedule_completion_monitor_service_1 = require("../services/schedule-completion-monitor.service");
+const marine_telemetry_service_1 = require("../services/marine-telemetry.service");
+const marine_websocket_service_1 = require("../services/marine-websocket.service");
 const auth_validator_1 = require("../validators/auth.validator");
 const user_validator_1 = require("../validators/user.validator");
 const auth_middleware_1 = require("../middleware/auth.middleware");
@@ -97,6 +100,10 @@ class ContainerSetup {
             const databaseService = new database_service_1.DatabaseService(node);
             await databaseService.initialize();
             typedi_1.default.set(database_service_1.DatabaseService, databaseService);
+            // Register DataSource for services that need direct access
+            // This fixes the "DataSource not found in container" error
+            const dataSource = databaseService.getDataSource();
+            typedi_1.default.set(typeorm_1.DataSource, dataSource);
             // Create service context for base services
             const serviceContext = {
                 node,
@@ -154,6 +161,13 @@ class ContainerSetup {
         const thingsBoardService = new ThingsBoardService(serviceContext, scheduleActivationService);
         await thingsBoardService.initialize();
         typedi_1.default.set(ThingsBoardService, thingsBoardService);
+        // Register MarineTelemetryService
+        const dataSource = databaseService.getDataSource();
+        const marineTelemetryService = new marine_telemetry_service_1.MarineTelemetryService(dataSource);
+        typedi_1.default.set(marine_telemetry_service_1.MarineTelemetryService, marineTelemetryService);
+        // Register MarineWebSocketService (will be initialized later with HTTP server)
+        const marineWebSocketService = new marine_websocket_service_1.MarineWebSocketService(marineTelemetryService, authService, node);
+        typedi_1.default.set(marine_websocket_service_1.MarineWebSocketService, marineWebSocketService);
         // Note: DeviceService is decorated with @Service()
         // It will be automatically instantiated by TypeDI when needed
     }
