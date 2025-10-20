@@ -149,7 +149,7 @@ export enum MachineStatus {
  */
 export interface MachineProfile {
     id: string;
-    oil_type: 'BO' | 'DO' | 'HFO';
+    oil_type: 'DO' | 'FO';
     density: number;
     label: string;
 }

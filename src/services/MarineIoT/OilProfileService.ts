@@ -42,7 +42,7 @@ export class OilProfileService {
         name: string;
         device_id: string;
         machine_type: MachineType;
-        oil_type: 'BO' | 'DO' | 'HFO';
+        oil_type: 'DO' | 'FO';
         operating_temperature: number;
         density: number;
         label?: string;

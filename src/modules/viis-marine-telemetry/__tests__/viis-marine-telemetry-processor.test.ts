@@ -67,13 +67,13 @@ describe('ViisMarinetTelemetryProcessor', () => {
     };
 
     const mockProfile: OilProfile = {
-        name: 'profile_bo_001',
+        name: 'profile_fo_001',
         device_id: 'device_001',
         machine_type: 'MAIN_ENGINE',
-        oil_type: 'BO',
+        oil_type: 'FO',
         operating_temperature: 85,
         density: 950,
-        label: 'Bunker Oil Standard',
+        label: 'Fuel Oil Standard',
         is_active: true
     };
 

@@ -2,7 +2,7 @@
  * @fileoverview Oil Profile DTOs for Marine IoT System
  * 
  * Provides validation DTOs for oil profile management operations:
- * - Create oil profile (BO/DO with density and temperature)
+ * - Create oil profile (DO/FO with density and temperature)
  * - Update oil profile
  * - Activate/deactivate profiles
  * - Query profiles with filters
@@ -36,9 +36,8 @@ export enum MachineType {
  * Oil type enumeration
  */
 export enum OilType {
-    BO = 'BO',    // Bunker Oil
     DO = 'DO',    // Diesel Oil
-    HFO = 'HFO'   // Heavy Fuel Oil
+    FO = 'FO'     // Fuel Oil
 }
 
 /**
@@ -61,7 +60,7 @@ export class CreateOilProfileDto {
     machine_type!: MachineType;
 
     @IsNotEmpty({ message: 'oil_type is required' })
-    @IsEnum(OilType, { message: 'oil_type must be BO, DO, or HFO' })
+    @IsEnum(OilType, { message: 'oil_type must be DO or FO' })
     oil_type!: OilType;
 
     @IsNotEmpty({ message: 'operating_temperature is required' })
@@ -100,7 +99,7 @@ export class UpdateOilProfileDto {
     machine_type?: MachineType;
 
     @IsOptional()
-    @IsEnum(OilType, { message: 'oil_type must be BO, DO, or HFO' })
+    @IsEnum(OilType, { message: 'oil_type must be DO or FO' })
     oil_type?: OilType;
 
     @IsOptional()

@@ -187,10 +187,10 @@ describe('MarineTelemetryController', () => {
                     type: marine_telemetry_dto_1.MachineType.MAIN_ENGINE,
                     sensors: { flow_in: 'fs03', flow_return: 'fs04' },
                     current_profile: {
-                        id: 'test_main_engine_bo',
-                        oil_type: 'BO',
+                        id: 'test_main_engine_fo',
+                        oil_type: 'FO',
                         density: 950,
-                        label: 'Main Engine BO'
+                        label: 'Main Engine FO'
                     },
                     status: marine_telemetry_dto_1.MachineStatus.OPERATIONAL,
                     last_update: Date.now()
@@ -199,10 +199,10 @@ describe('MarineTelemetryController', () => {
                     type: marine_telemetry_dto_1.MachineType.BOILER,
                     sensors: { flow_in: 'fs05', flow_return: 'fs06' },
                     current_profile: {
-                        id: 'test_boiler_hfo',
-                        oil_type: 'HFO',
+                        id: 'test_boiler_fo',
+                        oil_type: 'FO',
                         density: 980,
-                        label: 'Boiler HFO'
+                        label: 'Boiler FO'
                     },
                     status: marine_telemetry_dto_1.MachineStatus.OPERATIONAL,
                     last_update: Date.now()
@@ -233,10 +233,10 @@ describe('MarineTelemetryController', () => {
             expect(generator.current_profile.oil_type).toBe('DO');
             expect(generator.current_profile.density).toBe(850);
             const mainEngine = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.MAIN_ENGINE);
-            expect(mainEngine.current_profile.oil_type).toBe('BO');
+            expect(mainEngine.current_profile.oil_type).toBe('FO');
             expect(mainEngine.current_profile.density).toBe(950);
             const boiler = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.BOILER);
-            expect(boiler.current_profile.oil_type).toBe('HFO');
+            expect(boiler.current_profile.oil_type).toBe('FO');
             expect(boiler.current_profile.density).toBe(980);
         });
         it('should show OPERATIONAL status when recent data exists', async () => {

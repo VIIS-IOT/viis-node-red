@@ -85,7 +85,7 @@ describe('OilProfileController', () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'device_001',
                 machine_type: MachineType.MAIN_ENGINE,
-                oil_type: OilType.BO,
+                oil_type: OilType.FO,
                 operating_temperature: 85,
                 density: 0.95,
                 label: 'Bunker Oil Standard',
@@ -105,13 +105,13 @@ describe('OilProfileController', () => {
 
             expect(result).toBeDefined();
             expect(result.name).toContain('profile_bo_');
-            expect(result.oil_type).toBe(OilType.BO);
+            expect(result.oil_type).toBe(OilType.FO);
             expect(result.density).toBe(0.95);
             expect(result.is_active).toBe(true);
             expect(mockOilProfileService.createProfile).toHaveBeenCalledWith(
                 expect.objectContaining({
                     device_id: 'device_001',
-                    oil_type: OilType.BO,
+                    oil_type: OilType.FO,
                     density: 0.95
                 })
             );
@@ -149,7 +149,7 @@ describe('OilProfileController', () => {
                 name: 'custom_profile_name',
                 device_id: 'device_001',
                 machine_type: MachineType.BOILER,
-                oil_type: OilType.BO,
+                oil_type: OilType.FO,
                 operating_temperature: 85,
                 density: 0.95
             };
@@ -172,7 +172,7 @@ describe('OilProfileController', () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'non_existent_device',
                 machine_type: MachineType.MAIN_ENGINE,
-                oil_type: OilType.BO,
+                oil_type: OilType.FO,
                 operating_temperature: 85,
                 density: 0.95
             };
@@ -189,7 +189,7 @@ describe('OilProfileController', () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'device_001',
                 machine_type: MachineType.MAIN_ENGINE,
-                oil_type: OilType.BO,
+                oil_type: OilType.FO,
                 operating_temperature: 85,
                 density: 0.95
             };
@@ -213,7 +213,7 @@ describe('OilProfileController', () => {
                 {
                     name: 'profile_bo_1',
                     device_id: 'device_001',
-                    oil_type: OilType.BO,
+                    oil_type: OilType.FO,
                     operating_temperature: 85,
                     density: 0.95,
                     is_active: true,
@@ -245,14 +245,14 @@ describe('OilProfileController', () => {
         it('should filter profiles by oil type', async () => {
             const query: QueryOilProfileDto = {
                 device_id: 'device_001',
-                oil_type: OilType.BO
+                oil_type: OilType.FO
             };
 
             const mockProfiles = [
                 {
                     name: 'profile_bo_1',
                     device_id: 'device_001',
-                    oil_type: OilType.BO,
+                    oil_type: OilType.FO,
                     operating_temperature: 85,
                     density: 0.95,
                     is_active: true,
@@ -276,7 +276,7 @@ describe('OilProfileController', () => {
             const result = await controller.getProfiles(query);
 
             expect(result.profiles).toHaveLength(1);
-            expect(result.profiles[0].oil_type).toBe(OilType.BO);
+            expect(result.profiles[0].oil_type).toBe(OilType.FO);
         });
 
         it('should filter profiles by active status', async () => {
@@ -289,7 +289,7 @@ describe('OilProfileController', () => {
                 {
                     name: 'profile_bo_1',
                     device_id: 'device_001',
-                    oil_type: OilType.BO,
+                    oil_type: OilType.FO,
                     operating_temperature: 85,
                     density: 0.95,
                     is_active: true,
@@ -327,7 +327,7 @@ describe('OilProfileController', () => {
                 {
                     name: 'profile_1',
                     device_id: 'device_001',
-                    oil_type: OilType.BO,
+                    oil_type: OilType.FO,
                     operating_temperature: 85,
                     density: 0.95,
                     is_active: false,
@@ -370,7 +370,7 @@ describe('OilProfileController', () => {
             const mockProfile = {
                 name: 'profile_bo_1',
                 device_id: 'device_001',
-                oil_type: OilType.BO,
+                oil_type: OilType.FO,
                 operating_temperature: 85,
                 density: 0.95,
                 is_active: true,
@@ -415,7 +415,7 @@ describe('OilProfileController', () => {
             const mockProfile = {
                 name: 'profile_bo_1',
                 device_id: 'device_001',
-                oil_type: OilType.BO,
+                oil_type: OilType.FO,
                 operating_temperature: 85,
                 density: 0.96,
                 label: 'Updated Label',

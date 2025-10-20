@@ -3,7 +3,7 @@
  * @fileoverview Oil Profile DTOs for Marine IoT System
  *
  * Provides validation DTOs for oil profile management operations:
- * - Create oil profile (BO/DO with density and temperature)
+ * - Create oil profile (DO/FO with density and temperature)
  * - Update oil profile
  * - Activate/deactivate profiles
  * - Query profiles with filters
@@ -35,9 +35,8 @@ var MachineType;
  */
 var OilType;
 (function (OilType) {
-    OilType["BO"] = "BO";
     OilType["DO"] = "DO";
-    OilType["HFO"] = "HFO"; // Heavy Fuel Oil
+    OilType["FO"] = "FO"; // Fuel Oil
 })(OilType || (exports.OilType = OilType = {}));
 /**
  * DTO for creating a new oil profile
@@ -65,7 +64,7 @@ __decorate([
 ], CreateOilProfileDto.prototype, "machine_type", void 0);
 __decorate([
     (0, class_validator_1.IsNotEmpty)({ message: 'oil_type is required' }),
-    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be BO, DO, or HFO' }),
+    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be DO or FO' }),
     __metadata("design:type", String)
 ], CreateOilProfileDto.prototype, "oil_type", void 0);
 __decorate([
@@ -112,7 +111,7 @@ __decorate([
 ], UpdateOilProfileDto.prototype, "machine_type", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be BO, DO, or HFO' }),
+    (0, class_validator_1.IsEnum)(OilType, { message: 'oil_type must be DO or FO' }),
     __metadata("design:type", String)
 ], UpdateOilProfileDto.prototype, "oil_type", void 0);
 __decorate([

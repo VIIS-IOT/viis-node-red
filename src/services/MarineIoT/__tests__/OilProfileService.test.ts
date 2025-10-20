@@ -58,7 +58,7 @@ describe('OilProfileService', () => {
                 name: 'test_profile_bo',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE' as const,
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 label: 'Test BO Profile',
@@ -80,7 +80,7 @@ describe('OilProfileService', () => {
                 name: 'profile_1',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 is_active: true,
@@ -114,7 +114,7 @@ describe('OilProfileService', () => {
                     name: 'test_profile',
                     device_id: 'non_existent_device',
                     machine_type: 'MAIN_ENGINE',
-                    oil_type: 'BO' as const,
+                    oil_type: 'FO' as const,
                     operating_temperature: 85,
                     density: 950,
                 })
@@ -129,7 +129,7 @@ describe('OilProfileService', () => {
                 name: 'profile_1',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 is_active: true,
@@ -172,7 +172,7 @@ describe('OilProfileService', () => {
                 name: 'active_profile',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 is_active: true,
@@ -197,7 +197,7 @@ describe('OilProfileService', () => {
                 name: 'profile_1',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
             });
@@ -225,7 +225,7 @@ describe('OilProfileService', () => {
                 name: 'update_test',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 label: 'Original Label',
@@ -238,7 +238,7 @@ describe('OilProfileService', () => {
 
             expect(updated.label).toBe('Updated Label');
             expect(updated.density).toBe(0.96);
-            expect(updated.oil_type).toBe('BO'); // Unchanged
+            expect(updated.oil_type).toBe('FO'); // Unchanged
         });
 
         it('should deactivate others when setting as active', async () => {
@@ -246,7 +246,7 @@ describe('OilProfileService', () => {
                 name: 'profile_1',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 is_active: true,
@@ -278,7 +278,7 @@ describe('OilProfileService', () => {
                 name: 'to_delete',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 is_active: false,
@@ -298,7 +298,7 @@ describe('OilProfileService', () => {
                 name: 'active_profile',
                 device_id: testDeviceId,
                 machine_type: 'MAIN_ENGINE',
-                oil_type: 'BO' as const,
+                oil_type: 'FO' as const,
                 operating_temperature: 85,
                 density: 950,
                 is_active: true,

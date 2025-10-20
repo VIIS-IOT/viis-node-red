@@ -227,10 +227,10 @@ describe('MarineTelemetryController', () => {
                     type: MachineType.MAIN_ENGINE,
                     sensors: { flow_in: 'fs03', flow_return: 'fs04' },
                     current_profile: {
-                        id: 'test_main_engine_bo',
-                        oil_type: 'BO' as const,
+                        id: 'test_main_engine_fo',
+                        oil_type: 'FO' as const,
                         density: 950,
-                        label: 'Main Engine BO'
+                        label: 'Main Engine FO'
                     },
                     status: MachineStatus.OPERATIONAL,
                     last_update: Date.now()
@@ -239,10 +239,10 @@ describe('MarineTelemetryController', () => {
                     type: MachineType.BOILER,
                     sensors: { flow_in: 'fs05', flow_return: 'fs06' },
                     current_profile: {
-                        id: 'test_boiler_hfo',
-                        oil_type: 'HFO' as const,
+                        id: 'test_boiler_fo',
+                        oil_type: 'FO' as const,
                         density: 980,
-                        label: 'Boiler HFO'
+                        label: 'Boiler FO'
                     },
                     status: MachineStatus.OPERATIONAL,
                     last_update: Date.now()
@@ -285,11 +285,11 @@ describe('MarineTelemetryController', () => {
             expect(generator!.current_profile!.density).toBe(850);
 
             const mainEngine = result.machines.find(m => m.type === MachineType.MAIN_ENGINE);
-            expect(mainEngine!.current_profile!.oil_type).toBe('BO');
+            expect(mainEngine!.current_profile!.oil_type).toBe('FO');
             expect(mainEngine!.current_profile!.density).toBe(950);
 
             const boiler = result.machines.find(m => m.type === MachineType.BOILER);
-            expect(boiler!.current_profile!.oil_type).toBe('HFO');
+            expect(boiler!.current_profile!.oil_type).toBe('FO');
             expect(boiler!.current_profile!.density).toBe(980);
         });
 

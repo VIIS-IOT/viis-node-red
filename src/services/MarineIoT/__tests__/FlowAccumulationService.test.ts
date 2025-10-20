@@ -59,7 +59,7 @@ describe('FlowAccumulationService', () => {
         const profile = profileRepo.create({
             name: testProfileId,
             device_id: testDeviceId,
-            oil_type: 'BO',
+            oil_type: 'FO',
             operating_temperature: 85,
             density: 950,
             is_active: true,

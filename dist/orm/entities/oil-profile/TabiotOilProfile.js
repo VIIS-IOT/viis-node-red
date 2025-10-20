@@ -16,7 +16,7 @@ const Base_1 = require("../base/Base");
 /**
  * Oil Profile Entity for Marine IoT System
  * Stores oil type configurations for different machines (Generator, Main Engine, Boiler)
- * Each machine can have different oil types (BO/DO/HFO) with specific density and temperature
+ * Each machine can have different oil types (DO/FO) with specific density and temperature
  */
 let TabiotOilProfile = class TabiotOilProfile extends Base_1.CustomBaseEntity {
 };
@@ -40,8 +40,8 @@ __decorate([
 __decorate([
     (0, typeorm_1.Column)({
         type: 'enum',
-        enum: ['BO', 'DO', 'HFO'],
-        comment: 'Oil type: BO (Bunker Oil), DO (Diesel Oil), HFO (Heavy Fuel Oil)'
+        enum: ['DO', 'FO'],
+        comment: 'Oil type: DO (Diesel Oil), FO (Fuel Oil)'
     }),
     __metadata("design:type", String)
 ], TabiotOilProfile.prototype, "oil_type", void 0);
