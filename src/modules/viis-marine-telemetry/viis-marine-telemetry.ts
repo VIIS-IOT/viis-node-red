@@ -61,8 +61,35 @@ module.exports = function (RED: NodeAPI) {
                 // Initialize configuration manager
                 const configManager = new ViisTelemetryConfigManager(config, nodeContext);
                 const pollingConfig = configManager.getPollingConfig();
-                const envConfig = configManager.getEnvironmentConfig();
+                
+                // Detect board ID for multi-board mode
+                // Check if multi-board mode is active
+                let boardsConfig = globalHelper.getEnvVar('modbus_boards', null);
+                if (!boardsConfig) {
+                    boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+                }
+                
+                let boardIdForConfig = config.boardId || undefined;
+                if (!boardIdForConfig && boardsConfig) {
+                    // Multi-board mode but no boardId in config, use default
+                    let defaultBoard = globalHelper.getEnvVar('modbus_default_board', null);
+                    if (!defaultBoard) {
+                        defaultBoard = globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', null);
+                    }
+                    boardIdForConfig = defaultBoard || 'board1';
+                    node.log(`[Marine] Auto-detected board ID: ${boardIdForConfig}`);
+                }
+                
+                const envConfig = configManager.getEnvironmentConfig(boardIdForConfig);
                 const mqttTopicConfig = configManager.getMqttTopicConfig(envConfig.deviceId);
+                
+                // Log register mapping for debugging
+                const holdingRegCount = Object.keys(envConfig.modbusHoldingRegisters).length;
+                node.log(`[Marine] Loaded ${holdingRegCount} holding register mappings${boardIdForConfig ? ` for board: ${boardIdForConfig}` : ''}`);
+                
+                // Log first few mappings to verify
+                const firstFewMappings = Object.entries(envConfig.modbusHoldingRegisters).slice(0, 10);
+                node.log(`[Marine] Sample mappings: ${JSON.stringify(Object.fromEntries(firstFewMappings))}`);
 
                 // Initialize context
                 nodeContext.set(CONTEXT_KEYS.PREVIOUS_STATE, {});
@@ -84,7 +111,8 @@ module.exports = function (RED: NodeAPI) {
                 // Auto-detect mode
                 if (configData.mode === 'multi') {
                     isMultiBoardMode = true;
-                    node.log(`[Marine] Multi-board mode detected with ${configData.boards.length} boards`);
+                    const activeBoardId = currentBoardId || configData.defaultBoard;
+                    node.log(`[Marine] Multi-board mode detected with ${configData.boards.length} boards, active: ${activeBoardId}`);
 
                     const multiConfig: MultiModbusConfig = {
                         mode: 'multi',
@@ -122,6 +150,14 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 // Initialize TypeORM DataSource for Marine IoT
+                // Add delay to ensure env-loader has time to load env variables
+                node.log('[Marine] Waiting for env-loader to complete...');
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+                
+                // Verify env variables are loaded
+                const dbHost = globalHelper.getEnvVar('DATABASE_HOST', 'NOT_LOADED');
+                node.log(`[Marine] DATABASE_HOST from global context: ${dbHost}`);
+                
                 const dataSource = await createDataSource(nodeContext);
                 if (!dataSource.isInitialized) {
                     await dataSource.initialize();
@@ -229,7 +265,11 @@ module.exports = function (RED: NodeAPI) {
 
     // Helper functions (reuse from viis-telemetry)
     function readModbusConfig(globalHelper: GlobalContextHelper) {
-        const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+        // Try lowercase first (env-loader uses lowercase), then uppercase
+        let boardsConfig = globalHelper.getEnvVar('modbus_boards', null);
+        if (!boardsConfig) {
+            boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+        }
 
         if (boardsConfig) {
             try {
@@ -244,10 +284,16 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 if (Array.isArray(boards) && boards.length > 0) {
+                    // Try lowercase first for default board
+                    let defaultBoard = globalHelper.getEnvVar('modbus_default_board', null);
+                    if (!defaultBoard) {
+                        defaultBoard = globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id);
+                    }
+                    
                     return {
                         mode: 'multi',
                         boards: boards,
-                        defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                        defaultBoard: defaultBoard
                     };
                 }
             } catch (e) {

@@ -73,14 +73,32 @@ function createDataSource(nodeContext) {
         }
         return parseInt(process.env[envKey] || String(defaultValue));
     };
+    // Dual config support:
+    // - Inside container (helper exists): Use DATABASE_* (from GlobalContext via env-loader)
+    // - From host/migrations (no helper): Use DB_* (from .env file via process.env)
+    const dbHost = helper
+        ? getConfigValue('DATABASE_HOST', 'viis-local-mysql')
+        : getConfigValue('DB_HOST', 'localhost');
+    const dbPort = helper
+        ? getNumericValue('DATABASE_PORT', 3306)
+        : getNumericValue('DB_PORT', 3308);
+    const dbUsername = helper
+        ? getConfigValue('DATABASE_USERNAME', 'root')
+        : getConfigValue('DB_USERNAME', 'root');
+    const dbPassword = helper
+        ? getConfigValue('DATABASE_PASSWORD', 'admin@123')
+        : getConfigValue('DB_PASSWORD', 'admin@123');
+    const dbDatabase = helper
+        ? getConfigValue('DATABASE_NAME', 'viis_local')
+        : getConfigValue('DB_DATABASE', 'viis_local');
     // Create and cache the shared instance
     sharedDataSource = new typeorm_1.DataSource({
         type: "mysql",
-        host: getConfigValue('DB_HOST', 'viis-local-mysql'), // Use container name by default
-        port: getNumericValue('DB_PORT', 3306),
-        username: getConfigValue('DB_USERNAME', 'root'),
-        password: getConfigValue('DB_PASSWORD', 'admin@123'),
-        database: getConfigValue('DB_DATABASE', 'viis_local'),
+        host: dbHost,
+        port: dbPort,
+        username: dbUsername,
+        password: dbPassword,
+        database: dbDatabase,
         // Sử dụng glob pattern để load tất cả các file .ts hoặc .js trong thư mục entities và các thư mục con
         entities: [__dirname + "/entities/**/*.{js,ts}"],
         // Tương tự cho migrations
