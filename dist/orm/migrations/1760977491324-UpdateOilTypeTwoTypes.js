@@ -11,13 +11,18 @@ exports.UpdateOilTypeTwoTypes1760977491324 = void 0;
  */
 class UpdateOilTypeTwoTypes1760977491324 {
     async up(queryRunner) {
-        // Step 1: Convert existing BO and HFO records to FO
+        // Step 1: Add 'FO' to existing enum (temporarily allow all 4 values)
+        await queryRunner.query(`
+            ALTER TABLE \`tabiot_oil_profile\` 
+            MODIFY COLUMN \`oil_type\` enum ('BO', 'DO', 'HFO', 'FO') NOT NULL
+        `);
+        // Step 2: Convert existing BO and HFO records to FO
         await queryRunner.query(`
             UPDATE tabiot_oil_profile 
             SET oil_type = 'FO' 
             WHERE oil_type IN ('BO', 'HFO')
         `);
-        // Step 2: Modify the enum column to only allow DO and FO
+        // Step 3: Remove BO and HFO from enum (only keep DO and FO)
         await queryRunner.query(`
             ALTER TABLE \`tabiot_oil_profile\` 
             MODIFY COLUMN \`oil_type\` enum ('DO', 'FO') NOT NULL 
