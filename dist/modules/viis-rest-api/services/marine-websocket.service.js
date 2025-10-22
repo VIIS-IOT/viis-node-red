@@ -229,12 +229,14 @@ let MarineWebSocketService = class MarineWebSocketService {
     }
     /**
      * Handle get latest telemetry request
+     * Now includes trip accumulation data
      */
     async handleGetLatest(socket, data) {
         try {
             const { deviceId, keys } = data;
             const keyArray = keys && typeof keys === 'string' ? keys.split(',').map(k => k.trim()) : (Array.isArray(keys) ? keys : undefined);
-            const telemetry = await this.marineTelemetryService.getLatestTelemetry(deviceId, keyArray);
+            // Use enhanced telemetry with trip data
+            const telemetry = await this.marineTelemetryService.getLatestTelemetryWithTrip(deviceId, keyArray);
             socket.emit(MarineWebSocketEvents.TELEMETRY_UPDATE, {
                 deviceId,
                 data: telemetry,
@@ -316,6 +318,7 @@ let MarineWebSocketService = class MarineWebSocketService {
     }
     /**
      * Send telemetry update to a specific socket
+     * Now includes trip accumulation data if active trip exists
      */
     async sendTelemetryUpdate(socketId) {
         try {
@@ -324,7 +327,8 @@ let MarineWebSocketService = class MarineWebSocketService {
                 return;
             }
             const { deviceId, keys } = subscription;
-            const telemetry = await this.marineTelemetryService.getLatestTelemetry(deviceId, keys);
+            // Use enhanced telemetry with trip data
+            const telemetry = await this.marineTelemetryService.getLatestTelemetryWithTrip(deviceId, keys);
             this.io.to(socketId).emit(MarineWebSocketEvents.TELEMETRY_UPDATE, {
                 deviceId,
                 data: telemetry,

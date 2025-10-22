@@ -15,6 +15,8 @@ import { ScheduleCompletionMonitorService } from "../services/schedule-completio
 import { DeviceService } from "../services/device.service";
 import { MarineTelemetryService } from "../services/marine-telemetry.service";
 import { MarineWebSocketService } from "../services/marine-websocket.service";
+import { TripManagementService } from "../../../services/MarineIoT/TripManagementService";
+import { TripAccumulationService } from "../../../services/MarineIoT/TripAccumulationService";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
 import { HealthController } from "../controllers/health.controller";
@@ -198,6 +200,13 @@ export class ContainerSetup {
             node
         );
         Container.set(MarineWebSocketService, marineWebSocketService);
+
+        // Register Trip Management Services
+        const tripManagementService = new TripManagementService(dataSource);
+        Container.set(TripManagementService, tripManagementService);
+
+        const tripAccumulationService = new TripAccumulationService(dataSource);
+        Container.set(TripAccumulationService, tripAccumulationService);
 
         // Note: DeviceService is decorated with @Service()
         // It will be automatically instantiated by TypeDI when needed

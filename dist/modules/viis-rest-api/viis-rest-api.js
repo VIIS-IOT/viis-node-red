@@ -10,6 +10,7 @@ const api_routes_1 = require("./routes/api.routes");
 const database_service_1 = require("./services/database.service");
 const default_user_seed_service_1 = require("./services/default-user-seed.service");
 const marine_websocket_service_1 = require("./services/marine-websocket.service");
+const viis_rest_api_trip_integration_1 = require("./viis-rest-api-trip-integration");
 const container_setup_1 = require("./container/container.setup");
 const api_config_1 = require("./config/api.config");
 require("reflect-metadata");
@@ -26,6 +27,7 @@ module.exports = function (RED) {
         let authService;
         let apiRoutes;
         let marineWebSocketService = null;
+        let tripIntegrationManager = null;
         try {
             configManager = new api_config_1.ApiConfigManager(config, node);
         }
@@ -87,6 +89,17 @@ module.exports = function (RED) {
                     logger_1.logger.warn(node, `Failed to initialize WebSocket: ${error.message}`);
                     // Continue without WebSocket - REST API still works
                 }
+                // Initialize Trip Accumulation Worker
+                try {
+                    const dataSource = await databaseService.getDataSource();
+                    tripIntegrationManager = new viis_rest_api_trip_integration_1.TripIntegrationManager(dataSource, node);
+                    await tripIntegrationManager.initialize();
+                    logger_1.logger.info(node, "🚢 Trip accumulation worker started");
+                }
+                catch (error) {
+                    logger_1.logger.warn(node, `Failed to initialize trip worker: ${error.message}`);
+                    // Continue without trip worker - REST API still works
+                }
                 node.status({ fill: "green", shape: "dot", text: "API server running" });
                 logger_1.logger.info(node, `✅ VIIS REST API server is running on ${configManager.get('apiPrefix')}`);
                 // Log development features if enabled
@@ -106,6 +119,9 @@ module.exports = function (RED) {
             try {
                 logger_1.logger.info(node, "Shutting down VIIS REST API...");
                 // Cleanup services
+                if (tripIntegrationManager) {
+                    await tripIntegrationManager.cleanup();
+                }
                 if (marineWebSocketService) {
                     await marineWebSocketService.cleanup();
                 }

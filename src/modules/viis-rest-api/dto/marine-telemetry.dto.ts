@@ -78,7 +78,34 @@ export interface ConsumptionRate {
 }
 
 /**
- * Machine data aggregated
+ * Trip volume data
+ */
+export interface TripVolumeData {
+    m3: number;
+    tons: number;
+}
+
+/**
+ * Trip accumulation data for a machine
+ */
+export interface TripAccumulationData {
+    total_volume_in: TripVolumeData;
+    total_volume_return: TripVolumeData;
+    total_consumption: TripVolumeData;
+}
+
+/**
+ * Current trip information
+ */
+export interface CurrentTripInfo {
+    id: string;
+    name: string;
+    start_time: number;
+    duration_hours: number;
+}
+
+/**
+ * Machine data aggregated (base)
  */
 export interface MachineData {
     flow_in: MachineFlowData;
@@ -89,7 +116,14 @@ export interface MachineData {
 }
 
 /**
- * Latest telemetry response
+ * Enhanced machine data with trip accumulation
+ */
+export interface EnhancedMachineData extends MachineData {
+    trip_accumulation?: TripAccumulationData;
+}
+
+/**
+ * Latest telemetry response (base)
  */
 export interface LatestTelemetryResponseDto {
     device_id: string;
@@ -100,6 +134,21 @@ export interface LatestTelemetryResponseDto {
         [MachineType.MAIN_ENGINE]?: MachineData;
         [MachineType.BOILER]?: MachineData;
     };
+}
+
+/**
+ * Enhanced latest telemetry response with trip data
+ */
+export interface EnhancedLatestTelemetryResponseDto {
+    device_id: string;
+    timestamp: number;
+    data: TelemetryDataPoint[];
+    machines: {
+        [MachineType.GENERATOR]?: EnhancedMachineData;
+        [MachineType.MAIN_ENGINE]?: EnhancedMachineData;
+        [MachineType.BOILER]?: EnhancedMachineData;
+    };
+    current_trip?: CurrentTripInfo;
 }
 
 /**

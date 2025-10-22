@@ -386,7 +386,7 @@ export class OilProfileController {
     }
 
     /**
-     * Delete oil profile
+     * Soft delete oil profile (marks as deleted, preserves data for historical records)
      * DELETE /api/v2/oil-profiles/:name
      * 
      * @param name - Profile name
@@ -399,11 +399,11 @@ export class OilProfileController {
         @Param('name') name: string
     ): Promise<void> {
         try {
-            logger.info(this.node, 'Deleting oil profile', { name });
+            logger.info(this.node, 'Soft deleting oil profile', { name });
 
             await this.oilProfileService.deleteProfile(name);
 
-            logger.info(this.node, 'Oil profile deleted successfully', { name });
+            logger.info(this.node, 'Oil profile soft deleted successfully', { name });
         } catch (error) {
             logger.error(this.node, 'Error deleting oil profile', {
                 error: (error as Error).message,
@@ -419,6 +419,44 @@ export class OilProfileController {
             }
 
             throw new InternalServerError(`Failed to delete oil profile: ${(error as Error).message}`);
+        }
+    }
+
+    /**
+     * Restore a soft-deleted oil profile
+     * POST /api/v2/oil-profiles/:name/restore
+     * 
+     * @param name - Profile name
+     * @returns Restored profile
+     */
+    @Post('/:name/restore')
+    @Authorized()
+    async restoreProfile(
+        @Param('name') name: string
+    ): Promise<OilProfileResponseDto> {
+        try {
+            logger.info(this.node, 'Restoring oil profile', { name });
+
+            const profile = await this.oilProfileService.restoreProfile(name);
+
+            logger.info(this.node, 'Oil profile restored successfully', { name });
+
+            return this.mapToResponseDto(profile);
+        } catch (error) {
+            logger.error(this.node, 'Error restoring oil profile', {
+                error: (error as Error).message,
+                name
+            });
+
+            if ((error as Error).message.includes('not found')) {
+                throw new NotFoundError((error as Error).message);
+            }
+
+            if ((error as Error).message.includes('not deleted')) {
+                throw new BadRequestError((error as Error).message);
+            }
+
+            throw new InternalServerError(`Failed to restore oil profile: ${(error as Error).message}`);
         }
     }
 

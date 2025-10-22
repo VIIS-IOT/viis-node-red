@@ -40,7 +40,12 @@ class OilProfileService {
      * Set a profile as active (deactivates all others for the same device & machine)
      */
     async setActiveProfile(profileName) {
-        const profile = await this.oilProfileRepo.findOne({ where: { name: profileName } });
+        const profile = await this.oilProfileRepo.findOne({
+            where: {
+                name: profileName,
+                deleted_at: null
+            }
+        });
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
@@ -59,7 +64,7 @@ class OilProfileService {
             .createQueryBuilder()
             .update(TabiotOilProfile_1.TabiotOilProfile)
             .set({ is_active: false, modified: new Date() })
-            .where('device_id = :deviceId', { deviceId })
+            .where('device_id = :deviceId AND deleted_at IS NULL', { deviceId })
             .execute();
     }
     /**
@@ -70,7 +75,7 @@ class OilProfileService {
             .createQueryBuilder()
             .update(TabiotOilProfile_1.TabiotOilProfile)
             .set({ is_active: false, modified: new Date() })
-            .where('device_id = :deviceId AND machine_type = :machineType', { deviceId, machineType })
+            .where('device_id = :deviceId AND machine_type = :machineType AND deleted_at IS NULL', { deviceId, machineType })
             .execute();
     }
     /**
@@ -80,7 +85,8 @@ class OilProfileService {
         return await this.oilProfileRepo.findOne({
             where: {
                 device_id: deviceId,
-                is_active: true
+                is_active: true,
+                deleted_at: null
             }
         });
     }
@@ -92,7 +98,8 @@ class OilProfileService {
             where: {
                 device_id: deviceId,
                 machine_type: machineType,
-                is_active: true
+                is_active: true,
+                deleted_at: null
             }
         });
     }
@@ -101,7 +108,10 @@ class OilProfileService {
      */
     async getProfilesByDevice(deviceId) {
         return await this.oilProfileRepo.find({
-            where: { device_id: deviceId },
+            where: {
+                device_id: deviceId,
+                deleted_at: null
+            },
             order: { creation: 'DESC' }
         });
     }
@@ -109,7 +119,12 @@ class OilProfileService {
      * Update profile
      */
     async updateProfile(profileName, updates) {
-        const profile = await this.oilProfileRepo.findOne({ where: { name: profileName } });
+        const profile = await this.oilProfileRepo.findOne({
+            where: {
+                name: profileName,
+                deleted_at: null
+            }
+        });
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
@@ -122,15 +137,56 @@ class OilProfileService {
         return await this.oilProfileRepo.save(profile);
     }
     /**
-     * Delete profile (cannot delete active profile)
+     * Soft delete profile (cannot delete active profile)
+     * Profile is marked as deleted but data is preserved for historical flow accumulation records
      */
     async deleteProfile(profileName) {
-        const profile = await this.oilProfileRepo.findOne({ where: { name: profileName } });
+        const profile = await this.oilProfileRepo.findOne({
+            where: {
+                name: profileName,
+                deleted_at: null
+            }
+        });
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
         if (profile.is_active) {
             throw new Error('Cannot delete active profile. Please activate another profile first.');
+        }
+        // Soft delete: just mark as deleted
+        profile.deleted_at = new Date();
+        profile.modified = new Date();
+        await this.oilProfileRepo.save(profile);
+    }
+    /**
+     * Restore a soft-deleted profile
+     */
+    async restoreProfile(profileName) {
+        const profile = await this.oilProfileRepo.findOne({
+            where: { name: profileName },
+            withDeleted: true
+        });
+        if (!profile) {
+            throw new Error(`Profile ${profileName} not found`);
+        }
+        if (!profile.deleted_at) {
+            throw new Error(`Profile ${profileName} is not deleted`);
+        }
+        profile.deleted_at = undefined;
+        profile.modified = new Date();
+        return await this.oilProfileRepo.save(profile);
+    }
+    /**
+     * Permanently delete a profile (hard delete)
+     * WARNING: This will fail if profile is referenced in flow_accumulation table
+     */
+    async permanentlyDeleteProfile(profileName) {
+        const profile = await this.oilProfileRepo.findOne({
+            where: { name: profileName },
+            withDeleted: true
+        });
+        if (!profile) {
+            throw new Error(`Profile ${profileName} not found`);
         }
         await this.oilProfileRepo.remove(profile);
     }

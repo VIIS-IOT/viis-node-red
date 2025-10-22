@@ -11,6 +11,7 @@ import { ApiRoutes } from "./routes/api.routes";
 import { DatabaseService } from "./services/database.service";
 import { DefaultUserSeedService } from "./services/default-user-seed.service";
 import { MarineWebSocketService } from "./services/marine-websocket.service";
+import { TripIntegrationManager } from "./viis-rest-api-trip-integration";
 import { ContainerSetup } from "./container/container.setup";
 import { ApiConfigManager } from "./config/api.config";
 import "reflect-metadata";
@@ -52,6 +53,7 @@ export = function (RED: NodeAPI) {
         let authService: AuthService;
         let apiRoutes: ApiRoutes;
         let marineWebSocketService: MarineWebSocketService | null = null;
+        let tripIntegrationManager: TripIntegrationManager | null = null;
 
         try {
             configManager = new ApiConfigManager(config, node);
@@ -119,6 +121,17 @@ export = function (RED: NodeAPI) {
                     // Continue without WebSocket - REST API still works
                 }
 
+                // Initialize Trip Accumulation Worker
+                try {
+                    const dataSource = await databaseService.getDataSource();
+                    tripIntegrationManager = new TripIntegrationManager(dataSource, node);
+                    await tripIntegrationManager.initialize();
+                    logger.info(node, "🚢 Trip accumulation worker started");
+                } catch (error) {
+                    logger.warn(node, `Failed to initialize trip worker: ${(error as Error).message}`);
+                    // Continue without trip worker - REST API still works
+                }
+
                 node.status({ fill: "green", shape: "dot", text: "API server running" });
                 logger.info(node, `✅ VIIS REST API server is running on ${configManager.get('apiPrefix')}`);
 
@@ -141,6 +154,9 @@ export = function (RED: NodeAPI) {
                 logger.info(node, "Shutting down VIIS REST API...");
 
                 // Cleanup services
+                if (tripIntegrationManager) {
+                    await tripIntegrationManager.cleanup();
+                }
                 if (marineWebSocketService) {
                     await marineWebSocketService.cleanup();
                 }

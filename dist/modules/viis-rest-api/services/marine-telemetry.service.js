@@ -22,6 +22,8 @@ const TabiotDeviceTelemetryLatest_1 = require("../../../orm/entities/device-tele
 const TabiotDeviceTelemetry_1 = require("../../../orm/entities/device-telemetry/TabiotDeviceTelemetry");
 const TabiotOilProfile_1 = require("../../../orm/entities/oil-profile/TabiotOilProfile");
 const OilProfileService_1 = require("../../../services/MarineIoT/OilProfileService");
+const TripManagementService_1 = require("../../../services/MarineIoT/TripManagementService");
+const TripAccumulationService_1 = require("../../../services/MarineIoT/TripAccumulationService");
 const marine_telemetry_dto_1 = require("../dto/marine-telemetry.dto");
 /**
  * Sensor mapping for each machine type
@@ -38,6 +40,8 @@ let MarineTelemetryService = class MarineTelemetryService {
         this.telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
         this.oilProfileRepo = dataSource.getRepository(TabiotOilProfile_1.TabiotOilProfile);
         this.oilProfileService = new OilProfileService_1.OilProfileService(dataSource);
+        this.tripManagementService = new TripManagementService_1.TripManagementService(dataSource);
+        this.tripAccumulationService = new TripAccumulationService_1.TripAccumulationService(dataSource);
     }
     /**
      * Get latest telemetry data with machine aggregation
@@ -78,6 +82,70 @@ let MarineTelemetryService = class MarineTelemetryService {
             data: dataPoints,
             machines: machines
         };
+    }
+    /**
+     * Get latest telemetry data WITH trip accumulation
+     * Returns enhanced data including trip totals
+     */
+    async getLatestTelemetryWithTrip(deviceId, keys) {
+        // Get base real-time telemetry
+        const baseData = await this.getLatestTelemetry(deviceId, keys);
+        // Check if there's an active trip
+        const activeTrip = await this.tripManagementService.getActiveTrip(deviceId);
+        if (!activeTrip) {
+            // No active trip, return base data without trip accumulation
+            return Object.assign(Object.assign({}, baseData), { machines: baseData.machines, current_trip: undefined });
+        }
+        // Get trip accumulation data
+        const tripAccumulation = await this.tripAccumulationService.getTripAccumulation(activeTrip.id);
+        // Merge trip data with real-time data
+        const enhancedMachines = this.mergeWithTripData(baseData.machines, tripAccumulation, activeTrip);
+        // Calculate trip duration
+        const durationMs = Date.now() - activeTrip.start_time;
+        const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(2));
+        return {
+            device_id: deviceId,
+            timestamp: baseData.timestamp,
+            data: baseData.data,
+            machines: enhancedMachines,
+            current_trip: {
+                id: activeTrip.id,
+                name: activeTrip.trip_name || 'Unnamed Trip',
+                start_time: activeTrip.start_time,
+                duration_hours: durationHours
+            }
+        };
+    }
+    /**
+     * Merge trip accumulation data with real-time machine data
+     */
+    mergeWithTripData(machines, tripAccumulation, trip) {
+        const enhanced = {};
+        const machineTypes = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+        for (const machineType of machineTypes) {
+            const machineData = machines[machineType];
+            if (!machineData)
+                continue;
+            const sensors = MACHINE_SENSORS[machineType];
+            // Find accumulation data for this machine's sensors
+            const flowInAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_in);
+            const flowReturnAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_return);
+            enhanced[machineType] = Object.assign(Object.assign({}, machineData), { trip_accumulation: {
+                    total_volume_in: {
+                        m3: Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0),
+                        tons: Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_tons) || 0)
+                    },
+                    total_volume_return: {
+                        m3: Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_m3) || 0),
+                        tons: Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)
+                    },
+                    total_consumption: {
+                        m3: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_m3) || 0)).toFixed(2)),
+                        tons: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_tons) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)).toFixed(2))
+                    }
+                } });
+        }
+        return enhanced;
     }
     /**
      * Get historical telemetry data

@@ -56,6 +56,13 @@ export class TabiotOilProfile extends CustomBaseEntity {
     @Column({ type: 'text', nullable: true })
     description?: string;
 
+    @Column({ 
+        type: 'datetime', 
+        nullable: true,
+        comment: 'Soft delete timestamp - profile is hidden but data preserved'
+    })
+    deleted_at?: Date;
+
     @ManyToOne(() => TabiotDevice, { onDelete: 'CASCADE' })
     @JoinColumn({ name: 'device_id', referencedColumnName: 'name' })
     device?: TabiotDevice;

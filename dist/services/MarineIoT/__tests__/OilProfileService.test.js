@@ -231,7 +231,7 @@ describe('OilProfileService', () => {
         });
     });
     describe('deleteProfile', () => {
-        it('should delete inactive profile', async () => {
+        it('should soft delete inactive profile', async () => {
             await service.createProfile({
                 name: 'to_delete',
                 device_id: testDeviceId,
@@ -242,10 +242,20 @@ describe('OilProfileService', () => {
                 is_active: false,
             });
             await service.deleteProfile('to_delete');
+            // Check that profile is soft deleted (has deleted_at timestamp)
             const deleted = await dataSource
                 .getRepository(TabiotOilProfile_1.TabiotOilProfile)
+                .findOne({
+                where: { name: 'to_delete' },
+                withDeleted: true
+            });
+            expect(deleted).not.toBeNull();
+            expect(deleted === null || deleted === void 0 ? void 0 : deleted.deleted_at).not.toBeNull();
+            // Check that profile is not returned in normal queries
+            const normal = await dataSource
+                .getRepository(TabiotOilProfile_1.TabiotOilProfile)
                 .findOne({ where: { name: 'to_delete' } });
-            expect(deleted).toBeNull();
+            expect(normal).toBeNull();
         });
         it('should throw error when deleting active profile', async () => {
             await service.createProfile({
@@ -258,6 +268,49 @@ describe('OilProfileService', () => {
                 is_active: true,
             });
             await expect(service.deleteProfile('active_profile')).rejects.toThrow('Cannot delete active profile');
+        });
+        it('should throw error when deleting non-existent profile', async () => {
+            await expect(service.deleteProfile('non_existent')).rejects.toThrow('not found');
+        });
+    });
+    describe('restoreProfile', () => {
+        it('should restore soft-deleted profile', async () => {
+            // Create and delete profile
+            await service.createProfile({
+                name: 'to_restore',
+                device_id: testDeviceId,
+                machine_type: 'GENERATOR',
+                oil_type: 'DO',
+                operating_temperature: 40,
+                density: 850,
+                is_active: false,
+            });
+            await service.deleteProfile('to_restore');
+            // Verify it's deleted
+            const deleted = await service.getProfilesByDevice(testDeviceId);
+            expect(deleted.find(p => p.name === 'to_restore')).toBeUndefined();
+            // Restore it
+            const restored = await service.restoreProfile('to_restore');
+            expect(restored.name).toBe('to_restore');
+            expect(restored.deleted_at).toBeUndefined();
+            // Verify it's back in queries
+            const profiles = await service.getProfilesByDevice(testDeviceId);
+            expect(profiles.find(p => p.name === 'to_restore')).toBeDefined();
+        });
+        it('should throw error when restoring non-deleted profile', async () => {
+            await service.createProfile({
+                name: 'not_deleted',
+                device_id: testDeviceId,
+                machine_type: 'GENERATOR',
+                oil_type: 'DO',
+                operating_temperature: 40,
+                density: 850,
+                is_active: false,
+            });
+            await expect(service.restoreProfile('not_deleted')).rejects.toThrow('not deleted');
+        });
+        it('should throw error when restoring non-existent profile', async () => {
+            await expect(service.restoreProfile('non_existent')).rejects.toThrow('not found');
         });
     });
 });

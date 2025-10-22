@@ -122,15 +122,16 @@ module.exports = function (RED) {
                     stats.failedCalculations++;
                     return;
                 }
-                // Publish to MQTT if enabled
+                // Format payload for output (compatible with viis-thingsboard-telemetry)
+                const formattedPayload = formatAccumulationPayload(results);
+                // Publish to MQTT if enabled (legacy direct MQTT)
                 if (config.publishToMqtt && thingsboardMqttClient) {
-                    const payload = formatAccumulationPayload(results);
                     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
-                    thingsboardMqttClient.publish(topic, JSON.stringify(payload));
+                    thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
                     node.log(`[FlowAccumulation] Published to ${topic}: ${results.length} sensors`);
                 }
-                // Send output
-                node.send({ payload: results });
+                // Send formatted output (can be piped to viis-thingsboard-telemetry for retry support)
+                node.send({ payload: formattedPayload });
                 // Update stats
                 stats.lastSuccess = true;
                 stats.totalCalculations++;
@@ -206,13 +207,19 @@ module.exports = function (RED) {
                     hourStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - 1, 0, 0, 0);
                 }
                 const results = await accumulationService.calculateHourlyAccumulation(deviceId, hourStart);
-                // Publish to MQTT if enabled
-                if (config.publishToMqtt && thingsboardMqttClient && results.length > 0) {
-                    const mqttPayload = formatAccumulationPayload(results);
+                // Format payload for output
+                const formattedPayload = results.length > 0
+                    ? formatAccumulationPayload(results)
+                    : null;
+                // Publish to MQTT if enabled (legacy direct MQTT)
+                if (config.publishToMqtt && thingsboardMqttClient && formattedPayload) {
                     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
-                    thingsboardMqttClient.publish(topic, JSON.stringify(mqttPayload));
+                    thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
                 }
-                node.send({ payload: results });
+                // Send formatted output
+                if (formattedPayload) {
+                    node.send({ payload: formattedPayload });
+                }
                 node.status({
                     fill: "green",
                     shape: "dot",

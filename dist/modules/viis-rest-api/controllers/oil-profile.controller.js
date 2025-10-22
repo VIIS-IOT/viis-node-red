@@ -297,7 +297,7 @@ let OilProfileController = class OilProfileController {
         }
     }
     /**
-     * Delete oil profile
+     * Soft delete oil profile (marks as deleted, preserves data for historical records)
      * DELETE /api/v2/oil-profiles/:name
      *
      * @param name - Profile name
@@ -305,9 +305,9 @@ let OilProfileController = class OilProfileController {
      */
     async deleteProfile(name) {
         try {
-            logger_1.logger.info(this.node, 'Deleting oil profile', { name });
+            logger_1.logger.info(this.node, 'Soft deleting oil profile', { name });
             await this.oilProfileService.deleteProfile(name);
-            logger_1.logger.info(this.node, 'Oil profile deleted successfully', { name });
+            logger_1.logger.info(this.node, 'Oil profile soft deleted successfully', { name });
         }
         catch (error) {
             logger_1.logger.error(this.node, 'Error deleting oil profile', {
@@ -321,6 +321,34 @@ let OilProfileController = class OilProfileController {
                 throw new routing_controllers_1.BadRequestError(error.message);
             }
             throw new routing_controllers_1.InternalServerError(`Failed to delete oil profile: ${error.message}`);
+        }
+    }
+    /**
+     * Restore a soft-deleted oil profile
+     * POST /api/v2/oil-profiles/:name/restore
+     *
+     * @param name - Profile name
+     * @returns Restored profile
+     */
+    async restoreProfile(name) {
+        try {
+            logger_1.logger.info(this.node, 'Restoring oil profile', { name });
+            const profile = await this.oilProfileService.restoreProfile(name);
+            logger_1.logger.info(this.node, 'Oil profile restored successfully', { name });
+            return this.mapToResponseDto(profile);
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, 'Error restoring oil profile', {
+                error: error.message,
+                name
+            });
+            if (error.message.includes('not found')) {
+                throw new routing_controllers_1.NotFoundError(error.message);
+            }
+            if (error.message.includes('not deleted')) {
+                throw new routing_controllers_1.BadRequestError(error.message);
+            }
+            throw new routing_controllers_1.InternalServerError(`Failed to restore oil profile: ${error.message}`);
         }
     }
     /**
@@ -411,6 +439,14 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], OilProfileController.prototype, "deleteProfile", null);
+__decorate([
+    (0, routing_controllers_1.Post)('/:name/restore'),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('name')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], OilProfileController.prototype, "restoreProfile", null);
 exports.OilProfileController = OilProfileController = __decorate([
     (0, routing_controllers_1.JsonController)('/oil-profiles'),
     (0, typedi_1.Service)(),

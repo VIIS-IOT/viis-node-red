@@ -76,6 +76,14 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotOilProfile.prototype, "description", void 0);
 __decorate([
+    (0, typeorm_1.Column)({
+        type: 'datetime',
+        nullable: true,
+        comment: 'Soft delete timestamp - profile is hidden but data preserved'
+    }),
+    __metadata("design:type", Date)
+], TabiotOilProfile.prototype, "deleted_at", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => TabiotDevice_1.TabiotDevice, { onDelete: 'CASCADE' }),
     (0, typeorm_1.JoinColumn)({ name: 'device_id', referencedColumnName: 'name' }),
     __metadata("design:type", TabiotDevice_1.TabiotDevice)

@@ -48,6 +48,8 @@ const schedule_activation_service_1 = require("../services/schedule-activation.s
 const schedule_completion_monitor_service_1 = require("../services/schedule-completion-monitor.service");
 const marine_telemetry_service_1 = require("../services/marine-telemetry.service");
 const marine_websocket_service_1 = require("../services/marine-websocket.service");
+const TripManagementService_1 = require("../../../services/MarineIoT/TripManagementService");
+const TripAccumulationService_1 = require("../../../services/MarineIoT/TripAccumulationService");
 const auth_validator_1 = require("../validators/auth.validator");
 const user_validator_1 = require("../validators/user.validator");
 const auth_middleware_1 = require("../middleware/auth.middleware");
@@ -168,6 +170,11 @@ class ContainerSetup {
         // Register MarineWebSocketService (will be initialized later with HTTP server)
         const marineWebSocketService = new marine_websocket_service_1.MarineWebSocketService(marineTelemetryService, authService, node);
         typedi_1.default.set(marine_websocket_service_1.MarineWebSocketService, marineWebSocketService);
+        // Register Trip Management Services
+        const tripManagementService = new TripManagementService_1.TripManagementService(dataSource);
+        typedi_1.default.set(TripManagementService_1.TripManagementService, tripManagementService);
+        const tripAccumulationService = new TripAccumulationService_1.TripAccumulationService(dataSource);
+        typedi_1.default.set(TripAccumulationService_1.TripAccumulationService, tripAccumulationService);
         // Note: DeviceService is decorated with @Service()
         // It will be automatically instantiated by TypeDI when needed
     }

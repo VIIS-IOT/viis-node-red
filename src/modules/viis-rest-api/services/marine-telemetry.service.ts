@@ -11,13 +11,17 @@ import { TabiotDeviceTelemetryLatest } from '../../../orm/entities/device-teleme
 import { TabiotDeviceTelemetry } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetry';
 import { TabiotOilProfile } from '../../../orm/entities/oil-profile/TabiotOilProfile';
 import { OilProfileService, MachineType } from '../../../services/MarineIoT/OilProfileService';
+import { TripManagementService } from '../../../services/MarineIoT/TripManagementService';
+import { TripAccumulationService } from '../../../services/MarineIoT/TripAccumulationService';
 import {
     LatestTelemetryResponseDto,
+    EnhancedLatestTelemetryResponseDto,
     TelemetryHistoryResponseDto,
     MachinesSummaryResponseDto,
     MachineType as DtoMachineType,
     TelemetryDataPoint,
     MachineData,
+    EnhancedMachineData,
     MachineFlowData,
     ConsumptionRate,
     HistoricalDataPoint,
@@ -41,12 +45,16 @@ export class MarineTelemetryService {
     private telemetryRepo: Repository<TabiotDeviceTelemetry>;
     private oilProfileRepo: Repository<TabiotOilProfile>;
     private oilProfileService: OilProfileService;
+    private tripManagementService: TripManagementService;
+    private tripAccumulationService: TripAccumulationService;
 
     constructor(private dataSource: DataSource) {
         this.telemetryLatestRepo = dataSource.getRepository(TabiotDeviceTelemetryLatest);
         this.telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
         this.oilProfileRepo = dataSource.getRepository(TabiotOilProfile);
         this.oilProfileService = new OilProfileService(dataSource);
+        this.tripManagementService = new TripManagementService(dataSource);
+        this.tripAccumulationService = new TripAccumulationService(dataSource);
     }
 
     /**
@@ -99,6 +107,100 @@ export class MarineTelemetryService {
             data: dataPoints,
             machines: machines
         };
+    }
+
+    /**
+     * Get latest telemetry data WITH trip accumulation
+     * Returns enhanced data including trip totals
+     */
+    async getLatestTelemetryWithTrip(
+        deviceId: string,
+        keys?: string[]
+    ): Promise<EnhancedLatestTelemetryResponseDto> {
+        // Get base real-time telemetry
+        const baseData = await this.getLatestTelemetry(deviceId, keys);
+
+        // Check if there's an active trip
+        const activeTrip = await this.tripManagementService.getActiveTrip(deviceId);
+
+        if (!activeTrip) {
+            // No active trip, return base data without trip accumulation
+            return {
+                ...baseData,
+                machines: baseData.machines as any, // Cast to EnhancedMachineData
+                current_trip: undefined
+            };
+        }
+
+        // Get trip accumulation data
+        const tripAccumulation = await this.tripAccumulationService.getTripAccumulation(activeTrip.id);
+
+        // Merge trip data with real-time data
+        const enhancedMachines = this.mergeWithTripData(
+            baseData.machines,
+            tripAccumulation,
+            activeTrip
+        );
+
+        // Calculate trip duration
+        const durationMs = Date.now() - activeTrip.start_time;
+        const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(2));
+
+        return {
+            device_id: deviceId,
+            timestamp: baseData.timestamp,
+            data: baseData.data,
+            machines: enhancedMachines,
+            current_trip: {
+                id: activeTrip.id,
+                name: activeTrip.trip_name || 'Unnamed Trip',
+                start_time: activeTrip.start_time,
+                duration_hours: durationHours
+            }
+        };
+    }
+
+    /**
+     * Merge trip accumulation data with real-time machine data
+     */
+    private mergeWithTripData(
+        machines: Record<string, MachineData>,
+        tripAccumulation: any[],
+        trip: any
+    ): Record<string, EnhancedMachineData> {
+        const enhanced: Record<string, EnhancedMachineData> = {};
+        const machineTypes: MachineType[] = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+
+        for (const machineType of machineTypes) {
+            const machineData = machines[machineType];
+            if (!machineData) continue;
+
+            const sensors = MACHINE_SENSORS[machineType];
+
+            // Find accumulation data for this machine's sensors
+            const flowInAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_in);
+            const flowReturnAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_return);
+
+            enhanced[machineType] = {
+                ...machineData,
+                trip_accumulation: {
+                    total_volume_in: {
+                        m3: Number(flowInAcc?.total_volume_m3 || 0),
+                        tons: Number(flowInAcc?.total_volume_tons || 0)
+                    },
+                    total_volume_return: {
+                        m3: Number(flowReturnAcc?.total_volume_m3 || 0),
+                        tons: Number(flowReturnAcc?.total_volume_tons || 0)
+                    },
+                    total_consumption: {
+                        m3: Number((Number(flowInAcc?.total_volume_m3 || 0) - Number(flowReturnAcc?.total_volume_m3 || 0)).toFixed(2)),
+                        tons: Number((Number(flowInAcc?.total_volume_tons || 0) - Number(flowReturnAcc?.total_volume_tons || 0)).toFixed(2))
+                    }
+                }
+            };
+        }
+
+        return enhanced;
     }
 
     /**

@@ -274,13 +274,15 @@ export class MarineWebSocketService implements IService {
 
     /**
      * Handle get latest telemetry request
+     * Now includes trip accumulation data
      */
     private async handleGetLatest(socket: Socket, data: { deviceId: string; keys?: string[] | string }): Promise<void> {
         try {
             const { deviceId, keys } = data;
             const keyArray = keys && typeof keys === 'string' ? keys.split(',').map(k => k.trim()) : (Array.isArray(keys) ? keys : undefined);
 
-            const telemetry = await this.marineTelemetryService.getLatestTelemetry(deviceId, keyArray);
+            // Use enhanced telemetry with trip data
+            const telemetry = await this.marineTelemetryService.getLatestTelemetryWithTrip(deviceId, keyArray);
 
             socket.emit(MarineWebSocketEvents.TELEMETRY_UPDATE, {
                 deviceId,
@@ -377,6 +379,7 @@ export class MarineWebSocketService implements IService {
 
     /**
      * Send telemetry update to a specific socket
+     * Now includes trip accumulation data if active trip exists
      */
     private async sendTelemetryUpdate(socketId: string): Promise<void> {
         try {
@@ -386,7 +389,9 @@ export class MarineWebSocketService implements IService {
             }
 
             const { deviceId, keys } = subscription;
-            const telemetry = await this.marineTelemetryService.getLatestTelemetry(deviceId, keys);
+            
+            // Use enhanced telemetry with trip data
+            const telemetry = await this.marineTelemetryService.getLatestTelemetryWithTrip(deviceId, keys);
 
             this.io.to(socketId).emit(MarineWebSocketEvents.TELEMETRY_UPDATE, {
                 deviceId,
