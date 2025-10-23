@@ -196,14 +196,21 @@ describe('MarineTelemetryController', () => {
             expect(result.machines[MachineType.MAIN_ENGINE]).toBeUndefined();
         });
 
-        it('should throw error for non-existent device', async () => {
-            mockMarineTelemetryService.getLatestTelemetry.mockRejectedValue(
-                new Error('No telemetry data found for device non_existent')
-            );
+        it('should return empty structure for device with no telemetry data', async () => {
+            const emptyResponse = {
+                device_id: 'non_existent',
+                timestamp: Date.now(),
+                data: [],
+                machines: {}
+            };
 
-            await expect(
-                controller.getLatestTelemetry('non_existent', {})
-            ).rejects.toThrow();
+            mockMarineTelemetryService.getLatestTelemetry.mockResolvedValue(emptyResponse);
+
+            const result = await controller.getLatestTelemetry('non_existent', {});
+
+            expect(result.device_id).toBe('non_existent');
+            expect(result.data).toHaveLength(0);
+            expect(Object.keys(result.machines)).toHaveLength(0);
         });
     });
 

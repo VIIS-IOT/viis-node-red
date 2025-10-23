@@ -75,8 +75,14 @@ export class MarineTelemetryService {
 
         const telemetryData = await queryBuilder.getMany();
 
+        // If no data, return empty structure instead of error
         if (telemetryData.length === 0) {
-            throw new Error(`No telemetry data found for device ${deviceId}`);
+            return {
+                device_id: deviceId,
+                timestamp: Date.now(),
+                data: [],
+                machines: {}
+            };
         }
 
         // Get current timestamp from latest data

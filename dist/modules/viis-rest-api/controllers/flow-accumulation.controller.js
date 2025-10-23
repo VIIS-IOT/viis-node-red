@@ -67,6 +67,18 @@ let FlowAccumulationController = class FlowAccumulationController {
         }
     }
     /**
+     * Ensure DataSource is initialized before using
+     */
+    async ensureDataSource() {
+        if (!this.dataSource) {
+            await this.initializeServices();
+        }
+        if (!this.dataSource) {
+            throw new Error('DataSource initialization failed');
+        }
+        return this.dataSource;
+    }
+    /**
      * Get latest hourly accumulation data
      * GET /api/v2/marine/accumulation/latest/:device_id
      *
@@ -95,11 +107,9 @@ let FlowAccumulationController = class FlowAccumulationController {
      */
     async getLatestAccumulation(deviceId, query) {
         logger_1.logger.info(this.node, `[ACCUMULATION] Get latest accumulation for device: ${deviceId}`);
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
         try {
-            const repo = this.dataSource.getRepository('TabiotFlowAccumulation');
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
             let queryBuilder = repo.createQueryBuilder('acc')
                 .where('acc.device_id = :deviceId', { deviceId })
                 .orderBy('acc.hour_start', 'DESC');
@@ -166,11 +176,9 @@ let FlowAccumulationController = class FlowAccumulationController {
      */
     async getAccumulationHistory(deviceId, query) {
         logger_1.logger.info(this.node, `[ACCUMULATION] Get history for device: ${deviceId}`, query);
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
         try {
-            const repo = this.dataSource.getRepository('TabiotFlowAccumulation');
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
             let queryBuilder = repo.createQueryBuilder('acc')
                 .where('acc.device_id = :deviceId', { deviceId });
             // Apply time filters
@@ -256,9 +264,7 @@ let FlowAccumulationController = class FlowAccumulationController {
      */
     async getDailyTotals(deviceId, query) {
         logger_1.logger.info(this.node, `[ACCUMULATION] Get daily totals for device: ${deviceId}`);
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
         try {
             let queryString = `
                 SELECT 
@@ -293,7 +299,7 @@ let FlowAccumulationController = class FlowAccumulationController {
                 params.push(...keys);
             }
             queryString += ` GROUP BY sensor_key, DATE(hour_start) ORDER BY date DESC, sensor_key`;
-            const results = await this.dataSource.query(queryString, params);
+            const results = await dataSource.query(queryString, params);
             return {
                 device_id: deviceId,
                 data: results
@@ -331,11 +337,9 @@ let FlowAccumulationController = class FlowAccumulationController {
      */
     async getAccumulationSummary(deviceId, query) {
         logger_1.logger.info(this.node, `[ACCUMULATION] Get summary for device: ${deviceId}`);
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
         try {
-            const repo = this.dataSource.getRepository('TabiotFlowAccumulation');
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
             let queryBuilder = repo.createQueryBuilder('acc')
                 .where('acc.device_id = :deviceId', { deviceId });
             if (query.start_time) {

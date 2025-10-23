@@ -89,6 +89,21 @@ export class FlowAccumulationController {
     }
 
     /**
+     * Ensure DataSource is initialized before using
+     */
+    private async ensureDataSource(): Promise<DataSource> {
+        if (!this.dataSource) {
+            await this.initializeServices();
+        }
+        
+        if (!this.dataSource) {
+            throw new Error('DataSource initialization failed');
+        }
+        
+        return this.dataSource;
+    }
+
+    /**
      * Get latest hourly accumulation data
      * GET /api/v2/marine/accumulation/latest/:device_id
      * 
@@ -124,12 +139,10 @@ export class FlowAccumulationController {
     ) {
         logger.info(this.node, `[ACCUMULATION] Get latest accumulation for device: ${deviceId}`);
 
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
 
         try {
-            const repo = this.dataSource.getRepository('TabiotFlowAccumulation');
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
             
             let queryBuilder = repo.createQueryBuilder('acc')
                 .where('acc.device_id = :deviceId', { deviceId })
@@ -210,12 +223,10 @@ export class FlowAccumulationController {
     ) {
         logger.info(this.node, `[ACCUMULATION] Get history for device: ${deviceId}`, query);
 
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
 
         try {
-            const repo = this.dataSource.getRepository('TabiotFlowAccumulation');
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
             
             let queryBuilder = repo.createQueryBuilder('acc')
                 .where('acc.device_id = :deviceId', { deviceId });
@@ -320,9 +331,7 @@ export class FlowAccumulationController {
     ) {
         logger.info(this.node, `[ACCUMULATION] Get daily totals for device: ${deviceId}`);
 
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
 
         try {
             let queryString = `
@@ -364,7 +373,7 @@ export class FlowAccumulationController {
 
             queryString += ` GROUP BY sensor_key, DATE(hour_start) ORDER BY date DESC, sensor_key`;
 
-            const results = await this.dataSource.query(queryString, params);
+            const results = await dataSource.query(queryString, params);
 
             return {
                 device_id: deviceId,
@@ -411,12 +420,10 @@ export class FlowAccumulationController {
     ) {
         logger.info(this.node, `[ACCUMULATION] Get summary for device: ${deviceId}`);
 
-        if (!this.dataSource) {
-            throw new Error('DataSource not initialized');
-        }
+        const dataSource = await this.ensureDataSource();
 
         try {
-            const repo = this.dataSource.getRepository('TabiotFlowAccumulation');
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
             
             let queryBuilder = repo.createQueryBuilder('acc')
                 .where('acc.device_id = :deviceId', { deviceId });

@@ -55,8 +55,14 @@ let MarineTelemetryService = class MarineTelemetryService {
             .where('t.device_id = :deviceId', { deviceId })
             .andWhere('t.key_name IN (:...keys)', { keys: sensorKeys });
         const telemetryData = await queryBuilder.getMany();
+        // If no data, return empty structure instead of error
         if (telemetryData.length === 0) {
-            throw new Error(`No telemetry data found for device ${deviceId}`);
+            return {
+                device_id: deviceId,
+                timestamp: Date.now(),
+                data: [],
+                machines: {}
+            };
         }
         // Get current timestamp from latest data
         const timestamp = Math.max(...telemetryData.map(t => Number(t.timestamp)));
