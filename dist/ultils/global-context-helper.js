@@ -57,6 +57,19 @@ const ENV_TO_GLOBAL_MAPPING = {
     'EMQX_PORT': 'emqx_port',
     'EMQX_USERNAME': 'emqx_username',
     'EMQX_PASSWORD': 'emqx_password',
+    // Database configuration
+    'DATABASE_HOST': 'database_host',
+    'DATABASE_PORT': 'database_port',
+    'DATABASE_USERNAME': 'database_username',
+    'DATABASE_USER': 'database_username', // Alias for DATABASE_USERNAME
+    'DATABASE_PASSWORD': 'database_password',
+    'DATABASE_NAME': 'database_name',
+    // Legacy database configuration (db_* prefix)
+    'DB_HOST': 'db_host',
+    'DB_PORT': 'db_port',
+    'DB_USERNAME': 'db_username',
+    'DB_PASSWORD': 'db_password',
+    'DB_DATABASE': 'db_database',
     // Additional mappings for other environment variables
     'PORT': 'port',
     'ERP_URL': 'erp_url',

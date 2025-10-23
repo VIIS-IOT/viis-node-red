@@ -35,6 +35,10 @@ export class ModbusClientCore extends EventEmitter {
     private isConnected: boolean = false;
     private reconnectTimer?: NodeJS.Timeout;
     private wasConnected: boolean = false; // Track connection state
+    
+    // Request queue for serializing Modbus operations
+    private requestQueue: Promise<any> = Promise.resolve();
+    private queueLength: number = 0;
 
     constructor(config: ModbusConfig, node: Node) {
         super();
@@ -65,6 +69,33 @@ export class ModbusClientCore extends EventEmitter {
     }
 
     /**
+     * Enqueue a Modbus request to serialize operations
+     * This prevents overwhelming STM32 when multiple nodes poll simultaneously
+     */
+    private async enqueueRequest<T>(operation: () => Promise<T>): Promise<T> {
+        // Add to queue
+        this.queueLength++;
+        
+        // Chain the operation to the queue
+        const result = this.requestQueue.then(async () => {
+            try {
+                // Add small delay between requests for STM32 stability
+                if (this.queueLength > 1) {
+                    await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+                }
+                return await operation();
+            } finally {
+                this.queueLength--;
+            }
+        });
+        
+        // Update queue reference
+        this.requestQueue = result.catch(() => {}); // Catch to prevent queue blocking on errors
+        
+        return result;
+    }
+
+    /**
      * Apply board-specific configuration optimizations
      */
     private applyBoardSpecificConfig(): void {
@@ -82,11 +113,11 @@ export class ModbusClientCore extends EventEmitter {
                 }
                 break;
             case "STM32":
-                // STM32 boards can handle shorter timeouts
-                this.config.writeTimeout = this.config.writeTimeout || 3000;
-                this.config.readTimeout = this.config.readTimeout || 3000;
-                this.config.connectionTimeout = this.config.connectionTimeout || 2000;
-                this.config.maxRetries = this.config.maxRetries || 2;
+                // STM32 boards - increased timeouts for shared connection with multiple nodes
+                this.config.writeTimeout = this.config.writeTimeout || 8000;
+                this.config.readTimeout = this.config.readTimeout || 8000;
+                this.config.connectionTimeout = this.config.connectionTimeout || 5000;
+                this.config.maxRetries = this.config.maxRetries || 3;
                 if (this.node && this.node.log) {
                     //this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
                 }
@@ -490,74 +521,91 @@ export class ModbusClientCore extends EventEmitter {
     }
 
     public async readCoils(address: number, length: number): Promise<ModbusData> {
-        await this.ensureConnected();
+        // Use request queue to serialize operations
+        return this.enqueueRequest(async () => {
+            await this.ensureConnected();
 
-        const boardType = this.config.boardType || "STM32";
-        const readTimeout = this.config.readTimeout || 5000;
+            const boardType = this.config.boardType || "STM32";
+            const readTimeout = this.config.readTimeout || 5000;
 
-        try {
-            //this.node.debug(`[${boardType}-READ] Reading coils at address ${address}, length ${length} with timeout ${readTimeout}ms`);
+            try {
+                //this.node.debug(`[${boardType}-READ] Reading coils at address ${address}, length ${length} with timeout ${readTimeout}ms`);
 
-            // Add timeout wrapper with configurable timeout
-            const readPromise = this.client.readCoils(address, length);
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read coils timeout after ${readTimeout}ms`)), readTimeout);
-            });
+                // Add timeout wrapper with configurable timeout
+                const readPromise = this.client.readCoils(address, length);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read coils timeout after ${readTimeout}ms`)), readTimeout);
+                });
 
-            const { data } = await Promise.race([readPromise, timeoutPromise]);
-            //this.node.debug(`[${boardType}-READ] Successfully read coils at ${address}: ${data.length} values`);
-            return { address, data };
-        } catch (error) {
-            const err = error as Error;
-            this.node.warn(`[${boardType}-READ] Error reading coils at ${address}: ${err.message}`);
-            this.handleError(err);
-            throw error;
-        }
+                const { data } = await Promise.race([readPromise, timeoutPromise]);
+                //this.node.debug(`[${boardType}-READ] Successfully read coils at ${address}: ${data.length} values`);
+                return { address, data };
+            } catch (error) {
+                const err = error as Error;
+                this.node.warn(`[${boardType}-READ] Error reading coils at ${address}: ${err.message}`);
+                this.handleError(err);
+                throw error;
+            }
+        });
     }
 
     public async readInputRegisters(address: number, length: number): Promise<ModbusData> {
-        await this.ensureConnected();
+        // Use request queue to serialize operations
+        return this.enqueueRequest(async () => {
+            await this.ensureConnected();
 
-        try {
-            // Thêm timeout wrapper cho STM32
-            const readPromise = this.client.readInputRegisters(address, length);
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Read input registers timeout after 3s`)), 3000);
-            });
+            const boardType = this.config.boardType || "STM32";
+            const readTimeout = this.config.readTimeout || 8000;
 
-            const { data } = await Promise.race([readPromise, timeoutPromise]);
-            return { address, data };
-        } catch (error) {
-            const err = error as Error;
-            this.node.warn(`[STM32-READ] Error reading input registers at ${address}: ${err.message}`);
-            this.handleError(err);
-            throw error;
-        }
+            try {
+                // Timeout wrapper with configurable timeout
+                const readPromise = this.client.readInputRegisters(address, length);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read input registers timeout after ${readTimeout}ms`)), readTimeout);
+                });
+
+                const { data } = await Promise.race([readPromise, timeoutPromise]);
+                return { address, data };
+            } catch (error) {
+                const err = error as Error;
+                this.node.warn(`[${boardType}-READ] Error reading input registers at ${address}: ${err.message}`);
+                this.handleError(err);
+                throw error;
+            }
+        });
     }
 
     public async readHoldingRegisters(address: number, length: number): Promise<ModbusData> {
-        await this.ensureConnected();
+        // Use request queue to serialize operations
+        return this.enqueueRequest(async () => {
+            await this.ensureConnected();
 
-        try {
-            // Thêm timeout wrapper cho STM32
-            const readPromise = this.client.readHoldingRegisters(address, length);
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error(`[STM32-TIMEOUT] Read holding registers timeout after 3s`)), 3000);
-            });
+            const boardType = this.config.boardType || "STM32";
+            const readTimeout = this.config.readTimeout || 8000;
 
-            const { data } = await Promise.race([readPromise, timeoutPromise]);
-            return { address, data };
-        } catch (error) {
-            const err = error as Error;
-            this.node.warn(`[STM32-READ] Error reading holding registers at ${address}: ${err.message}`);
-            this.handleError(err);
-            throw error;
-        }
+            try {
+                // Timeout wrapper with configurable timeout
+                const readPromise = this.client.readHoldingRegisters(address, length);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read holding registers timeout after ${readTimeout}ms`)), readTimeout);
+                });
+
+                const { data } = await Promise.race([readPromise, timeoutPromise]);
+                return { address, data };
+            } catch (error) {
+                const err = error as Error;
+                this.node.warn(`[${boardType}-READ] Error reading holding registers at ${address}: ${err.message}`);
+                this.handleError(err);
+                throw error;
+            }
+        });
     }
 
     // Ghi Holding Register
     public async writeRegister(address: number, value: number): Promise<void> {
-        await this.ensureConnected();
+        // Use request queue to serialize operations
+        return this.enqueueRequest(async () => {
+            await this.ensureConnected();
 
         const boardType = this.config.boardType || "STM32";
         const writeTimeout = this.config.writeTimeout || 5000;
@@ -595,10 +643,13 @@ export class ModbusClientCore extends EventEmitter {
                 throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
             }
         }
+        });
     }
 
     public async writeCoil(address: number, value: boolean): Promise<void> {
-        await this.ensureConnected();
+        // Use request queue to serialize operations
+        return this.enqueueRequest(async () => {
+            await this.ensureConnected();
 
         const boardType = this.config.boardType || "STM32";
         const writeTimeout = this.config.writeTimeout || 5000;
@@ -636,6 +687,7 @@ export class ModbusClientCore extends EventEmitter {
                 throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
             }
         }
+        });
     }
 
     // Ngắt kết nối
