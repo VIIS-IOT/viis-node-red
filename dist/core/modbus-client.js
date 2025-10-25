@@ -66,11 +66,11 @@ class ModbusClientCore extends events_1.EventEmitter {
                 }
                 break;
             case "STM32":
-                // STM32 boards - increased timeouts for shared connection with multiple nodes
-                this.config.writeTimeout = this.config.writeTimeout || 8000;
-                this.config.readTimeout = this.config.readTimeout || 8000;
-                this.config.connectionTimeout = this.config.connectionTimeout || 5000;
-                this.config.maxRetries = this.config.maxRetries || 3;
+                // STM32 boards - optimized timeouts for fast polling (reduced from 8000ms to 3000ms)
+                this.config.writeTimeout = this.config.writeTimeout || 5000;
+                this.config.readTimeout = this.config.readTimeout || 3000; // Reduced for fast polling
+                this.config.connectionTimeout = this.config.connectionTimeout || 3000;
+                this.config.maxRetries = this.config.maxRetries || 2; // Reduced retries
                 if (this.node && this.node.log) {
                     //this.node.log(`[${boardType}] Applied STM32-specific configuration: writeTimeout=${this.config.writeTimeout}ms, readTimeout=${this.config.readTimeout}ms`);
                 }
@@ -454,7 +454,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
             const boardType = this.config.boardType || "STM32";
-            const readTimeout = this.config.readTimeout || 8000;
+            const readTimeout = this.config.readTimeout || 3000; // Use configured timeout
             try {
                 // Timeout wrapper with configurable timeout
                 const readPromise = this.client.readInputRegisters(address, length);
@@ -477,7 +477,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
             const boardType = this.config.boardType || "STM32";
-            const readTimeout = this.config.readTimeout || 8000;
+            const readTimeout = this.config.readTimeout || 3000; // Use configured timeout
             try {
                 // Timeout wrapper with configurable timeout
                 const readPromise = this.client.readHoldingRegisters(address, length);

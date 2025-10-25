@@ -169,7 +169,13 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private async pollCoils(config: PollingConfig, mapping: { [key: string]: number }): Promise<void> {
     const state = this.pollingStates.coils;
 
-    if (state.isPolling || this.isPollingPaused || this.isConfigUpdating) return;
+    // Skip if previous polling is still in progress
+    if (state.isPolling) {
+      this.node.warn('coils polling skipped - previous operation still in progress');
+      return;
+    }
+
+    if (this.isPollingPaused || this.isConfigUpdating) return;
 
     if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.handleMaxFailures('coils', state);
@@ -180,7 +186,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
     try {
       const result = await this.retryOperation(
-        () => this.modbusClient.readCoils(config.startAddress, config.quantity)
+        () => this.modbusClient.readCoils(config.startAddress, config.quantity),
+        config.interval
       );
 
       const currentState = this.processCoilData(result, mapping, config.startAddress);
@@ -205,7 +212,13 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private async pollInputRegisters(config: PollingConfig, mapping: { [key: string]: number }): Promise<void> {
     const state = this.pollingStates.inputRegisters;
 
-    if (state.isPolling || this.isPollingPaused || this.isConfigUpdating) return;
+    // Skip if previous polling is still in progress
+    if (state.isPolling) {
+      this.node.warn('inputRegisters polling skipped - previous operation still in progress');
+      return;
+    }
+
+    if (this.isPollingPaused || this.isConfigUpdating) return;
 
     if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.handleMaxFailures('inputRegisters', state);
@@ -216,7 +229,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
     try {
       const result = await this.retryOperation(
-        () => this.modbusClient.readInputRegisters(config.startAddress, config.quantity)
+        () => this.modbusClient.readInputRegisters(config.startAddress, config.quantity),
+        config.interval
       );
 
       const currentState = this.processRegisterData(result, mapping, 'read', 'input');
@@ -241,7 +255,13 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private async pollHoldingRegisters(config: PollingConfig, mapping: { [key: string]: number }): Promise<void> {
     const state = this.pollingStates.holdingRegisters;
 
-    if (state.isPolling || this.isPollingPaused || this.isConfigUpdating) return;
+    // Skip if previous polling is still in progress
+    if (state.isPolling) {
+      this.node.warn('holdingRegisters polling skipped - previous operation still in progress');
+      return;
+    }
+
+    if (this.isPollingPaused || this.isConfigUpdating) return;
 
     if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.handleMaxFailures('holdingRegisters', state);
@@ -252,7 +272,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
     try {
       const result = await this.retryOperation(
-        () => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity)
+        () => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity),
+        config.interval
       );
 
       const currentState = this.processRegisterData(result, mapping, 'read', 'holding');
@@ -357,17 +378,22 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
   /**
    * Retry operation with exponential backoff
+   * Automatically reduces retries for fast polling intervals
    */
-  private async retryOperation<T>(operation: () => Promise<T>): Promise<T> {
+  private async retryOperation<T>(operation: () => Promise<T>, pollInterval?: number): Promise<T> {
     let lastError: Error;
+    
+    // Reduce retries for fast polling (< 2s) to avoid request buildup
+    const maxRetries = pollInterval && pollInterval < 2000 ? 1 : MAX_RETRY_ATTEMPTS;
+    const retryDelay = pollInterval && pollInterval < 2000 ? 200 : RETRY_DELAY;
 
-    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error as Error;
-        if (attempt < MAX_RETRY_ATTEMPTS) {
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
       }
     }

@@ -88,7 +88,12 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
      */
     async pollCoils(config, mapping) {
         const state = this.pollingStates.coils;
-        if (state.isPolling || this.isPollingPaused || this.isConfigUpdating)
+        // Skip if previous polling is still in progress
+        if (state.isPolling) {
+            this.node.warn('coils polling skipped - previous operation still in progress');
+            return;
+        }
+        if (this.isPollingPaused || this.isConfigUpdating)
             return;
         if (state.consecutiveFailures >= viis_telemetry_constants_1.MAX_CONSECUTIVE_FAILURES) {
             this.handleMaxFailures('coils', state);
@@ -96,7 +101,7 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
         }
         state.isPolling = true;
         try {
-            const result = await this.retryOperation(() => this.modbusClient.readCoils(config.startAddress, config.quantity));
+            const result = await this.retryOperation(() => this.modbusClient.readCoils(config.startAddress, config.quantity), config.interval);
             const currentState = this.processCoilData(result, mapping, config.startAddress);
             this.node.context().global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, currentState);
             this.emitTelemetryData(currentState, viis_telemetry_constants_1.REGISTER_TYPES.COILS);
@@ -117,7 +122,12 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
      */
     async pollInputRegisters(config, mapping) {
         const state = this.pollingStates.inputRegisters;
-        if (state.isPolling || this.isPollingPaused || this.isConfigUpdating)
+        // Skip if previous polling is still in progress
+        if (state.isPolling) {
+            this.node.warn('inputRegisters polling skipped - previous operation still in progress');
+            return;
+        }
+        if (this.isPollingPaused || this.isConfigUpdating)
             return;
         if (state.consecutiveFailures >= viis_telemetry_constants_1.MAX_CONSECUTIVE_FAILURES) {
             this.handleMaxFailures('inputRegisters', state);
@@ -125,7 +135,7 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
         }
         state.isPolling = true;
         try {
-            const result = await this.retryOperation(() => this.modbusClient.readInputRegisters(config.startAddress, config.quantity));
+            const result = await this.retryOperation(() => this.modbusClient.readInputRegisters(config.startAddress, config.quantity), config.interval);
             const currentState = this.processRegisterData(result, mapping, 'read', 'input');
             this.node.context().global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA, currentState);
             this.emitTelemetryData(currentState, viis_telemetry_constants_1.REGISTER_TYPES.INPUT_REGISTERS);
@@ -146,7 +156,12 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
      */
     async pollHoldingRegisters(config, mapping) {
         const state = this.pollingStates.holdingRegisters;
-        if (state.isPolling || this.isPollingPaused || this.isConfigUpdating)
+        // Skip if previous polling is still in progress
+        if (state.isPolling) {
+            this.node.warn('holdingRegisters polling skipped - previous operation still in progress');
+            return;
+        }
+        if (this.isPollingPaused || this.isConfigUpdating)
             return;
         if (state.consecutiveFailures >= viis_telemetry_constants_1.MAX_CONSECUTIVE_FAILURES) {
             this.handleMaxFailures('holdingRegisters', state);
@@ -154,7 +169,7 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
         }
         state.isPolling = true;
         try {
-            const result = await this.retryOperation(() => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity));
+            const result = await this.retryOperation(() => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity), config.interval);
             const currentState = this.processRegisterData(result, mapping, 'read', 'holding');
             this.node.context().global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, currentState);
             this.emitTelemetryData(currentState, viis_telemetry_constants_1.REGISTER_TYPES.HOLDING_REGISTERS);
@@ -235,17 +250,21 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
     }
     /**
      * Retry operation with exponential backoff
+     * Automatically reduces retries for fast polling intervals
      */
-    async retryOperation(operation) {
+    async retryOperation(operation, pollInterval) {
         let lastError;
-        for (let attempt = 1; attempt <= viis_telemetry_constants_1.MAX_RETRY_ATTEMPTS; attempt++) {
+        // Reduce retries for fast polling (< 2s) to avoid request buildup
+        const maxRetries = pollInterval && pollInterval < 2000 ? 1 : viis_telemetry_constants_1.MAX_RETRY_ATTEMPTS;
+        const retryDelay = pollInterval && pollInterval < 2000 ? 200 : viis_telemetry_constants_1.RETRY_DELAY;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 return await operation();
             }
             catch (error) {
                 lastError = error;
-                if (attempt < viis_telemetry_constants_1.MAX_RETRY_ATTEMPTS) {
-                    await new Promise(resolve => setTimeout(resolve, viis_telemetry_constants_1.RETRY_DELAY * attempt));
+                if (attempt < maxRetries) {
+                    await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
                 }
             }
         }
