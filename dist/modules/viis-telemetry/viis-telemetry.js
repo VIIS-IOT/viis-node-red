@@ -135,7 +135,7 @@ module.exports = function (RED) {
                 // Initialize connection manager
                 const connectionManager = new viis_telemetry_connection_manager_1.ViisTelemetryConnectionManager(node, modbusClient, localMqttClient, thingsboardMqttClient, mysqlClient);
                 // Initialize polling service
-                const pollingService = new viis_telemetry_polling_service_1.ViisTelemetryPollingService(node, nodeContext, modbusClient);
+                const pollingService = new viis_telemetry_polling_service_1.ViisTelemetryPollingService(node, nodeContext, modbusClient, currentBoardId, envConfig.deviceId);
                 // Initialize telemetry processor
                 const processorConfig = {
                     emqxTopic: mqttTopicConfig.emqx,

@@ -171,7 +171,9 @@ module.exports = function (RED: NodeAPI) {
         const pollingService = new ViisTelemetryPollingService(
           node,
           nodeContext,
-          modbusClient
+          modbusClient,
+          currentBoardId,
+          envConfig.deviceId
         );
 
         // Initialize telemetry processor

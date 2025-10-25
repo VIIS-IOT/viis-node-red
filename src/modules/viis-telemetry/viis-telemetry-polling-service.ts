@@ -7,6 +7,7 @@ import { Node, NodeContext } from "node-red";
 import { ModbusClientCore, ModbusData } from "../../core/modbus-client";
 import { TelemetryData, ScaleConfig } from "./viis-telemetry-utils";
 import { applyScaling } from "./viis-telemetry-utils";
+import { ErrorNotificationService, BusinessLogicError } from "../../services/error-notification.service";
 import {
   MAX_CONSECUTIVE_FAILURES,
   POLLING_BACKOFF_TIME,
@@ -44,6 +45,7 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private readonly node: Node;
   private readonly nodeContext: NodeContext;
   private readonly modbusClient: ModbusClientCore;
+  private readonly errorNotificationService: ErrorNotificationService;
 
   private readonly pollingStates: {
     coils: PollingState;
@@ -53,16 +55,23 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
   private isPollingPaused = false;
   private isConfigUpdating = false;
+  private currentBoardId: string | undefined;
+  private deviceId: string;
 
   constructor(
     node: Node,
     nodeContext: NodeContext,
-    modbusClient: ModbusClientCore
+    modbusClient: ModbusClientCore,
+    boardId?: string,
+    deviceId?: string
   ) {
     super();
     this.node = node;
     this.nodeContext = nodeContext;
     this.modbusClient = modbusClient;
+    this.errorNotificationService = new ErrorNotificationService(nodeContext);
+    this.currentBoardId = boardId;
+    this.deviceId = deviceId || node.id;
 
     this.pollingStates = {
       coils: { isPolling: false, consecutiveFailures: 0, interval: null },
@@ -181,7 +190,7 @@ export class ViisTelemetryPollingService extends EventEmitter {
       state.consecutiveFailures = 0;
 
     } catch (error) {
-      this.handlePollingError('coils', state, error as Error);
+      await this.handlePollingError('coils', state, error as Error);
     } finally {
       state.isPolling = false;
       if (this.isConfigUpdating) {
@@ -210,14 +219,14 @@ export class ViisTelemetryPollingService extends EventEmitter {
         () => this.modbusClient.readInputRegisters(config.startAddress, config.quantity)
       );
 
-      const currentState = this.processRegisterData(result, mapping, 'read');
+      const currentState = this.processRegisterData(result, mapping, 'read', 'input');
       this.node.context().global.set(GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA, currentState);
 
       this.emitTelemetryData(currentState, REGISTER_TYPES.INPUT_REGISTERS);
       state.consecutiveFailures = 0;
 
     } catch (error) {
-      this.handlePollingError('inputRegisters', state, error as Error);
+      await this.handlePollingError('inputRegisters', state, error as Error);
     } finally {
       state.isPolling = false;
       if (this.isConfigUpdating) {
@@ -246,14 +255,14 @@ export class ViisTelemetryPollingService extends EventEmitter {
         () => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity)
       );
 
-      const currentState = this.processRegisterData(result, mapping, 'read');
+      const currentState = this.processRegisterData(result, mapping, 'read', 'holding');
       this.node.context().global.set(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, currentState);
 
       this.emitTelemetryData(currentState, REGISTER_TYPES.HOLDING_REGISTERS);
       state.consecutiveFailures = 0;
 
     } catch (error) {
-      this.handlePollingError('holdingRegisters', state, error as Error);
+      await this.handlePollingError('holdingRegisters', state, error as Error);
     } finally {
       state.isPolling = false;
       if (this.isConfigUpdating) {
@@ -293,14 +302,22 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private processRegisterData(
     result: ModbusData,
     mapping: { [key: string]: number },
-    direction: 'read' | 'write'
+    direction: 'read' | 'write',
+    registerType: 'holding' | 'input' = 'input'
   ): TelemetryData {
     const currentState: TelemetryData = {};
     const values = result.data as number[];
     const scaleConfigs = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
 
     Object.entries(mapping).forEach(([key, index]) => {
-      currentState[key] = applyScaling(key, values[index], direction, scaleConfigs);
+      let value = applyScaling(key, values[index], direction, scaleConfigs);
+      
+      // Divide flow sensor values by 10 for holding registers
+      if (registerType === 'holding' && /^fs0[1-6]$/.test(key)) {
+        value = value / 10;
+      }
+      
+      currentState[key] = value;
     });
 
     return currentState;
@@ -327,10 +344,15 @@ export class ViisTelemetryPollingService extends EventEmitter {
   /**
    * Handle polling error
    */
-  private handlePollingError(type: string, state: PollingState, error: Error): void {
+  private async handlePollingError(type: string, state: PollingState, error: Error): Promise<void> {
     state.consecutiveFailures++;
     this.node.error(`${type} polling error: ${error.message}`);
     this.node.warn(`Consecutive ${type} failures: ${state.consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}`);
+    
+    // Proactively write error notification when max failures reached
+    if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      await this.writeModbusConnectionError(type, error);
+    }
   }
 
   /**
@@ -359,5 +381,37 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private resetPreviousState(): void {
     this.nodeContext.set('previousState', {});
     this.isConfigUpdating = false;
+  }
+
+  /**
+   * Proactively write Modbus connection error notification
+   */
+  private async writeModbusConnectionError(registerType: string, error: Error): Promise<void> {
+    try {
+      const errorData: BusinessLogicError = {
+        err_code: `MODBUS_${registerType.toUpperCase()}_CONNECTION_FAILURE`,
+        message: `Failed to read ${registerType} after ${MAX_RETRY_ATTEMPTS} retry attempts: ${error.message}`,
+        severity: 'high',
+        type: 'error',
+        entity: this.deviceId,
+        entity_label: `Device ${this.deviceId}`,
+        metadata: {
+          register_type: registerType,
+          board_id: this.currentBoardId,
+          error_message: error.message,
+          consecutive_failures: MAX_CONSECUTIVE_FAILURES,
+          max_retry_attempts: MAX_RETRY_ATTEMPTS,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      await this.errorNotificationService.createFromBusinessLogic(errorData);
+      this.node.warn(`Error notification created for ${registerType} connection failure`);
+    } catch (notificationError: any) {
+      // Silently skip if database not ready
+      if (notificationError?.message !== 'Database not initialized') {
+        this.node.error(`Failed to create error notification: ${notificationError.message}`);
+      }
+    }
   }
 }
