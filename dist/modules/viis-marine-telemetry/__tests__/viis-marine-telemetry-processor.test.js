@@ -12,10 +12,10 @@ jest.mock('../../../services/MarineIoT/OilProfileService', () => {
     const localMockGetActiveProfileForMachine = jest.fn();
     const localMockGetMachineTypeBySensor = jest.fn((sensorKey) => {
         const mapping = {
-            'fs01': 'GENERATOR',
-            'fs02': 'GENERATOR',
-            'fs03': 'MAIN_ENGINE',
-            'fs04': 'MAIN_ENGINE',
+            'fs01': 'MAIN_ENGINE',
+            'fs02': 'MAIN_ENGINE',
+            'fs03': 'GENERATOR',
+            'fs04': 'GENERATOR',
             'fs05': 'BOILER',
             'fs06': 'BOILER'
         };
@@ -163,7 +163,7 @@ describe('ViisMarinetTelemetryProcessor', () => {
             };
             const result = await processor.processFlowSensorData(telemetryData);
             expect(result).toHaveLength(3);
-            // fs01 is GENERATOR sensor -> DO profile
+            // fs01 is MAIN_ENGINE sensor -> DO profile
             expect(result[0]).toMatchObject({
                 device_id: 'device_001',
                 key_name: 'fs01',
@@ -171,14 +171,14 @@ describe('ViisMarinetTelemetryProcessor', () => {
                 oil_profile_id: 'profile_do_001',
                 density_snapshot: 850
             });
-            // fs02 is GENERATOR sensor -> DO profile  
+            // fs02 is MAIN_ENGINE sensor -> DO profile  
             expect(result[1]).toMatchObject({
                 key_name: 'fs02',
                 float_value: 30.2,
                 oil_profile_id: 'profile_do_001',
                 density_snapshot: 850
             });
-            // fs03 is MAIN_ENGINE sensor -> BO profile
+            // fs03 is GENERATOR sensor -> BO profile
             expect(result[2]).toMatchObject({
                 key_name: 'fs03',
                 float_value: 15.8,
@@ -352,13 +352,13 @@ describe('ViisMarinetTelemetryProcessor', () => {
             expect(savedEntities).toHaveLength(3);
             // Verify each sensor has correct profile
             const fs01 = savedEntities.find((e) => e.key_name === 'fs01');
-            expect(fs01.oil_profile_id).toBe('profile_do_001'); // GENERATOR -> DO
+            expect(fs01.oil_profile_id).toBe('profile_do_001'); // MAIN_ENGINE -> DO
             expect(fs01.density_snapshot).toBe(850);
             const fs02 = savedEntities.find((e) => e.key_name === 'fs02');
-            expect(fs02.oil_profile_id).toBe('profile_do_001'); // GENERATOR -> DO
+            expect(fs02.oil_profile_id).toBe('profile_do_001'); // MAIN_ENGINE -> DO
             expect(fs02.density_snapshot).toBe(850);
             const fs03 = savedEntities.find((e) => e.key_name === 'fs03');
-            expect(fs03.oil_profile_id).toBe('profile_bo_001'); // MAIN_ENGINE -> BO
+            expect(fs03.oil_profile_id).toBe('profile_bo_001'); // GENERATOR -> BO
             expect(fs03.density_snapshot).toBe(950);
         });
     });

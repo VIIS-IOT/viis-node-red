@@ -89,13 +89,13 @@ This node automatically calculates hourly accumulation data from flow sensors (f
     "fs01_avg_flow_m3h": 25.5,
     "fs01_accumulated_m3": 25.5,
     "fs01_accumulated_tons": 24.225,
-    "fs01_oil_profile": "BO_Generator",
+    "fs01_oil_profile": "DO_MainEngine",
     "fs01_density": 950,
     "fs01_samples": 60,
     "fs02_avg_flow_m3h": 30.2,
     "fs02_accumulated_m3": 30.2,
     "fs02_accumulated_tons": 28.69,
-    "fs02_oil_profile": "BO_Generator",
+    "fs02_oil_profile": "DO_MainEngine",
     "fs02_density": 950,
     "fs02_samples": 60
 }

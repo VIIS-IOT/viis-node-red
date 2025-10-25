@@ -181,8 +181,8 @@ MarineTelemetryService
 ### Machine Sensor Mapping
 ```typescript
 const MACHINE_SENSORS = {
-  'GENERATOR':   { flow_in: 'fs01', flow_return: 'fs02' },
-  'MAIN_ENGINE': { flow_in: 'fs03', flow_return: 'fs04' },
+  'MAIN_ENGINE': { flow_in: 'fs01', flow_return: 'fs02' },
+  'GENERATOR':   { flow_in: 'fs03', flow_return: 'fs04' },
   'BOILER':      { flow_in: 'fs05', flow_return: 'fs06' }
 };
 ```

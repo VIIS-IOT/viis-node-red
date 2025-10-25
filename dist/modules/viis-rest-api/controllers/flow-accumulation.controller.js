@@ -355,10 +355,10 @@ let FlowAccumulationController = class FlowAccumulationController {
                 queryBuilder = queryBuilder.andWhere('acc.hour_start < :endTime', { endTime });
             }
             const records = await queryBuilder.getMany();
-            // Machine sensor mapping (fs01-fs02: Generator, fs03-fs04: Main Engine, fs05-fs06: Boiler)
+            // Machine sensor mapping (fs01-fs02: Main Engine, fs03-fs04: Generator, fs05-fs06: Boiler)
             const machineMap = {
-                'GENERATOR': ['fs01', 'fs02'],
-                'MAIN_ENGINE': ['fs03', 'fs04'],
+                'MAIN_ENGINE': ['fs01', 'fs02'],
+                'GENERATOR': ['fs03', 'fs04'],
                 'BOILER': ['fs05', 'fs06']
             };
             const machines = {};

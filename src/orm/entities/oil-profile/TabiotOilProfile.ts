@@ -20,7 +20,7 @@ export class TabiotOilProfile extends CustomBaseEntity {
     @Column({
         type: 'enum',
         enum: ['GENERATOR', 'MAIN_ENGINE', 'BOILER'],
-        comment: 'Machine type: GENERATOR (fs01-02), MAIN_ENGINE (fs03-04), BOILER (fs05-06)'
+        comment: 'Machine type: MAIN_ENGINE (fs01-02), GENERATOR (fs03-04), BOILER (fs05-06)'
     })
     machine_type!: 'GENERATOR' | 'MAIN_ENGINE' | 'BOILER';
 

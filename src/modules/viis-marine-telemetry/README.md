@@ -168,9 +168,9 @@ CREATE TABLE tabiot_device_telemetry (
 ## 🛢️ Oil Profile System
 
 ### Machine Types
-- **GENERATOR** (fs01-fs02): Main generator engines
-- **MAIN_ENGINE** (fs03-fs04): Ship propulsion engines  
-- **BOILER** (fs05-fs06): Auxiliary boilers
+- **MAIN_ENGINE** (fs01-fs02): Ship propulsion engines (Máy chính 1, 2)
+- **GENERATOR** (fs03-fs04): Main generator engines (Máy phát 3, 4)
+- **BOILER** (fs05-fs06): Auxiliary boilers (Nồi hơi 5, 6)
 
 ### Oil Types
 - **BO** (Bunker Oil): Heavy fuel oil
@@ -298,9 +298,9 @@ MODBUS_BOARD1_HOLDING_REGISTERS={
 ```
 
 ### Result
-- Holding register 0 → fs01 (Generator inlet)
-- Holding register 1 → fs02 (Generator return)
-- Holding register 2 → fs03 (Main engine inlet)
+- Holding register 0 → fs01 (Main engine inlet)
+- Holding register 1 → fs02 (Main engine return)
+- Holding register 2 → fs03 (Generator inlet)
 - etc.
 
 ## 🚀 Usage Example

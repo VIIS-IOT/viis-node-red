@@ -100,9 +100,19 @@ export class ErrorMappingService {
     }
 
     // Find error code definition
-    const errorDef = registerMap.error_codes?.find((ec: any) => 
-      ec.code === source.value
-    );
+    let errorDef;
+    
+    if (source.register_type === 'holding') {
+      // For holding registers: any non-zero value matches the first error code
+      if (source.value !== 0 && registerMap.error_codes?.length > 0) {
+        errorDef = registerMap.error_codes[0];
+      }
+    } else {
+      // For coils and other types: exact match required
+      errorDef = registerMap.error_codes?.find((ec: any) => 
+        ec.code === source.value
+      );
+    }
 
     if (!errorDef) {
       // Value exists but no error code defined for this value
@@ -204,9 +214,19 @@ export class ErrorMappingService {
     }
 
     // Find error code definition
-    const errorDef = registerMap.error_codes?.find((ec: any) => 
-      ec.code === source.value
-    );
+    let errorDef;
+    
+    if (source.register_type === 'holding') {
+      // For holding registers: any non-zero value matches the first error code
+      if (source.value !== 0 && registerMap.error_codes?.length > 0) {
+        errorDef = registerMap.error_codes[0];
+      }
+    } else {
+      // For coils and other types: exact match required
+      errorDef = registerMap.error_codes?.find((ec: any) => 
+        ec.code === source.value
+      );
+    }
 
     if (!errorDef) {
       return null;

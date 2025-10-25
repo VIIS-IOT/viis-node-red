@@ -27,7 +27,7 @@ class ErrorMappingService {
      * @returns Parsed error or null if no mapping found
      */
     parseModbusError(source, deviceType) {
-        var _a, _b;
+        var _a, _b, _c;
         // Get mapping for device type
         const mapping = this.contextHelper.getErrorCodeMappingForDevice(deviceType);
         if (!mapping) {
@@ -42,7 +42,17 @@ class ErrorMappingService {
             return null;
         }
         // Find error code definition
-        const errorDef = (_b = registerMap.error_codes) === null || _b === void 0 ? void 0 : _b.find((ec) => ec.code === source.value);
+        let errorDef;
+        if (source.register_type === 'holding') {
+            // For holding registers: any non-zero value matches the first error code
+            if (source.value !== 0 && ((_b = registerMap.error_codes) === null || _b === void 0 ? void 0 : _b.length) > 0) {
+                errorDef = registerMap.error_codes[0];
+            }
+        }
+        else {
+            // For coils and other types: exact match required
+            errorDef = (_c = registerMap.error_codes) === null || _c === void 0 ? void 0 : _c.find((ec) => ec.code === source.value);
+        }
         if (!errorDef) {
             // Value exists but no error code defined for this value
             return null;
@@ -114,7 +124,7 @@ class ErrorMappingService {
      * @returns Parsed error or null if no mapping found
      */
     parseModbusErrorByBoardId(source, boardId) {
-        var _a, _b;
+        var _a, _b, _c;
         // Try to get mapping by board_id first
         const mapping = this.getMappingForBoardId(boardId);
         if (!mapping) {
@@ -128,7 +138,17 @@ class ErrorMappingService {
             return null;
         }
         // Find error code definition
-        const errorDef = (_b = registerMap.error_codes) === null || _b === void 0 ? void 0 : _b.find((ec) => ec.code === source.value);
+        let errorDef;
+        if (source.register_type === 'holding') {
+            // For holding registers: any non-zero value matches the first error code
+            if (source.value !== 0 && ((_b = registerMap.error_codes) === null || _b === void 0 ? void 0 : _b.length) > 0) {
+                errorDef = registerMap.error_codes[0];
+            }
+        }
+        else {
+            // For coils and other types: exact match required
+            errorDef = (_c = registerMap.error_codes) === null || _c === void 0 ? void 0 : _c.find((ec) => ec.code === source.value);
+        }
         if (!errorDef) {
             return null;
         }

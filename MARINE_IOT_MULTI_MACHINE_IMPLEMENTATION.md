@@ -15,8 +15,8 @@
 ### ⚡ Sensor → Machine Mapping
 
 ```
-GENERATOR:    fs01 (in) + fs02 (return) → DO (850 kg/m³)
-MAIN_ENGINE:  fs03 (in) + fs04 (return) → BO (950 kg/m³)
+MAIN_ENGINE:  fs01 (in) + fs02 (return) → DO (850 kg/m³)
+GENERATOR:    fs03 (in) + fs04 (return) → BO (950 kg/m³)
 BOILER:       fs05 (in) + fs06 (return) → HFO (980 kg/m³)
 ```
 
@@ -50,8 +50,8 @@ npm run migration:revert   # Rollback (dev only)
 **Sensor mapping**:
 ```typescript
 {
-  'fs01': 'GENERATOR', 'fs02': 'GENERATOR',
-  'fs03': 'MAIN_ENGINE', 'fs04': 'MAIN_ENGINE',
+  'fs01': 'MAIN_ENGINE', 'fs02': 'MAIN_ENGINE',
+  'fs03': 'GENERATOR', 'fs04': 'GENERATOR',
   'fs05': 'BOILER', 'fs06': 'BOILER'
 }
 ```

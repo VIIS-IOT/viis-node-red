@@ -32,10 +32,11 @@ import {
 
 /**
  * Sensor mapping for each machine type
+ * fs01-fs02: Máy chính (Main Engine), fs03-fs04: Máy phát (Generator), fs05-fs06: Nồi hơi (Boiler)
  */
 const MACHINE_SENSORS: Record<MachineType, { flow_in: string; flow_return: string }> = {
-    'GENERATOR': { flow_in: 'fs01', flow_return: 'fs02' },
-    'MAIN_ENGINE': { flow_in: 'fs03', flow_return: 'fs04' },
+    'MAIN_ENGINE': { flow_in: 'fs01', flow_return: 'fs02' },
+    'GENERATOR': { flow_in: 'fs03', flow_return: 'fs04' },
     'BOILER': { flow_in: 'fs05', flow_return: 'fs06' }
 };
 

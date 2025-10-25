@@ -33,7 +33,7 @@ __decorate([
     (0, typeorm_1.Column)({
         type: 'enum',
         enum: ['GENERATOR', 'MAIN_ENGINE', 'BOILER'],
-        comment: 'Machine type: GENERATOR (fs01-02), MAIN_ENGINE (fs03-04), BOILER (fs05-06)'
+        comment: 'Machine type: MAIN_ENGINE (fs01-02), GENERATOR (fs03-04), BOILER (fs05-06)'
     }),
     __metadata("design:type", String)
 ], TabiotOilProfile.prototype, "machine_type", void 0);

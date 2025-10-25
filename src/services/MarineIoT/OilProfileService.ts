@@ -14,11 +14,12 @@ export class OilProfileService {
     private deviceRepo: Repository<TabiotDevice>;
 
     // Sensor key to machine type mapping
+    // fs01-fs02: Máy chính (Main Engine), fs03-fs04: Máy phát (Generator), fs05-fs06: Nồi hơi (Boiler)
     private static readonly SENSOR_MACHINE_MAP: Record<string, MachineType> = {
-        'fs01': 'GENERATOR',
-        'fs02': 'GENERATOR',
-        'fs03': 'MAIN_ENGINE',
-        'fs04': 'MAIN_ENGINE',
+        'fs01': 'MAIN_ENGINE',
+        'fs02': 'MAIN_ENGINE',
+        'fs03': 'GENERATOR',
+        'fs04': 'GENERATOR',
         'fs05': 'BOILER',
         'fs06': 'BOILER',
     };

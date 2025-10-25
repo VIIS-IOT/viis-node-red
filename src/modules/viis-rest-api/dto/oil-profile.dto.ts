@@ -27,8 +27,8 @@ import { Transform } from 'class-transformer';
  * Machine type enumeration
  */
 export enum MachineType {
-    GENERATOR = 'GENERATOR',      // Generator (fs01-02)
-    MAIN_ENGINE = 'MAIN_ENGINE',  // Main Engine (fs03-04)
+    GENERATOR = 'GENERATOR',      // Generator (fs03-04)
+    MAIN_ENGINE = 'MAIN_ENGINE',  // Main Engine (fs01-02)
     BOILER = 'BOILER'             // Boiler (fs05-06)
 }
 
