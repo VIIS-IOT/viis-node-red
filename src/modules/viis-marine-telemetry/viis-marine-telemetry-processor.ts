@@ -250,12 +250,18 @@ export class ViisMarinetTelemetryProcessor {
      * Parse TFS (Total Flow Sensor) values from holding registers
      * Each TFS sensor uses 2 consecutive registers: integer part + decimal part
      * 
-     * Formula: tfs_value = integer + ((decimal % 1000) / 1000)
-     * Note: Only the last 3 digits of decimal register are used via modulo 1000
+     * Formula: tfs_value = parseFloat(`${integer}.${decimal}`)
+     * The entire decimal register value becomes the decimal part
      * 
-     * Example:
-     * - Register[10] = 91, Register[11] = 8979
-     * - Result: 91 + ((8979 % 1000) / 1000) = 91 + (979/1000) = 91.979 m³
+     * Examples:
+     * - Register[10] = 91, Register[11] = 4589
+     *   Result: parseFloat("91.4589") = 91.4589 m³
+     * - Register[10] = 91, Register[11] = 6987
+     *   Result: parseFloat("91.6987") = 91.6987 m³
+     * - Register[10] = 91, Register[11] = 698
+     *   Result: parseFloat("91.698") = 91.698 m³
+     * - Register[10] = 91, Register[11] = 5
+     *   Result: parseFloat("91.5") = 91.5 m³
      * 
      * Mapping:
      * - tfs01: registers 10-11
@@ -289,11 +295,9 @@ export class ViisMarinetTelemetryProcessor {
                 if (integerPart !== undefined && integerPart !== null &&
                     decimalPart !== undefined && decimalPart !== null) {
                     
-                    // Parse: integer + (decimal % 1000) / 1000
-                    // Only take last 3 digits of decimal part
-                    // Example: decimal=8979 -> 8979%1000=979 -> 979/1000=0.979
-                    const decimalOnly = (decimalPart % 1000) / 1000;
-                    const tfsValue = integerPart + decimalOnly;
+                    // Parse: Concatenate integer and decimal parts as string, then parse as float
+                    // Example: 91 and 4589 → "91.4589" → 91.4589
+                    const tfsValue = parseFloat(`${integerPart}.${decimalPart}`);
 
                     tfsSensorData.push({
                         device_id: this.deviceId,
@@ -302,7 +306,7 @@ export class ViisMarinetTelemetryProcessor {
                         tfs_value: tfsValue
                     });
 
-                    this.node.log(`[Marine] Parsed ${sensorKey}: ${integerPart} + (${decimalPart}%1000)/1000 = ${tfsValue.toFixed(4)} m³`);
+                    this.node.log(`[Marine] Parsed ${sensorKey}: ${integerPart}.${decimalPart} = ${tfsValue} m³`);
                 }
             }
         }
