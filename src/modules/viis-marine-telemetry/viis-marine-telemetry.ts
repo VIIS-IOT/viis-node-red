@@ -20,7 +20,7 @@ import {
     TelemetryProcessorConfig,
     PeriodicSnapshotConfig
 } from '../viis-telemetry/viis-telemetry-processor';
-import { CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
+import { CONTEXT_KEYS, REGISTER_TYPES } from '../viis-telemetry/viis-telemetry-constants';
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ViisMarinetTelemetryNodeDef, MarineIoTConfig } from './viis-marine-telemetry-config';
 import { ViisMarinetTelemetryProcessor } from './viis-marine-telemetry-processor';
@@ -401,7 +401,7 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     // Process TFS data (tfs01-tfs06) from raw holding registers
-                    if (event.rawData && event.source === 'holding-registers') {
+                    if (event.rawData && event.source === REGISTER_TYPES.HOLDING_REGISTERS) {
                         const tfsData = await marineProcessor.processTfsData(event.rawData);
                         if (tfsData.length > 0) {
                             node.log(`[Marine] Processed ${tfsData.length} TFS sensors`);

@@ -198,7 +198,13 @@ class ViisMarinetTelemetryProcessor {
     /**
      * Parse TFS (Total Flow Sensor) values from holding registers
      * Each TFS sensor uses 2 consecutive registers: integer part + decimal part
-     * Formula: tfs_value = integer_part + (decimal_part / 1000)
+     *
+     * Formula: tfs_value = integer + ((decimal % 1000) / 1000)
+     * Note: Only the last 3 digits of decimal register are used via modulo 1000
+     *
+     * Example:
+     * - Register[10] = 91, Register[11] = 8979
+     * - Result: 91 + ((8979 % 1000) / 1000) = 91 + (979/1000) = 91.979 m³
      *
      * Mapping:
      * - tfs01: registers 10-11
@@ -228,15 +234,18 @@ class ViisMarinetTelemetryProcessor {
                 // Validate values
                 if (integerPart !== undefined && integerPart !== null &&
                     decimalPart !== undefined && decimalPart !== null) {
-                    // Parse: integer + decimal/1000
-                    const tfsValue = integerPart + (decimalPart / 1000);
+                    // Parse: integer + (decimal % 1000) / 1000
+                    // Only take last 3 digits of decimal part
+                    // Example: decimal=8979 -> 8979%1000=979 -> 979/1000=0.979
+                    const decimalOnly = (decimalPart % 1000) / 1000;
+                    const tfsValue = integerPart + decimalOnly;
                     tfsSensorData.push({
                         device_id: this.deviceId,
                         timestamp: timestamp,
                         key_name: sensorKey,
                         tfs_value: tfsValue
                     });
-                    this.node.log(`[Marine] Parsed ${sensorKey}: ${integerPart} + ${decimalPart}/1000 = ${tfsValue.toFixed(4)} m³`);
+                    this.node.log(`[Marine] Parsed ${sensorKey}: ${integerPart} + (${decimalPart}%1000)/1000 = ${tfsValue.toFixed(4)} m³`);
                 }
             }
         }

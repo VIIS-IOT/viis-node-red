@@ -298,7 +298,7 @@ module.exports = function (RED) {
                         await marineProcessor.saveFlowSensorData(flowSensorData);
                     }
                     // Process TFS data (tfs01-tfs06) from raw holding registers
-                    if (event.rawData && event.source === 'holding-registers') {
+                    if (event.rawData && event.source === viis_telemetry_constants_1.REGISTER_TYPES.HOLDING_REGISTERS) {
                         const tfsData = await marineProcessor.processTfsData(event.rawData);
                         if (tfsData.length > 0) {
                             node.log(`[Marine] Processed ${tfsData.length} TFS sensors`);
