@@ -5,6 +5,7 @@ const typeorm_1 = require("typeorm");
 const TabiotFlowAccumulation_1 = require("../../orm/entities/flow-accumulation/TabiotFlowAccumulation");
 const TabiotDeviceTelemetry_1 = require("../../orm/entities/device-telemetry/TabiotDeviceTelemetry");
 const TabiotOilProfile_1 = require("../../orm/entities/oil-profile/TabiotOilProfile");
+const FlowCheckpointService_1 = require("./FlowCheckpointService");
 /**
  * Flow Accumulation Service for Marine IoT System
  * Calculates hourly flow accumulation from flow sensor data
@@ -14,9 +15,11 @@ class FlowAccumulationService {
         this.dataSource = dataSource;
         // Flow sensor keys
         this.FLOW_SENSORS = ['fs01', 'fs02', 'fs03', 'fs04', 'fs05', 'fs06'];
+        this.TFS_SENSORS = ['tfs01', 'tfs02', 'tfs03', 'tfs04', 'tfs05', 'tfs06'];
         this.accumulationRepo = dataSource.getRepository(TabiotFlowAccumulation_1.TabiotFlowAccumulation);
         this.telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
         this.oilProfileRepo = dataSource.getRepository(TabiotOilProfile_1.TabiotOilProfile);
+        this.checkpointService = new FlowCheckpointService_1.FlowCheckpointService(dataSource);
     }
     /**
      * Calculate hourly accumulation for a specific hour
@@ -44,30 +47,41 @@ class FlowAccumulationService {
         return results;
     }
     /**
-     * Calculate accumulation for a single sensor
+     * Calculate accumulation for a single sensor using TFS delta
      */
     async calculateSensorAccumulation(deviceId, sensorKey, hourStart, hourEnd, startTs, endTs) {
-        // Query telemetry data for this sensor in this hour
+        // Map fs to tfs sensor key
+        const tfsKey = sensorKey.replace('fs', 'tfs');
+        // Query TFS telemetry data for this sensor in this hour
         const telemetryData = await this.telemetryRepo
             .createQueryBuilder('t')
             .where('t.device_id = :deviceId', { deviceId })
-            .andWhere('t.key_name = :sensorKey', { sensorKey })
+            .andWhere('t.key_name = :tfsKey', { tfsKey })
             .andWhere('t.timestamp >= :startTs', { startTs })
             .andWhere('t.timestamp < :endTs', { endTs })
             .andWhere('t.value_type = :valueType', { valueType: 'float' })
             .orderBy('t.timestamp', 'ASC')
             .getMany();
         if (telemetryData.length === 0) {
-            console.log(`No data for ${sensorKey} in hour ${hourStart.toISOString()}`);
+            console.log(`No TFS data for ${tfsKey} in hour ${hourStart.toISOString()}`);
             return null;
         }
-        // Calculate average flow rate
-        const flowValues = telemetryData.map(t => t.float_value || 0);
-        const avgFlowM3h = flowValues.reduce((sum, val) => sum + val, 0) / flowValues.length;
-        // Get density from first sample (assuming profile doesn't change mid-hour)
+        // Get first and last TFS values
         const firstSample = telemetryData[0];
-        const densityUsed = firstSample.density_snapshot || 0;
-        const oilProfileId = firstSample.oil_profile_id || 'unknown';
+        const lastSample = telemetryData[telemetryData.length - 1];
+        const firstTfsValue = firstSample.float_value || 0;
+        const lastTfsValue = lastSample.float_value || 0;
+        // Calculate accumulated volume from TFS delta
+        let accumulatedM3 = lastTfsValue - firstTfsValue;
+        // Handle TFS reset within the hour (negative delta)
+        if (accumulatedM3 < 0) {
+            // Calculate accumulated volume in segments
+            accumulatedM3 = this.calculateWithResets(telemetryData);
+            console.warn(`TFS reset detected for ${tfsKey} in hour ${hourStart.toISOString()}, accumulated: ${accumulatedM3.toFixed(4)}`);
+        }
+        // Get density from last sample
+        const densityUsed = lastSample.density_snapshot || 0;
+        const oilProfileId = lastSample.oil_profile_id || 'unknown';
         // If no density snapshot, try to get from active profile
         let finalDensity = densityUsed;
         let finalProfileId = oilProfileId;
@@ -80,17 +94,14 @@ class FlowAccumulationService {
                 finalProfileId = activeProfile.name;
             }
             else {
-                console.warn(`No density available for ${sensorKey} at ${hourStart.toISOString()}`);
-                finalDensity = 1000; // Default fallback (1000 kg/m³ = 1 ton/m³ for water)
+                console.warn(`No density available for ${tfsKey} at ${hourStart.toISOString()}`);
+                finalDensity = 1000; // Default fallback
             }
         }
-        // Calculate accumulated volume
-        // avg_flow_m3h is the average flow rate in m3/h
-        // For 1 hour period: accumulated_m3 = avg_flow_m3h * 1
-        const accumulatedM3 = avgFlowM3h * 1; // 1 hour
-        // Convert kg/m³ to tons/m³ for tons calculation
-        // tons = m3 * (kg/m³ / 1000)
+        // Calculate accumulated tons
         const accumulatedTons = accumulatedM3 * (finalDensity / 1000);
+        // Calculate average flow rate for compatibility
+        const avgFlowM3h = accumulatedM3 / 1; // Accumulated / 1 hour
         // Check if record already exists
         const existing = await this.accumulationRepo.findOne({
             where: {
@@ -123,6 +134,27 @@ class FlowAccumulationService {
             const accumulation = this.accumulationRepo.create(accumulationData);
             return await this.accumulationRepo.save(accumulation);
         }
+    }
+    /**
+     * Calculate accumulated volume when TFS was reset within the hour
+     * Sum up deltas between consecutive readings, treating negative deltas as resets
+     */
+    calculateWithResets(telemetryData) {
+        let totalAccumulated = 0;
+        for (let i = 1; i < telemetryData.length; i++) {
+            const prevValue = telemetryData[i - 1].float_value || 0;
+            const currValue = telemetryData[i].float_value || 0;
+            const delta = currValue - prevValue;
+            if (delta >= 0) {
+                // Normal accumulation
+                totalAccumulated += delta;
+            }
+            else {
+                // Reset detected, add current value (accumulated since reset)
+                totalAccumulated += currValue;
+            }
+        }
+        return totalAccumulated;
     }
     /**
      * Calculate accumulation for the previous hour (for scheduled job)

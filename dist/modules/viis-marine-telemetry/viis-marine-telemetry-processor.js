@@ -7,6 +7,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ViisMarinetTelemetryProcessor = void 0;
 const OilProfileService_1 = require("../../services/MarineIoT/OilProfileService");
 const TabiotDeviceTelemetry_1 = require("../../orm/entities/device-telemetry/TabiotDeviceTelemetry");
+const FlowCheckpointService_1 = require("../../services/MarineIoT/FlowCheckpointService");
+const TripAccumulationService_1 = require("../../services/MarineIoT/TripAccumulationService");
+const TripManagementService_1 = require("../../services/MarineIoT/TripManagementService");
 class ViisMarinetTelemetryProcessor {
     constructor(node, nodeContext, dataSource, marineConfig, deviceId) {
         this.node = node;
@@ -14,6 +17,9 @@ class ViisMarinetTelemetryProcessor {
         this.dataSource = dataSource;
         this.marineConfig = marineConfig;
         this.oilProfileService = new OilProfileService_1.OilProfileService(dataSource);
+        this.checkpointService = new FlowCheckpointService_1.FlowCheckpointService(dataSource);
+        this.tripAccumulationService = new TripAccumulationService_1.TripAccumulationService(dataSource);
+        this.tripManagementService = new TripManagementService_1.TripManagementService(dataSource);
         this.deviceId = deviceId;
         this.profileCache = {
             profile: null,
@@ -188,6 +194,166 @@ class ViisMarinetTelemetryProcessor {
             age: age,
             profile: this.profileCache.profile
         };
+    }
+    /**
+     * Parse TFS (Total Flow Sensor) values from holding registers
+     * Each TFS sensor uses 2 consecutive registers: integer part + decimal part
+     * Formula: tfs_value = integer_part + (decimal_part / 1000)
+     *
+     * Mapping:
+     * - tfs01: registers 10-11
+     * - tfs02: registers 12-13
+     * - tfs03: registers 14-15
+     * - tfs04: registers 16-17
+     * - tfs05: registers 18-19
+     * - tfs06: registers 20-21
+     */
+    parseTfsValues(holdingRegisterData) {
+        const tfsSensorData = [];
+        const timestamp = Date.now();
+        // TFS register mapping: [sensor_key, integer_address, decimal_address]
+        const tfsMapping = [
+            ['tfs01', 10, 11],
+            ['tfs02', 12, 13],
+            ['tfs03', 14, 15],
+            ['tfs04', 16, 17],
+            ['tfs05', 18, 19],
+            ['tfs06', 20, 21]
+        ];
+        for (const [sensorKey, intAddr, decAddr] of tfsMapping) {
+            // Check if addresses are within bounds
+            if (intAddr < holdingRegisterData.length && decAddr < holdingRegisterData.length) {
+                const integerPart = holdingRegisterData[intAddr];
+                const decimalPart = holdingRegisterData[decAddr];
+                // Validate values
+                if (integerPart !== undefined && integerPart !== null &&
+                    decimalPart !== undefined && decimalPart !== null) {
+                    // Parse: integer + decimal/1000
+                    const tfsValue = integerPart + (decimalPart / 1000);
+                    tfsSensorData.push({
+                        device_id: this.deviceId,
+                        timestamp: timestamp,
+                        key_name: sensorKey,
+                        tfs_value: tfsValue
+                    });
+                    this.node.log(`[Marine] Parsed ${sensorKey}: ${integerPart} + ${decimalPart}/1000 = ${tfsValue.toFixed(4)} m³`);
+                }
+            }
+        }
+        if (tfsSensorData.length > 0) {
+            this.node.log(`[Marine] Parsed ${tfsSensorData.length} TFS values`);
+        }
+        return tfsSensorData;
+    }
+    /**
+     * Process and save TFS values to database with profile information
+     * Also updates checkpoints and trip accumulation
+     * This method should be called after holding registers are read
+     */
+    async processTfsData(holdingRegisterData) {
+        if (!this.marineConfig.enabled) {
+            return [];
+        }
+        const tfsSensorData = this.parseTfsValues(holdingRegisterData);
+        if (tfsSensorData.length > 0) {
+            // Save TFS to database with profile/density
+            await this.saveTfsData(tfsSensorData);
+            // Update checkpoints and calculate deltas
+            await this.updateCheckpointsAndAccumulation(tfsSensorData);
+        }
+        return tfsSensorData;
+    }
+    /**
+     * Save TFS data to database with oil profile and density
+     * TFS data needs profile/density for tons calculation in accumulation service
+     */
+    async saveTfsData(tfsSensorData) {
+        if (tfsSensorData.length === 0) {
+            return;
+        }
+        try {
+            const telemetryRepo = this.dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
+            const entities = [];
+            // Get profile for each TFS sensor based on corresponding flow sensor
+            for (const data of tfsSensorData) {
+                // Map tfs01 -> fs01 to get machine type
+                const fsSensorKey = data.key_name.replace('tfs', 'fs');
+                const profile = await this.getProfileForSensor(fsSensorKey);
+                const entity = new TabiotDeviceTelemetry_1.TabiotDeviceTelemetry();
+                entity.device_id = data.device_id;
+                entity.timestamp = data.timestamp;
+                entity.key_name = data.key_name; // tfs01, tfs02, etc.
+                entity.value_type = 'float';
+                entity.float_value = data.tfs_value;
+                entity.oil_profile_id = (profile === null || profile === void 0 ? void 0 : profile.name) || null;
+                entity.density_snapshot = (profile === null || profile === void 0 ? void 0 : profile.density) || null;
+                entities.push(entity);
+            }
+            // Save to database
+            await telemetryRepo.save(entities);
+            this.node.log(`[Marine] Saved ${entities.length} TFS records to database`);
+        }
+        catch (error) {
+            this.node.error(`[Marine] Failed to save TFS data: ${error.message}`);
+            throw error;
+        }
+    }
+    /**
+     * Update checkpoints and trip accumulation based on TFS delta
+     * This is called after TFS data is saved to database
+     */
+    async updateCheckpointsAndAccumulation(tfsSensorData) {
+        if (tfsSensorData.length === 0) {
+            return;
+        }
+        try {
+            // Check if there's an active trip
+            const activeTrip = await this.tripManagementService.getActiveTrip(this.deviceId);
+            // Prepare checkpoint updates
+            const checkpointUpdates = [];
+            const tripUpdates = [];
+            for (const data of tfsSensorData) {
+                // Update trip checkpoint (always)
+                const tripCheckpoint = await this.checkpointService.updateCheckpoint({
+                    deviceId: data.device_id,
+                    sensorKey: data.key_name,
+                    tfsValue: data.tfs_value,
+                    checkpointType: 'trip'
+                });
+                // If we have a positive delta and an active trip, accumulate
+                if (activeTrip && tripCheckpoint.delta !== null && tripCheckpoint.delta > 0) {
+                    // Get profile for density/tons calculation
+                    const fsSensorKey = data.key_name.replace('tfs', 'fs');
+                    const profile = await this.getProfileForSensor(fsSensorKey);
+                    const density = (profile === null || profile === void 0 ? void 0 : profile.density) || 1000; // Default to 1000 kg/m³
+                    // Calculate delta in tons
+                    const deltaM3 = tripCheckpoint.delta;
+                    const deltaTons = deltaM3 * (density / 1000);
+                    tripUpdates.push({
+                        sensorKey: fsSensorKey, // Use fs01-fs06 for trip accumulation
+                        flowRate: {
+                            m3h: deltaM3, // Store delta in m3h field
+                            th: deltaTons // Store delta in th field
+                        },
+                        density: density,
+                        oilProfileId: (profile === null || profile === void 0 ? void 0 : profile.name) || null
+                    });
+                    this.node.log(`[Marine] ${data.key_name} delta: ${deltaM3.toFixed(4)} m³ (${deltaTons.toFixed(4)} tons)`);
+                }
+                if (tripCheckpoint.wasReset) {
+                    this.node.warn(`[Marine] ${data.key_name} was reset, checkpoint updated to ${data.tfs_value.toFixed(4)} m³`);
+                }
+            }
+            // Batch update trip accumulation if we have deltas
+            if (activeTrip && tripUpdates.length > 0) {
+                await this.tripAccumulationService.batchUpdateAccumulationWithDelta(activeTrip.id, tripUpdates);
+                this.node.log(`[Marine] Updated trip accumulation for ${tripUpdates.length} sensors`);
+            }
+        }
+        catch (error) {
+            this.node.error(`[Marine] Failed to update checkpoints: ${error.message}`);
+            // Don't throw - this is not critical, logging is enough
+        }
     }
 }
 exports.ViisMarinetTelemetryProcessor = ViisMarinetTelemetryProcessor;

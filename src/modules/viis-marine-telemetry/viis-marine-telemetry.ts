@@ -392,11 +392,20 @@ module.exports = function (RED: NodeAPI) {
                 // Process standard telemetry
                 await telemetryProcessor.processTelemetryData(event);
 
-                // Process Marine IoT flow sensor data if enabled
+                // Process Marine IoT data if enabled
                 if (marineProcessor && event.data) {
+                    // Process flow sensor data (fs01-fs06)
                     const flowSensorData = await marineProcessor.processFlowSensorData(event.data);
                     if (flowSensorData.length > 0) {
                         await marineProcessor.saveFlowSensorData(flowSensorData);
+                    }
+
+                    // Process TFS data (tfs01-tfs06) from raw holding registers
+                    if (event.rawData && event.source === 'holding-registers') {
+                        const tfsData = await marineProcessor.processTfsData(event.rawData);
+                        if (tfsData.length > 0) {
+                            node.log(`[Marine] Processed ${tfsData.length} TFS sensors`);
+                        }
                     }
                 }
             } catch (error) {

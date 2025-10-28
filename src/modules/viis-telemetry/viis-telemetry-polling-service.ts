@@ -279,7 +279,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
       const currentState = this.processRegisterData(result, mapping, 'read', 'holding');
       this.node.context().global.set(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, currentState);
 
-      this.emitTelemetryData(currentState, REGISTER_TYPES.HOLDING_REGISTERS);
+      // Emit with raw data for TFS parsing
+      this.emitTelemetryData(currentState, REGISTER_TYPES.HOLDING_REGISTERS, result.data as number[]);
       state.consecutiveFailures = 0;
 
     } catch (error) {
@@ -347,8 +348,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
   /**
    * Emit telemetry data event
    */
-  private emitTelemetryData(data: TelemetryData, source: string): void {
-    this.emit('telemetry-data', { data, source });
+  private emitTelemetryData(data: TelemetryData, source: string, rawData?: number[]): void {
+    this.emit('telemetry-data', { data, source, rawData });
   }
 
   /**

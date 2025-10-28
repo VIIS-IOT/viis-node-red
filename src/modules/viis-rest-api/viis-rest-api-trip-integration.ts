@@ -9,6 +9,7 @@ import { Node } from 'node-red';
 import { DataSource } from 'typeorm';
 import { TripAccumulationWorker } from '../../services/MarineIoT/TripAccumulationWorker';
 import { TripAccumulationService } from '../../services/MarineIoT/TripAccumulationService';
+import { FlowCheckpointService } from '../../services/MarineIoT/FlowCheckpointService';
 import { logger } from './utils/logger';
 
 export class TripIntegrationManager {
@@ -28,11 +29,13 @@ export class TripIntegrationManager {
 
             // Create services
             const tripAccumulationService = new TripAccumulationService(this.dataSource);
+            const checkpointService = new FlowCheckpointService(this.dataSource);
 
             // Create and start worker
             this.worker = new TripAccumulationWorker(
                 this.dataSource,
                 tripAccumulationService,
+                checkpointService,
                 this.node
             );
 

@@ -4,6 +4,7 @@ import { TabiotFlowAccumulation } from '../../../orm/entities/flow-accumulation/
 import { TabiotDeviceTelemetry } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetry';
 import { TabiotOilProfile } from '../../../orm/entities/oil-profile/TabiotOilProfile';
 import { TabiotDevice } from '../../../orm/entities/device/TabiotDevice';
+import { TabiotCustomer } from '../../../orm/entities/customer/customer';
 
 describe('FlowAccumulationService', () => {
     let dataSource: DataSource;
@@ -19,12 +20,7 @@ describe('FlowAccumulationService', () => {
             username: process.env.DB_USER || 'root',
             password: process.env.DB_PASSWORD || '',
             database: process.env.DB_NAME || 'viis_local_test',
-            entities: [
-                TabiotFlowAccumulation,
-                TabiotDeviceTelemetry,
-                TabiotOilProfile,
-                TabiotDevice,
-            ],
+            entities: ['src/orm/entities/**/*.ts'],
             synchronize: true,
             dropSchema: true,
         });
@@ -71,10 +67,11 @@ describe('FlowAccumulationService', () => {
     });
 
     afterEach(async () => {
-        await dataSource.getRepository(TabiotFlowAccumulation).clear();
-        await dataSource.getRepository(TabiotDeviceTelemetry).clear();
-        await dataSource.getRepository(TabiotOilProfile).clear();
-        await dataSource.getRepository(TabiotDevice).clear();
+        // Delete in order to respect foreign key constraints
+        await dataSource.getRepository(TabiotFlowAccumulation).delete({});
+        await dataSource.getRepository(TabiotDeviceTelemetry).delete({});
+        await dataSource.getRepository(TabiotOilProfile).delete({});
+        await dataSource.getRepository(TabiotDevice).delete({});
     });
 
     describe('calculateHourlyAccumulation', () => {
@@ -83,19 +80,25 @@ describe('FlowAccumulationService', () => {
             const startTs = hourStart.getTime();
             const endTs = startTs + 3600000; // +1 hour
 
-            // Create sample telemetry data (120 samples over 1 hour)
+            // Create TFS telemetry data (accumulated values increasing)
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
             const samples = [];
             
+            const startTfs = 100.0; // Starting accumulated value
+            const endTfs = 125.5;   // Ending accumulated value
+            const deltaPerSample = (endTfs - startTfs) / 119; // Distribute across samples
+            
             for (let i = 0; i < 120; i++) {
                 const timestamp = startTs + (i * 30000); // Every 30 seconds
+                const tfsValue = startTfs + (i * deltaPerSample);
+                
                 samples.push(
                     telemetryRepo.create({
                         device_id: testDeviceId,
                         timestamp,
-                        key_name: 'fs01',
+                        key_name: 'tfs01', // TFS sensor (accumulated)
                         value_type: 'float',
-                        float_value: 25.5, // Constant flow for simplicity
+                        float_value: tfsValue,
                         oil_profile_id: testProfileId,
                         density_snapshot: 950,
                     })
@@ -112,10 +115,11 @@ describe('FlowAccumulationService', () => {
 
             expect(results).toHaveLength(1); // Only fs01 has data
             expect(results[0].sensor_key).toBe('fs01');
-            expect(results[0].avg_flow_m3h).toBe(25.5);
-            expect(results[0].accumulated_m3).toBe(25.5); // 25.5 * 1 hour
-            expect(results[0].accumulated_tons).toBe(24.225); // 25.5 * 0.95
+            expect(results[0].accumulated_m3).toBeCloseTo(25.5, 1); // endTfs - startTfs
+            expect(results[0].accumulated_tons).toBeCloseTo(24.225, 2); // 25.5 * (950/1000)
             expect(results[0].sample_count).toBe(120);
+            expect(results[0].oil_profile_id).toBe(testProfileId);
+            expect(results[0].density_used).toBe(950);
         });
 
         it('should calculate for multiple sensors', async () => {
@@ -123,19 +127,28 @@ describe('FlowAccumulationService', () => {
             const startTs = hourStart.getTime();
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
-            const sensors = ['fs01', 'fs02', 'fs03'];
-            const flowRates = [25.5, 30.2, 18.7];
             
-            for (let s = 0; s < sensors.length; s++) {
+            // TFS sensors with different accumulations
+            const sensorConfig = [
+                { fs: 'fs01', tfs: 'tfs01', start: 100.0, end: 125.5 },  // 25.5 m³
+                { fs: 'fs02', tfs: 'tfs02', start: 200.0, end: 230.2 },  // 30.2 m³
+                { fs: 'fs03', tfs: 'tfs03', start: 300.0, end: 318.7 },  // 18.7 m³
+            ];
+            
+            for (const config of sensorConfig) {
+                const deltaPerSample = (config.end - config.start) / 119;
+                
                 for (let i = 0; i < 120; i++) {
                     const timestamp = startTs + (i * 30000);
+                    const tfsValue = config.start + (i * deltaPerSample);
+                    
                     await telemetryRepo.save(
                         telemetryRepo.create({
                             device_id: testDeviceId,
                             timestamp,
-                            key_name: sensors[s],
+                            key_name: config.tfs,
                             value_type: 'float',
-                            float_value: flowRates[s],
+                            float_value: tfsValue,
                             oil_profile_id: testProfileId,
                             density_snapshot: 950,
                         })
@@ -154,26 +167,28 @@ describe('FlowAccumulationService', () => {
             const fs02 = results.find(r => r.sensor_key === 'fs02');
             const fs03 = results.find(r => r.sensor_key === 'fs03');
 
-            expect(fs01?.avg_flow_m3h).toBe(25.5);
-            expect(fs02?.avg_flow_m3h).toBe(30.2);
-            expect(fs03?.avg_flow_m3h).toBe(18.7);
+            expect(fs01?.accumulated_m3).toBeCloseTo(25.5, 1);
+            expect(fs02?.accumulated_m3).toBeCloseTo(30.2, 1);
+            expect(fs03?.accumulated_m3).toBeCloseTo(18.7, 1);
         });
 
         it('should verify math: accumulated_tons = accumulated_m3 * density', async () => {
             const hourStart = new Date('2025-01-01T00:00:00Z');
             const startTs = hourStart.getTime();
-            const density = 0.85; // Different density
+            const density = 850; // 850 kg/m³
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
             
+            // TFS accumulated from 100 to 120 = 20 m³
             for (let i = 0; i < 60; i++) {
+                const tfsValue = 100 + (i * 20 / 59);
                 await telemetryRepo.save(
                     telemetryRepo.create({
                         device_id: testDeviceId,
                         timestamp: startTs + (i * 60000),
-                        key_name: 'fs01',
+                        key_name: 'tfs01',
                         value_type: 'float',
-                        float_value: 20.0,
+                        float_value: tfsValue,
                         oil_profile_id: testProfileId,
                         density_snapshot: density,
                     })
@@ -186,27 +201,28 @@ describe('FlowAccumulationService', () => {
             );
 
             const result = results[0];
-            const expectedTons = result.accumulated_m3 * density;
-            
-            expect(result.accumulated_tons).toBeCloseTo(expectedTons, 5);
+            // 20 m³ * (850/1000) = 17 tons
+            expect(result.accumulated_m3).toBeCloseTo(20, 1);
+            expect(result.accumulated_tons).toBeCloseTo(17, 1);
             expect(result.density_used).toBe(density);
         });
 
-        it('should handle varying flow rates correctly', async () => {
+        it('should include profile information', async () => {
             const hourStart = new Date('2025-01-01T00:00:00Z');
             const startTs = hourStart.getTime();
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
-            const flowRates = [20, 22, 24, 26, 28, 30]; // Varying rates
             
+            // TFS data with profile info
             for (let i = 0; i < 60; i++) {
+                const tfsValue = 100 + (i * 0.5);
                 await telemetryRepo.save(
                     telemetryRepo.create({
                         device_id: testDeviceId,
                         timestamp: startTs + (i * 60000),
-                        key_name: 'fs01',
+                        key_name: 'tfs01',
                         value_type: 'float',
-                        float_value: flowRates[i % flowRates.length],
+                        float_value: tfsValue,
                         oil_profile_id: testProfileId,
                         density_snapshot: 950,
                     })
@@ -218,9 +234,8 @@ describe('FlowAccumulationService', () => {
                 hourStart
             );
 
-            // Average should be (20+22+24+26+28+30)/6 = 25
-            expect(results[0].avg_flow_m3h).toBe(25);
-            expect(results[0].accumulated_m3).toBe(25);
+            expect(results[0].oil_profile_id).toBe(testProfileId);
+            expect(results[0].density_used).toBe(950);
         });
 
         it('should handle missing telemetry gracefully', async () => {
@@ -241,15 +256,16 @@ describe('FlowAccumulationService', () => {
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
             
-            // Create telemetry without density snapshot
+            // Create TFS telemetry without density snapshot
             for (let i = 0; i < 60; i++) {
+                const tfsValue = 100 + (i * 0.5);
                 await telemetryRepo.save(
                     telemetryRepo.create({
                         device_id: testDeviceId,
                         timestamp: startTs + (i * 60000),
-                        key_name: 'fs01',
+                        key_name: 'tfs01',
                         value_type: 'float',
-                        float_value: 20.0,
+                        float_value: tfsValue,
                         // No oil_profile_id or density_snapshot
                     })
                 );
@@ -260,7 +276,7 @@ describe('FlowAccumulationService', () => {
                 hourStart
             );
 
-            // Should use density from active profile or default 1.0
+            // Should use density from active profile (950) or default 1000
             expect(results).toHaveLength(1);
             expect(results[0].density_used).toBeGreaterThan(0);
         });
@@ -271,14 +287,16 @@ describe('FlowAccumulationService', () => {
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
             
+            // TFS data
             for (let i = 0; i < 60; i++) {
+                const tfsValue = 100 + (i * 0.5);
                 await telemetryRepo.save(
                     telemetryRepo.create({
                         device_id: testDeviceId,
                         timestamp: startTs + (i * 60000),
-                        key_name: 'fs01',
+                        key_name: 'tfs01',
                         value_type: 'float',
-                        float_value: 25.0,
+                        float_value: tfsValue,
                         oil_profile_id: testProfileId,
                         density_snapshot: 950,
                     })
@@ -393,7 +411,7 @@ describe('FlowAccumulationService', () => {
 
     describe('calculatePreviousHour', () => {
         it('should calculate for previous hour', async () => {
-            // Set up data for previous hour
+            // Set up TFS data for previous hour
             const now = new Date();
             const previousHour = new Date(now);
             previousHour.setHours(now.getHours() - 1, 0, 0, 0);
@@ -402,14 +420,16 @@ describe('FlowAccumulationService', () => {
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
             
+            // TFS accumulated from 100 to 120 = 20 m³
             for (let i = 0; i < 60; i++) {
+                const tfsValue = 100 + (i * 20 / 59);
                 await telemetryRepo.save(
                     telemetryRepo.create({
                         device_id: testDeviceId,
                         timestamp: startTs + (i * 60000),
-                        key_name: 'fs01',
+                        key_name: 'tfs01',
                         value_type: 'float',
-                        float_value: 20.0,
+                        float_value: tfsValue,
                         oil_profile_id: testProfileId,
                         density_snapshot: 950,
                     })
@@ -420,6 +440,7 @@ describe('FlowAccumulationService', () => {
 
             expect(results).toHaveLength(1);
             expect(results[0].sensor_key).toBe('fs01');
+            expect(results[0].accumulated_m3).toBeCloseTo(20, 1);
         });
     });
 
@@ -430,17 +451,20 @@ describe('FlowAccumulationService', () => {
 
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry);
             
-            // Create telemetry for 3 hours
+            // Create TFS telemetry for 3 hours
             for (let h = 0; h < 3; h++) {
                 const hourTs = startDate.getTime() + (h * 3600000);
+                const baseValue = 100 + (h * 25); // Start each hour at different value
+                
                 for (let i = 0; i < 60; i++) {
+                    const tfsValue = baseValue + (i * 25 / 59); // Accumulate 25 m³ per hour
                     await telemetryRepo.save(
                         telemetryRepo.create({
                             device_id: testDeviceId,
                             timestamp: hourTs + (i * 60000),
-                            key_name: 'fs01',
+                            key_name: 'tfs01',
                             value_type: 'float',
-                            float_value: 25.0,
+                            float_value: tfsValue,
                             oil_profile_id: testProfileId,
                             density_snapshot: 950,
                         })

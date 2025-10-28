@@ -25,6 +25,7 @@ export interface TelemetryProcessorConfig {
 export interface TelemetryDataEvent {
   data: TelemetryData;
   source: string;
+  rawData?: number[]; // Raw register data for special processing (e.g., TFS parsing)
 }
 
 /** Periodic snapshot configuration */

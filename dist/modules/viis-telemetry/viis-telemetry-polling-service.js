@@ -172,7 +172,8 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
             const result = await this.retryOperation(() => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity), config.interval);
             const currentState = this.processRegisterData(result, mapping, 'read', 'holding');
             this.node.context().global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, currentState);
-            this.emitTelemetryData(currentState, viis_telemetry_constants_1.REGISTER_TYPES.HOLDING_REGISTERS);
+            // Emit with raw data for TFS parsing
+            this.emitTelemetryData(currentState, viis_telemetry_constants_1.REGISTER_TYPES.HOLDING_REGISTERS, result.data);
             state.consecutiveFailures = 0;
         }
         catch (error) {
@@ -223,8 +224,8 @@ class ViisTelemetryPollingService extends events_1.EventEmitter {
     /**
      * Emit telemetry data event
      */
-    emitTelemetryData(data, source) {
-        this.emit('telemetry-data', { data, source });
+    emitTelemetryData(data, source, rawData) {
+        this.emit('telemetry-data', { data, source, rawData });
     }
     /**
      * Handle maximum failures reached

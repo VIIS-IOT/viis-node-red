@@ -104,6 +104,41 @@ export class TripAccumulationService {
     }
 
     /**
+     * Batch update accumulation using direct delta values (TFS-based)
+     * Used when accumulation comes from TFS delta instead of flow rate × time
+     */
+    async batchUpdateAccumulationWithDelta(
+        tripId: string,
+        updates: AccumulationUpdate[]
+    ): Promise<void> {
+        const timestamp = Date.now();
+
+        // Build batch update using transaction
+        await this.dataSource.transaction(async (manager) => {
+            for (const update of updates) {
+                // flowRate.m3h and flowRate.th now contain delta values directly
+                const deltaM3 = update.flowRate.m3h;
+                const deltaTons = update.flowRate.th;
+
+                await manager
+                    .createQueryBuilder()
+                    .update(TabiotTripAccumulation)
+                    .set({
+                        total_volume_m3: () => `total_volume_m3 + ${deltaM3}`,
+                        total_volume_tons: () => `total_volume_tons + ${deltaTons}`,
+                        current_density: update.density,
+                        oil_profile_id: update.oilProfileId,
+                        last_update_time: timestamp,
+                        sample_count: () => 'sample_count + 1',
+                    })
+                    .where('trip_id = :tripId', { tripId })
+                    .andWhere('sensor_key = :sensorKey', { sensorKey: update.sensorKey })
+                    .execute();
+            }
+        });
+    }
+
+    /**
      * Get accumulation data for a trip
      */
     async getTripAccumulation(tripId: string): Promise<TabiotTripAccumulation[]> {

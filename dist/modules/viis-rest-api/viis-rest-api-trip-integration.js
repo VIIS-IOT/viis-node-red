@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TripIntegrationManager = void 0;
 const TripAccumulationWorker_1 = require("../../services/MarineIoT/TripAccumulationWorker");
 const TripAccumulationService_1 = require("../../services/MarineIoT/TripAccumulationService");
+const FlowCheckpointService_1 = require("../../services/MarineIoT/FlowCheckpointService");
 const logger_1 = require("./utils/logger");
 class TripIntegrationManager {
     constructor(dataSource, node) {
@@ -24,8 +25,9 @@ class TripIntegrationManager {
             logger_1.logger.info(this.node, '[TRIP-INTEGRATION] Initializing trip accumulation system...');
             // Create services
             const tripAccumulationService = new TripAccumulationService_1.TripAccumulationService(this.dataSource);
+            const checkpointService = new FlowCheckpointService_1.FlowCheckpointService(this.dataSource);
             // Create and start worker
-            this.worker = new TripAccumulationWorker_1.TripAccumulationWorker(this.dataSource, tripAccumulationService, this.node);
+            this.worker = new TripAccumulationWorker_1.TripAccumulationWorker(this.dataSource, tripAccumulationService, checkpointService, this.node);
             this.worker.start();
             logger_1.logger.info(this.node, '[TRIP-INTEGRATION] ✅ Trip accumulation system initialized');
         }

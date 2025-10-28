@@ -26,16 +26,19 @@ const typeorm_1 = require("typeorm");
 const TabiotTrip_1 = require("../../orm/entities/trip/TabiotTrip");
 const TabiotDeviceTelemetryLatest_1 = require("../../orm/entities/device-telemetry/TabiotDeviceTelemetryLatest");
 const TripAccumulationService_1 = require("./TripAccumulationService");
+const FlowCheckpointService_1 = require("./FlowCheckpointService");
 const logger_1 = require("../../modules/viis-rest-api/utils/logger");
 let TripAccumulationWorker = class TripAccumulationWorker {
-    constructor(dataSource, tripAccumulationService, node) {
+    constructor(dataSource, tripAccumulationService, checkpointService, node) {
         this.dataSource = dataSource;
         this.tripAccumulationService = tripAccumulationService;
+        this.checkpointService = checkpointService;
         this.node = node;
         this.interval = null;
         this.isRunning = false;
         this.UPDATE_INTERVAL = 2000; // 2 seconds
         this.FLOW_SENSORS = ['fs01', 'fs02', 'fs03', 'fs04', 'fs05', 'fs06'];
+        this.TFS_SENSORS = ['tfs01', 'tfs02', 'tfs03', 'tfs04', 'tfs05', 'tfs06'];
         this.tripRepo = dataSource.getRepository(TabiotTrip_1.TabiotTrip);
         this.telemetryLatestRepo = dataSource.getRepository(TabiotDeviceTelemetryLatest_1.TabiotDeviceTelemetryLatest);
     }
@@ -94,48 +97,73 @@ let TripAccumulationWorker = class TripAccumulationWorker {
         }
     }
     /**
-     * Process a single trip
+     * Process a single trip using TFS delta-based accumulation
      */
     async processSingleTrip(trip) {
         try {
-            // Get latest telemetry for all flow sensors
+            // Get latest telemetry for all TFS sensors
             const latestData = await this.telemetryLatestRepo
                 .createQueryBuilder('t')
                 .where('t.device_id = :deviceId', { deviceId: trip.device_id })
-                .andWhere('t.key_name IN (:...sensors)', { sensors: this.FLOW_SENSORS })
+                .andWhere('t.key_name IN (:...sensors)', { sensors: this.TFS_SENSORS })
                 .getMany();
             if (latestData.length === 0) {
-                logger_1.logger.debug(this.node, `[TRIP-WORKER] No telemetry data for trip ${trip.id}`);
+                logger_1.logger.debug(this.node, `[TRIP-WORKER] No TFS telemetry data for trip ${trip.id}`);
                 return;
             }
-            // Build batch update
-            const updates = latestData.map(sensor => {
-                const flowRateM3h = sensor.float_value || 0;
-                const density = sensor.density_snapshot || 1000;
-                const flowRateTons = this.calculateTons(flowRateM3h, density);
-                return {
-                    sensorKey: sensor.key_name,
-                    flowRate: {
-                        m3h: flowRateM3h,
-                        th: flowRateTons
-                    },
-                    density: density,
-                    oilProfileId: sensor.oil_profile_id || null
-                };
-            });
-            // Batch update accumulation
-            await this.tripAccumulationService.batchUpdateAccumulation(trip.id, updates);
-            logger_1.logger.debug(this.node, `[TRIP-WORKER] Updated trip ${trip.id} (${updates.length} sensors)`);
+            // Build checkpoint updates and calculate deltas
+            const checkpointUpdates = latestData.map(sensor => ({
+                deviceId: trip.device_id,
+                sensorKey: sensor.key_name,
+                tfsValue: sensor.float_value || 0,
+                checkpointType: 'trip',
+                metadata: {
+                    trip_id: trip.id,
+                    oil_profile_id: sensor.oil_profile_id,
+                    density: sensor.density_snapshot
+                }
+            }));
+            // Batch update checkpoints and get deltas
+            const { deltas, resets } = await this.checkpointService.batchUpdateCheckpoints(checkpointUpdates);
+            if (resets.size > 0) {
+                logger_1.logger.warn(this.node, `[TRIP-WORKER] TFS reset detected for trip ${trip.id}: ${Array.from(resets).join(', ')}`);
+            }
+            // Build accumulation updates from deltas
+            const accumulationUpdates = [];
+            for (const sensor of latestData) {
+                const delta = deltas.get(sensor.key_name);
+                if (delta !== undefined && delta > 0) {
+                    const density = sensor.density_snapshot || 1000;
+                    const deltaTons = this.calculateTons(delta, density);
+                    accumulationUpdates.push({
+                        sensorKey: sensor.key_name,
+                        flowRate: {
+                            m3h: delta, // Delta volume (not flow rate, but reusing structure)
+                            th: deltaTons
+                        },
+                        density: density,
+                        oilProfileId: sensor.oil_profile_id || null
+                    });
+                }
+            }
+            if (accumulationUpdates.length > 0) {
+                // Use direct delta update method instead of batch update
+                await this.tripAccumulationService.batchUpdateAccumulationWithDelta(trip.id, accumulationUpdates);
+                logger_1.logger.debug(this.node, `[TRIP-WORKER] Updated trip ${trip.id} with ${accumulationUpdates.length} deltas`);
+            }
         }
         catch (error) {
             logger_1.logger.error(this.node, `[TRIP-WORKER] Error processing trip ${trip.id}: ${error.message}`);
         }
     }
     /**
-     * Calculate tons from m³/h and density
+     * Calculate tons from m³ and density
+     * @param m3 - Volume in cubic meters
+     * @param density - Density in kg/m³
+     * @returns Volume in tons
      */
-    calculateTons(m3h, density) {
-        return Number(((m3h * density) / 1000).toFixed(2));
+    calculateTons(m3, density) {
+        return Number(((m3 * density) / 1000).toFixed(4));
     }
     /**
      * Manual trigger for testing
@@ -159,5 +187,6 @@ exports.TripAccumulationWorker = TripAccumulationWorker;
 exports.TripAccumulationWorker = TripAccumulationWorker = __decorate([
     (0, typedi_1.Service)(),
     __metadata("design:paramtypes", [typeorm_1.DataSource,
-        TripAccumulationService_1.TripAccumulationService, Object])
+        TripAccumulationService_1.TripAccumulationService,
+        FlowCheckpointService_1.FlowCheckpointService, Object])
 ], TripAccumulationWorker);
