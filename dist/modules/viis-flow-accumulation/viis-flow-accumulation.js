@@ -3,13 +3,9 @@
  * viis-flow-accumulation Node
  * Calculates and publishes hourly flow accumulation data
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 const cron_1 = require("cron");
 const FlowAccumulationService_1 = require("../../services/MarineIoT/FlowAccumulationService");
-const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const dataSource_1 = require("../../orm/dataSource");
 module.exports = function (RED) {
@@ -49,17 +45,17 @@ module.exports = function (RED) {
                 // Initialize service
                 accumulationService = new FlowAccumulationService_1.FlowAccumulationService(dataSource);
                 node.log('[FlowAccumulation] Accumulation service initialized');
-                // Get MQTT client if publishing enabled
-                if (config.publishToMqtt) {
-                    const thingsboardConfig = createThingsboardMqttConfig(globalHelper);
-                    thingsboardMqttClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, node);
-                    if (!thingsboardMqttClient) {
-                        node.warn('[FlowAccumulation] MQTT client not available, publishing disabled');
-                    }
-                    else {
-                        node.log('[FlowAccumulation] MQTT client connected');
-                    }
-                }
+                // MQTT direct publishing disabled - use viis-thingsboard-telemetry node for retry support
+                // if (config.publishToMqtt) {
+                //     const thingsboardConfig = createThingsboardMqttConfig(globalHelper);
+                //     thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
+                //     
+                //     if (!thingsboardMqttClient) {
+                //         node.warn('[FlowAccumulation] MQTT client not available, publishing disabled');
+                //     } else {
+                //         node.log('[FlowAccumulation] MQTT client connected');
+                //     }
+                // }
                 // Setup scheduled calculation
                 if (config.enableAutoCalculation && config.cronSchedule) {
                     setupScheduledCalculation(config.cronSchedule);
@@ -124,12 +120,12 @@ module.exports = function (RED) {
                 }
                 // Format payload for output (compatible with viis-thingsboard-telemetry)
                 const formattedPayload = formatAccumulationPayload(results);
-                // Publish to MQTT if enabled (legacy direct MQTT)
-                if (config.publishToMqtt && thingsboardMqttClient) {
-                    const topic = config.mqttTopic || 'v1/devices/me/telemetry';
-                    thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
-                    node.log(`[FlowAccumulation] Published to ${topic}: ${results.length} sensors`);
-                }
+                // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
+                // if (config.publishToMqtt && thingsboardMqttClient) {
+                //     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
+                //     thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
+                //     node.log(`[FlowAccumulation] Published to ${topic}: ${results.length} sensors`);
+                // }
                 // Send formatted output (can be piped to viis-thingsboard-telemetry for retry support)
                 node.send({ payload: formattedPayload });
                 // Update stats
@@ -211,11 +207,11 @@ module.exports = function (RED) {
                 const formattedPayload = results.length > 0
                     ? formatAccumulationPayload(results)
                     : null;
-                // Publish to MQTT if enabled (legacy direct MQTT)
-                if (config.publishToMqtt && thingsboardMqttClient && formattedPayload) {
-                    const topic = config.mqttTopic || 'v1/devices/me/telemetry';
-                    thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
-                }
+                // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
+                // if (config.publishToMqtt && thingsboardMqttClient && formattedPayload) {
+                //     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
+                //     thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
+                // }
                 // Send formatted output
                 if (formattedPayload) {
                     node.send({ payload: formattedPayload });
@@ -291,8 +287,9 @@ module.exports = function (RED) {
             }
             const firstResult = results[0];
             // Start with base fields
+            // Use hour_start timestamp for ThingsBoard timeseries (not current time)
             const payload = {
-                ts: Date.now(),
+                ts: firstResult.hour_start.getTime(),
                 hour_start: firstResult.hour_start.toISOString(),
                 hour_end: firstResult.hour_end.toISOString(),
             };

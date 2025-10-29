@@ -63,66 +63,141 @@ describe('FlowAccumulationService', () => {
         await dataSource.getRepository(TabiotOilProfile_1.TabiotOilProfile).delete({});
         await dataSource.getRepository(TabiotDevice_1.TabiotDevice).delete({});
     });
-    describe('calculateHourlyAccumulation', () => {
-        it('should calculate accumulation with valid telemetry data', async () => {
+    describe('getTFSValueNearBoundary', () => {
+        it('should find TFS value exactly at boundary', async () => {
             const hourStart = new Date('2025-01-01T00:00:00Z');
-            const startTs = hourStart.getTime();
-            const endTs = startTs + 3600000; // +1 hour
-            // Create TFS telemetry data (accumulated values increasing)
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
-            const samples = [];
-            const startTfs = 100.0; // Starting accumulated value
-            const endTfs = 125.5; // Ending accumulated value
-            const deltaPerSample = (endTfs - startTfs) / 119; // Distribute across samples
-            for (let i = 0; i < 120; i++) {
-                const timestamp = startTs + (i * 30000); // Every 30 seconds
-                const tfsValue = startTfs + (i * deltaPerSample);
-                samples.push(telemetryRepo.create({
-                    device_id: testDeviceId,
-                    timestamp,
-                    key_name: 'tfs01', // TFS sensor (accumulated)
-                    value_type: 'float',
-                    float_value: tfsValue,
-                    oil_profile_id: testProfileId,
-                    density_snapshot: 950,
-                }));
-            }
-            await telemetryRepo.save(samples);
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourStart.getTime(),
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 91.4589,
+                oil_profile_id: testProfileId,
+                density_snapshot: 950,
+            }));
+            const result = await service.getTFSValueNearBoundary(testDeviceId, 'tfs01', hourStart, 60000);
+            expect(result).not.toBeNull();
+            expect(result.value).toBe(91.4589);
+            expect(result.density).toBe(950);
+            expect(result.profileId).toBe(testProfileId);
+        });
+        it('should find TFS value near boundary (within tolerance)', async () => {
+            const hourStart = new Date('2025-01-01T00:00:00Z');
+            const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
+            // Data at 00:00:03 (3 seconds after boundary)
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourStart.getTime() + 3000,
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 91.4589,
+                oil_profile_id: testProfileId,
+                density_snapshot: 950,
+            }));
+            const result = await service.getTFSValueNearBoundary(testDeviceId, 'tfs01', hourStart, 60000);
+            expect(result).not.toBeNull();
+            expect(result.value).toBe(91.4589);
+        });
+        it('should return null when no data within tolerance', async () => {
+            const hourStart = new Date('2025-01-01T00:00:00Z');
+            const result = await service.getTFSValueNearBoundary(testDeviceId, 'tfs01', hourStart, 60000);
+            expect(result).toBeNull();
+        });
+        it('should find closest TFS value when multiple samples exist', async () => {
+            const hourStart = new Date('2025-01-01T00:00:00Z');
+            const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
+            // Sample 1: 59 seconds before boundary
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourStart.getTime() - 59000,
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 90.0,
+                oil_profile_id: testProfileId,
+                density_snapshot: 950,
+            }));
+            // Sample 2: 3 seconds after boundary (closer)
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourStart.getTime() + 3000,
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 91.4589,
+                oil_profile_id: testProfileId,
+                density_snapshot: 950,
+            }));
+            const result = await service.getTFSValueNearBoundary(testDeviceId, 'tfs01', hourStart, 60000);
+            expect(result).not.toBeNull();
+            expect(result.value).toBe(91.4589); // Should pick the closest one
+        });
+    });
+    describe('calculateHourlyAccumulation - Boundary-Based', () => {
+        it('should calculate accumulation using boundary samples (user example)', async () => {
+            const hourStart = new Date('2025-01-01T19:00:00Z'); // 7:00 PM
+            const hourEnd = new Date('2025-01-01T20:00:00Z'); // 8:00 PM
+            const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
+            // TFS at 7:00 PM: 91.4589 m³
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourStart.getTime() + 3000, // 3 seconds after
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 91.4589,
+                oil_profile_id: testProfileId,
+                density_snapshot: 950,
+            }));
+            // TFS at 8:00 PM: 116.9589 m³
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourEnd.getTime() - 2000, // 2 seconds before
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 116.9589,
+                oil_profile_id: testProfileId,
+                density_snapshot: 950,
+            }));
             // Calculate accumulation
             const results = await service.calculateHourlyAccumulation(testDeviceId, hourStart);
-            expect(results).toHaveLength(1); // Only fs01 has data
+            expect(results).toHaveLength(1);
             expect(results[0].sensor_key).toBe('fs01');
-            expect(results[0].accumulated_m3).toBeCloseTo(25.5, 1); // endTfs - startTfs
+            expect(results[0].accumulated_m3).toBeCloseTo(25.5, 2); // 116.9589 - 91.4589 = 25.5
             expect(results[0].accumulated_tons).toBeCloseTo(24.225, 2); // 25.5 * (950/1000)
-            expect(results[0].sample_count).toBe(120);
+            expect(results[0].sample_count).toBe(2); // Boundary-based uses 2 samples
             expect(results[0].oil_profile_id).toBe(testProfileId);
             expect(results[0].density_used).toBe(950);
         });
         it('should calculate for multiple sensors', async () => {
             const hourStart = new Date('2025-01-01T00:00:00Z');
-            const startTs = hourStart.getTime();
+            const hourEnd = new Date('2025-01-01T01:00:00Z');
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
-            // TFS sensors with different accumulations
+            // TFS sensors with boundary values
             const sensorConfig = [
                 { fs: 'fs01', tfs: 'tfs01', start: 100.0, end: 125.5 }, // 25.5 m³
                 { fs: 'fs02', tfs: 'tfs02', start: 200.0, end: 230.2 }, // 30.2 m³
                 { fs: 'fs03', tfs: 'tfs03', start: 300.0, end: 318.7 }, // 18.7 m³
             ];
             for (const config of sensorConfig) {
-                const deltaPerSample = (config.end - config.start) / 119;
-                for (let i = 0; i < 120; i++) {
-                    const timestamp = startTs + (i * 30000);
-                    const tfsValue = config.start + (i * deltaPerSample);
-                    await telemetryRepo.save(telemetryRepo.create({
-                        device_id: testDeviceId,
-                        timestamp,
-                        key_name: config.tfs,
-                        value_type: 'float',
-                        float_value: tfsValue,
-                        oil_profile_id: testProfileId,
-                        density_snapshot: 950,
-                    }));
-                }
+                // Start boundary sample
+                await telemetryRepo.save(telemetryRepo.create({
+                    device_id: testDeviceId,
+                    timestamp: hourStart.getTime() + 2000,
+                    key_name: config.tfs,
+                    value_type: 'float',
+                    float_value: config.start,
+                    oil_profile_id: testProfileId,
+                    density_snapshot: 950,
+                }));
+                // End boundary sample
+                await telemetryRepo.save(telemetryRepo.create({
+                    device_id: testDeviceId,
+                    timestamp: hourEnd.getTime() - 3000,
+                    key_name: config.tfs,
+                    value_type: 'float',
+                    float_value: config.end,
+                    oil_profile_id: testProfileId,
+                    density_snapshot: 950,
+                }));
             }
             const results = await service.calculateHourlyAccumulation(testDeviceId, hourStart);
             expect(results).toHaveLength(3);
@@ -135,22 +210,29 @@ describe('FlowAccumulationService', () => {
         });
         it('should verify math: accumulated_tons = accumulated_m3 * density', async () => {
             const hourStart = new Date('2025-01-01T00:00:00Z');
-            const startTs = hourStart.getTime();
+            const hourEnd = new Date('2025-01-01T01:00:00Z');
             const density = 850; // 850 kg/m³
             const telemetryRepo = dataSource.getRepository(TabiotDeviceTelemetry_1.TabiotDeviceTelemetry);
-            // TFS accumulated from 100 to 120 = 20 m³
-            for (let i = 0; i < 60; i++) {
-                const tfsValue = 100 + (i * 20 / 59);
-                await telemetryRepo.save(telemetryRepo.create({
-                    device_id: testDeviceId,
-                    timestamp: startTs + (i * 60000),
-                    key_name: 'tfs01',
-                    value_type: 'float',
-                    float_value: tfsValue,
-                    oil_profile_id: testProfileId,
-                    density_snapshot: density,
-                }));
-            }
+            // TFS at start: 100 m³
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourStart.getTime() + 5000,
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 100.0,
+                oil_profile_id: testProfileId,
+                density_snapshot: density,
+            }));
+            // TFS at end: 120 m³ (delta = 20 m³)
+            await telemetryRepo.save(telemetryRepo.create({
+                device_id: testDeviceId,
+                timestamp: hourEnd.getTime() - 4000,
+                key_name: 'tfs01',
+                value_type: 'float',
+                float_value: 120.0,
+                oil_profile_id: testProfileId,
+                density_snapshot: density,
+            }));
             const results = await service.calculateHourlyAccumulation(testDeviceId, hourStart);
             const result = results[0];
             // 20 m³ * (850/1000) = 17 tons

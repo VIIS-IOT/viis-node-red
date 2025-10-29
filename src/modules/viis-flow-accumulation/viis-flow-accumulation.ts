@@ -63,17 +63,17 @@ module.exports = function (RED: NodeAPI) {
                 accumulationService = new FlowAccumulationService(dataSource);
                 node.log('[FlowAccumulation] Accumulation service initialized');
 
-                // Get MQTT client if publishing enabled
-                if (config.publishToMqtt) {
-                    const thingsboardConfig = createThingsboardMqttConfig(globalHelper);
-                    thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
-                    
-                    if (!thingsboardMqttClient) {
-                        node.warn('[FlowAccumulation] MQTT client not available, publishing disabled');
-                    } else {
-                        node.log('[FlowAccumulation] MQTT client connected');
-                    }
-                }
+                // MQTT direct publishing disabled - use viis-thingsboard-telemetry node for retry support
+                // if (config.publishToMqtt) {
+                //     const thingsboardConfig = createThingsboardMqttConfig(globalHelper);
+                //     thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
+                //     
+                //     if (!thingsboardMqttClient) {
+                //         node.warn('[FlowAccumulation] MQTT client not available, publishing disabled');
+                //     } else {
+                //         node.log('[FlowAccumulation] MQTT client connected');
+                //     }
+                // }
 
                 // Setup scheduled calculation
                 if (config.enableAutoCalculation && config.cronSchedule) {
@@ -155,12 +155,12 @@ module.exports = function (RED: NodeAPI) {
                 // Format payload for output (compatible with viis-thingsboard-telemetry)
                 const formattedPayload = formatAccumulationPayload(results);
 
-                // Publish to MQTT if enabled (legacy direct MQTT)
-                if (config.publishToMqtt && thingsboardMqttClient) {
-                    const topic = config.mqttTopic || 'v1/devices/me/telemetry';
-                    thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
-                    node.log(`[FlowAccumulation] Published to ${topic}: ${results.length} sensors`);
-                }
+                // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
+                // if (config.publishToMqtt && thingsboardMqttClient) {
+                //     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
+                //     thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
+                //     node.log(`[FlowAccumulation] Published to ${topic}: ${results.length} sensors`);
+                // }
 
                 // Send formatted output (can be piped to viis-thingsboard-telemetry for retry support)
                 node.send({ payload: formattedPayload });
@@ -257,11 +257,11 @@ module.exports = function (RED: NodeAPI) {
                     ? formatAccumulationPayload(results) 
                     : null;
 
-                // Publish to MQTT if enabled (legacy direct MQTT)
-                if (config.publishToMqtt && thingsboardMqttClient && formattedPayload) {
-                    const topic = config.mqttTopic || 'v1/devices/me/telemetry';
-                    thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
-                }
+                // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
+                // if (config.publishToMqtt && thingsboardMqttClient && formattedPayload) {
+                //     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
+                //     thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
+                // }
 
                 // Send formatted output
                 if (formattedPayload) {
@@ -351,8 +351,9 @@ module.exports = function (RED: NodeAPI) {
             const firstResult = results[0];
             
             // Start with base fields
+            // Use hour_start timestamp for ThingsBoard timeseries (not current time)
             const payload: AccumulationPayload = {
-                ts: Date.now(),
+                ts: firstResult.hour_start.getTime(),
                 hour_start: firstResult.hour_start.toISOString(),
                 hour_end: firstResult.hour_end.toISOString(),
             };

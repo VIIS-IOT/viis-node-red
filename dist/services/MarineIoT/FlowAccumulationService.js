@@ -22,20 +22,51 @@ class FlowAccumulationService {
         this.checkpointService = new FlowCheckpointService_1.FlowCheckpointService(dataSource);
     }
     /**
-     * Calculate hourly accumulation for a specific hour
+     * Get TFS value near a specific time boundary
+     * @param deviceId - Device ID
+     * @param sensorKey - TFS sensor key (tfs01-tfs06)
+     * @param boundaryTime - Target time (e.g., hour boundary)
+     * @param toleranceMs - Tolerance in milliseconds (default: 60000 = 1 minute)
+     * @returns TFS telemetry nearest to boundary, or null if not found within tolerance
+     */
+    async getTFSValueNearBoundary(deviceId, sensorKey, boundaryTime, toleranceMs = 60000) {
+        const boundaryTs = boundaryTime.getTime();
+        const startTs = boundaryTs - toleranceMs;
+        const endTs = boundaryTs + toleranceMs;
+        // Query TFS values near the boundary
+        const telemetryData = await this.telemetryRepo
+            .createQueryBuilder('t')
+            .where('t.device_id = :deviceId', { deviceId })
+            .andWhere('t.key_name = :sensorKey', { sensorKey })
+            .andWhere('t.timestamp >= :startTs', { startTs })
+            .andWhere('t.timestamp <= :endTs', { endTs })
+            .andWhere('t.value_type = :valueType', { valueType: 'float' })
+            .orderBy('ABS(t.timestamp - :boundaryTs)', 'ASC')
+            .setParameter('boundaryTs', boundaryTs)
+            .limit(1)
+            .getOne();
+        if (!telemetryData || telemetryData.float_value === null) {
+            return null;
+        }
+        return {
+            timestamp: telemetryData.timestamp,
+            value: telemetryData.float_value,
+            density: telemetryData.density_snapshot || 1000,
+            profileId: telemetryData.oil_profile_id || 'unknown'
+        };
+    }
+    /**
+     * Calculate hourly accumulation for a specific hour using boundary-based approach
      * @param deviceId - Device ID
      * @param hourStart - Start of the hour (e.g., 2025-01-01 00:00:00)
      */
     async calculateHourlyAccumulation(deviceId, hourStart) {
         const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000); // +1 hour
-        // Convert to timestamps for query
-        const startTs = hourStart.getTime();
-        const endTs = hourEnd.getTime();
         const results = [];
         // Process each flow sensor
         for (const sensorKey of this.FLOW_SENSORS) {
             try {
-                const accumulation = await this.calculateSensorAccumulation(deviceId, sensorKey, hourStart, hourEnd, startTs, endTs);
+                const accumulation = await this.calculateSensorAccumulationBoundary(deviceId, sensorKey, hourStart, hourEnd);
                 if (accumulation) {
                     results.push(accumulation);
                 }
@@ -47,45 +78,41 @@ class FlowAccumulationService {
         return results;
     }
     /**
-     * Calculate accumulation for a single sensor using TFS delta
+     * Calculate accumulation for a single sensor using boundary-based TFS delta
+     * More accurate than first/last sample approach
      */
-    async calculateSensorAccumulation(deviceId, sensorKey, hourStart, hourEnd, startTs, endTs) {
+    async calculateSensorAccumulationBoundary(deviceId, sensorKey, hourStart, hourEnd) {
         // Map fs to tfs sensor key
         const tfsKey = sensorKey.replace('fs', 'tfs');
-        // Query TFS telemetry data for this sensor in this hour
-        const telemetryData = await this.telemetryRepo
-            .createQueryBuilder('t')
-            .where('t.device_id = :deviceId', { deviceId })
-            .andWhere('t.key_name = :tfsKey', { tfsKey })
-            .andWhere('t.timestamp >= :startTs', { startTs })
-            .andWhere('t.timestamp < :endTs', { endTs })
-            .andWhere('t.value_type = :valueType', { valueType: 'float' })
-            .orderBy('t.timestamp', 'ASC')
-            .getMany();
-        if (telemetryData.length === 0) {
-            console.log(`No TFS data for ${tfsKey} in hour ${hourStart.toISOString()}`);
+        // Get TFS values near hour boundaries (within 1 minute tolerance)
+        const tfsAtStart = await this.getTFSValueNearBoundary(deviceId, tfsKey, hourStart, 60000);
+        const tfsAtEnd = await this.getTFSValueNearBoundary(deviceId, tfsKey, hourEnd, 60000);
+        if (!tfsAtStart || !tfsAtEnd) {
+            console.log(`Insufficient TFS boundary data for ${tfsKey} in hour ${hourStart.toISOString()}`);
             return null;
         }
-        // Get first and last TFS values
-        const firstSample = telemetryData[0];
-        const lastSample = telemetryData[telemetryData.length - 1];
-        const firstTfsValue = firstSample.float_value || 0;
-        const lastTfsValue = lastSample.float_value || 0;
-        // Calculate accumulated volume from TFS delta
-        let accumulatedM3 = lastTfsValue - firstTfsValue;
-        // Handle TFS reset within the hour (negative delta)
-        if (accumulatedM3 < 0) {
-            // Calculate accumulated volume in segments
-            accumulatedM3 = this.calculateWithResets(telemetryData);
-            console.warn(`TFS reset detected for ${tfsKey} in hour ${hourStart.toISOString()}, accumulated: ${accumulatedM3.toFixed(4)}`);
+        // Validate time coverage (should be close to 1 hour)
+        const actualDurationMs = tfsAtEnd.timestamp - tfsAtStart.timestamp;
+        const actualHours = actualDurationMs / (1000 * 60 * 60);
+        const coveragePercent = (actualDurationMs / 3600000) * 100;
+        // Warn if coverage is less than 95%
+        if (coveragePercent < 95) {
+            console.warn(`Low data coverage for ${tfsKey}: ${coveragePercent.toFixed(1)}% (${actualDurationMs / 1000}s)`);
         }
-        // Get density from last sample
-        const densityUsed = lastSample.density_snapshot || 0;
-        const oilProfileId = lastSample.oil_profile_id || 'unknown';
-        // If no density snapshot, try to get from active profile
-        let finalDensity = densityUsed;
-        let finalProfileId = oilProfileId;
-        if (!densityUsed) {
+        // Calculate accumulated volume from TFS delta
+        let accumulatedM3 = tfsAtEnd.value - tfsAtStart.value;
+        // Handle TFS reset (negative delta)
+        if (accumulatedM3 < 0) {
+            console.warn(`TFS reset detected for ${tfsKey} in hour ${hourStart.toISOString()}, cannot calculate accurately`);
+            // For now, return null when reset detected in boundary approach
+            // Future: implement segment-based calculation for resets
+            return null;
+        }
+        // Use density from end sample (most recent)
+        let finalDensity = tfsAtEnd.density;
+        let finalProfileId = tfsAtEnd.profileId;
+        // If no density, try to get from active profile
+        if (!finalDensity || finalDensity === 1000) {
             const activeProfile = await this.oilProfileRepo.findOne({
                 where: { device_id: deviceId, is_active: true }
             });
@@ -100,8 +127,8 @@ class FlowAccumulationService {
         }
         // Calculate accumulated tons
         const accumulatedTons = accumulatedM3 * (finalDensity / 1000);
-        // Calculate average flow rate for compatibility
-        const avgFlowM3h = accumulatedM3 / 1; // Accumulated / 1 hour
+        // Calculate average flow rate based on actual time coverage
+        const avgFlowM3h = actualHours > 0 ? accumulatedM3 / actualHours : 0;
         // Check if record already exists
         const existing = await this.accumulationRepo.findOne({
             where: {
@@ -120,9 +147,9 @@ class FlowAccumulationService {
             accumulated_tons: accumulatedTons,
             oil_profile_id: finalProfileId,
             density_used: finalDensity,
-            sample_count: telemetryData.length,
-            first_sample_ts: telemetryData[0].timestamp,
-            last_sample_ts: telemetryData[telemetryData.length - 1].timestamp
+            sample_count: 2, // Boundary-based uses 2 samples (start + end)
+            first_sample_ts: tfsAtStart.timestamp,
+            last_sample_ts: tfsAtEnd.timestamp
         };
         if (existing) {
             // Update existing record

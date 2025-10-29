@@ -5,12 +5,17 @@
  *
  * Format: TFS uses 2 consecutive 16-bit registers
  * - Register[n]: Integer part
- * - Register[n+1]: Decimal part (only last 3 digits used)
- * - Formula: tfs_value = integer + ((decimal % 1000) / 1000)
+ * - Register[n+1]: Decimal part (entire value becomes decimal)
+ * - Formula: tfs_value = parseFloat(`${integer}.${decimal}`)
  *
- * Example:
+ * Examples:
  * - Register 10 = 91, Register 11 = 4589
- * - Result: 91 + ((4589%1000)/1000) = 91 + (589/1000) = 91.589 m³
+ *   Result: parseFloat("91.4589") = 91.4589 m³
+ * - Register 10 = 91, Register 11 = 6987
+ *   Result: parseFloat("91.6987") = 91.6987 m³
+ * - Register 10 = 91, Register 11 = 698
+ *   Result: parseFloat("91.698") = 91.698 m³
+ * - Delta: 91.6987 - 91.4589 = 0.2398 ≈ 0.240 m³
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const viis_marine_telemetry_processor_1 = require("../viis-marine-telemetry-processor");
@@ -50,54 +55,54 @@ describe('TFS Parsing Logic', () => {
     describe('parseTfsValues - Basic Parsing', () => {
         it('should parse TFS01 correctly (example from user)', () => {
             // User's example: Register 10 = 91, Register 11 = 4589
-            // Formula: 91 + ((4589 % 1000) / 1000) = 91 + (589/1000) = 91.589 m³
+            // Formula: parseFloat("91.4589") = 91.4589 m³
             const holdingRegisters = new Array(10);
             holdingRegisters[10] = 91; // tfs01 integer part
-            holdingRegisters[11] = 4589; // tfs01 decimal part (only last 3 digits: 589)
+            holdingRegisters[11] = 4589; // tfs01 decimal part
             holdingRegisters.length = 30; // Leave tfs02-06 undefined
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(1);
             expect(result[0].key_name).toBe('tfs01');
-            expect(result[0].tfs_value).toBe(91.589); // 91 + (589/1000)
+            expect(result[0].tfs_value).toBe(91.4589); // parseFloat("91.4589")
             expect(result[0].device_id).toBe('device_001');
             expect(result[0].timestamp).toBeGreaterThan(0);
             // Log message verification
-            expect(mockNode.log).toHaveBeenCalledWith(expect.stringContaining('tfs01: 91 + (4589%1000)/1000 = 91.5890 m³'));
+            expect(mockNode.log).toHaveBeenCalledWith(expect.stringContaining('tfs01: 91.4589'));
         });
         it('should parse all 6 TFS sensors from holding registers', () => {
             const holdingRegisters = new Array(30).fill(0);
-            // tfs01: address 10-11 → 100.250 m³
+            // tfs01: address 10-11 → parseFloat("100.250") = 100.25 m³
             holdingRegisters[10] = 100;
             holdingRegisters[11] = 250;
-            // tfs02: address 12-13 → 200.500 m³
+            // tfs02: address 12-13 → parseFloat("200.500") = 200.5 m³
             holdingRegisters[12] = 200;
             holdingRegisters[13] = 500;
-            // tfs03: address 14-15 → 300.750 m³
+            // tfs03: address 14-15 → parseFloat("300.7500") = 300.75 m³
             holdingRegisters[14] = 300;
-            holdingRegisters[15] = 750;
-            // tfs04: address 16-17 → 400.125 m³
+            holdingRegisters[15] = 7500;
+            // tfs04: address 16-17 → parseFloat("400.1250") = 400.125 m³
             holdingRegisters[16] = 400;
-            holdingRegisters[17] = 125;
-            // tfs05: address 18-19 → 500.999 m³
+            holdingRegisters[17] = 1250;
+            // tfs05: address 18-19 → parseFloat("500.9999") = 500.9999 m³
             holdingRegisters[18] = 500;
-            holdingRegisters[19] = 999;
-            // tfs06: address 20-21 → 600.001 m³
+            holdingRegisters[19] = 9999;
+            // tfs06: address 20-21 → parseFloat("600.1") = 600.1 m³
             holdingRegisters[20] = 600;
             holdingRegisters[21] = 1;
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(6);
             expect(result[0].key_name).toBe('tfs01');
-            expect(result[0].tfs_value).toBe(100.250);
+            expect(result[0].tfs_value).toBe(100.25);
             expect(result[1].key_name).toBe('tfs02');
-            expect(result[1].tfs_value).toBe(200.500);
+            expect(result[1].tfs_value).toBe(200.5);
             expect(result[2].key_name).toBe('tfs03');
-            expect(result[2].tfs_value).toBe(300.750);
+            expect(result[2].tfs_value).toBe(300.75);
             expect(result[3].key_name).toBe('tfs04');
             expect(result[3].tfs_value).toBe(400.125);
             expect(result[4].key_name).toBe('tfs05');
-            expect(result[4].tfs_value).toBe(500.999);
+            expect(result[4].tfs_value).toBe(500.9999);
             expect(result[5].key_name).toBe('tfs06');
-            expect(result[5].tfs_value).toBe(600.001);
+            expect(result[5].tfs_value).toBe(600.1);
         });
         it('should handle zero values correctly', () => {
             // Only set tfs01 registers, leave others as undefined to skip them
@@ -113,47 +118,47 @@ describe('TFS Parsing Logic', () => {
         it('should handle large integer values', () => {
             const holdingRegisters = new Array(10);
             holdingRegisters[10] = 65535; // Max 16-bit unsigned
-            holdingRegisters[11] = 999; // Last 3 digits: 999
+            holdingRegisters[11] = 9999;
             holdingRegisters.length = 30; // Leave others undefined
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(1);
-            expect(result[0].tfs_value).toBe(65535.999); // 65535 + (999/1000)
+            expect(result[0].tfs_value).toBe(65535.9999); // parseFloat("65535.9999")
         });
         it('should handle decimal-only values (integer = 0)', () => {
             const holdingRegisters = new Array(10);
             holdingRegisters[10] = 0;
-            holdingRegisters[11] = 456; // 0.456 m³
+            holdingRegisters[11] = 456; // parseFloat("0.456") = 0.456 m³
             holdingRegisters.length = 30; // Leave others undefined
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(1);
             expect(result[0].tfs_value).toBe(0.456);
         });
-        it('should use modulo 1000 for decimal values > 1000', () => {
+        it('should handle decimal values with variable digits', () => {
             const holdingRegisters = new Array(10);
             holdingRegisters[10] = 91;
-            holdingRegisters[11] = 8979; // 8979 % 1000 = 979 → 0.979
+            holdingRegisters[11] = 8979; // parseFloat("91.8979") = 91.8979
             holdingRegisters.length = 30;
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(1);
-            expect(result[0].tfs_value).toBe(91.979); // 91 + (979/1000)
+            expect(result[0].tfs_value).toBe(91.8979);
             expect(result[0].key_name).toBe('tfs01');
         });
-        it('should use modulo 1000 for various large decimal values', () => {
+        it('should parse various decimal values correctly', () => {
             const holdingRegisters = new Array(30);
-            // tfs01: 1234 % 1000 = 234 → 100.234
+            // tfs01: parseFloat("100.1234") = 100.1234
             holdingRegisters[10] = 100;
             holdingRegisters[11] = 1234;
-            // tfs02: 5678 % 1000 = 678 → 200.678
+            // tfs02: parseFloat("200.5678") = 200.5678
             holdingRegisters[12] = 200;
             holdingRegisters[13] = 5678;
-            // tfs03: 9999 % 1000 = 999 → 300.999
+            // tfs03: parseFloat("300.9999") = 300.9999
             holdingRegisters[14] = 300;
             holdingRegisters[15] = 9999;
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(3);
-            expect(result[0].tfs_value).toBe(100.234);
-            expect(result[1].tfs_value).toBe(200.678);
-            expect(result[2].tfs_value).toBe(300.999);
+            expect(result[0].tfs_value).toBe(100.1234);
+            expect(result[1].tfs_value).toBe(200.5678);
+            expect(result[2].tfs_value).toBe(300.9999);
         });
     });
     describe('parseTfsValues - Edge Cases', () => {
@@ -191,70 +196,72 @@ describe('TFS Parsing Logic', () => {
         });
     });
     describe('parseTfsValues - Delta Calculation Scenarios', () => {
-        it('should parse TFS for delta calculation - increasing values', () => {
-            // Simulation: First reading
+        it('should parse TFS for delta calculation - increasing values (user example)', () => {
+            // User's example: First reading at 7:00 PM
             const holdingRegisters1 = new Array(30);
             holdingRegisters1[10] = 91;
-            holdingRegisters1[11] = 458; // 458 % 1000 = 458
+            holdingRegisters1[11] = 4589; // 4589/10000 = 0.4589
             const result1 = processor.parseTfsValues(holdingRegisters1);
-            expect(result1[0].tfs_value).toBe(91.458);
-            // Second reading (3 seconds later)
+            expect(result1[0].tfs_value).toBe(91.4589);
+            // Second reading at 7:00:03 (3 seconds later)
             const holdingRegisters2 = new Array(30);
             holdingRegisters2[10] = 91;
-            holdingRegisters2[11] = 698; // 698 % 1000 = 698
+            holdingRegisters2[11] = 6987; // 6987/10000 = 0.6987
             const result2 = processor.parseTfsValues(holdingRegisters2);
-            expect(result2[0].tfs_value).toBe(91.698);
-            // Expected delta: 91.698 - 91.458 = 0.240 m³
+            expect(result2[0].tfs_value).toBe(91.6987);
+            // Expected delta: 91.6987 - 91.4589 = 0.2398 ≈ 0.240 m³
             const delta = result2[0].tfs_value - result1[0].tfs_value;
-            expect(delta).toBeCloseTo(0.240, 3);
+            expect(delta).toBeCloseTo(0.2398, 4);
         });
         it('should detect counter rollover (integer part changes)', () => {
             // First reading
             const holdingRegisters1 = new Array(30);
             holdingRegisters1[10] = 91;
-            holdingRegisters1[11] = 900; // 900 % 1000 = 900
+            holdingRegisters1[11] = 9000; // parseFloat("91.9000") = 91.9
             const result1 = processor.parseTfsValues(holdingRegisters1);
-            expect(result1[0].tfs_value).toBe(91.900);
+            expect(result1[0].tfs_value).toBe(91.9);
             // Second reading (crossed to next integer)
             const holdingRegisters2 = new Array(30);
             holdingRegisters2[10] = 92;
-            holdingRegisters2[11] = 150; // 150 % 1000 = 150
+            holdingRegisters2[11] = 15; // parseFloat("92.15") = 92.15
             const result2 = processor.parseTfsValues(holdingRegisters2);
-            expect(result2[0].tfs_value).toBe(92.150);
-            // Expected delta: 92.150 - 91.900 = 0.250 m³
+            expect(result2[0].tfs_value).toBe(92.15);
+            // Expected delta: 92.15 - 91.9 = 0.25 m³
             const delta = result2[0].tfs_value - result1[0].tfs_value;
-            expect(delta).toBeCloseTo(0.250, 3);
+            expect(delta).toBeCloseTo(0.25, 4);
         });
         it('should detect PLC counter reset (negative delta)', () => {
             // First reading - high value
             const holdingRegisters1 = new Array(30).fill(0);
             holdingRegisters1[10] = 1000;
-            holdingRegisters1[11] = 500;
+            holdingRegisters1[11] = 5; // parseFloat("1000.5") = 1000.5
             const result1 = processor.parseTfsValues(holdingRegisters1);
-            expect(result1[0].tfs_value).toBe(1000.500);
+            expect(result1[0].tfs_value).toBe(1000.5);
             // Second reading - reset to low value
             const holdingRegisters2 = new Array(30).fill(0);
             holdingRegisters2[10] = 5;
-            holdingRegisters2[11] = 250;
+            holdingRegisters2[11] = 25; // parseFloat("5.25") = 5.25
             const result2 = processor.parseTfsValues(holdingRegisters2);
-            expect(result2[0].tfs_value).toBe(5.250);
+            expect(result2[0].tfs_value).toBe(5.25);
             // Negative delta indicates reset
             const delta = result2[0].tfs_value - result1[0].tfs_value;
             expect(delta).toBeLessThan(0);
-            expect(delta).toBeCloseTo(-995.250, 3);
+            expect(delta).toBeCloseTo(-995.25, 2);
         });
         it('should handle very small deltas (precision test)', () => {
             const holdingRegisters1 = new Array(30).fill(0);
             holdingRegisters1[10] = 100;
-            holdingRegisters1[11] = 100;
+            holdingRegisters1[11] = 1000; // parseFloat("100.1000") = 100.1
             const result1 = processor.parseTfsValues(holdingRegisters1);
+            expect(result1[0].tfs_value).toBe(100.1);
             const holdingRegisters2 = new Array(30).fill(0);
             holdingRegisters2[10] = 100;
-            holdingRegisters2[11] = 101;
+            holdingRegisters2[11] = 1001; // parseFloat("100.1001") = 100.1001
             const result2 = processor.parseTfsValues(holdingRegisters2);
-            // Delta should be 0.001 m³
+            expect(result2[0].tfs_value).toBe(100.1001);
+            // Delta: 100.1001 - 100.1 = 0.0001 m³
             const delta = result2[0].tfs_value - result1[0].tfs_value;
-            expect(delta).toBeCloseTo(0.001, 3);
+            expect(delta).toBeCloseTo(0.0001, 4);
         });
     });
     describe('TFS Parsing - Real-world Scenarios', () => {
@@ -265,31 +272,31 @@ describe('TFS Parsing Logic', () => {
             // Expected accumulation: 25.5 m³ in 1 hour
             const startReading = new Array(30).fill(0);
             startReading[10] = 91;
-            startReading[11] = 458;
+            startReading[11] = 458; // parseFloat("91.458") = 91.458
             const endReading = new Array(30).fill(0);
             endReading[10] = 116;
-            endReading[11] = 958;
+            endReading[11] = 958; // parseFloat("116.958") = 116.958
             const start = processor.parseTfsValues(startReading);
             const end = processor.parseTfsValues(endReading);
             const accumulated = end[0].tfs_value - start[0].tfs_value;
-            expect(accumulated).toBeCloseTo(25.5, 3);
+            expect(accumulated).toBeCloseTo(25.5, 2);
         });
         it('should parse multi-sensor trip scenario', () => {
             // Trip with 3 active sensors
             const holdingRegisters = new Array(30);
-            // Main Engine Flow In (fs01/tfs01): 150.250 m³
+            // Main Engine Flow In (fs01/tfs01): 150.25 m³
             holdingRegisters[10] = 150;
-            holdingRegisters[11] = 250;
+            holdingRegisters[11] = 25; // parseFloat("150.25") = 150.25
             // Main Engine Flow Return (fs02/tfs02): 120.125 m³
             holdingRegisters[12] = 120;
-            holdingRegisters[13] = 125;
-            // Generator Flow In (fs03/tfs03): 80.500 m³
+            holdingRegisters[13] = 125; // parseFloat("120.125") = 120.125
+            // Generator Flow In (fs03/tfs03): 80.5 m³
             holdingRegisters[14] = 80;
-            holdingRegisters[15] = 500;
+            holdingRegisters[15] = 5; // parseFloat("80.5") = 80.5
             // Leave tfs04-06 undefined
             const result = processor.parseTfsValues(holdingRegisters);
             expect(result).toHaveLength(3);
-            // Main Engine consumption: 150.250 - 120.125 = 30.125 m³
+            // Main Engine consumption: 150.25 - 120.125 = 30.125 m³
             const mainEngineConsumption = result[0].tfs_value - result[1].tfs_value;
             expect(mainEngineConsumption).toBeCloseTo(30.125, 3);
         });
@@ -309,34 +316,33 @@ describe('TFS Parsing Logic', () => {
         });
     });
     describe('TFS Parsing - Precision and Accuracy', () => {
-        it('should maintain 3 decimal precision', () => {
+        it('should handle variable decimal precision', () => {
             const holdingRegisters = new Array(30).fill(0);
             holdingRegisters[10] = 123;
-            holdingRegisters[11] = 456;
+            holdingRegisters[11] = 456; // parseFloat("123.456") = 123.456
             const result = processor.parseTfsValues(holdingRegisters);
-            // 123 + (456/1000) = 123.456
             expect(result[0].tfs_value).toBe(123.456);
             expect(result[0].tfs_value.toString()).toBe('123.456');
         });
         it('should handle rounding edge cases', () => {
             const holdingRegisters = new Array(30).fill(0);
             holdingRegisters[10] = 99;
-            holdingRegisters[11] = 999;
+            holdingRegisters[11] = 9999; // 9999/10000 = 0.9999
             const result = processor.parseTfsValues(holdingRegisters);
-            expect(result[0].tfs_value).toBe(99.999);
+            expect(result[0].tfs_value).toBe(99.9999);
         });
-        it('should parse multiple sensors with different precisions', () => {
+        it('should parse multiple sensors with different decimal lengths', () => {
             const holdingRegisters = new Array(30).fill(0);
             holdingRegisters[10] = 1;
-            holdingRegisters[11] = 1; // 1.001
+            holdingRegisters[11] = 1; // parseFloat("1.1") = 1.1
             holdingRegisters[12] = 10;
-            holdingRegisters[13] = 10; // 10.010
+            holdingRegisters[13] = 10; // parseFloat("10.10") = 10.1
             holdingRegisters[14] = 100;
-            holdingRegisters[15] = 100; // 100.100
+            holdingRegisters[15] = 100; // parseFloat("100.100") = 100.1
             const result = processor.parseTfsValues(holdingRegisters);
-            expect(result[0].tfs_value).toBe(1.001);
-            expect(result[1].tfs_value).toBe(10.010);
-            expect(result[2].tfs_value).toBe(100.100);
+            expect(result[0].tfs_value).toBe(1.1);
+            expect(result[1].tfs_value).toBe(10.1);
+            expect(result[2].tfs_value).toBe(100.1);
         });
     });
     describe('TFS Parsing - Performance', () => {
@@ -356,14 +362,14 @@ describe('TFS Parsing Logic', () => {
         it('should handle rapid consecutive parsing calls', () => {
             const holdingRegisters = new Array(30).fill(0);
             holdingRegisters[10] = 100;
-            holdingRegisters[11] = 500;
+            holdingRegisters[11] = 5; // parseFloat("100.5") = 100.5
             const results = [];
             for (let i = 0; i < 100; i++) {
                 results.push(processor.parseTfsValues(holdingRegisters));
             }
             expect(results).toHaveLength(100);
             results.forEach(result => {
-                expect(result[0].tfs_value).toBe(100.500);
+                expect(result[0].tfs_value).toBe(100.5);
             });
         });
     });
