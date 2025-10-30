@@ -18,6 +18,7 @@ import {
     ResilienceOptions,
     CircuitBreakerOptions
 } from "./resilience-utils";
+import axios, { AxiosError } from "axios";
 
 // require('dotenv').config();
 
@@ -1515,6 +1516,181 @@ export class ScheduleService {
                 // Remove if too many attempts
                 if (item.attempts >= 5) {
                     queue.remove(i);
+                }
+            }
+        }
+    }
+
+    /**
+     * Send notification to backend via HTTP API
+     * This bypasses MQTT ThingsBoard and sends directly to backend
+     */
+    async sendNotificationToBackend(
+        schedule: TabiotSchedule,
+        action: 'start' | 'end',
+        success: boolean = true,
+        options?: {
+            maxRetries?: number;
+            baseDelay?: number;
+            timeout?: number;
+        }
+    ): Promise<boolean> {
+        const {
+            maxRetries = 3,
+            baseDelay = 1000,
+            timeout = 5000
+        } = options || {};
+
+        // Get backend URL and device access token from environment
+        const backendUrl = this.globalHelper 
+            ? this.globalHelper.getEnvVar('VIIS_BACKEND', '') 
+            : (process.env.VIIS_BACKEND || '');
+        
+        const deviceAccessToken = this.globalHelper
+            ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '')
+            : (process.env.DEVICE_ACCESS_TOKEN || '');
+
+        const deviceId = this.globalHelper
+            ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown')
+            : (process.env.DEVICE_ID || 'unknown');
+
+        if (!backendUrl || !deviceAccessToken) {
+            if (this.node) {
+                this.node.warn('⚠️ HTTP NOTIFICATION SKIPPED: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+            }
+            return false;
+        }
+
+        const isStart = action === 'start';
+        const severity = (!isStart && !success) ? 'error' : 'notification';
+        const alarmStatus = isStart ? 'Pending' : 'Clear';
+        
+        // Build notification message
+        let message: string;
+        if (isStart) {
+            message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy`;
+        } else {
+            message = success 
+                ? `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`
+                : `Lịch trình "${schedule.label || schedule.name}" đã kết thúc với lỗi`;
+        }
+
+        // Prepare request payload (ThingsboardAlarm format)
+        const payload = {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: message,
+            severity: severity,
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: schedule.name,
+            alarm_status: alarmStatus,
+            clear_by: isStart ? '' : 'Value',
+            clear_by_user_id: '',
+            entity: deviceId
+        };
+
+        const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+
+        try {
+            await this.executeWithResilience(
+                async () => {
+                    const response = await axios.post(url, payload, {
+                        params: {
+                            device_access_token: deviceAccessToken
+                        },
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    if (response.status !== 200 && response.status !== 201) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    return response.data;
+                },
+                {
+                    maxRetries,
+                    baseDelay,
+                    maxDelay: 10000,
+                    timeout,
+                    circuitBreakerKey: 'backend-notification',
+                    circuitBreakerThreshold: 5,
+                    circuitBreakerTimeout: 30000
+                }
+            );
+
+            if (this.node) {
+                this.node.warn(`📡 HTTP NOTIFICATION SENT: ${schedule.name} | Action: ${action} | Status: ${alarmStatus}`);
+            }
+
+            return true;
+        } catch (error) {
+            const errorMessage = error instanceof AxiosError 
+                ? `${error.message} (${error.response?.status || 'N/A'})`
+                : (error as Error).message;
+
+            if (this.node) {
+                this.node.warn(`❌ HTTP NOTIFICATION FAILED: ${schedule.name} | ${errorMessage}`);
+            }
+
+            return false;
+        }
+    }
+
+    /**
+     * Send notification via both MQTT and HTTP (for backward compatibility and reliability)
+     * @deprecated Consider using sendNotificationToBackend only for better performance
+     */
+    async sendNotificationDual(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        schedule: TabiotSchedule,
+        action: 'start' | 'end',
+        success: boolean = true,
+        options?: {
+            preferHttp?: boolean;  // If true, only send HTTP if it succeeds
+            maxRetries?: number;
+            baseDelay?: number;
+        }
+    ): Promise<void> {
+        const { preferHttp = true } = options || {};
+
+        // Try HTTP notification first (faster and more direct)
+        const httpSuccess = await this.sendNotificationToBackend(
+            schedule,
+            action,
+            success,
+            options
+        );
+
+        // If HTTP succeeded and preferHttp is true, skip MQTT
+        if (httpSuccess && preferHttp) {
+            if (this.node) {
+                this.node.warn(`✅ NOTIFICATION SENT: ${schedule.name} | Via HTTP only`);
+            }
+            return;
+        }
+
+        // Otherwise, also send via MQTT (fallback or dual mode)
+        try {
+            await this.publishMqttNotificationWithRetry(
+                thingsboardClient,
+                emqxClient,
+                schedule,
+                success,
+                options
+            );
+
+            if (this.node) {
+                const mode = httpSuccess ? 'HTTP + MQTT' : 'MQTT only (HTTP failed)';
+                this.node.warn(`✅ NOTIFICATION SENT: ${schedule.name} | Via ${mode}`);
+            }
+        } catch (error) {
+            if (!httpSuccess) {
+                // Both failed
+                if (this.node) {
+                    this.node.warn(`❌ NOTIFICATION COMPLETE FAILURE: ${schedule.name} | Both HTTP and MQTT failed`);
                 }
             }
         }

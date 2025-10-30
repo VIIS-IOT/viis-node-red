@@ -52,6 +52,8 @@ const dataSource_1 = require("../../orm/dataSource");
 const SyncScheduleService_1 = require("../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importStar(require("typedi"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const resilience_utils_1 = require("./resilience-utils");
+const axios_1 = __importStar(require("axios"));
 // require('dotenv').config();
 let ScheduleService = class ScheduleService {
     constructor(node, debugEnable = false) {
@@ -1147,6 +1149,334 @@ let ScheduleService = class ScheduleService {
         catch (error) {
             console.error(`Error publishing config update for ${configParam.key}: ${error.message}`);
             throw error;
+        }
+    }
+    // ==================== RESILIENCE METHODS ====================
+    /**
+     * Execute operation with timeout protection
+     */
+    async executeWithTimeout(operation, timeoutMs, timeoutMessage) {
+        return (0, resilience_utils_1.executeWithTimeout)(operation, timeoutMs, timeoutMessage);
+    }
+    /**
+     * Execute operation with exponential backoff retry
+     */
+    async executeWithExponentialBackoff(operation, maxRetries, baseDelay, maxDelay = 30000, useJitter = true) {
+        return (0, resilience_utils_1.executeWithExponentialBackoff)(operation, maxRetries, baseDelay, maxDelay, useJitter);
+    }
+    /**
+     * Get circuit breaker state
+     */
+    getCircuitBreakerState(key) {
+        return resilience_utils_1.CircuitBreakerManager.getInstance().getState(key);
+    }
+    /**
+     * Update circuit breaker state
+     */
+    updateCircuitBreakerState(key, state) {
+        resilience_utils_1.CircuitBreakerManager.getInstance().updateState(key, state);
+    }
+    /**
+     * Execute operation with circuit breaker protection
+     */
+    async executeWithCircuitBreaker(operation, circuitKey, failureThreshold, resetTimeout) {
+        return (0, resilience_utils_1.executeWithCircuitBreaker)(operation, circuitKey, {
+            failureThreshold,
+            resetTimeout
+        });
+    }
+    /**
+     * Execute operation with combined resilience patterns
+     */
+    async executeWithResilience(operation, options) {
+        return (0, resilience_utils_1.executeWithResilience)(operation, options);
+    }
+    /**
+     * Publish MQTT notification with retry mechanism
+     */
+    async publishMqttNotificationWithRetry(thingsboardClient, emqxClient, schedule, success, options) {
+        const { maxRetries = 3, baseDelay = 1000, useExponentialBackoff = true, queueOnFailure = false, checkConnection = false, attemptReconnect = false } = options || {};
+        const active_schedule = {
+            scheduleId: schedule.name,
+            label: schedule.label,
+            device_label: schedule.device_label,
+            status: schedule.status,
+            start_time: schedule.start_time,
+            end_time: schedule.end_time,
+            timestamp: Date.now(),
+        };
+        const payload = { "active_schedule": JSON.stringify(active_schedule) };
+        const payloadString = JSON.stringify(payload);
+        let thingsboardSuccess = false;
+        let emqxSuccess = false;
+        // Check connections if enabled
+        if (checkConnection) {
+            if (!thingsboardClient.isConnected()) {
+                if (this.node) {
+                    this.node.warn(`⚠️ ThingsBoard disconnected, skipping publish for ${schedule.name}`);
+                }
+                if (attemptReconnect && thingsboardClient.reconnect) {
+                    try {
+                        await thingsboardClient.reconnect();
+                    }
+                    catch (error) {
+                        this.debugLog(`Failed to reconnect ThingsBoard: ${error.message}`);
+                    }
+                }
+            }
+            if (!emqxClient.isConnected()) {
+                if (this.node) {
+                    this.node.warn(`⚠️ EMQX disconnected, skipping publish for ${schedule.name}`);
+                }
+                if (attemptReconnect && emqxClient.reconnect) {
+                    try {
+                        await emqxClient.reconnect();
+                    }
+                    catch (error) {
+                        this.debugLog(`Failed to reconnect EMQX: ${error.message}`);
+                    }
+                }
+            }
+        }
+        // Publish to ThingsBoard with retry
+        try {
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await this.executeWithExponentialBackoff(() => thingsboardClient.publish(thingsboardTopic, payloadString), maxRetries, baseDelay, 30000, useExponentialBackoff);
+            thingsboardSuccess = true;
+            this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
+        }
+        catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ ThingsBoard MQTT failed after ${maxRetries} retries: ${error.message}`);
+            }
+        }
+        // Publish to EMQX with retry
+        try {
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await this.executeWithExponentialBackoff(() => emqxClient.publish(emqxTopic, payloadString), maxRetries, baseDelay, 30000, useExponentialBackoff);
+            emqxSuccess = true;
+            this.debugLog(`Published MQTT notification to EMQX local for ${schedule.name}`);
+        }
+        catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EMQX MQTT failed after ${maxRetries} retries: ${error.message}`);
+            }
+        }
+        // Log results
+        if (thingsboardSuccess && emqxSuccess) {
+            if (this.node) {
+                this.node.warn(`📡 MQTT PUBLISHED: ${schedule.name} | Status: ${schedule.status} | Topics: ThingsBoard + EMQX`);
+            }
+        }
+        else if (thingsboardSuccess || emqxSuccess) {
+            if (this.node) {
+                const successBroker = thingsboardSuccess ? 'ThingsBoard' : 'EMQX';
+                this.node.warn(`⚠️ MQTT PARTIAL SUCCESS: ${schedule.name} | ${successBroker} only`);
+            }
+        }
+        else {
+            if (this.node) {
+                this.node.warn(`❌ MQTT COMPLETE FAILURE: ${schedule.name} | Both brokers failed`);
+            }
+            // Queue for later retry if enabled
+            if (queueOnFailure) {
+                resilience_utils_1.MqttFailedQueue.getInstance().add({
+                    schedule,
+                    type: 'notification',
+                    timestamp: Date.now()
+                });
+            }
+        }
+    }
+    /**
+     * Publish config update with retry mechanism
+     */
+    async publishConfigUpdateWithRetry(thingsboardClient, emqxClient, configParam, options) {
+        const { maxRetries = 2, baseDelay = 500 } = options || {};
+        const payload = {
+            ts: configParam.timestamp,
+            [configParam.key]: configParam.value,
+            note: `Config parameter updated (no Modbus mapping) for schedule ${configParam.scheduleId}`,
+            type: configParam.type,
+            source: "schedule-executor"
+        };
+        const payloadString = JSON.stringify(payload);
+        let success = false;
+        // Try ThingsBoard
+        try {
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await this.executeWithExponentialBackoff(() => thingsboardClient.publish(thingsboardTopic, payloadString), maxRetries, baseDelay);
+            success = true;
+        }
+        catch (error) {
+            this.debugLog(`ThingsBoard config publish failed: ${error.message}`);
+        }
+        // Try EMQX
+        try {
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await this.executeWithExponentialBackoff(() => emqxClient.publish(emqxTopic, payloadString), maxRetries, baseDelay);
+            success = true;
+        }
+        catch (error) {
+            this.debugLog(`EMQX config publish failed: ${error.message}`);
+        }
+        if (!success && this.node) {
+            this.node.warn(`⚠️ CONFIG PUBLISH FAILED: ${configParam.key} for schedule ${configParam.scheduleId}`);
+        }
+    }
+    /**
+     * Get failed MQTT queue
+     */
+    getFailedMqttQueue() {
+        return resilience_utils_1.MqttFailedQueue.getInstance().getAll();
+    }
+    /**
+     * Process failed MQTT queue
+     */
+    async processFailedMqttQueue(thingsboardClient, emqxClient) {
+        const queue = resilience_utils_1.MqttFailedQueue.getInstance();
+        const items = queue.getAll();
+        for (let i = items.length - 1; i >= 0; i--) {
+            const item = items[i];
+            try {
+                if (item.type === 'notification' && item.schedule) {
+                    await this.publishMqttNotificationWithRetry(thingsboardClient, emqxClient, item.schedule, true, { maxRetries: 1, baseDelay: 500 });
+                    queue.remove(i);
+                }
+                else if (item.type === 'config' && item.configParam) {
+                    await this.publishConfigUpdateWithRetry(thingsboardClient, emqxClient, item.configParam, { maxRetries: 1, baseDelay: 500 });
+                    queue.remove(i);
+                }
+            }
+            catch (error) {
+                queue.incrementAttempts(i);
+                // Remove if too many attempts
+                if (item.attempts >= 5) {
+                    queue.remove(i);
+                }
+            }
+        }
+    }
+    /**
+     * Send notification to backend via HTTP API
+     * This bypasses MQTT ThingsBoard and sends directly to backend
+     */
+    async sendNotificationToBackend(schedule, action, success = true, options) {
+        var _a;
+        const { maxRetries = 3, baseDelay = 1000, timeout = 5000 } = options || {};
+        // Get backend URL and device access token from environment
+        const backendUrl = this.globalHelper
+            ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
+            : (process.env.VIIS_BACKEND || '');
+        const deviceAccessToken = this.globalHelper
+            ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '')
+            : (process.env.DEVICE_ACCESS_TOKEN || '');
+        const deviceId = this.globalHelper
+            ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown')
+            : (process.env.DEVICE_ID || 'unknown');
+        if (!backendUrl || !deviceAccessToken) {
+            if (this.node) {
+                this.node.warn('⚠️ HTTP NOTIFICATION SKIPPED: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+            }
+            return false;
+        }
+        const isStart = action === 'start';
+        const severity = (!isStart && !success) ? 'error' : 'notification';
+        const alarmStatus = isStart ? 'Pending' : 'Clear';
+        // Build notification message
+        let message;
+        if (isStart) {
+            message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy`;
+        }
+        else {
+            message = success
+                ? `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`
+                : `Lịch trình "${schedule.label || schedule.name}" đã kết thúc với lỗi`;
+        }
+        // Prepare request payload (ThingsboardAlarm format)
+        const payload = {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: message,
+            severity: severity,
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: schedule.name,
+            alarm_status: alarmStatus,
+            clear_by: isStart ? '' : 'Value',
+            clear_by_user_id: '',
+            entity: deviceId
+        };
+        const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+        try {
+            await this.executeWithResilience(async () => {
+                const response = await axios_1.default.post(url, payload, {
+                    params: {
+                        device_access_token: deviceAccessToken
+                    },
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                if (response.status !== 200 && response.status !== 201) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.data;
+            }, {
+                maxRetries,
+                baseDelay,
+                maxDelay: 10000,
+                timeout,
+                circuitBreakerKey: 'backend-notification',
+                circuitBreakerThreshold: 5,
+                circuitBreakerTimeout: 30000
+            });
+            if (this.node) {
+                this.node.warn(`📡 HTTP NOTIFICATION SENT: ${schedule.name} | Action: ${action} | Status: ${alarmStatus}`);
+            }
+            return true;
+        }
+        catch (error) {
+            const errorMessage = error instanceof axios_1.AxiosError
+                ? `${error.message} (${((_a = error.response) === null || _a === void 0 ? void 0 : _a.status) || 'N/A'})`
+                : error.message;
+            if (this.node) {
+                this.node.warn(`❌ HTTP NOTIFICATION FAILED: ${schedule.name} | ${errorMessage}`);
+            }
+            return false;
+        }
+    }
+    /**
+     * Send notification via both MQTT and HTTP (for backward compatibility and reliability)
+     * @deprecated Consider using sendNotificationToBackend only for better performance
+     */
+    async sendNotificationDual(thingsboardClient, emqxClient, schedule, action, success = true, options) {
+        const { preferHttp = true } = options || {};
+        // Try HTTP notification first (faster and more direct)
+        const httpSuccess = await this.sendNotificationToBackend(schedule, action, success, options);
+        // If HTTP succeeded and preferHttp is true, skip MQTT
+        if (httpSuccess && preferHttp) {
+            if (this.node) {
+                this.node.warn(`✅ NOTIFICATION SENT: ${schedule.name} | Via HTTP only`);
+            }
+            return;
+        }
+        // Otherwise, also send via MQTT (fallback or dual mode)
+        try {
+            await this.publishMqttNotificationWithRetry(thingsboardClient, emqxClient, schedule, success, options);
+            if (this.node) {
+                const mode = httpSuccess ? 'HTTP + MQTT' : 'MQTT only (HTTP failed)';
+                this.node.warn(`✅ NOTIFICATION SENT: ${schedule.name} | Via ${mode}`);
+            }
+        }
+        catch (error) {
+            if (!httpSuccess) {
+                // Both failed
+                if (this.node) {
+                    this.node.warn(`❌ NOTIFICATION COMPLETE FAILURE: ${schedule.name} | Both HTTP and MQTT failed`);
+                }
+            }
         }
     }
 };

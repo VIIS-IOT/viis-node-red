@@ -238,7 +238,8 @@ module.exports = function (RED) {
                             debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
                         if (statusChanged) {
-                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
+                            // Send HTTP notification directly to backend when schedule disabled via RPC
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                             await scheduleService.syncScheduleLog(schedule, true);
                         }
                     }
@@ -371,7 +372,8 @@ module.exports = function (RED) {
                                 }
                             }
                             if (statusChanged) {
-                                await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, writeSuccess);
+                                // Send HTTP notification directly to backend when schedule starts
+                                await scheduleService.sendNotificationToBackend(schedule, 'start', writeSuccess);
                                 await scheduleService.syncScheduleLog(schedule, writeSuccess);
                             }
                         }
@@ -416,7 +418,8 @@ module.exports = function (RED) {
                             scheduleService.clearActiveCommands(schedule.name);
                         }
                         if (statusChanged) {
-                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
+                            // Send HTTP notification directly to backend when schedule finishes
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                             await scheduleService.syncScheduleLog(schedule, true);
                         }
                     }
