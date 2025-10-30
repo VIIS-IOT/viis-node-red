@@ -221,16 +221,11 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     if (schedule.status === "running") {
-                        const statusChanged = hasStatusChanged(schedule.name, "finished");
-
-                        schedule.status = "finished";
-                        schedule.enable = 0;
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-
                         // Clear timestamp when schedule is disabled via RPC
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
+                        
                         const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
 
@@ -263,16 +258,41 @@ module.exports = function (RED: NodeAPI) {
                         const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands];
+                        
+                        let resetSuccess = true; // Track reset result
                         if (allResetCommands.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
+                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
                             scheduleService.clearActiveCommands(schedule.name);
-                            debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
+                            debugLog(`Cleared active commands for schedule ${schedule.name} via RPC - Success: ${resetSuccess}`);
                         }
 
-                        if (statusChanged) {
-                            // Send HTTP notification directly to backend when schedule disabled via RPC
-                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                            await scheduleService.syncScheduleLog(schedule, true);
+                        // CRITICAL FIX: Only set status to "finished" if reset succeeded
+                        // If reset failed, keep status as "running" so users know devices are still ON
+                        if (resetSuccess) {
+                            const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            schedule.status = "finished";
+                            schedule.enable = 0;
+                            await scheduleService.updateScheduleStatus(schedule, "finished");
+                            
+                            if (statusChanged) {
+                                // Send HTTP notification - success case
+                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                                await scheduleService.syncScheduleLog(schedule, true);
+                            }
+                        } else {
+                            // Reset failed via RPC - keep status as "running" and send error notification
+                            debugLog(`⚠️ CRITICAL: RPC disable ${schedule.name} FAILED to turn off devices - keeping status as "running"`);
+                            
+                            // Disable schedule but keep status running to indicate devices are still ON
+                            schedule.enable = 0;
+                            await scheduleService.updateScheduleStatus(schedule, "running"); // Keep as running!
+                            
+                            // Send error notification
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', false);
+                            await scheduleService.syncScheduleLog(schedule, false);
+                            
+                            // Log critical warning
+                            node.warn(`🚨 CRITICAL: RPC disable ${schedule.name} cannot turn off devices - MANUAL INTERVENTION REQUIRED`);
                         }
                     } else {
                         debugLog(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
@@ -284,7 +304,102 @@ module.exports = function (RED: NodeAPI) {
                     send(msg);
                     done();
                     return;
-                } else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
+                }
+
+                // Handle RPC command: confirm-devices-off
+                // User manually confirms that devices have been turned off (for recovery from stuck 'running' status)
+                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && (msg.payload as RpcPayload).method === "confirm-devices-off") {
+                    const payload = msg.payload as RpcPayload;
+                    const params = payload.params || {};
+                    const scheduleId = params.scheduleId;
+                    const verifyDevices = params.verifyDevices !== false; // Default to true
+
+                    if (!scheduleId) {
+                        node.error("Missing scheduleId in confirm-devices-off RPC command");
+                        node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
+                        done(new Error("Missing scheduleId"));
+                        return;
+                    }
+
+                    const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
+                    const schedule = schedules.find(s => s.name === scheduleId);
+
+                    if (!schedule) {
+                        debugLog(`Schedule with id ${scheduleId} not found`);
+                        node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
+                        send(msg);
+                        done();
+                        return;
+                    }
+
+                    if (schedule.status !== "running") {
+                        node.warn(`Schedule ${scheduleId} is not running (status: ${schedule.status})`);
+                        node.status({ fill: "yellow", shape: "ring", text: "Not running" });
+                        send(msg);
+                        done();
+                        return;
+                    }
+
+                    let confirmSuccess = true;
+
+                    // If verifyDevices is true, read Modbus to confirm devices are actually OFF
+                    if (verifyDevices) {
+                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                        
+                        if (activeCommands.length > 0) {
+                            for (const cmd of activeCommands) {
+                                try {
+                                    let readResult: { data: any[] };
+                                    let currentValue: number | boolean;
+                                    
+                                    if (cmd.fc === 5) {
+                                        readResult = await modbusClient.readCoils(cmd.address, 1);
+                                        currentValue = Boolean(readResult.data[0]);
+                                        if (currentValue !== false) {
+                                            confirmSuccess = false;
+                                            node.warn(`⚠️ Device at coil ${cmd.address} (${cmd.key}) is still ON`);
+                                        }
+                                    } else if (cmd.fc === 6) {
+                                        readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                                        currentValue = Number(readResult.data[0]);
+                                        if (currentValue !== 0) {
+                                            confirmSuccess = false;
+                                            node.warn(`⚠️ Register at ${cmd.address} (${cmd.key}) is still ${currentValue}`);
+                                        }
+                                    }
+                                } catch (error) {
+                                    node.error(`Error verifying device status: ${(error as Error).message}`);
+                                    confirmSuccess = false;
+                                }
+                            }
+                        }
+                    }
+
+                    if (confirmSuccess) {
+                        // Update status to finished
+                        schedule.status = "finished";
+                        schedule.enable = 0;
+                        scheduleService.clearActiveCommands(schedule.name);
+                        await scheduleService.updateScheduleStatus(schedule, "finished");
+                        
+                        // Send success notification
+                        await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                        await scheduleService.syncScheduleLog(schedule, true);
+                        
+                        node.warn(`✅ MANUAL RECOVERY: Schedule ${schedule.name} confirmed OFF and set to finished`);
+                        node.status({ fill: "green", shape: "dot", text: "Confirmed OFF" });
+                    } else {
+                        node.warn(`❌ MANUAL RECOVERY FAILED: Some devices are still ON for ${schedule.name}`);
+                        node.status({ fill: "red", shape: "ring", text: "Devices still ON" });
+                    }
+
+                    send(msg);
+                    done();
+                    return;
+                }
+
+                // Handle RPC command: control (general Modbus control)
+                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
                     const payload = msg.payload as RpcPayload;
 
                     if (payload.method === "control" && payload.params) {
@@ -434,10 +549,6 @@ module.exports = function (RED: NodeAPI) {
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
                         debugLog("start finishing schedule");
 
-                        const statusChanged = hasStatusChanged(schedule.name, "finished");
-
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
@@ -459,19 +570,48 @@ module.exports = function (RED: NodeAPI) {
                         const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = [...activeCommands, ...extraResetCommands];
+                        
+                        let resetSuccess = true; // Track reset result
                         if (allResetCommands.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
+                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
                             scheduleService.clearActiveCommands(schedule.name);
                         }
 
-                        if (statusChanged) {
-                            // Send HTTP notification directly to backend when schedule finishes
-                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                            await scheduleService.syncScheduleLog(schedule, true);
+                        // CRITICAL FIX: Only set status to "finished" if reset succeeded
+                        // If reset failed, keep status as "running" so users know devices are still ON
+                        if (resetSuccess) {
+                            const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            await scheduleService.updateScheduleStatus(schedule, "finished");
+                            
+                            if (statusChanged) {
+                                // Send HTTP notification - success case
+                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                                await scheduleService.syncScheduleLog(schedule, true);
+                            }
+                        } else {
+                            // Reset failed - keep status as "running" and send error notification
+                            debugLog(`⚠️ CRITICAL: Schedule ${schedule.name} time ended but FAILED to turn off devices - keeping status as "running"`);
+                            
+                            // Send error notification immediately
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', false);
+                            await scheduleService.syncScheduleLog(schedule, false);
+                            
+                            // Log critical warning
+                            if (node) {
+                                node.warn(`🚨 CRITICAL: Schedule ${schedule.name} cannot turn off devices - MANUAL INTERVENTION REQUIRED`);
+                            }
                         }
                     } else {
                         debugLog(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
+                }
+
+                // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
+                // This runs every 2 minutes and handles cases where reset failed but devices were manually turned off
+                try {
+                    await scheduleService.checkAndRecoverStuckSchedules(modbusClient, schedules);
+                } catch (error) {
+                    debugLog(`Error in recovery check: ${(error as Error).message}`);
                 }
 
                 const enabledScheduleIds = schedules.map(s => s.name);
