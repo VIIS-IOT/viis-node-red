@@ -127,6 +127,17 @@ module.exports = function (RED) {
                 // Verify env variables are loaded
                 const dbHost = globalHelper.getEnvVar('DATABASE_HOST', 'NOT_LOADED');
                 node.log(`[Marine] DATABASE_HOST from global context: ${dbHost}`);
+                // Load SCALE_CONFIGS from env and set to global context
+                const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
+                try {
+                    const scaleConfigs = JSON.parse(scaleConfigsJson);
+                    nodeContext.global.set('scaleConfigs', scaleConfigs);
+                    node.log(`[Marine] Loaded ${scaleConfigs.length} scale configurations`);
+                }
+                catch (error) {
+                    node.warn(`[Marine] Failed to parse SCALE_CONFIGS: ${error.message}`);
+                    nodeContext.global.set('scaleConfigs', []);
+                }
                 const dataSource = await (0, dataSource_1.createDataSource)(nodeContext);
                 if (!dataSource.isInitialized) {
                     await dataSource.initialize();

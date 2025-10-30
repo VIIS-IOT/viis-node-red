@@ -8,6 +8,16 @@ import Container, { Service } from "typedi";
 import { Node } from "node-red";
 import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig, ScheduleConfigValues, ConfigParameter } from "./type";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import {
+    executeWithTimeout,
+    executeWithExponentialBackoff,
+    executeWithCircuitBreaker,
+    executeWithResilience,
+    CircuitBreakerManager,
+    MqttFailedQueue,
+    ResilienceOptions,
+    CircuitBreakerOptions
+} from "./resilience-utils";
 
 // require('dotenv').config();
 
@@ -1204,6 +1214,309 @@ export class ScheduleService {
         } catch (error) {
             console.error(`Error publishing config update for ${configParam.key}: ${(error as Error).message}`);
             throw error;
+        }
+    }
+
+    // ==================== RESILIENCE METHODS ====================
+
+    /**
+     * Execute operation with timeout protection
+     */
+    async executeWithTimeout<T>(
+        operation: () => Promise<T>,
+        timeoutMs: number,
+        timeoutMessage?: string
+    ): Promise<T> {
+        return executeWithTimeout(operation, timeoutMs, timeoutMessage);
+    }
+
+    /**
+     * Execute operation with exponential backoff retry
+     */
+    async executeWithExponentialBackoff<T>(
+        operation: () => Promise<T>,
+        maxRetries: number,
+        baseDelay: number,
+        maxDelay: number = 30000,
+        useJitter: boolean = true
+    ): Promise<T> {
+        return executeWithExponentialBackoff(operation, maxRetries, baseDelay, maxDelay, useJitter);
+    }
+
+    /**
+     * Get circuit breaker state
+     */
+    getCircuitBreakerState(key: string) {
+        return CircuitBreakerManager.getInstance().getState(key);
+    }
+
+    /**
+     * Update circuit breaker state
+     */
+    updateCircuitBreakerState(key: string, state: any) {
+        CircuitBreakerManager.getInstance().updateState(key, state);
+    }
+
+    /**
+     * Execute operation with circuit breaker protection
+     */
+    async executeWithCircuitBreaker<T>(
+        operation: () => Promise<T>,
+        circuitKey: string,
+        failureThreshold: number,
+        resetTimeout: number
+    ): Promise<T> {
+        return executeWithCircuitBreaker(operation, circuitKey, {
+            failureThreshold,
+            resetTimeout
+        });
+    }
+
+    /**
+     * Execute operation with combined resilience patterns
+     */
+    async executeWithResilience<T>(
+        operation: () => Promise<T>,
+        options: ResilienceOptions
+    ): Promise<T> {
+        return executeWithResilience(operation, options);
+    }
+
+    /**
+     * Publish MQTT notification with retry mechanism
+     */
+    async publishMqttNotificationWithRetry(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        schedule: TabiotSchedule,
+        success: boolean,
+        options?: {
+            maxRetries?: number;
+            baseDelay?: number;
+            useExponentialBackoff?: boolean;
+            queueOnFailure?: boolean;
+            checkConnection?: boolean;
+            attemptReconnect?: boolean;
+        }
+    ): Promise<void> {
+        const {
+            maxRetries = 3,
+            baseDelay = 1000,
+            useExponentialBackoff = true,
+            queueOnFailure = false,
+            checkConnection = false,
+            attemptReconnect = false
+        } = options || {};
+
+        const active_schedule = {
+            scheduleId: schedule.name,
+            label: schedule.label,
+            device_label: schedule.device_label,
+            status: schedule.status,
+            start_time: schedule.start_time,
+            end_time: schedule.end_time,
+            timestamp: Date.now(),
+        };
+        const payload = { "active_schedule": JSON.stringify(active_schedule) };
+        const payloadString = JSON.stringify(payload);
+
+        let thingsboardSuccess = false;
+        let emqxSuccess = false;
+
+        // Check connections if enabled
+        if (checkConnection) {
+            if (!thingsboardClient.isConnected()) {
+                if (this.node) {
+                    this.node.warn(`⚠️ ThingsBoard disconnected, skipping publish for ${schedule.name}`);
+                }
+                if (attemptReconnect && (thingsboardClient as any).reconnect) {
+                    try {
+                        await (thingsboardClient as any).reconnect();
+                    } catch (error) {
+                        this.debugLog(`Failed to reconnect ThingsBoard: ${(error as Error).message}`);
+                    }
+                }
+            }
+            if (!emqxClient.isConnected()) {
+                if (this.node) {
+                    this.node.warn(`⚠️ EMQX disconnected, skipping publish for ${schedule.name}`);
+                }
+                if (attemptReconnect && (emqxClient as any).reconnect) {
+                    try {
+                        await (emqxClient as any).reconnect();
+                    } catch (error) {
+                        this.debugLog(`Failed to reconnect EMQX: ${(error as Error).message}`);
+                    }
+                }
+            }
+        }
+
+        // Publish to ThingsBoard with retry
+        try {
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await this.executeWithExponentialBackoff(
+                () => thingsboardClient.publish(thingsboardTopic, payloadString),
+                maxRetries,
+                baseDelay,
+                30000,
+                useExponentialBackoff
+            );
+            thingsboardSuccess = true;
+            this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
+        } catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ ThingsBoard MQTT failed after ${maxRetries} retries: ${(error as Error).message}`);
+            }
+        }
+
+        // Publish to EMQX with retry
+        try {
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await this.executeWithExponentialBackoff(
+                () => emqxClient.publish(emqxTopic, payloadString),
+                maxRetries,
+                baseDelay,
+                30000,
+                useExponentialBackoff
+            );
+            emqxSuccess = true;
+            this.debugLog(`Published MQTT notification to EMQX local for ${schedule.name}`);
+        } catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EMQX MQTT failed after ${maxRetries} retries: ${(error as Error).message}`);
+            }
+        }
+
+        // Log results
+        if (thingsboardSuccess && emqxSuccess) {
+            if (this.node) {
+                this.node.warn(`📡 MQTT PUBLISHED: ${schedule.name} | Status: ${schedule.status} | Topics: ThingsBoard + EMQX`);
+            }
+        } else if (thingsboardSuccess || emqxSuccess) {
+            if (this.node) {
+                const successBroker = thingsboardSuccess ? 'ThingsBoard' : 'EMQX';
+                this.node.warn(`⚠️ MQTT PARTIAL SUCCESS: ${schedule.name} | ${successBroker} only`);
+            }
+        } else {
+            if (this.node) {
+                this.node.warn(`❌ MQTT COMPLETE FAILURE: ${schedule.name} | Both brokers failed`);
+            }
+            
+            // Queue for later retry if enabled
+            if (queueOnFailure) {
+                MqttFailedQueue.getInstance().add({
+                    schedule,
+                    type: 'notification',
+                    timestamp: Date.now()
+                });
+            }
+        }
+    }
+
+    /**
+     * Publish config update with retry mechanism
+     */
+    async publishConfigUpdateWithRetry(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        configParam: ConfigParameter,
+        options?: {
+            maxRetries?: number;
+            baseDelay?: number;
+        }
+    ): Promise<void> {
+        const { maxRetries = 2, baseDelay = 500 } = options || {};
+
+        const payload = {
+            ts: configParam.timestamp,
+            [configParam.key]: configParam.value,
+            note: `Config parameter updated (no Modbus mapping) for schedule ${configParam.scheduleId}`,
+            type: configParam.type,
+            source: "schedule-executor"
+        };
+        const payloadString = JSON.stringify(payload);
+
+        let success = false;
+
+        // Try ThingsBoard
+        try {
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await this.executeWithExponentialBackoff(
+                () => thingsboardClient.publish(thingsboardTopic, payloadString),
+                maxRetries,
+                baseDelay
+            );
+            success = true;
+        } catch (error) {
+            this.debugLog(`ThingsBoard config publish failed: ${(error as Error).message}`);
+        }
+
+        // Try EMQX
+        try {
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await this.executeWithExponentialBackoff(
+                () => emqxClient.publish(emqxTopic, payloadString),
+                maxRetries,
+                baseDelay
+            );
+            success = true;
+        } catch (error) {
+            this.debugLog(`EMQX config publish failed: ${(error as Error).message}`);
+        }
+
+        if (!success && this.node) {
+            this.node.warn(`⚠️ CONFIG PUBLISH FAILED: ${configParam.key} for schedule ${configParam.scheduleId}`);
+        }
+    }
+
+    /**
+     * Get failed MQTT queue
+     */
+    getFailedMqttQueue() {
+        return MqttFailedQueue.getInstance().getAll();
+    }
+
+    /**
+     * Process failed MQTT queue
+     */
+    async processFailedMqttQueue(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore
+    ): Promise<void> {
+        const queue = MqttFailedQueue.getInstance();
+        const items = queue.getAll();
+
+        for (let i = items.length - 1; i >= 0; i--) {
+            const item = items[i];
+            
+            try {
+                if (item.type === 'notification' && item.schedule) {
+                    await this.publishMqttNotificationWithRetry(
+                        thingsboardClient,
+                        emqxClient,
+                        item.schedule,
+                        true,
+                        { maxRetries: 1, baseDelay: 500 }
+                    );
+                    queue.remove(i);
+                } else if (item.type === 'config' && item.configParam) {
+                    await this.publishConfigUpdateWithRetry(
+                        thingsboardClient,
+                        emqxClient,
+                        item.configParam,
+                        { maxRetries: 1, baseDelay: 500 }
+                    );
+                    queue.remove(i);
+                }
+            } catch (error) {
+                queue.incrementAttempts(i);
+                // Remove if too many attempts
+                if (item.attempts >= 5) {
+                    queue.remove(i);
+                }
+            }
         }
     }
 }
