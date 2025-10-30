@@ -320,6 +320,7 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
   /**
    * Process register data with scaling
+   * Scaling is configured via SCALE_CONFIGS in global context
    */
   private processRegisterData(
     result: ModbusData,
@@ -332,13 +333,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
     const scaleConfigs = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
 
     Object.entries(mapping).forEach(([key, index]) => {
-      let value = applyScaling(key, values[index], direction, scaleConfigs);
-      
-      // Divide flow sensor values by 10 for holding registers
-      if (registerType === 'holding' && /^fs0[1-6]$/.test(key)) {
-        value = value / 10;
-      }
-      
+      // Apply scaling from config - handles all scaling including fs01-fs06 division
+      const value = applyScaling(key, values[index], direction, scaleConfigs);
       currentState[key] = value;
     });
 

@@ -134,12 +134,32 @@ export class FlowAccumulationService {
         // Calculate accumulated volume from TFS delta
         let accumulatedM3 = tfsAtEnd.value - tfsAtStart.value;
 
-        // Handle TFS reset (negative delta)
+        // Handle TFS reset (negative delta) - fallback to segment-based calculation
         if (accumulatedM3 < 0) {
-            console.warn(`TFS reset detected for ${tfsKey} in hour ${hourStart.toISOString()}, cannot calculate accurately`);
-            // For now, return null when reset detected in boundary approach
-            // Future: implement segment-based calculation for resets
-            return null;
+            console.warn(`TFS reset detected for ${tfsKey} in hour ${hourStart.toISOString()}, using segment-based calculation`);
+            
+            // Query all TFS telemetry data in this hour
+            const hourStartTs = hourStart.getTime();
+            const hourEndTs = hourEnd.getTime();
+            
+            const allTfsData = await this.telemetryRepo
+                .createQueryBuilder('t')
+                .where('t.device_id = :deviceId', { deviceId })
+                .andWhere('t.key_name = :tfsKey', { tfsKey })
+                .andWhere('t.timestamp >= :startTs', { startTs: hourStartTs })
+                .andWhere('t.timestamp <= :endTs', { endTs: hourEndTs })
+                .andWhere('t.value_type = :valueType', { valueType: 'float' })
+                .orderBy('t.timestamp', 'ASC')
+                .getMany();
+            
+            if (allTfsData.length < 2) {
+                console.warn(`Insufficient TFS data for reset calculation: ${allTfsData.length} samples`);
+                return null;
+            }
+            
+            // Use segment-based calculation that handles resets
+            accumulatedM3 = this.calculateWithResets(allTfsData);
+            console.log(`Calculated with resets for ${tfsKey}: ${accumulatedM3.toFixed(3)} m³`);
         }
 
         // Use density from end sample (most recent)

@@ -76,7 +76,8 @@
       "viis-error-trigger": "dist/modules/viis-error-trigger/viis-error-trigger.js",
       "viis-thingsboard-telemetry": "dist/modules/viis-thingsboard-telemetry/viis-thingsboard-telemetry.js",
       "viis-marine-telemetry": "dist/modules/viis-marine-telemetry/viis-marine-telemetry.js",
-      "viis-flow-accumulation": "dist/modules/viis-flow-accumulation/viis-flow-accumulation.js"
+      "viis-flow-accumulation": "dist/modules/viis-flow-accumulation/viis-flow-accumulation.js",
+      "viis-tfs-monitor": "dist/modules/viis-tfs-monitor/viis-tfs-monitor.js"
     }
   },
   "dependencies": {
