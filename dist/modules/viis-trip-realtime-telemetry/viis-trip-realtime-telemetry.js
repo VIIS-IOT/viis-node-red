@@ -132,7 +132,7 @@ module.exports = function (RED) {
             const payload = {
                 ts: now,
                 trip_id: activeTrip.id,
-                trip_start: new Date(activeTrip.start_time).toISOString(),
+                trip_start: tripStartTime,
                 trip_status: activeTrip.status,
                 trip_duration_hours: Number(durationHours.toFixed(2)),
             };
