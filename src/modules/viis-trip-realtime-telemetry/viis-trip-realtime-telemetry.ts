@@ -1,0 +1,315 @@
+/**
+ * viis-trip-realtime-telemetry Node
+ * Real-time trip accumulation monitoring with configurable update interval
+ * Sends running totals for active trips to ThingsBoard dashboard
+ */
+
+import { NodeAPI, Node, NodeContext } from "node-red";
+import { DataSource } from "typeorm";
+import { TripManagementService } from "../../services/MarineIoT/TripManagementService";
+import { TripAccumulationService } from "../../services/MarineIoT/TripAccumulationService";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { createDataSource } from "../../orm/dataSource";
+import {
+    ViisTripRealtimeTelemetryNodeDef,
+    TripTelemetryPayload,
+    MachineConsumption,
+    TripTelemetryStatus,
+} from "./viis-trip-realtime-telemetry-config";
+
+module.exports = function (RED: NodeAPI) {
+    /**
+     * Main viis-trip-realtime-telemetry node implementation
+     */
+    function ViisTripRealtimeTelemetryNode(this: Node, config: ViisTripRealtimeTelemetryNodeDef) {
+        RED.nodes.createNode(this, config);
+        const node = this;
+        const nodeContext: NodeContext = this.context();
+
+        // State variables
+        let updateTimer: NodeJS.Timeout | null = null;
+        let tripManagementService: TripManagementService | null = null;
+        let tripAccumulationService: TripAccumulationService | null = null;
+        let dataSource: DataSource | null = null;
+        let deviceId: string = '';
+        
+        // Statistics
+        const stats: TripTelemetryStatus = {
+            lastUpdate: null,
+            tripActive: false,
+            currentTripId: null,
+            totalUpdates: 0,
+            updateInterval: config.updateInterval || 5,
+        };
+
+        // Wrap async initialization
+        (async () => {
+            try {
+                // Initialize GlobalContextHelper
+                const globalHelper = new GlobalContextHelper(nodeContext);
+                deviceId = globalHelper.getEnvVar('DEVICE_ID', 'unknown-device');
+
+                // Initialize DataSource
+                dataSource = await createDataSource(nodeContext);
+                if (!dataSource.isInitialized) {
+                    await dataSource.initialize();
+                    node.log('[TripRealtime] Database connection initialized');
+                }
+
+                // Initialize services
+                tripManagementService = new TripManagementService(dataSource);
+                tripAccumulationService = new TripAccumulationService(dataSource);
+                node.log('[TripRealtime] Services initialized');
+
+                // Start periodic updates
+                startPeriodicUpdates();
+
+                // Setup cleanup
+                setupCleanupHandler();
+
+                node.status({ fill: "green", shape: "dot", text: "Ready" });
+
+            } catch (error) {
+                node.error(`[TripRealtime] Initialization failed: ${(error as Error).message}`);
+                node.status({ fill: "red", shape: "ring", text: "Initialization failed" });
+            }
+        })().catch((error) => {
+            node.error(`[TripRealtime] Async initialization error: ${(error as Error).message}`);
+            node.status({ fill: "red", shape: "ring", text: "Startup error" });
+        });
+
+        /**
+         * Start periodic update timer
+         */
+        function startPeriodicUpdates(): void {
+            const intervalMs = (config.updateInterval || 5) * 1000;
+            
+            updateTimer = setInterval(async () => {
+                await publishTripTelemetry();
+            }, intervalMs);
+
+            node.log(`[TripRealtime] Update interval: ${config.updateInterval}s`);
+        }
+
+        /**
+         * Publish trip telemetry data
+         */
+        async function publishTripTelemetry(): Promise<void> {
+            if (!tripManagementService || !tripAccumulationService) {
+                return;
+            }
+
+            try {
+                // Get active trip
+                const activeTrip = await tripManagementService.getActiveTrip(deviceId);
+                
+                if (!activeTrip) {
+                    // No active trip
+                    if (stats.tripActive) {
+                        node.log('[TripRealtime] No active trip - waiting...');
+                        node.status({ fill: "yellow", shape: "ring", text: "No active trip" });
+                    }
+                    stats.tripActive = false;
+                    stats.currentTripId = null;
+                    return;
+                }
+
+                // Active trip exists
+                stats.tripActive = true;
+                stats.currentTripId = activeTrip.id;
+
+                // Get trip accumulation data
+                const tripAccumulations = await tripAccumulationService.getTripAccumulation(activeTrip.id);
+
+                if (tripAccumulations.length === 0) {
+                    node.warn('[TripRealtime] No accumulation data for active trip');
+                    return;
+                }
+
+                // Format payload
+                const payload = await formatTripTelemetryPayload(activeTrip, tripAccumulations);
+
+                // Add machine consumption if enabled
+                if (config.includeConsumption) {
+                    await addMachineConsumption(payload, activeTrip.id);
+                }
+
+                // Send output
+                node.send({ payload });
+
+                // Update stats
+                stats.lastUpdate = Date.now();
+                stats.totalUpdates++;
+                
+                node.status({ 
+                    fill: "green", 
+                    shape: "dot", 
+                    text: `Trip: ${activeTrip.trip_name || activeTrip.id.substring(0, 8)}` 
+                });
+
+            } catch (error) {
+                node.error(`[TripRealtime] Telemetry publish failed: ${(error as Error).message}`);
+                node.status({ fill: "red", shape: "ring", text: "Publish failed" });
+            }
+        }
+
+        /**
+         * Format trip telemetry payload (ThingsBoard format)
+         */
+        async function formatTripTelemetryPayload(
+            activeTrip: any,
+            tripAccumulations: any[]
+        ): Promise<TripTelemetryPayload> {
+            const tripStartTime = new Date(activeTrip.start_time).getTime();
+            const now = Date.now();
+            const durationHours = (now - tripStartTime) / (1000 * 60 * 60);
+
+            const payload: TripTelemetryPayload = {
+                ts: now,
+                trip_id: activeTrip.id,
+                trip_start: new Date(activeTrip.start_time).toISOString(),
+                trip_status: activeTrip.status,
+                trip_duration_hours: Number(durationHours.toFixed(2)),
+            };
+
+            // Add sensor running totals (flat structure)
+            tripAccumulations.forEach((tripAcc) => {
+                const prefix = tripAcc.sensor_key; // fs01, fs02, etc.
+                
+                payload[`${prefix}_trip_total_m3`] = Number(tripAcc.total_volume_m3);
+                payload[`${prefix}_trip_total_tons`] = Number(tripAcc.total_volume_tons);
+                payload[`${prefix}_trip_samples`] = tripAcc.sample_count;
+                payload[`${prefix}_last_update`] = tripAcc.last_update_time;
+                
+                // Add density and oil profile info
+                if (tripAcc.current_density) {
+                    payload[`${prefix}_density`] = Number(tripAcc.current_density);
+                }
+                if (tripAcc.oil_profile_id) {
+                    payload[`${prefix}_oil_profile`] = tripAcc.oil_profile_id;
+                }
+            });
+
+            return payload;
+        }
+
+        /**
+         * Add machine consumption calculations
+         * Machine 1: fs01 (in) - fs02 (return)
+         * Machine 2: fs03 (in) - fs04 (return)
+         * Machine 3: fs05 (in) - fs06 (return)
+         */
+        async function addMachineConsumption(
+            payload: TripTelemetryPayload,
+            tripId: string
+        ): Promise<void> {
+            if (!tripAccumulationService) return;
+
+            try {
+                const machines: MachineConsumption[] = [];
+
+                // Machine 1
+                const machine1 = await tripAccumulationService.getMachineConsumption(tripId, 'fs01', 'fs02');
+                if (machine1) {
+                    machines.push({
+                        machine_name: 'Machine 1',
+                        flow_in_sensor: 'fs01',
+                        flow_return_sensor: 'fs02',
+                        consumption_m3: machine1.m3,
+                        consumption_tons: machine1.tons,
+                    });
+                }
+
+                // Machine 2
+                const machine2 = await tripAccumulationService.getMachineConsumption(tripId, 'fs03', 'fs04');
+                if (machine2) {
+                    machines.push({
+                        machine_name: 'Machine 2',
+                        flow_in_sensor: 'fs03',
+                        flow_return_sensor: 'fs04',
+                        consumption_m3: machine2.m3,
+                        consumption_tons: machine2.tons,
+                    });
+                }
+
+                // Machine 3
+                const machine3 = await tripAccumulationService.getMachineConsumption(tripId, 'fs05', 'fs06');
+                if (machine3) {
+                    machines.push({
+                        machine_name: 'Machine 3',
+                        flow_in_sensor: 'fs05',
+                        flow_return_sensor: 'fs06',
+                        consumption_m3: machine3.m3,
+                        consumption_tons: machine3.tons,
+                    });
+                }
+
+                // Add to payload (flat structure for ThingsBoard)
+                machines.forEach((machine, index) => {
+                    const machineNum = index + 1;
+                    payload[`machine${machineNum}_consumption_m3`] = machine.consumption_m3;
+                    payload[`machine${machineNum}_consumption_tons`] = machine.consumption_tons;
+                    payload[`machine${machineNum}_flow_in`] = machine.flow_in_sensor;
+                    payload[`machine${machineNum}_flow_return`] = machine.flow_return_sensor;
+                });
+
+                // Total consumption
+                const totalConsumption = await tripAccumulationService.getTotalConsumption(tripId);
+                payload.total_consumption_m3 = totalConsumption.m3;
+                payload.total_consumption_tons = totalConsumption.tons;
+
+            } catch (error) {
+                node.warn(`[TripRealtime] Failed to calculate machine consumption: ${(error as Error).message}`);
+            }
+        }
+
+        /**
+         * Setup cleanup handler
+         */
+        function setupCleanupHandler(): void {
+            node.on('close', async (done: () => void) => {
+                try {
+                    // Stop timer
+                    if (updateTimer) {
+                        clearInterval(updateTimer);
+                        node.log('[TripRealtime] Update timer stopped');
+                    }
+
+                    // Close database connection
+                    if (dataSource && dataSource.isInitialized) {
+                        await dataSource.destroy();
+                        node.log('[TripRealtime] Database connection closed');
+                    }
+
+                    node.log('[TripRealtime] Node closed and cleaned up');
+                    done();
+                } catch (error) {
+                    node.error(`[TripRealtime] Cleanup error: ${(error as Error).message}`);
+                    done();
+                }
+            });
+        }
+
+        /**
+         * Setup input message handler (for manual trigger or status)
+         */
+        node.on('input', async (msg: any) => {
+            try {
+                const topic = msg.topic || '';
+
+                if (topic === 'trigger') {
+                    // Manual trigger
+                    await publishTripTelemetry();
+                } else if (topic === 'status') {
+                    // Send status
+                    node.send({ payload: stats });
+                }
+
+            } catch (error) {
+                node.error(`[TripRealtime] Input handler error: ${(error as Error).message}`);
+            }
+        });
+    }
+
+    RED.nodes.registerType("viis-trip-realtime-telemetry", ViisTripRealtimeTelemetryNode);
+};

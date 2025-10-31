@@ -77,6 +77,7 @@
       "viis-thingsboard-telemetry": "dist/modules/viis-thingsboard-telemetry/viis-thingsboard-telemetry.js",
       "viis-marine-telemetry": "dist/modules/viis-marine-telemetry/viis-marine-telemetry.js",
       "viis-flow-accumulation": "dist/modules/viis-flow-accumulation/viis-flow-accumulation.js",
+      "viis-trip-realtime-telemetry": "dist/modules/viis-trip-realtime-telemetry/viis-trip-realtime-telemetry.js",
       "viis-tfs-monitor": "dist/modules/viis-tfs-monitor/viis-tfs-monitor.js"
     }
   },
