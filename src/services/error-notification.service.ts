@@ -12,6 +12,8 @@ import { TabiotNotification } from '../orm/entities/notification/TabiotNotificat
 import { createDataSource } from '../orm/dataSource';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import axios, { AxiosError } from 'axios';
+import { GlobalContextHelper } from '../ultils/global-context-helper';
 
 /**
  * Business logic error input
@@ -32,6 +34,7 @@ export interface BusinessLogicError {
 export class ErrorNotificationService {
   private nodeContext: NodeContext;
   private errorMappingService: ErrorMappingService;
+  private globalHelper: GlobalContextHelper;
   private notificationRepo: Repository<TabiotNotification> | null = null;
   private initialized: boolean = false;
 
@@ -42,6 +45,7 @@ export class ErrorNotificationService {
   constructor(nodeContext: NodeContext) {
     this.nodeContext = nodeContext;
     this.errorMappingService = new ErrorMappingService(nodeContext);
+    this.globalHelper = new GlobalContextHelper(nodeContext);
     this.initializeRepository();
   }
 
@@ -185,7 +189,14 @@ export class ErrorNotificationService {
       await this.notificationRepo.update({ name: existing.name }, updates);
       
       // Fetch and return updated notification
-      return await this.notificationRepo.findOne({ where: { name: existing.name } }) || existing;
+      const updatedNotification = await this.notificationRepo.findOne({ where: { name: existing.name } }) || existing;
+      
+      // Send notification to backend (async, don't await to avoid blocking)
+      this.sendNotificationToBackend(updatedNotification, 'create').catch(error => {
+        console.error('[ErrorNotificationService] Failed to sync notification to backend:', error.message);
+      });
+      
+      return updatedNotification;
     }
 
     // Create new notification
@@ -210,7 +221,14 @@ export class ErrorNotificationService {
       ...metadata
     });
 
-    return await this.notificationRepo.save(notification);
+    const savedNotification = await this.notificationRepo.save(notification);
+    
+    // Send notification to backend (async, don't await to avoid blocking)
+    this.sendNotificationToBackend(savedNotification, 'create').catch(error => {
+      console.error('[ErrorNotificationService] Failed to sync notification to backend:', error.message);
+    });
+    
+    return savedNotification;
   }
 
   /**
@@ -351,6 +369,10 @@ export class ErrorNotificationService {
         }
       );
       
+      // Note: We don't send HTTP notification on resolve
+      // Only send when creating new error notification
+      console.log(`[ErrorNotificationService] Notification resolved (local only): ${notification.name}`);
+      
       return true;
     }
 
@@ -469,6 +491,124 @@ export class ErrorNotificationService {
     }
 
     return true;
+  }
+
+  /**
+   * Send notification to backend via HTTP API
+   * Mirrors the format used by viis-schedule-executor for consistency
+   * Note: Only called when creating new error notification, not when resolving
+   * @param notification - Created notification
+   * @param action - 'create' for new error (resolve action not used)
+   * @returns True if sent successfully
+   */
+  private async sendNotificationToBackend(
+    notification: TabiotNotification,
+    action: 'create' | 'resolve'
+  ): Promise<boolean> {
+    try {
+      // Get backend URL and device access token from environment
+      const backendUrl = this.globalHelper.getEnvVar('VIIS_BACKEND', '');
+      const deviceAccessToken = this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+      const deviceId = this.globalHelper.getEnvVar('DEVICE_ID', 'unknown');
+
+      if (!backendUrl || !deviceAccessToken) {
+        console.warn('[ErrorNotificationService] HTTP sync skipped: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+        return false;
+      }
+
+      // Determine severity and status based on action
+      const isResolve = action === 'resolve';
+      const alarmStatus = isResolve ? 'Clear' : 'Pending';
+      
+      // Map notification severity to alarm severity
+      let severity = 'notification';
+      if (notification.severity === 'critical' || notification.severity === 'high') {
+        severity = isResolve ? 'notification' : 'error';
+      }
+
+      // Parse metadata for additional context
+      let metadata: any = {};
+      try {
+        if (notification.metadata) {
+          metadata = typeof notification.metadata === 'string'
+            ? JSON.parse(notification.metadata)
+            : notification.metadata;
+        }
+      } catch (error) {
+        console.warn('[ErrorNotificationService] Failed to parse metadata:', error);
+      }
+
+      // Build message with Vietnamese format
+      let message: string;
+      if (isResolve) {
+        message = `Lỗi "${notification.err_code}" đã được khắc phục: ${notification.entity_label || notification.entity}`;
+      } else {
+        message = notification.message || `Lỗi ${notification.err_code} phát hiện tại ${notification.entity_label || notification.entity}`;
+      }
+
+      // Prepare request payload (ThingsboardAlarm format)
+      const payload = {
+        alarm_name: notification.err_code || 'ERROR',
+        id: deviceId,
+        msg: message,
+        severity: severity,
+        trigger_time: notification.created_at?.toISOString() || new Date().toISOString(),
+        tb_alarm_id: notification.name,
+        alarm_status: alarmStatus,
+        clear_by: isResolve ? 'Auto' : '',
+        clear_by_user_id: '',
+        entity: notification.entity || deviceId,
+        // Include metadata for context
+        metadata: {
+          err_code: notification.err_code,
+          entity_label: notification.entity_label,
+          severity: notification.severity,
+          board_id: metadata.board_id,
+          register_type: metadata.register_type,
+          address: metadata.address
+        }
+      };
+
+      const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+
+      // Send HTTP request with timeout
+      const response = await axios.post(url, payload, {
+        params: {
+          device_access_token: deviceAccessToken
+        },
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000
+      });
+
+      if (response.status === 200 || response.status === 201) {
+        console.log(
+          `[ErrorNotificationService] 📡 HTTP notification sent: ${notification.err_code} (${action})`,
+          `Status: ${response.status}`
+        );
+        return true;
+      } else {
+        console.warn(
+          `[ErrorNotificationService] HTTP notification failed: ${response.status}`,
+          response.statusText
+        );
+        return false;
+      }
+    } catch (error: any) {
+      // Log error but don't throw - notification already saved to DB
+      if (axios.isAxiosError(error)) {
+        const axiosError = error as AxiosError;
+        console.error(
+          `[ErrorNotificationService] HTTP notification error:`,
+          `Status: ${axiosError.response?.status || 'N/A'}`,
+          `Message: ${axiosError.message}`
+        );
+      } else {
+        console.error('[ErrorNotificationService] HTTP notification error:', error.message);
+      }
+      return false;
+    }
   }
 
   /**

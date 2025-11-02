@@ -381,7 +381,7 @@ class ModbusClientCore extends events_1.EventEmitter {
     async ensureConnected() {
         // Kiểm tra kết nối hiện tại
         if (!this.isConnected || !this.client.isOpen) {
-            //this.node.log("[STM32-ENSURE] Connection lost or not initialized, attempting to reconnect...");
+            //this.node.log(" Connection lost or not initialized, attempting to reconnect...");
             // Đóng kết nối hiện tại nếu còn mở
             try {
                 if (this.client.isOpen) {
@@ -404,9 +404,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 catch (error) {
                     retryCount++;
                     const err = error;
-                    //this.node.log(`[STM32-ENSURE] Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
+                    //this.node.log(` Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
                     if (retryCount >= maxRetries) {
-                        throw new Error(`[STM32-ENSURE] Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
+                        throw new Error(` Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
                     }
                     // Đợi lâu hơn cho STM32 recovery
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -421,7 +421,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         }
         // Chỉ verify nếu thực sự cần thiết
         if (!this.isConnected) {
-            throw new Error("[STM32-ENSURE] Connection could not be established");
+            throw new Error(" Connection could not be established");
         }
     }
     async readCoils(address, length) {

@@ -6,11 +6,16 @@
  * @author VIIS Team
  * @version 1.0.0
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ErrorNotificationService = void 0;
 const error_mapping_service_1 = require("./error-mapping.service");
 const TabiotNotification_1 = require("../orm/entities/notification/TabiotNotification");
 const dataSource_1 = require("../orm/dataSource");
+const axios_1 = __importDefault(require("axios"));
+const global_context_helper_1 = require("../ultils/global-context-helper");
 /**
  * Service for creating and managing error notifications
  */
@@ -24,6 +29,7 @@ class ErrorNotificationService {
         this.initialized = false;
         this.nodeContext = nodeContext;
         this.errorMappingService = new error_mapping_service_1.ErrorMappingService(nodeContext);
+        this.globalHelper = new global_context_helper_1.GlobalContextHelper(nodeContext);
         this.initializeRepository();
     }
     /**
@@ -121,7 +127,12 @@ class ErrorNotificationService {
             // Update directly via repository
             await this.notificationRepo.update({ name: existing.name }, updates);
             // Fetch and return updated notification
-            return await this.notificationRepo.findOne({ where: { name: existing.name } }) || existing;
+            const updatedNotification = await this.notificationRepo.findOne({ where: { name: existing.name } }) || existing;
+            // Send notification to backend (async, don't await to avoid blocking)
+            this.sendNotificationToBackend(updatedNotification, 'create').catch(error => {
+                console.error('[ErrorNotificationService] Failed to sync notification to backend:', error.message);
+            });
+            return updatedNotification;
         }
         // Create new notification
         console.log(`[ErrorNotificationService] Creating new notification: ${err_code} for ${entity}`);
@@ -138,7 +149,12 @@ class ErrorNotificationService {
         notification.is_sent = 0;
         notification.created_at = new Date();
         notification.metadata = JSON.stringify(Object.assign({ occurrence_count: 1, first_occurred: new Date().toISOString(), last_occurred: new Date().toISOString() }, metadata));
-        return await this.notificationRepo.save(notification);
+        const savedNotification = await this.notificationRepo.save(notification);
+        // Send notification to backend (async, don't await to avoid blocking)
+        this.sendNotificationToBackend(savedNotification, 'create').catch(error => {
+            console.error('[ErrorNotificationService] Failed to sync notification to backend:', error.message);
+        });
+        return savedNotification;
     }
     /**
      * Find unresolved notification for given error code and entity
@@ -250,6 +266,9 @@ class ErrorNotificationService {
                 is_read: 1,
                 metadata: JSON.stringify(Object.assign(Object.assign({}, existingMetadata), { resolved_at: new Date().toISOString(), resolved_by: 'auto' }))
             });
+            // Note: We don't send HTTP notification on resolve
+            // Only send when creating new error notification
+            console.log(`[ErrorNotificationService] Notification resolved (local only): ${notification.name}`);
             return true;
         }
         return false;
@@ -342,6 +361,107 @@ class ErrorNotificationService {
             }
         }
         return true;
+    }
+    /**
+     * Send notification to backend via HTTP API
+     * Mirrors the format used by viis-schedule-executor for consistency
+     * Note: Only called when creating new error notification, not when resolving
+     * @param notification - Created notification
+     * @param action - 'create' for new error (resolve action not used)
+     * @returns True if sent successfully
+     */
+    async sendNotificationToBackend(notification, action) {
+        var _a, _b;
+        try {
+            // Get backend URL and device access token from environment
+            const backendUrl = this.globalHelper.getEnvVar('VIIS_BACKEND', '');
+            const deviceAccessToken = this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            const deviceId = this.globalHelper.getEnvVar('DEVICE_ID', 'unknown');
+            if (!backendUrl || !deviceAccessToken) {
+                console.warn('[ErrorNotificationService] HTTP sync skipped: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+                return false;
+            }
+            // Determine severity and status based on action
+            const isResolve = action === 'resolve';
+            const alarmStatus = isResolve ? 'Clear' : 'Pending';
+            // Map notification severity to alarm severity
+            let severity = 'notification';
+            if (notification.severity === 'critical' || notification.severity === 'high') {
+                severity = isResolve ? 'notification' : 'error';
+            }
+            // Parse metadata for additional context
+            let metadata = {};
+            try {
+                if (notification.metadata) {
+                    metadata = typeof notification.metadata === 'string'
+                        ? JSON.parse(notification.metadata)
+                        : notification.metadata;
+                }
+            }
+            catch (error) {
+                console.warn('[ErrorNotificationService] Failed to parse metadata:', error);
+            }
+            // Build message with Vietnamese format
+            let message;
+            if (isResolve) {
+                message = `Lỗi "${notification.err_code}" đã được khắc phục: ${notification.entity_label || notification.entity}`;
+            }
+            else {
+                message = notification.message || `Lỗi ${notification.err_code} phát hiện tại ${notification.entity_label || notification.entity}`;
+            }
+            // Prepare request payload (ThingsboardAlarm format)
+            const payload = {
+                alarm_name: notification.err_code || 'ERROR',
+                id: deviceId,
+                msg: message,
+                severity: severity,
+                trigger_time: ((_a = notification.created_at) === null || _a === void 0 ? void 0 : _a.toISOString()) || new Date().toISOString(),
+                tb_alarm_id: notification.name,
+                alarm_status: alarmStatus,
+                clear_by: isResolve ? 'Auto' : '',
+                clear_by_user_id: '',
+                entity: notification.entity || deviceId,
+                // Include metadata for context
+                metadata: {
+                    err_code: notification.err_code,
+                    entity_label: notification.entity_label,
+                    severity: notification.severity,
+                    board_id: metadata.board_id,
+                    register_type: metadata.register_type,
+                    address: metadata.address
+                }
+            };
+            const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+            // Send HTTP request with timeout
+            const response = await axios_1.default.post(url, payload, {
+                params: {
+                    device_access_token: deviceAccessToken
+                },
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 5000
+            });
+            if (response.status === 200 || response.status === 201) {
+                console.log(`[ErrorNotificationService] 📡 HTTP notification sent: ${notification.err_code} (${action})`, `Status: ${response.status}`);
+                return true;
+            }
+            else {
+                console.warn(`[ErrorNotificationService] HTTP notification failed: ${response.status}`, response.statusText);
+                return false;
+            }
+        }
+        catch (error) {
+            // Log error but don't throw - notification already saved to DB
+            if (axios_1.default.isAxiosError(error)) {
+                const axiosError = error;
+                console.error(`[ErrorNotificationService] HTTP notification error:`, `Status: ${((_b = axiosError.response) === null || _b === void 0 ? void 0 : _b.status) || 'N/A'}`, `Message: ${axiosError.message}`);
+            }
+            else {
+                console.error('[ErrorNotificationService] HTTP notification error:', error.message);
+            }
+            return false;
+        }
     }
     /**
      * Get service statistics
