@@ -22,7 +22,7 @@ export interface ViisTripRealtimeTelemetryNodeDef extends NodeDef {
 export interface TripTelemetryPayload {
     ts: number;
     trip_id: string;
-    trip_start: string;
+    trip_start: number;
     trip_status: string;
     trip_duration_hours: number;
     

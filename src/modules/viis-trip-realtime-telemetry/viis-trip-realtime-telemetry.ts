@@ -167,7 +167,7 @@ module.exports = function (RED: NodeAPI) {
             const payload: TripTelemetryPayload = {
                 ts: now,
                 trip_id: activeTrip.id,
-                trip_start: new Date(activeTrip.start_time).toISOString(),
+                trip_start: tripStartTime,
                 trip_status: activeTrip.status,
                 trip_duration_hours: Number(durationHours.toFixed(2)),
             };
@@ -179,7 +179,7 @@ module.exports = function (RED: NodeAPI) {
                 payload[`${prefix}_trip_total_m3`] = Number(tripAcc.total_volume_m3);
                 payload[`${prefix}_trip_total_tons`] = Number(tripAcc.total_volume_tons);
                 payload[`${prefix}_trip_samples`] = tripAcc.sample_count;
-                payload[`${prefix}_last_update`] = tripAcc.last_update_time;
+                payload[`${prefix}_last_update`] = tripAcc.last_update_time ? new Date(tripAcc.last_update_time).getTime() : now;
                 
                 // Add density and oil profile info
                 if (tripAcc.current_density) {
