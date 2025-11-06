@@ -258,6 +258,45 @@ export class ScheduleService {
                 }
             }
 
+            // Kiểm tra interval (ngày trong tuần: 0=Sunday, 1=Monday, ..., 6=Saturday)
+            if (schedule.interval && schedule.interval.trim() !== '') {
+                const currentDayOfWeek = now.day(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+                let allowedDays: number[] = [];
+
+                try {
+                    // Parse interval - có thể là:
+                    // - Single number: "3" -> [3]
+                    // - Comma-separated: "1,3,5" -> [1, 3, 5]
+                    // - JSON array: "[1,3,5]" -> [1, 3, 5]
+                    const trimmedInterval = schedule.interval.trim();
+                    
+                    if (trimmedInterval.startsWith('[') && trimmedInterval.endsWith(']')) {
+                        // JSON array format
+                        allowedDays = JSON.parse(trimmedInterval);
+                    } else if (trimmedInterval.includes(',')) {
+                        // Comma-separated format
+                        allowedDays = trimmedInterval.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                    } else {
+                        // Single number format
+                        const dayNum = parseInt(trimmedInterval);
+                        if (!isNaN(dayNum)) {
+                            allowedDays = [dayNum];
+                        }
+                    }
+
+                    // Kiểm tra xem ngày hiện tại có trong danh sách cho phép không
+                    if (allowedDays.length > 0 && !allowedDays.includes(currentDayOfWeek)) {
+                        this.debugLog(`Schedule ${schedule.name} skipped: current day ${currentDayOfWeek} not in interval ${JSON.stringify(allowedDays)}`);
+                        return false;
+                    }
+
+                    this.debugLog(`Schedule ${schedule.name} interval check passed: day ${currentDayOfWeek} in ${JSON.stringify(allowedDays)}`);
+                } catch (error) {
+                    console.error(`Error parsing interval for schedule ${schedule.name}: ${(error as Error).message}`);
+                    // Nếu parse lỗi, cho phép schedule chạy (fallback to old behavior)
+                }
+            }
+
             // Parse start_time và end_time từ chuỗi HH:mm:ss
             const startTime = moment(schedule.start_time, "HH:mm:ss");
             const endTime = moment(schedule.end_time, "HH:mm:ss");
