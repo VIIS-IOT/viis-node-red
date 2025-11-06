@@ -100,7 +100,7 @@ describe('HTTP Notification to Backend', () => {
                 clear_by: 'Value'
             }), expect.any(Object));
         });
-        test('should send error notification on failure', async () => {
+        test('should send error notification on end failure', async () => {
             mockedAxios.post.mockResolvedValue({
                 status: 200,
                 data: { status: 'success' }
@@ -110,9 +110,24 @@ describe('HTTP Notification to Backend', () => {
             );
             expect(result).toBe(true);
             expect(mockedAxios.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-                msg: expect.stringContaining('kết thúc với lỗi'),
+                msg: expect.stringContaining('KHÔNG THỂ TẮT'),
                 severity: 'error',
                 alarm_status: 'Clear'
+            }), expect.any(Object));
+        });
+        test('should send error notification on start failure', async () => {
+            mockedAxios.post.mockResolvedValue({
+                status: 200,
+                data: { status: 'success' }
+            });
+            const schedule = createTestSchedule();
+            const result = await scheduleService.sendNotificationToBackend(schedule, 'start', false // failure
+            );
+            expect(result).toBe(true);
+            expect(mockedAxios.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                msg: expect.stringContaining('không thể bắt đầu'),
+                severity: 'error',
+                alarm_status: 'Pending'
             }), expect.any(Object));
         });
         test('should retry on network failure', async () => {

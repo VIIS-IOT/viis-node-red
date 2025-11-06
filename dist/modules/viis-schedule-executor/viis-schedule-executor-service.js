@@ -261,6 +261,43 @@ let ScheduleService = class ScheduleService {
                     return false;
                 }
             }
+            // Kiểm tra interval (ngày trong tuần: 0=Sunday, 1=Monday, ..., 6=Saturday)
+            if (schedule.interval && schedule.interval.trim() !== '') {
+                const currentDayOfWeek = now.day(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+                let allowedDays = [];
+                try {
+                    // Parse interval - có thể là:
+                    // - Single number: "3" -> [3]
+                    // - Comma-separated: "1,3,5" -> [1, 3, 5]
+                    // - JSON array: "[1,3,5]" -> [1, 3, 5]
+                    const trimmedInterval = schedule.interval.trim();
+                    if (trimmedInterval.startsWith('[') && trimmedInterval.endsWith(']')) {
+                        // JSON array format
+                        allowedDays = JSON.parse(trimmedInterval);
+                    }
+                    else if (trimmedInterval.includes(',')) {
+                        // Comma-separated format
+                        allowedDays = trimmedInterval.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                    }
+                    else {
+                        // Single number format
+                        const dayNum = parseInt(trimmedInterval);
+                        if (!isNaN(dayNum)) {
+                            allowedDays = [dayNum];
+                        }
+                    }
+                    // Kiểm tra xem ngày hiện tại có trong danh sách cho phép không
+                    if (allowedDays.length > 0 && !allowedDays.includes(currentDayOfWeek)) {
+                        this.debugLog(`Schedule ${schedule.name} skipped: current day ${currentDayOfWeek} not in interval ${JSON.stringify(allowedDays)}`);
+                        return false;
+                    }
+                    this.debugLog(`Schedule ${schedule.name} interval check passed: day ${currentDayOfWeek} in ${JSON.stringify(allowedDays)}`);
+                }
+                catch (error) {
+                    console.error(`Error parsing interval for schedule ${schedule.name}: ${error.message}`);
+                    // Nếu parse lỗi, cho phép schedule chạy (fallback to old behavior)
+                }
+            }
             // Parse start_time và end_time từ chuỗi HH:mm:ss
             const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
             const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
@@ -745,6 +782,100 @@ let ScheduleService = class ScheduleService {
                 this.node.warn(`❌ DATABASE ERROR: ${schedule.name} | Failed to update status | ${error.message}`);
             }
             console.error(`Error updating status for ${schedule.name}: ${error.message}`);
+        }
+    }
+    /**
+     * Auto-detect and recover stuck 'running' schedules
+     * Checks if devices are actually OFF and updates status to 'finished' if so
+     * This handles cases where reset failed but user manually turned off devices
+     */
+    async checkAndRecoverStuckSchedules(modbusClient, schedules) {
+        const now = (0, moment_1.default)();
+        for (const schedule of schedules) {
+            // Only check schedules that are "running" and past their end time
+            if (schedule.status !== 'running')
+                continue;
+            const endDateTime = (0, moment_1.default)(`${schedule.end_date} ${schedule.end_time}`, "YYYY-MM-DD HH:mm:ss");
+            const minutesPastEnd = now.diff(endDateTime, 'minutes');
+            // Only check if at least 2 minutes past end time (grace period)
+            if (minutesPastEnd < 2)
+                continue;
+            this.debugLog(`🔍 RECOVERY CHECK: Schedule ${schedule.name} is stuck in "running" status ${minutesPastEnd} minutes past end time`);
+            // Get the commands that should have been reset
+            const activeCommands = this.getActiveCommands(schedule.name);
+            if (activeCommands.length === 0) {
+                this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                await this.updateScheduleStatus(schedule, 'finished');
+                await this.sendNotificationToBackend(schedule, 'end', true);
+                continue;
+            }
+            // Verify if devices are actually OFF by reading Modbus
+            let allDevicesOff = true;
+            for (const cmd of activeCommands) {
+                try {
+                    let readResult;
+                    let currentValue;
+                    if (cmd.fc === 5) {
+                        readResult = await modbusClient.readCoils(cmd.address, 1);
+                        currentValue = Boolean(readResult.data[0]);
+                        // Device should be OFF (false)
+                        if (currentValue !== false) {
+                            allDevicesOff = false;
+                            this.debugLog(`⚠️ Device at coil ${cmd.address} is still ON (${currentValue})`);
+                        }
+                    }
+                    else if (cmd.fc === 6) {
+                        readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                        currentValue = Number(readResult.data[0]);
+                        // Device should be 0 or OFF value
+                        if (currentValue !== 0 && currentValue !== cmd.value) {
+                            allDevicesOff = false;
+                            this.debugLog(`⚠️ Register at ${cmd.address} is still ${currentValue} (expected 0)`);
+                        }
+                    }
+                }
+                catch (error) {
+                    this.debugLog(`Error reading Modbus for recovery check: ${error.message}`);
+                    allDevicesOff = false;
+                    break;
+                }
+            }
+            // If all devices are confirmed OFF, update status to finished
+            if (allDevicesOff) {
+                if (this.node) {
+                    this.node.warn(`✅ RECOVERY SUCCESS: Schedule ${schedule.name} devices confirmed OFF - updating to finished`);
+                }
+                this.clearActiveCommands(schedule.name);
+                await this.updateScheduleStatus(schedule, 'finished');
+                await this.sendNotificationToBackend(schedule, 'end', true);
+                // Send recovery notification
+                if (this.node) {
+                    this.node.warn(`📡 RECOVERY NOTIFICATION: ${schedule.name} auto-recovered after manual shutdown`);
+                }
+            }
+            else {
+                // Devices still ON - try to reset again
+                if (minutesPastEnd >= 5) {
+                    // After 5 minutes, try one more time to reset
+                    if (this.node) {
+                        this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
+                    }
+                    const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
+                    if (resetSuccess) {
+                        this.clearActiveCommands(schedule.name);
+                        await this.updateScheduleStatus(schedule, 'finished');
+                        await this.sendNotificationToBackend(schedule, 'end', true);
+                        if (this.node) {
+                            this.node.warn(`✅ RECOVERY RETRY SUCCESS: ${schedule.name} reset succeeded on retry`);
+                        }
+                    }
+                    else {
+                        if (this.node) {
+                            this.node.warn(`❌ RECOVERY RETRY FAILED: ${schedule.name} still cannot reset - manual intervention still required`);
+                        }
+                    }
+                }
+            }
         }
     }
     /**
@@ -1364,7 +1495,7 @@ let ScheduleService = class ScheduleService {
      * This bypasses MQTT ThingsBoard and sends directly to backend
      */
     async sendNotificationToBackend(schedule, action, success = true, options) {
-        var _a;
+        var _a, _b;
         const { maxRetries = 3, baseDelay = 1000, timeout = 5000 } = options || {};
         // Get backend URL and device access token from environment
         const backendUrl = this.globalHelper
@@ -1383,17 +1514,26 @@ let ScheduleService = class ScheduleService {
             return false;
         }
         const isStart = action === 'start';
-        const severity = (!isStart && !success) ? 'error' : 'notification';
+        // Set severity to 'error' for ANY failure (start or end)
+        const severity = !success ? 'error' : 'notification';
         const alarmStatus = isStart ? 'Pending' : 'Clear';
-        // Build notification message
+        // Build notification message - clearly indicate success/failure for both start and end
         let message;
         if (isStart) {
-            message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy`;
+            if (success) {
+                message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy thành công`;
+            }
+            else {
+                message = `Lịch trình "${schedule.label || schedule.name}" không thể bắt đầu - Lỗi ghi Modbus sau ${((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getEnvVar('MODBUS_MAX_RETRIES', 3)) || 3} lần retry`;
+            }
         }
         else {
-            message = success
-                ? `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`
-                : `Lịch trình "${schedule.label || schedule.name}" đã kết thúc với lỗi`;
+            if (success) {
+                message = `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`;
+            }
+            else {
+                message = `Lịch trình "${schedule.label || schedule.name}" đã kết thúc nhưng KHÔNG THỂ TẮT thiết bị - Lỗi ghi Modbus sau retry`;
+            }
         }
         // Prepare request payload (ThingsboardAlarm format)
         const payload = {
@@ -1439,7 +1579,7 @@ let ScheduleService = class ScheduleService {
         }
         catch (error) {
             const errorMessage = error instanceof axios_1.AxiosError
-                ? `${error.message} (${((_a = error.response) === null || _a === void 0 ? void 0 : _a.status) || 'N/A'})`
+                ? `${error.message} (${((_b = error.response) === null || _b === void 0 ? void 0 : _b.status) || 'N/A'})`
                 : error.message;
             if (this.node) {
                 this.node.warn(`❌ HTTP NOTIFICATION FAILED: ${schedule.name} | ${errorMessage}`);
