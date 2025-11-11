@@ -278,6 +278,22 @@ module.exports = function (RED: NodeAPI) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                                 await scheduleService.syncScheduleLog(schedule, true);
+                                
+                                // Publish audit log for RPC disable (success)
+                                try {
+                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                    await scheduleService.publishAuditLog(
+                                        thingsboardClient,
+                                        emqxClient,
+                                        schedule,
+                                        'end',
+                                        { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                        true
+                                    );
+                                } catch (auditError) {
+                                    debugLog(`Failed to publish audit log for RPC disable: ${(auditError as Error).message}`);
+                                }
                             }
                         } else {
                             // Reset failed via RPC - keep status as "running" and send error notification
@@ -290,6 +306,23 @@ module.exports = function (RED: NodeAPI) {
                             // Send error notification
                             await scheduleService.sendNotificationToBackend(schedule, 'end', false);
                             await scheduleService.syncScheduleLog(schedule, false);
+                            
+                            // Publish audit log for RPC disable (failure)
+                            try {
+                                const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                await scheduleService.publishAuditLog(
+                                    thingsboardClient,
+                                    emqxClient,
+                                    schedule,
+                                    'end',
+                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                    false,
+                                    'RPC disable: Không thể tắt thiết bị - Lỗi ghi Modbus'
+                                );
+                            } catch (auditError) {
+                                debugLog(`Failed to publish audit log for failed RPC disable: ${(auditError as Error).message}`);
+                            }
                             
                             // Log critical warning
                             node.warn(`🚨 CRITICAL: RPC disable ${schedule.name} cannot turn off devices - MANUAL INTERVENTION REQUIRED`);
@@ -533,6 +566,21 @@ module.exports = function (RED: NodeAPI) {
                                 // Send HTTP notification directly to backend when schedule starts
                                 await scheduleService.sendNotificationToBackend(schedule, 'start', writeSuccess);
                                 await scheduleService.syncScheduleLog(schedule, writeSuccess);
+                                
+                                // Publish audit log for schedule start
+                                try {
+                                    await scheduleService.publishAuditLog(
+                                        thingsboardClient,
+                                        emqxClient,
+                                        schedule,
+                                        'start',
+                                        { holdingCommands, coilCommands },
+                                        writeSuccess,
+                                        writeSuccess ? undefined : 'Không thể ghi dữ liệu Modbus sau 3 lần thử'
+                                    );
+                                } catch (auditError) {
+                                    debugLog(`Failed to publish audit log for schedule start: ${(auditError as Error).message}`);
+                                }
                             }
                         }
                     } else if (schedule.status === "running" && isDue) {
@@ -587,6 +635,22 @@ module.exports = function (RED: NodeAPI) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                                 await scheduleService.syncScheduleLog(schedule, true);
+                                
+                                // Publish audit log for schedule end (success)
+                                try {
+                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                    await scheduleService.publishAuditLog(
+                                        thingsboardClient,
+                                        emqxClient,
+                                        schedule,
+                                        'end',
+                                        { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                        true
+                                    );
+                                } catch (auditError) {
+                                    debugLog(`Failed to publish audit log for schedule end: ${(auditError as Error).message}`);
+                                }
                             }
                         } else {
                             // Reset failed - keep status as "running" and send error notification
@@ -595,6 +659,23 @@ module.exports = function (RED: NodeAPI) {
                             // Send error notification immediately
                             await scheduleService.sendNotificationToBackend(schedule, 'end', false);
                             await scheduleService.syncScheduleLog(schedule, false);
+                            
+                            // Publish audit log for schedule end (failure)
+                            try {
+                                const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                await scheduleService.publishAuditLog(
+                                    thingsboardClient,
+                                    emqxClient,
+                                    schedule,
+                                    'end',
+                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                    false,
+                                    'Không thể tắt thiết bị sau khi kết thúc lịch trình - Lỗi ghi Modbus'
+                                );
+                            } catch (auditError) {
+                                debugLog(`Failed to publish audit log for failed schedule end: ${(auditError as Error).message}`);
+                            }
                             
                             // Log critical warning
                             if (node) {

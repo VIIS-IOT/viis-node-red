@@ -19,6 +19,7 @@ import {
     CircuitBreakerOptions
 } from "./resilience-utils";
 import axios, { AxiosError } from "axios";
+import { v4 as uuidv4 } from "uuid";
 
 // require('dotenv').config();
 
@@ -704,6 +705,87 @@ export class ScheduleService {
             }
             console.error(`Error publishing MQTT for ${schedule.name}: ${(error as Error).message}`);
             throw error;
+        }
+    }
+
+    /**
+     * Publish audit log for schedule execution
+     * This logs which function keys were changed and why (schedule start/end)
+     */
+    async publishAuditLog(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        schedule: TabiotSchedule,
+        action: 'start' | 'end',
+        commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] },
+        success: boolean = true,
+        errorMessage?: string
+    ): Promise<void> {
+        try {
+            const requestId = uuidv4();
+            const allCommands = [...commands.holdingCommands, ...commands.coilCommands];
+            
+            // Build human-readable message
+            const actionText = action === 'start' ? 'bắt đầu' : 'kết thúc';
+            const statusText = success ? 'thành công' : 'thất bại';
+            const changedKeys = allCommands.map(cmd => `${cmd.key}=${cmd.value}`).join(', ');
+            
+            let message: string;
+            if (success) {
+                message = `Lịch trình "${schedule.label || schedule.name}" ${actionText}: ${changedKeys || 'không có thay đổi'}`;
+            } else {
+                message = `Lịch trình "${schedule.label || schedule.name}" ${actionText} ${statusText}: ${errorMessage || 'Lỗi không xác định'}`;
+            }
+
+            // Build logs object according to audit log format
+            const logs = {
+                from: "DEVICE_EXE_SCHEDULE",
+                requestId: requestId,
+                message: message,
+                metadata: {
+                    status: success ? "SUCCESS" : "FAIL",
+                    schedule_id: schedule.name,
+                    schedule_label: schedule.label,
+                    action: action,
+                    changed_keys: allCommands.map(cmd => ({
+                        key: cmd.key,
+                        value: cmd.value,
+                        address: cmd.address,
+                        fc: cmd.fc
+                    })),
+                    timestamp: Date.now(),
+                    error: errorMessage || null
+                }
+            };
+
+            // Build telemetry payload
+            const telemetryPayload = {
+                logs: logs
+            };
+            const payloadString = JSON.stringify(telemetryPayload);
+
+            // Publish to ThingsBoard
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await thingsboardClient.publish(thingsboardTopic, payloadString);
+            this.debugLog(`Published audit log to ThingsBoard for schedule ${schedule.name} (${action})`);
+
+            // Publish to EMQX local
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await emqxClient.publish(emqxTopic, payloadString);
+            this.debugLog(`Published audit log to EMQX local for schedule ${schedule.name} (${action})`);
+            
+            // Log success
+            if (this.node) {
+                this.node.warn(`📝 AUDIT LOG PUBLISHED: ${schedule.name} | Action: ${action} | Keys: ${allCommands.length} | Status: ${success ? 'SUCCESS' : 'FAIL'}`);
+            }
+
+        } catch (error) {
+            // Log error but don't throw - audit log failure should not break schedule execution
+            if (this.node) {
+                this.node.warn(`❌ AUDIT LOG ERROR: ${schedule.name} | ${(error as Error).message}`);
+            }
+            console.error(`Error publishing audit log for ${schedule.name}: ${(error as Error).message}`);
         }
     }
 
