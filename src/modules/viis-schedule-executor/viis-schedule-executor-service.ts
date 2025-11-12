@@ -1763,7 +1763,7 @@ export class ScheduleService {
         const {
             maxRetries = 3,
             baseDelay = 1000,
-            timeout = 5000
+            timeout = 10000
         } = options || {};
 
         // Get backend URL and device access token from environment
@@ -1832,7 +1832,8 @@ export class ScheduleService {
                         },
                         headers: {
                             'Content-Type': 'application/json'
-                        }
+                        },
+                        timeout: timeout
                     });
 
                     if (response.status !== 200 && response.status !== 201) {

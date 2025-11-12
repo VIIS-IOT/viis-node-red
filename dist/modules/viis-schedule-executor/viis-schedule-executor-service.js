@@ -54,6 +54,7 @@ const typedi_1 = __importStar(require("typedi"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const resilience_utils_1 = require("./resilience-utils");
 const axios_1 = __importStar(require("axios"));
+const uuid_1 = require("uuid");
 // require('dotenv').config();
 let ScheduleService = class ScheduleService {
     constructor(node, debugEnable = false) {
@@ -684,6 +685,72 @@ let ScheduleService = class ScheduleService {
             }
             console.error(`Error publishing MQTT for ${schedule.name}: ${error.message}`);
             throw error;
+        }
+    }
+    /**
+     * Publish audit log for schedule execution
+     * This logs which function keys were changed and why (schedule start/end)
+     */
+    async publishAuditLog(thingsboardClient, emqxClient, schedule, action, commands, success = true, errorMessage) {
+        try {
+            const requestId = (0, uuid_1.v4)();
+            const allCommands = [...commands.holdingCommands, ...commands.coilCommands];
+            // Build human-readable message
+            const actionText = action === 'start' ? 'bắt đầu' : 'kết thúc';
+            const statusText = success ? 'thành công' : 'thất bại';
+            const changedKeys = allCommands.map(cmd => `${cmd.key}=${cmd.value}`).join(', ');
+            let message;
+            if (success) {
+                message = `Lịch trình "${schedule.label || schedule.name}" ${actionText}: ${changedKeys || 'không có thay đổi'}`;
+            }
+            else {
+                message = `Lịch trình "${schedule.label || schedule.name}" ${actionText} ${statusText}: ${errorMessage || 'Lỗi không xác định'}`;
+            }
+            // Build logs object according to audit log format
+            const logs = {
+                from: "DEVICE_EXE_SCHEDULE",
+                requestId: requestId,
+                message: message,
+                metadata: {
+                    status: success ? "SUCCESS" : "FAIL",
+                    schedule_id: schedule.name,
+                    schedule_label: schedule.label,
+                    action: action,
+                    changed_keys: allCommands.map(cmd => ({
+                        key: cmd.key,
+                        value: cmd.value,
+                        address: cmd.address,
+                        fc: cmd.fc
+                    })),
+                    timestamp: Date.now(),
+                    error: errorMessage || null
+                }
+            };
+            // Build telemetry payload
+            const telemetryPayload = {
+                logs: logs
+            };
+            const payloadString = JSON.stringify(telemetryPayload);
+            // Publish to ThingsBoard
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await thingsboardClient.publish(thingsboardTopic, payloadString);
+            this.debugLog(`Published audit log to ThingsBoard for schedule ${schedule.name} (${action})`);
+            // Publish to EMQX local
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await emqxClient.publish(emqxTopic, payloadString);
+            this.debugLog(`Published audit log to EMQX local for schedule ${schedule.name} (${action})`);
+            // Log success
+            if (this.node) {
+                this.node.warn(`📝 AUDIT LOG PUBLISHED: ${schedule.name} | Action: ${action} | Keys: ${allCommands.length} | Status: ${success ? 'SUCCESS' : 'FAIL'}`);
+            }
+        }
+        catch (error) {
+            // Log error but don't throw - audit log failure should not break schedule execution
+            if (this.node) {
+                this.node.warn(`❌ AUDIT LOG ERROR: ${schedule.name} | ${error.message}`);
+            }
+            console.error(`Error publishing audit log for ${schedule.name}: ${error.message}`);
         }
     }
     /**
@@ -1496,7 +1563,7 @@ let ScheduleService = class ScheduleService {
      */
     async sendNotificationToBackend(schedule, action, success = true, options) {
         var _a, _b;
-        const { maxRetries = 3, baseDelay = 1000, timeout = 5000 } = options || {};
+        const { maxRetries = 3, baseDelay = 1000, timeout = 10000 } = options || {};
         // Get backend URL and device access token from environment
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
@@ -1557,7 +1624,8 @@ let ScheduleService = class ScheduleService {
                     },
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    timeout: timeout
                 });
                 if (response.status !== 200 && response.status !== 201) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
