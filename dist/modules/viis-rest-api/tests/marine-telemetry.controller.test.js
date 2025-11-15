@@ -42,7 +42,7 @@ describe('MarineTelemetryController', () => {
                     value_tons: 850,
                     oil_profile_id: 'test_generator_do',
                     density_snapshot: 850,
-                    machine_type: marine_telemetry_dto_1.MachineType.GENERATOR
+                    machine_type: marine_telemetry_dto_1.MachineType.GENERATOR_DO
                 },
                 {
                     key_name: 'fs02',
@@ -50,7 +50,7 @@ describe('MarineTelemetryController', () => {
                     value_tons: 833,
                     oil_profile_id: 'test_generator_do',
                     density_snapshot: 850,
-                    machine_type: marine_telemetry_dto_1.MachineType.GENERATOR
+                    machine_type: marine_telemetry_dto_1.MachineType.GENERATOR_DO
                 },
                 {
                     key_name: 'fs03',
@@ -86,7 +86,7 @@ describe('MarineTelemetryController', () => {
                 }
             ],
             machines: {
-                [marine_telemetry_dto_1.MachineType.GENERATOR]: {
+                [marine_telemetry_dto_1.MachineType.GENERATOR_DO]: {
                     flow_in: { key: 'fs01', m3h: 1000, th: 850 },
                     flow_return: { key: 'fs02', m3h: 980, th: 833 },
                     consumption_rate: { m3h: 20, th: 17 },
@@ -115,14 +115,14 @@ describe('MarineTelemetryController', () => {
             expect(mockMarineTelemetryService.getLatestTelemetry).toHaveBeenCalledWith(TEST_DEVICE_ID, undefined);
             expect(result.device_id).toBe(TEST_DEVICE_ID);
             expect(result.data).toHaveLength(6);
-            expect(result.machines[marine_telemetry_dto_1.MachineType.GENERATOR]).toBeDefined();
+            expect(result.machines[marine_telemetry_dto_1.MachineType.GENERATOR_DO]).toBeDefined();
             expect(result.machines[marine_telemetry_dto_1.MachineType.MAIN_ENGINE]).toBeDefined();
             expect(result.machines[marine_telemetry_dto_1.MachineType.BOILER]).toBeDefined();
         });
         it('should calculate consumption rate correctly for Generator', async () => {
             mockMarineTelemetryService.getLatestTelemetry.mockResolvedValue(mockLatestTelemetryResponse);
             const result = await controller.getLatestTelemetry(TEST_DEVICE_ID, {});
-            const generator = result.machines[marine_telemetry_dto_1.MachineType.GENERATOR];
+            const generator = result.machines[marine_telemetry_dto_1.MachineType.GENERATOR_DO];
             expect(generator).toBeDefined();
             expect(generator.flow_in.m3h).toBe(1000);
             expect(generator.flow_return.m3h).toBe(980);
@@ -151,7 +151,7 @@ describe('MarineTelemetryController', () => {
         });
         it('should filter by specified sensor keys', async () => {
             const filteredResponse = Object.assign(Object.assign({}, mockLatestTelemetryResponse), { data: mockLatestTelemetryResponse.data.filter(d => d.key_name === 'fs01' || d.key_name === 'fs02'), machines: {
-                    [marine_telemetry_dto_1.MachineType.GENERATOR]: mockLatestTelemetryResponse.machines[marine_telemetry_dto_1.MachineType.GENERATOR]
+                    [marine_telemetry_dto_1.MachineType.GENERATOR_DO]: mockLatestTelemetryResponse.machines[marine_telemetry_dto_1.MachineType.GENERATOR_DO]
                 } });
             mockMarineTelemetryService.getLatestTelemetry.mockResolvedValue(filteredResponse);
             const result = await controller.getLatestTelemetry(TEST_DEVICE_ID, {
@@ -159,7 +159,7 @@ describe('MarineTelemetryController', () => {
             });
             expect(mockMarineTelemetryService.getLatestTelemetry).toHaveBeenCalledWith(TEST_DEVICE_ID, ['fs01', 'fs02']);
             expect(result.data).toHaveLength(2);
-            expect(result.machines[marine_telemetry_dto_1.MachineType.GENERATOR]).toBeDefined();
+            expect(result.machines[marine_telemetry_dto_1.MachineType.GENERATOR_DO]).toBeDefined();
             expect(result.machines[marine_telemetry_dto_1.MachineType.MAIN_ENGINE]).toBeUndefined();
         });
         it('should return empty structure for device with no telemetry data', async () => {
@@ -181,7 +181,7 @@ describe('MarineTelemetryController', () => {
             device_id: TEST_DEVICE_ID,
             machines: [
                 {
-                    type: marine_telemetry_dto_1.MachineType.GENERATOR,
+                    type: marine_telemetry_dto_1.MachineType.GENERATOR_DO,
                     sensors: { flow_in: 'fs01', flow_return: 'fs02' },
                     current_profile: {
                         id: 'test_generator_do',
@@ -228,7 +228,7 @@ describe('MarineTelemetryController', () => {
         it('should include correct sensor mapping for each machine', async () => {
             mockMarineTelemetryService.getMachineSummary.mockResolvedValue(mockMachinesSummaryResponse);
             const result = await controller.getMachinesSummary(TEST_DEVICE_ID);
-            const generator = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.GENERATOR);
+            const generator = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.GENERATOR_DO);
             expect(generator.sensors).toEqual({ flow_in: 'fs01', flow_return: 'fs02' });
             const mainEngine = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.MAIN_ENGINE);
             expect(mainEngine.sensors).toEqual({ flow_in: 'fs03', flow_return: 'fs04' });
@@ -238,7 +238,7 @@ describe('MarineTelemetryController', () => {
         it('should include active oil profiles', async () => {
             mockMarineTelemetryService.getMachineSummary.mockResolvedValue(mockMachinesSummaryResponse);
             const result = await controller.getMachinesSummary(TEST_DEVICE_ID);
-            const generator = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.GENERATOR);
+            const generator = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.GENERATOR_DO);
             expect(generator.current_profile.oil_type).toBe('DO');
             expect(generator.current_profile.density).toBe(850);
             const mainEngine = result.machines.find(m => m.type === marine_telemetry_dto_1.MachineType.MAIN_ENGINE);
@@ -284,7 +284,7 @@ describe('MarineTelemetryController', () => {
                     fs05: 200,
                     fs06: 198,
                     profiles: {
-                        [marine_telemetry_dto_1.MachineType.GENERATOR]: { id: 'test_generator_do', density: 850 },
+                        [marine_telemetry_dto_1.MachineType.GENERATOR_DO]: { id: 'test_generator_do', density: 850 },
                         [marine_telemetry_dto_1.MachineType.MAIN_ENGINE]: { id: 'test_main_engine_bo', density: 950 },
                         [marine_telemetry_dto_1.MachineType.BOILER]: { id: 'test_boiler_hfo', density: 980 }
                     }
@@ -325,9 +325,9 @@ describe('MarineTelemetryController', () => {
                 start_time: startTime,
                 end_time: endTime,
                 interval: 60000,
-                machine_type: marine_telemetry_dto_1.MachineType.GENERATOR
+                machine_type: marine_telemetry_dto_1.MachineType.GENERATOR_DO
             });
-            expect(mockMarineTelemetryService.getTelemetryHistory).toHaveBeenCalledWith(TEST_DEVICE_ID, startTime, endTime, undefined, 60000, marine_telemetry_dto_1.MachineType.GENERATOR);
+            expect(mockMarineTelemetryService.getTelemetryHistory).toHaveBeenCalledWith(TEST_DEVICE_ID, startTime, endTime, undefined, 60000, marine_telemetry_dto_1.MachineType.GENERATOR_DO);
         });
     });
 });

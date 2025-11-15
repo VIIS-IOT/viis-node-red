@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tests for Marine Telemetry Controller
- * 
+ *
  * Comprehensive test suite for Marine IoT telemetry API endpoints
  */
 
@@ -50,7 +50,7 @@ describe('MarineTelemetryController', () => {
                     value_tons: 850,
                     oil_profile_id: 'test_generator_do',
                     density_snapshot: 850,
-                    machine_type: MachineType.GENERATOR
+                    machine_type: MachineType.GENERATOR_DO
                 },
                 {
                     key_name: 'fs02',
@@ -58,7 +58,7 @@ describe('MarineTelemetryController', () => {
                     value_tons: 833,
                     oil_profile_id: 'test_generator_do',
                     density_snapshot: 850,
-                    machine_type: MachineType.GENERATOR
+                    machine_type: MachineType.GENERATOR_DO
                 },
                 {
                     key_name: 'fs03',
@@ -94,7 +94,7 @@ describe('MarineTelemetryController', () => {
                 }
             ],
             machines: {
-                [MachineType.GENERATOR]: {
+                [MachineType.GENERATOR_DO]: {
                     flow_in: { key: 'fs01', m3h: 1000, th: 850 },
                     flow_return: { key: 'fs02', m3h: 980, th: 833 },
                     consumption_rate: { m3h: 20, th: 17 },
@@ -126,7 +126,7 @@ describe('MarineTelemetryController', () => {
             expect(mockMarineTelemetryService.getLatestTelemetry).toHaveBeenCalledWith(TEST_DEVICE_ID, undefined);
             expect(result.device_id).toBe(TEST_DEVICE_ID);
             expect(result.data).toHaveLength(6);
-            expect(result.machines[MachineType.GENERATOR]).toBeDefined();
+            expect(result.machines[MachineType.GENERATOR_DO]).toBeDefined();
             expect(result.machines[MachineType.MAIN_ENGINE]).toBeDefined();
             expect(result.machines[MachineType.BOILER]).toBeDefined();
         });
@@ -136,7 +136,7 @@ describe('MarineTelemetryController', () => {
 
             const result = await controller.getLatestTelemetry(TEST_DEVICE_ID, {});
 
-            const generator = result.machines[MachineType.GENERATOR];
+            const generator = result.machines[MachineType.GENERATOR_DO];
             expect(generator).toBeDefined();
             expect(generator!.flow_in.m3h).toBe(1000);
             expect(generator!.flow_return.m3h).toBe(980);
@@ -173,11 +173,11 @@ describe('MarineTelemetryController', () => {
         it('should filter by specified sensor keys', async () => {
             const filteredResponse = {
                 ...mockLatestTelemetryResponse,
-                data: mockLatestTelemetryResponse.data.filter(d => 
+                data: mockLatestTelemetryResponse.data.filter(d =>
                     d.key_name === 'fs01' || d.key_name === 'fs02'
                 ),
                 machines: {
-                    [MachineType.GENERATOR]: mockLatestTelemetryResponse.machines[MachineType.GENERATOR]
+                    [MachineType.GENERATOR_DO]: mockLatestTelemetryResponse.machines[MachineType.GENERATOR_DO]
                 }
             };
 
@@ -192,7 +192,7 @@ describe('MarineTelemetryController', () => {
                 ['fs01', 'fs02']
             );
             expect(result.data).toHaveLength(2);
-            expect(result.machines[MachineType.GENERATOR]).toBeDefined();
+            expect(result.machines[MachineType.GENERATOR_DO]).toBeDefined();
             expect(result.machines[MachineType.MAIN_ENGINE]).toBeUndefined();
         });
 
@@ -219,7 +219,7 @@ describe('MarineTelemetryController', () => {
             device_id: TEST_DEVICE_ID,
             machines: [
                 {
-                    type: MachineType.GENERATOR,
+                    type: MachineType.GENERATOR_DO,
                     sensors: { flow_in: 'fs01', flow_return: 'fs02' },
                     current_profile: {
                         id: 'test_generator_do',
@@ -272,7 +272,7 @@ describe('MarineTelemetryController', () => {
 
             const result = await controller.getMachinesSummary(TEST_DEVICE_ID);
 
-            const generator = result.machines.find(m => m.type === MachineType.GENERATOR);
+            const generator = result.machines.find(m => m.type === MachineType.GENERATOR_DO);
             expect(generator!.sensors).toEqual({ flow_in: 'fs01', flow_return: 'fs02' });
 
             const mainEngine = result.machines.find(m => m.type === MachineType.MAIN_ENGINE);
@@ -287,7 +287,7 @@ describe('MarineTelemetryController', () => {
 
             const result = await controller.getMachinesSummary(TEST_DEVICE_ID);
 
-            const generator = result.machines.find(m => m.type === MachineType.GENERATOR);
+            const generator = result.machines.find(m => m.type === MachineType.GENERATOR_DO);
             expect(generator!.current_profile!.oil_type).toBe('DO');
             expect(generator!.current_profile!.density).toBe(850);
 
@@ -350,7 +350,7 @@ describe('MarineTelemetryController', () => {
                     fs05: 200,
                     fs06: 198,
                     profiles: {
-                        [MachineType.GENERATOR]: { id: 'test_generator_do', density: 850 },
+                        [MachineType.GENERATOR_DO]: { id: 'test_generator_do', density: 850 },
                         [MachineType.MAIN_ENGINE]: { id: 'test_main_engine_bo', density: 950 },
                         [MachineType.BOILER]: { id: 'test_boiler_hfo', density: 980 }
                     }
@@ -416,7 +416,7 @@ describe('MarineTelemetryController', () => {
                 start_time: startTime,
                 end_time: endTime,
                 interval: 60000,
-                machine_type: MachineType.GENERATOR
+                machine_type: MachineType.GENERATOR_DO
             });
 
             expect(mockMarineTelemetryService.getTelemetryHistory).toHaveBeenCalledWith(
@@ -425,7 +425,7 @@ describe('MarineTelemetryController', () => {
                 endTime,
                 undefined,
                 60000,
-                MachineType.GENERATOR
+                MachineType.GENERATOR_DO
             );
         });
     });

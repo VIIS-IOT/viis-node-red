@@ -16,6 +16,7 @@ const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-con
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const viis_marine_telemetry_processor_1 = require("./viis-marine-telemetry-processor");
 const dataSource_1 = require("../../orm/dataSource");
+const DH6400PollingService_1 = require("../../services/MarineIoT/DH6400PollingService");
 module.exports = function (RED) {
     /**
      * Main viis-marine-telemetry node implementation
@@ -34,6 +35,7 @@ module.exports = function (RED) {
         // Variables to store clients for cleanup
         let thingsboardMqttClient = null;
         let marineProcessor = null;
+        let dh6400PollingService = null;
         // Marine IoT configuration
         const marineConfig = {
             enabled: config.enableMarineIoT !== false, // Default: true
@@ -151,6 +153,15 @@ module.exports = function (RED) {
                 else {
                     node.log('[Marine] Marine IoT disabled');
                 }
+                // Initialize DH6400 Polling Service (NEW)
+                const dh6400Config = createDH6400Config(globalHelper, config);
+                if (dh6400Config.enabled) {
+                    dh6400PollingService = new DH6400PollingService_1.DH6400PollingService(node, nodeContext, dh6400Config);
+                    node.log(`[Marine] DH6400 serial polling enabled for ${dh6400Config.enabledChannels.length} channels`);
+                }
+                else {
+                    node.log('[Marine] DH6400 serial polling disabled');
+                }
                 // Initialize connection manager
                 const connectionManager = new viis_telemetry_connection_manager_1.ViisTelemetryConnectionManager(node, modbusClient, localMqttClient, thingsboardMqttClient, mysqlClient);
                 // Initialize polling service
@@ -169,14 +180,19 @@ module.exports = function (RED) {
                 };
                 const telemetryProcessor = new viis_telemetry_processor_1.ViisTelemetryProcessor(node, nodeContext, flowContext, localMqttClient, thingsboardMqttClient, processorConfig, periodicSnapshotConfig);
                 // Setup event handlers with Marine IoT integration
-                setupEventHandlers(node, connectionManager, pollingService, telemetryProcessor, marineProcessor, pollingConfig, envConfig);
+                setupEventHandlers(node, connectionManager, pollingService, telemetryProcessor, marineProcessor, dh6400PollingService, pollingConfig, envConfig);
                 // Setup input message handler
                 setupInputHandler(node, telemetryProcessor, marineProcessor, flowContext, debugLogKey, thresholdConfigKey);
                 // Setup cleanup handler
-                setupCleanupHandler(node, pollingService, connectionManager, thingsboardMqttClient, flowContext, debugLogKey, thresholdConfigKey, isMultiBoardMode, currentBoardId);
+                setupCleanupHandler(node, pollingService, connectionManager, thingsboardMqttClient, dh6400PollingService, flowContext, debugLogKey, thresholdConfigKey, isMultiBoardMode, currentBoardId);
                 // Start polling if all clients are connected
                 if (connectionManager.areAllClientsConnected()) {
                     startPolling(pollingService, pollingConfig, envConfig);
+                    // Start DH6400 polling if enabled
+                    if (dh6400PollingService) {
+                        dh6400PollingService.startPolling();
+                        node.log('[Marine] DH6400 polling started');
+                    }
                     node.status({ fill: "green", shape: "dot", text: "Marine IoT polling active" });
                 }
                 else {
@@ -286,14 +302,47 @@ module.exports = function (RED) {
             connectionLimit: globalHelper.getNumericEnvVar('DATABASE_CONNECTION_LIMIT', 10),
         };
     }
-    function setupEventHandlers(node, connectionManager, pollingService, telemetryProcessor, marineProcessor, pollingConfig, envConfig) {
+    function createDH6400Config(globalHelper, nodeConfig) {
+        const dh6400Enabled = globalHelper.getEnvVar('DH6400_ENABLED', 'false') === 'true';
+        if (!dh6400Enabled) {
+            return {
+                enabled: false,
+                pollingInterval: 1000,
+                serialPort: '',
+                baudRate: 9600,
+                enabledChannels: []
+            };
+        }
+        const serialPort = globalHelper.getEnvVar('DH6400_SERIAL_PORT', '/dev/ttyACM0');
+        const enabledChannelsStr = globalHelper.getEnvVar('DH6400_ENABLED_CHANNELS', '1,2,3,4,5,6');
+        const enabledChannels = enabledChannelsStr
+            .split(',')
+            .map(ch => parseInt(ch.trim()))
+            .filter(ch => ch >= 1 && ch <= 6);
+        return {
+            enabled: serialPort.trim() !== '' && enabledChannels.length > 0,
+            pollingInterval: globalHelper.getNumericEnvVar('DH6400_POLLING_INTERVAL', 1000),
+            serialPort: serialPort.trim(),
+            baudRate: globalHelper.getNumericEnvVar('DH6400_BAUD_RATE', 9600),
+            enabledChannels: enabledChannels
+        };
+    }
+    function setupEventHandlers(node, connectionManager, pollingService, telemetryProcessor, marineProcessor, dh6400PollingService, pollingConfig, envConfig) {
         connectionManager.on('all-connected', () => {
             pollingService.resumePolling();
             startPolling(pollingService, pollingConfig, envConfig);
+            // Resume DH6400 polling if enabled
+            if (dh6400PollingService) {
+                dh6400PollingService.resumePolling();
+            }
             node.status({ fill: "green", shape: "dot", text: "Marine IoT polling active" });
         });
         connectionManager.on('any-disconnected', () => {
             pollingService.pausePolling();
+            // Pause DH6400 polling if enabled
+            if (dh6400PollingService) {
+                dh6400PollingService.pausePolling();
+            }
             node.status({ fill: "red", shape: "ring", text: "Client disconnected" });
         });
         // Handle telemetry data with Marine IoT integration
@@ -321,6 +370,21 @@ module.exports = function (RED) {
                 node.error(`[Marine] Failed to process telemetry: ${error.message}`);
             }
         });
+        // Handle DH6400 telemetry data (NEW)
+        if (dh6400PollingService && marineProcessor) {
+            dh6400PollingService.on('telemetry-data', async (event) => {
+                try {
+                    // Process DH6400 flow data (fs01-fs06)
+                    await marineProcessor.processDH6400FlowData(event.rawData);
+                    // Process DH6400 TFS data (tfs01-tfs06)
+                    await marineProcessor.processDH6400Data(event.rawData);
+                    node.log(`[Marine] DH6400 data processed: ${event.rawData.size} channels`);
+                }
+                catch (error) {
+                    node.error(`[Marine] Failed to process DH6400 data: ${error.message}`);
+                }
+            });
+        }
     }
     function startPolling(pollingService, pollingConfig, envConfig) {
         pollingService.startPolling(pollingConfig.coil, pollingConfig.input, pollingConfig.holding, {
@@ -363,10 +427,15 @@ module.exports = function (RED) {
             }
         });
     }
-    function setupCleanupHandler(node, pollingService, connectionManager, thingsboardMqttClient, flowContext, debugLogKey, thresholdConfigKey, isMultiBoardMode, currentBoardId) {
+    function setupCleanupHandler(node, pollingService, connectionManager, thingsboardMqttClient, dh6400PollingService, flowContext, debugLogKey, thresholdConfigKey, isMultiBoardMode, currentBoardId) {
         node.on('close', async (done) => {
             try {
                 pollingService.stopPolling();
+                // Cleanup DH6400 polling service
+                if (dh6400PollingService) {
+                    await dh6400PollingService.cleanup();
+                    node.log('[Marine] DH6400 polling service cleaned up');
+                }
                 connectionManager.cleanup();
                 flowContext.set(debugLogKey, false);
                 flowContext.set(thresholdConfigKey, {});

@@ -34,7 +34,7 @@ describe('OilProfileService', () => {
         // Create test device
         const deviceRepo = dataSource.getRepository(TabiotDevice);
         testDeviceId = `test_device_${Date.now()}`;
-        
+
         const device = deviceRepo.create({
             name: testDeviceId,
             id: testDeviceId,
@@ -42,7 +42,7 @@ describe('OilProfileService', () => {
             creation: new Date(),
             modified: new Date(),
         });
-        
+
         await deviceRepo.save(device);
     });
 
@@ -289,9 +289,9 @@ describe('OilProfileService', () => {
             // Check that profile is soft deleted (has deleted_at timestamp)
             const deleted = await dataSource
                 .getRepository(TabiotOilProfile)
-                .findOne({ 
+                .findOne({
                     where: { name: 'to_delete' },
-                    withDeleted: true 
+                    withDeleted: true
                 });
 
             expect(deleted).not.toBeNull();
@@ -334,7 +334,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'to_restore',
                 device_id: testDeviceId,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO' as const,
                 operating_temperature: 40,
                 density: 850,
@@ -362,7 +362,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'not_deleted',
                 device_id: testDeviceId,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO' as const,
                 operating_temperature: 40,
                 density: 850,

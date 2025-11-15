@@ -154,47 +154,60 @@ module.exports = function (RED) {
             return payload;
         }
         /**
-         * Add machine consumption calculations
-         * Machine 1: fs01 (in) - fs02 (return)
-         * Machine 2: fs03 (in) - fs04 (return)
-         * Machine 3: fs05 (in) - fs06 (return)
+         * Add machine consumption calculations (NEW 4-machine configuration)
+         * Machine 1 (BOILER): fs01 (direct consumption, no return)
+         * Machine 2 (MAIN_ENGINE): fs02 (in) - fs03 (return)
+         * Machine 3 (GENERATOR_HFO): fs03 (in) - fs04 (return)
+         * Machine 4 (GENERATOR_DO): fs05 (in) - fs06 (return)
          */
         async function addMachineConsumption(payload, tripId) {
             if (!tripAccumulationService)
                 return;
             try {
                 const machines = [];
-                // Machine 1
-                const machine1 = await tripAccumulationService.getMachineConsumption(tripId, 'fs01', 'fs02');
-                if (machine1) {
+                // Machine 1: BOILER (direct consumption, no return flow)
+                const tripAccumulations = await tripAccumulationService.getTripAccumulation(tripId);
+                const boilerAcc = tripAccumulations.find(a => a.sensor_key === 'fs01');
+                if (boilerAcc) {
                     machines.push({
-                        machine_name: 'Machine 1',
+                        machine_name: 'BOILER',
                         flow_in_sensor: 'fs01',
-                        flow_return_sensor: 'fs02',
-                        consumption_m3: machine1.m3,
-                        consumption_tons: machine1.tons,
+                        flow_return_sensor: undefined,
+                        consumption_m3: Number(boilerAcc.total_volume_m3), // Direct consumption
+                        consumption_tons: Number(boilerAcc.total_volume_tons),
                     });
                 }
-                // Machine 2
-                const machine2 = await tripAccumulationService.getMachineConsumption(tripId, 'fs03', 'fs04');
+                // Machine 2: MAIN_ENGINE (fs02 in - fs03 return)
+                const machine2 = await tripAccumulationService.getMachineConsumption(tripId, 'fs02', 'fs03');
                 if (machine2) {
                     machines.push({
-                        machine_name: 'Machine 2',
-                        flow_in_sensor: 'fs03',
-                        flow_return_sensor: 'fs04',
+                        machine_name: 'MAIN_ENGINE',
+                        flow_in_sensor: 'fs02',
+                        flow_return_sensor: 'fs03',
                         consumption_m3: machine2.m3,
                         consumption_tons: machine2.tons,
                     });
                 }
-                // Machine 3
-                const machine3 = await tripAccumulationService.getMachineConsumption(tripId, 'fs05', 'fs06');
+                // Machine 3: GENERATOR_HFO (fs03 in - fs04 return)
+                const machine3 = await tripAccumulationService.getMachineConsumption(tripId, 'fs03', 'fs04');
                 if (machine3) {
                     machines.push({
-                        machine_name: 'Machine 3',
-                        flow_in_sensor: 'fs05',
-                        flow_return_sensor: 'fs06',
+                        machine_name: 'GENERATOR_HFO',
+                        flow_in_sensor: 'fs03',
+                        flow_return_sensor: 'fs04',
                         consumption_m3: machine3.m3,
                         consumption_tons: machine3.tons,
+                    });
+                }
+                // Machine 4: GENERATOR_DO (fs05 in - fs06 return)
+                const machine4 = await tripAccumulationService.getMachineConsumption(tripId, 'fs05', 'fs06');
+                if (machine4) {
+                    machines.push({
+                        machine_name: 'GENERATOR_DO',
+                        flow_in_sensor: 'fs05',
+                        flow_return_sensor: 'fs06',
+                        consumption_m3: machine4.m3,
+                        consumption_tons: machine4.tons,
                     });
                 }
                 // Add to payload (flat structure for ThingsBoard)

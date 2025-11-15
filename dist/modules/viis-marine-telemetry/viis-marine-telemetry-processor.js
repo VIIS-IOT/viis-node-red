@@ -197,6 +197,9 @@ class ViisMarinetTelemetryProcessor {
     }
     /**
      * Parse TFS (Total Flow Sensor) values from holding registers
+     * @deprecated Use processDH6400Data() for direct DH6400 serial communication
+     *
+     * LEGACY METHOD - for Modbus-based systems only
      * Each TFS sensor uses 2 consecutive registers: integer part + decimal part
      *
      * Formula: tfs_value = parseFloat(`${integer}.${decimal}`)
@@ -367,6 +370,78 @@ class ViisMarinetTelemetryProcessor {
             this.node.error(`[Marine] Failed to update checkpoints: ${error.message}`);
             // Don't throw - this is not critical, logging is enough
         }
+    }
+    /**
+     * Process DH6400 flow data (NEW - Direct serial communication)
+     * Replaces Modbus-based TFS parsing with direct DH6400 25-byte protocol
+     *
+     * @param dh6400Data - Raw DH6400 data from all channels (Map<channel, DH6400FlowData>)
+     * @returns Array of TFS sensor data ready for database storage
+     */
+    async processDH6400Data(dh6400Data) {
+        if (!this.marineConfig.enabled) {
+            return [];
+        }
+        const tfsSensorData = [];
+        const timestamp = Date.now();
+        // Process each channel (1-6)
+        for (const [channel, flowData] of dh6400Data) {
+            const sensorKey = `tfs${String(channel).padStart(2, '0')}`; // tfs01-tfs06
+            const tfsValue = flowData.totalAccumulatedM3;
+            tfsSensorData.push({
+                device_id: this.deviceId,
+                timestamp: timestamp,
+                key_name: sensorKey,
+                tfs_value: tfsValue
+            });
+            this.node.log(`[Marine] DH6400 ${sensorKey}: ${tfsValue.toFixed(4)} m³ ` +
+                `(instant: ${flowData.instantFlowM3h.toFixed(2)} m³/h)`);
+        }
+        if (tfsSensorData.length > 0) {
+            this.node.log(`[Marine] Processed ${tfsSensorData.length} DH6400 TFS values`);
+            // Save to database with profile/density
+            await this.saveTfsData(tfsSensorData);
+            // Update checkpoints and trip accumulation
+            await this.updateCheckpointsAndAccumulation(tfsSensorData);
+        }
+        return tfsSensorData;
+    }
+    /**
+     * Process DH6400 instantaneous flow data (fs01-fs06)
+     * Extract instantaneous flow values from DH6400 data
+     *
+     * @param dh6400Data - Raw DH6400 data from all channels
+     * @returns Array of flow sensor data with oil profile information
+     */
+    async processDH6400FlowData(dh6400Data) {
+        if (!this.marineConfig.enabled) {
+            return [];
+        }
+        const flowSensorData = [];
+        const timestamp = Date.now();
+        // Process each channel (1-6)
+        for (const [channel, flowData] of dh6400Data) {
+            const sensorKey = `fs${String(channel).padStart(2, '0')}`; // fs01-fs06
+            const instantFlow = flowData.instantFlowM3h;
+            // Get profile specific to this sensor's machine
+            const profile = await this.getProfileForSensor(sensorKey);
+            flowSensorData.push({
+                device_id: this.deviceId,
+                timestamp: timestamp,
+                key_name: sensorKey,
+                float_value: instantFlow,
+                oil_profile_id: (profile === null || profile === void 0 ? void 0 : profile.name) || null,
+                density_snapshot: (profile === null || profile === void 0 ? void 0 : profile.density) || null
+            });
+        }
+        if (flowSensorData.length > 0) {
+            const profileSummary = [...new Set(flowSensorData.map(d => d.oil_profile_id))].join(', ');
+            this.node.log(`[Marine] Processed ${flowSensorData.length} DH6400 flow sensor readings ` +
+                `with profiles: ${profileSummary || 'none'}`);
+            // Save to database
+            await this.saveFlowSensorData(flowSensorData);
+        }
+        return flowSensorData;
     }
 }
 exports.ViisMarinetTelemetryProcessor = ViisMarinetTelemetryProcessor;

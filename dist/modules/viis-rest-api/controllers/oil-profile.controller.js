@@ -168,18 +168,19 @@ let OilProfileController = class OilProfileController {
      * GET /api/v2/oil-profiles/active/:device_id/:machine_type
      *
      * @param deviceId - Device ID
-     * @param machineType - Machine type (GENERATOR, MAIN_ENGINE, or BOILER)
+     * @param machineType - Machine type (GENERATOR_DO, GENERATOR_HFO, MAIN_ENGINE, or BOILER)
      * @returns Active oil profile for the machine or null
      *
      * @example
-     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR
+     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR_DO
+     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR_HFO
      * GET /api/v2/oil-profiles/active/ship_001/MAIN_ENGINE
      * GET /api/v2/oil-profiles/active/ship_001/BOILER
      */
     async getActiveProfileByMachine(deviceId, machineType) {
         try {
             // Validate machine type
-            const validMachineTypes = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+            const validMachineTypes = ['GENERATOR_DO', 'GENERATOR_HFO', 'MAIN_ENGINE', 'BOILER'];
             if (!validMachineTypes.includes(machineType)) {
                 throw new routing_controllers_1.BadRequestError(`Invalid machine_type. Must be one of: ${validMachineTypes.join(', ')}`);
             }

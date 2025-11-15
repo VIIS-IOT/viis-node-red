@@ -355,11 +355,14 @@ let FlowAccumulationController = class FlowAccumulationController {
                 queryBuilder = queryBuilder.andWhere('acc.hour_start < :endTime', { endTime });
             }
             const records = await queryBuilder.getMany();
-            // Machine sensor mapping (fs01-fs02: Main Engine, fs03-fs04: Generator, fs05-fs06: Boiler)
+            // Machine sensor mapping (NEW 4-machine configuration)
+            // BOILER: fs01 (direct consumption)
+            // MAIN_ENGINE: fs02-fs03, GENERATOR_HFO: fs03-fs04, GENERATOR_DO: fs05-fs06
             const machineMap = {
-                'MAIN_ENGINE': ['fs01', 'fs02'],
-                'GENERATOR': ['fs03', 'fs04'],
-                'BOILER': ['fs05', 'fs06']
+                'BOILER': ['fs01'],
+                'MAIN_ENGINE': ['fs02', 'fs03'],
+                'GENERATOR_HFO': ['fs03', 'fs04'],
+                'GENERATOR_DO': ['fs05', 'fs06']
             };
             const machines = {};
             Object.entries(machineMap).forEach(([machineType, sensors]) => {

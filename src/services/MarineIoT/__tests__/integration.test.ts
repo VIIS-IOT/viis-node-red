@@ -42,7 +42,7 @@ describe('Marine IoT Integration Tests', () => {
     beforeEach(async () => {
         testDeviceId = `test_device_${Date.now()}`;
         const deviceRepo = dataSource.getRepository(TabiotDevice);
-        
+
         await deviceRepo.save(
             deviceRepo.create({
                 name: testDeviceId,
@@ -150,7 +150,7 @@ describe('Marine IoT Integration Tests', () => {
             const doProfile = await profileService.createProfile({
                 name: 'profile_do',
                 device_id: testDeviceId,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -281,7 +281,7 @@ describe('Marine IoT Integration Tests', () => {
             // Create 24 hours of data
             for (let h = 0; h < 24; h++) {
                 const hourStart = new Date(`2025-01-01T${h.toString().padStart(2, '0')}:00:00Z`);
-                
+
                 for (let i = 0; i < 60; i++) {
                     await telemetryRepo.save(
                         telemetryRepo.create({
@@ -343,7 +343,7 @@ describe('Marine IoT Integration Tests', () => {
             const profile2 = await profileService.createProfile({
                 name: 'profile_device2',
                 device_id: device2Id,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -356,7 +356,7 @@ describe('Marine IoT Integration Tests', () => {
             // Create telemetry for both devices
             for (let i = 0; i < 60; i++) {
                 const timestamp = hourStart.getTime() + (i * 60000);
-                
+
                 // Device 1
                 await telemetryRepo.save(
                     telemetryRepo.create({
@@ -397,7 +397,7 @@ describe('Marine IoT Integration Tests', () => {
             // Same flow but different density
             expect(results1[0].avg_flow_m3h).toBe(25.0);
             expect(results2[0].avg_flow_m3h).toBe(25.0);
-            
+
             expect(results1[0].accumulated_tons).toBe(23.75); // 25 * 0.95
             expect(results2[0].accumulated_tons).toBe(21.25); // 25 * 0.85
         });

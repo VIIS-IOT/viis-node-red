@@ -18,13 +18,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MachineStatus = exports.MarineTelemetryHistoryQueryDto = exports.MarineTelemetryQueryDto = exports.MachineType = void 0;
 const class_validator_1 = require("class-validator");
 /**
- * Machine types supported by Marine IoT
+ * Machine types supported by Marine IoT (4 machines)
  */
 var MachineType;
 (function (MachineType) {
-    MachineType["GENERATOR"] = "GENERATOR";
-    MachineType["MAIN_ENGINE"] = "MAIN_ENGINE";
     MachineType["BOILER"] = "BOILER";
+    MachineType["MAIN_ENGINE"] = "MAIN_ENGINE";
+    MachineType["GENERATOR_HFO"] = "GENERATOR_HFO";
+    MachineType["GENERATOR_DO"] = "GENERATOR_DO";
 })(MachineType || (exports.MachineType = MachineType = {}));
 /**
  * Query parameters for getting latest telemetry

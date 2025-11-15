@@ -1,6 +1,6 @@
 /**
  * @fileoverview Oil Profile Controller Tests
- * 
+ *
  * Comprehensive test suite for Oil Profile API endpoints
  */
 
@@ -120,7 +120,7 @@ describe('OilProfileController', () => {
         it('should create DO profile successfully', async () => {
             const createDto: CreateOilProfileDto = {
                 device_id: 'device_001',
-                machine_type: MachineType.GENERATOR,
+                machine_type: MachineType.GENERATOR_DO,
                 oil_type: OilType.DO,
                 operating_temperature: 40,
                 density: 0.85,

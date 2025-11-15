@@ -125,7 +125,7 @@ describe('Marine IoT Integration Tests', () => {
             const doProfile = await profileService.createProfile({
                 name: 'profile_do',
                 device_id: testDeviceId,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -265,7 +265,7 @@ describe('Marine IoT Integration Tests', () => {
             const profile2 = await profileService.createProfile({
                 name: 'profile_device2',
                 device_id: device2Id,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,

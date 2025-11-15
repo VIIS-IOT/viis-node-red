@@ -279,7 +279,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'to_restore',
                 device_id: testDeviceId,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,
@@ -301,7 +301,7 @@ describe('OilProfileService', () => {
             await service.createProfile({
                 name: 'not_deleted',
                 device_id: testDeviceId,
-                machine_type: 'GENERATOR',
+                machine_type: 'GENERATOR_DO',
                 oil_type: 'DO',
                 operating_temperature: 40,
                 density: 850,

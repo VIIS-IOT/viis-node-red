@@ -15,7 +15,12 @@ const TabiotDevice_1 = require("../device/TabiotDevice");
 const Base_1 = require("../base/Base");
 /**
  * Oil Profile Entity for Marine IoT System
- * Stores oil type configurations for different machines (Generator, Main Engine, Boiler)
+ * Stores oil type configurations for different machines
+ * Supports 4 machines:
+ * - BOILER: Nồi hơi (fs01 - direct consumption)
+ * - MAIN_ENGINE: Máy chính (fs02 in - fs03 return)
+ * - GENERATOR_HFO: Máy phát HFO (fs03 in - fs04 return)
+ * - GENERATOR_DO: Máy phát DO (fs05 in - fs06 return)
  * Each machine can have different oil types (DO/FO) with specific density and temperature
  */
 let TabiotOilProfile = class TabiotOilProfile extends Base_1.CustomBaseEntity {
@@ -32,8 +37,8 @@ __decorate([
 __decorate([
     (0, typeorm_1.Column)({
         type: 'enum',
-        enum: ['GENERATOR', 'MAIN_ENGINE', 'BOILER'],
-        comment: 'Machine type: MAIN_ENGINE (fs01-02), GENERATOR (fs03-04), BOILER (fs05-06)'
+        enum: ['BOILER', 'MAIN_ENGINE', 'GENERATOR_HFO', 'GENERATOR_DO'],
+        comment: 'Machine type: BOILER (fs01), MAIN_ENGINE (fs02-fs03), GENERATOR_HFO (fs03-fs04), GENERATOR_DO (fs05-fs06)'
     }),
     __metadata("design:type", String)
 ], TabiotOilProfile.prototype, "machine_type", void 0);

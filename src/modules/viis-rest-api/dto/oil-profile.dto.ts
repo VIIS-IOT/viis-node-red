@@ -1,6 +1,6 @@
 /**
  * @fileoverview Oil Profile DTOs for Marine IoT System
- * 
+ *
  * Provides validation DTOs for oil profile management operations:
  * - Create oil profile (DO/FO with density and temperature)
  * - Update oil profile
@@ -27,9 +27,10 @@ import { Transform } from 'class-transformer';
  * Machine type enumeration
  */
 export enum MachineType {
-    GENERATOR = 'GENERATOR',      // Generator (fs03-04)
-    MAIN_ENGINE = 'MAIN_ENGINE',  // Main Engine (fs01-02)
-    BOILER = 'BOILER'             // Boiler (fs05-06)
+    GENERATOR_DO = 'GENERATOR_DO',    // Generator using Diesel Oil (fs03)
+    GENERATOR_HFO = 'GENERATOR_HFO',  // Generator using Heavy Fuel Oil (fs04)
+    MAIN_ENGINE = 'MAIN_ENGINE',      // Main Engine (fs01-02)
+    BOILER = 'BOILER'                 // Boiler (fs05-06)
 }
 
 /**

@@ -65,7 +65,7 @@ describe('ViisMarinetTelemetryProcessor', () => {
     const mockProfileDO = {
         name: 'profile_do_001',
         device_id: 'device_001',
-        machine_type: 'GENERATOR',
+        machine_type: 'GENERATOR_DO',
         oil_type: 'DO',
         operating_temperature: 85,
         density: 950,
@@ -171,7 +171,7 @@ describe('ViisMarinetTelemetryProcessor', () => {
                 oil_profile_id: 'profile_do_001',
                 density_snapshot: 850
             });
-            // fs02 is MAIN_ENGINE sensor -> DO profile  
+            // fs02 is MAIN_ENGINE sensor -> DO profile
             expect(result[1]).toMatchObject({
                 key_name: 'fs02',
                 float_value: 30.2,

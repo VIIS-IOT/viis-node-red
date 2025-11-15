@@ -26,7 +26,8 @@ const class_transformer_1 = require("class-transformer");
  */
 var MachineType;
 (function (MachineType) {
-    MachineType["GENERATOR"] = "GENERATOR";
+    MachineType["GENERATOR_DO"] = "GENERATOR_DO";
+    MachineType["GENERATOR_HFO"] = "GENERATOR_HFO";
     MachineType["MAIN_ENGINE"] = "MAIN_ENGINE";
     MachineType["BOILER"] = "BOILER"; // Boiler (fs05-06)
 })(MachineType || (exports.MachineType = MachineType = {}));

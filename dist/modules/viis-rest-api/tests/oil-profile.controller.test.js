@@ -83,7 +83,7 @@ describe('OilProfileController', () => {
         it('should create DO profile successfully', async () => {
             const createDto = {
                 device_id: 'device_001',
-                machine_type: oil_profile_dto_1.MachineType.GENERATOR,
+                machine_type: oil_profile_dto_1.MachineType.GENERATOR_DO,
                 oil_type: oil_profile_dto_1.OilType.DO,
                 operating_temperature: 40,
                 density: 0.85,

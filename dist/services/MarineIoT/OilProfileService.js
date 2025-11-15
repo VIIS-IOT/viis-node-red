@@ -6,7 +6,11 @@ const TabiotDevice_1 = require("../../orm/entities/device/TabiotDevice");
 /**
  * Oil Profile Service for Marine IoT System
  * Handles CRUD operations and active profile management
- * Supports multi-machine profiles (Generator, Main Engine, Boiler)
+ * Supports multi-machine profiles:
+ * - BOILER: Nồi hơi (fs01 - direct consumption)
+ * - MAIN_ENGINE: Máy chính (fs02 in - fs03 return)
+ * - GENERATOR_HFO: Máy phát HFO (fs03 in - fs04 return)
+ * - GENERATOR_DO: Máy phát DO (fs05 in - fs06 return)
  */
 class OilProfileService {
     constructor(dataSource) {
@@ -193,12 +197,17 @@ class OilProfileService {
 }
 exports.OilProfileService = OilProfileService;
 // Sensor key to machine type mapping
-// fs01-fs02: Máy chính (Main Engine), fs03-fs04: Máy phát (Generator), fs05-fs06: Nồi hơi (Boiler)
+// NEW MAPPING (4 machines):
+// - fs01: BOILER (direct consumption)
+// - fs02-fs03: MAIN_ENGINE (fs02 in - fs03 return)
+// - fs03-fs04: GENERATOR_HFO (fs03 in - fs04 return) 
+// - fs05-fs06: GENERATOR_DO (fs05 in - fs06 return)
+// Note: fs03 is shared between MAIN_ENGINE (return) and GENERATOR_HFO (in)
 OilProfileService.SENSOR_MACHINE_MAP = {
-    'fs01': 'MAIN_ENGINE',
+    'fs01': 'BOILER',
     'fs02': 'MAIN_ENGINE',
-    'fs03': 'GENERATOR',
-    'fs04': 'GENERATOR',
-    'fs05': 'BOILER',
-    'fs06': 'BOILER',
+    'fs03': 'MAIN_ENGINE', // Primary mapping for fs03 is MAIN_ENGINE
+    'fs04': 'GENERATOR_HFO',
+    'fs05': 'GENERATOR_DO',
+    'fs06': 'GENERATOR_DO',
 };

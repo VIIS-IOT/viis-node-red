@@ -1,6 +1,6 @@
 /**
  * @fileoverview Oil Profile Controller for Marine IoT System
- * 
+ *
  * Provides REST API endpoints for managing oil profiles:
  * - Create new oil profile (BO/DO)
  * - List all profiles for a device
@@ -44,7 +44,7 @@ import {
 
 /**
  * Oil Profile Controller
- * 
+ *
  * Base path: /api/v2/oil-profiles
  */
 @JsonController('/oil-profiles')
@@ -62,14 +62,14 @@ export class OilProfileController {
             throw new Error('DataSource not available');
         }
         this.oilProfileService = new OilProfileService(dataSource);
-        
+
         logger.info(this.node, 'OilProfileController initialized');
     }
 
     /**
      * Create new oil profile
      * POST /api/v2/oil-profiles
-     * 
+     *
      * @param createDto - Oil profile creation data
      * @returns Created oil profile
      */
@@ -121,7 +121,7 @@ export class OilProfileController {
     /**
      * Get all profiles for a device
      * GET /api/v2/oil-profiles
-     * 
+     *
      * @param query - Query parameters
      * @returns List of oil profiles
      */
@@ -178,7 +178,7 @@ export class OilProfileController {
     /**
      * Get active profile for a device (any machine)
      * GET /api/v2/oil-profiles/active/:device_id
-     * 
+     *
      * @deprecated Use getActiveProfileByMachine for machine-specific profiles
      * @param deviceId - Device ID
      * @returns Active oil profile or null
@@ -212,13 +212,14 @@ export class OilProfileController {
     /**
      * Get active profile for a specific machine on a device
      * GET /api/v2/oil-profiles/active/:device_id/:machine_type
-     * 
+     *
      * @param deviceId - Device ID
-     * @param machineType - Machine type (GENERATOR, MAIN_ENGINE, or BOILER)
+     * @param machineType - Machine type (GENERATOR_DO, GENERATOR_HFO, MAIN_ENGINE, or BOILER)
      * @returns Active oil profile for the machine or null
-     * 
+     *
      * @example
-     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR
+     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR_DO
+     * GET /api/v2/oil-profiles/active/ship_001/GENERATOR_HFO
      * GET /api/v2/oil-profiles/active/ship_001/MAIN_ENGINE
      * GET /api/v2/oil-profiles/active/ship_001/BOILER
      */
@@ -230,7 +231,7 @@ export class OilProfileController {
     ): Promise<OilProfileResponseDto | null> {
         try {
             // Validate machine type
-            const validMachineTypes = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+            const validMachineTypes = ['GENERATOR_DO', 'GENERATOR_HFO', 'MAIN_ENGINE', 'BOILER'];
             if (!validMachineTypes.includes(machineType)) {
                 throw new BadRequestError(
                     `Invalid machine_type. Must be one of: ${validMachineTypes.join(', ')}`
@@ -282,7 +283,7 @@ export class OilProfileController {
     /**
      * Get single profile by name
      * GET /api/v2/oil-profiles/:name
-     * 
+     *
      * @param name - Profile name
      * @returns Oil profile
      */
@@ -314,7 +315,7 @@ export class OilProfileController {
     /**
      * Update oil profile
      * PUT /api/v2/oil-profiles/:name
-     * 
+     *
      * @param name - Profile name
      * @param updateDto - Update data
      * @returns Updated profile
@@ -350,7 +351,7 @@ export class OilProfileController {
     /**
      * Activate oil profile
      * POST /api/v2/oil-profiles/activate
-     * 
+     *
      * @param activateDto - Profile name to activate
      * @returns Activated profile
      */
@@ -388,7 +389,7 @@ export class OilProfileController {
     /**
      * Soft delete oil profile (marks as deleted, preserves data for historical records)
      * DELETE /api/v2/oil-profiles/:name
-     * 
+     *
      * @param name - Profile name
      * @returns Success message
      */
@@ -425,7 +426,7 @@ export class OilProfileController {
     /**
      * Restore a soft-deleted oil profile
      * POST /api/v2/oil-profiles/:name/restore
-     * 
+     *
      * @param name - Profile name
      * @returns Restored profile
      */
