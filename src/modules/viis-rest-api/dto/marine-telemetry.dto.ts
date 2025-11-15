@@ -8,12 +8,13 @@
 import { IsString, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
 
 /**
- * Machine types supported by Marine IoT
+ * Machine types supported by Marine IoT (4 machines)
  */
 export enum MachineType {
-    GENERATOR = 'GENERATOR',
+    BOILER = 'BOILER',
     MAIN_ENGINE = 'MAIN_ENGINE',
-    BOILER = 'BOILER'
+    GENERATOR_HFO = 'GENERATOR_HFO',
+    GENERATOR_DO = 'GENERATOR_DO'
 }
 
 /**
@@ -109,7 +110,7 @@ export interface CurrentTripInfo {
  */
 export interface MachineData {
     flow_in: MachineFlowData;
-    flow_return: MachineFlowData;
+    flow_return?: MachineFlowData; // Optional for BOILER (direct consumption)
     consumption_rate: ConsumptionRate;
     oil_profile: string | null;
     density: number;
@@ -130,9 +131,10 @@ export interface LatestTelemetryResponseDto {
     timestamp: number;
     data: TelemetryDataPoint[];
     machines: {
-        [MachineType.GENERATOR]?: MachineData;
-        [MachineType.MAIN_ENGINE]?: MachineData;
         [MachineType.BOILER]?: MachineData;
+        [MachineType.MAIN_ENGINE]?: MachineData;
+        [MachineType.GENERATOR_HFO]?: MachineData;
+        [MachineType.GENERATOR_DO]?: MachineData;
     };
 }
 
@@ -144,9 +146,10 @@ export interface EnhancedLatestTelemetryResponseDto {
     timestamp: number;
     data: TelemetryDataPoint[];
     machines: {
-        [MachineType.GENERATOR]?: EnhancedMachineData;
-        [MachineType.MAIN_ENGINE]?: EnhancedMachineData;
         [MachineType.BOILER]?: EnhancedMachineData;
+        [MachineType.MAIN_ENGINE]?: EnhancedMachineData;
+        [MachineType.GENERATOR_HFO]?: EnhancedMachineData;
+        [MachineType.GENERATOR_DO]?: EnhancedMachineData;
     };
     current_trip?: CurrentTripInfo;
 }
@@ -210,7 +213,7 @@ export interface MachineSummary {
     type: MachineType;
     sensors: {
         flow_in: string;
-        flow_return: string;
+        flow_return?: string; // Optional because BOILER has no return flow
     };
     current_profile: MachineProfile | null;
     status: MachineStatus;

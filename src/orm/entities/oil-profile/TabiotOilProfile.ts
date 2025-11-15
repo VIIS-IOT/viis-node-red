@@ -4,7 +4,12 @@ import { CustomBaseEntity } from '../base/Base';
 
 /**
  * Oil Profile Entity for Marine IoT System
- * Stores oil type configurations for different machines (Generator, Main Engine, Boiler)
+ * Stores oil type configurations for different machines
+ * Supports 4 machines:
+ * - BOILER: Nồi hơi (fs01 - direct consumption)
+ * - MAIN_ENGINE: Máy chính (fs02 in - fs03 return)
+ * - GENERATOR_HFO: Máy phát HFO (fs03 in - fs04 return)
+ * - GENERATOR_DO: Máy phát DO (fs05 in - fs06 return)
  * Each machine can have different oil types (DO/FO) with specific density and temperature
  */
 @Entity('tabiot_oil_profile')
@@ -19,10 +24,10 @@ export class TabiotOilProfile extends CustomBaseEntity {
 
     @Column({
         type: 'enum',
-        enum: ['GENERATOR', 'MAIN_ENGINE', 'BOILER'],
-        comment: 'Machine type: MAIN_ENGINE (fs01-02), GENERATOR (fs03-04), BOILER (fs05-06)'
+        enum: ['BOILER', 'MAIN_ENGINE', 'GENERATOR_HFO', 'GENERATOR_DO'],
+        comment: 'Machine type: BOILER (fs01), MAIN_ENGINE (fs02-fs03), GENERATOR_HFO (fs03-fs04), GENERATOR_DO (fs05-fs06)'
     })
-    machine_type!: 'GENERATOR' | 'MAIN_ENGINE' | 'BOILER';
+    machine_type!: 'BOILER' | 'MAIN_ENGINE' | 'GENERATOR_HFO' | 'GENERATOR_DO';
 
     @Column({
         type: 'enum',

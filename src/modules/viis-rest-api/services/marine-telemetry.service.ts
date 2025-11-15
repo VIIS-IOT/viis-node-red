@@ -31,13 +31,18 @@ import {
 } from '../dto/marine-telemetry.dto';
 
 /**
- * Sensor mapping for each machine type
- * fs01-fs02: Máy chính (Main Engine), fs03-fs04: Máy phát (Generator), fs05-fs06: Nồi hơi (Boiler)
+ * Sensor mapping for each machine type (NEW 4-machine configuration)
+ * - BOILER: fs01 (direct consumption, no return flow)
+ * - MAIN_ENGINE: fs02 (in) - fs03 (return)
+ * - GENERATOR_HFO: fs03 (in) - fs04 (return)
+ * - GENERATOR_DO: fs05 (in) - fs06 (return)
+ * Note: fs03 is shared between MAIN_ENGINE (return) and GENERATOR_HFO (in)
  */
-const MACHINE_SENSORS: Record<MachineType, { flow_in: string; flow_return: string }> = {
-    'MAIN_ENGINE': { flow_in: 'fs01', flow_return: 'fs02' },
-    'GENERATOR': { flow_in: 'fs03', flow_return: 'fs04' },
-    'BOILER': { flow_in: 'fs05', flow_return: 'fs06' }
+const MACHINE_SENSORS: Record<MachineType, { flow_in: string; flow_return?: string }> = {
+    'BOILER': { flow_in: 'fs01' }, // Direct consumption, no return
+    'MAIN_ENGINE': { flow_in: 'fs02', flow_return: 'fs03' },
+    'GENERATOR_HFO': { flow_in: 'fs03', flow_return: 'fs04' },
+    'GENERATOR_DO': { flow_in: 'fs05', flow_return: 'fs06' }
 };
 
 @Service()
@@ -176,7 +181,7 @@ export class MarineTelemetryService {
         trip: any
     ): Record<string, EnhancedMachineData> {
         const enhanced: Record<string, EnhancedMachineData> = {};
-        const machineTypes: MachineType[] = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+        const machineTypes: MachineType[] = ['BOILER', 'MAIN_ENGINE', 'GENERATOR_HFO', 'GENERATOR_DO'];
 
         for (const machineType of machineTypes) {
             const machineData = machines[machineType];
@@ -186,25 +191,47 @@ export class MarineTelemetryService {
 
             // Find accumulation data for this machine's sensors
             const flowInAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_in);
-            const flowReturnAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_return);
-
-            enhanced[machineType] = {
-                ...machineData,
-                trip_accumulation: {
-                    total_volume_in: {
-                        m3: Number(flowInAcc?.total_volume_m3 || 0),
-                        tons: Number(flowInAcc?.total_volume_tons || 0)
-                    },
-                    total_volume_return: {
-                        m3: Number(flowReturnAcc?.total_volume_m3 || 0),
-                        tons: Number(flowReturnAcc?.total_volume_tons || 0)
-                    },
-                    total_consumption: {
-                        m3: Number((Number(flowInAcc?.total_volume_m3 || 0) - Number(flowReturnAcc?.total_volume_m3 || 0)).toFixed(2)),
-                        tons: Number((Number(flowInAcc?.total_volume_tons || 0) - Number(flowReturnAcc?.total_volume_tons || 0)).toFixed(2))
+            
+            // BOILER has no return flow
+            if (machineType === 'BOILER') {
+                enhanced[machineType] = {
+                    ...machineData,
+                    trip_accumulation: {
+                        total_volume_in: {
+                            m3: Number(flowInAcc?.total_volume_m3 || 0),
+                            tons: Number(flowInAcc?.total_volume_tons || 0)
+                        },
+                        total_volume_return: {
+                            m3: 0,
+                            tons: 0
+                        },
+                        total_consumption: {
+                            m3: Number(flowInAcc?.total_volume_m3 || 0), // Direct consumption
+                            tons: Number(flowInAcc?.total_volume_tons || 0)
+                        }
                     }
-                }
-            };
+                };
+            } else if (sensors.flow_return) {
+                const flowReturnAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_return);
+                
+                enhanced[machineType] = {
+                    ...machineData,
+                    trip_accumulation: {
+                        total_volume_in: {
+                            m3: Number(flowInAcc?.total_volume_m3 || 0),
+                            tons: Number(flowInAcc?.total_volume_tons || 0)
+                        },
+                        total_volume_return: {
+                            m3: Number(flowReturnAcc?.total_volume_m3 || 0),
+                            tons: Number(flowReturnAcc?.total_volume_tons || 0)
+                        },
+                        total_consumption: {
+                            m3: Number((Number(flowInAcc?.total_volume_m3 || 0) - Number(flowReturnAcc?.total_volume_m3 || 0)).toFixed(2)),
+                            tons: Number((Number(flowInAcc?.total_volume_tons || 0) - Number(flowReturnAcc?.total_volume_tons || 0)).toFixed(2))
+                        }
+                    }
+                };
+            }
         }
 
         return enhanced;
@@ -260,7 +287,7 @@ export class MarineTelemetryService {
      */
     async getMachineSummary(deviceId: string): Promise<MachinesSummaryResponseDto> {
         const machines: MachineSummary[] = [];
-        const machineTypes: MachineType[] = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+        const machineTypes: MachineType[] = ['BOILER', 'MAIN_ENGINE', 'GENERATOR_HFO', 'GENERATOR_DO'];
 
         for (const machineType of machineTypes) {
             const sensors = MACHINE_SENSORS[machineType];
@@ -335,39 +362,57 @@ export class MarineTelemetryService {
         const machines: Record<string, MachineData> = {};
 
         // Group by machine type
-        const machineTypes: MachineType[] = ['GENERATOR', 'MAIN_ENGINE', 'BOILER'];
+        const machineTypes: MachineType[] = ['BOILER', 'MAIN_ENGINE', 'GENERATOR_HFO', 'GENERATOR_DO'];
 
         for (const machineType of machineTypes) {
             const sensors = MACHINE_SENSORS[machineType];
             
             const flowInData = dataPoints.find(d => d.key_name === sensors.flow_in);
-            const flowReturnData = dataPoints.find(d => d.key_name === sensors.flow_return);
+            
+            if (!flowInData) continue;
 
-            if (flowInData && flowReturnData) {
-                const flowIn: MachineFlowData = {
-                    key: flowInData.key_name,
-                    m3h: flowInData.value,
-                    th: flowInData.value_tons
-                };
+            const flowIn: MachineFlowData = {
+                key: flowInData.key_name,
+                m3h: flowInData.value,
+                th: flowInData.value_tons
+            };
 
-                const flowReturn: MachineFlowData = {
-                    key: flowReturnData.key_name,
-                    m3h: flowReturnData.value,
-                    th: flowReturnData.value_tons
-                };
-
-                const consumption: ConsumptionRate = {
-                    m3h: Number((flowIn.m3h - flowReturn.m3h).toFixed(2)),
-                    th: Number((flowIn.th - flowReturn.th).toFixed(2))
-                };
-
+            // BOILER has no return flow (direct consumption)
+            if (machineType === 'BOILER') {
                 machines[machineType] = {
                     flow_in: flowIn,
-                    flow_return: flowReturn,
-                    consumption_rate: consumption,
+                    flow_return: undefined as any,
+                    consumption_rate: {
+                        m3h: flowIn.m3h, // Direct consumption equals flow_in
+                        th: flowIn.th
+                    },
                     oil_profile: flowInData.oil_profile_id,
                     density: flowInData.density_snapshot || 0
                 };
+            } else if (sensors.flow_return) {
+                // Other machines have return flow
+                const flowReturnData = dataPoints.find(d => d.key_name === sensors.flow_return);
+                
+                if (flowReturnData) {
+                    const flowReturn: MachineFlowData = {
+                        key: flowReturnData.key_name,
+                        m3h: flowReturnData.value,
+                        th: flowReturnData.value_tons
+                    };
+
+                    const consumption: ConsumptionRate = {
+                        m3h: Number((flowIn.m3h - flowReturn.m3h).toFixed(2)),
+                        th: Number((flowIn.th - flowReturn.th).toFixed(2))
+                    };
+
+                    machines[machineType] = {
+                        flow_in: flowIn,
+                        flow_return: flowReturn,
+                        consumption_rate: consumption,
+                        oil_profile: flowInData.oil_profile_id,
+                        density: flowInData.density_snapshot || 0
+                    };
+                }
             }
         }
 
