@@ -289,11 +289,9 @@ module.exports = function (RED: NodeAPI) {
                         node.log('[TripRealtime] Update timer stopped');
                     }
 
-                    // Close database connection
-                    if (dataSource && dataSource.isInitialized) {
-                        await dataSource.destroy();
-                        node.log('[TripRealtime] Database connection closed');
-                    }
+                    // NOTE: DataSource cleanup is handled by viis-marine-telemetry node
+                    // to avoid race condition when multiple nodes share the same singleton DataSource
+                    // Do NOT destroy DataSource here
 
                     node.log('[TripRealtime] Node closed and cleaned up');
                     done();

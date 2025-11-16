@@ -87,7 +87,12 @@ const ENV_TO_GLOBAL_MAPPING = {
     'EMQX_ACCESS_KEY': 'emqx_access_key',
     'EMQX_SECRET_KEY': 'emqx_secret_key',
     'AWS_SNS_ACCESS_KEY_ID': 'aws_sns_access_key_id',
-    'AWS_SNS_SECRET_ACCESS_KEY': 'aws_sns_secret_access_key'
+    'AWS_SNS_SECRET_ACCESS_KEY': 'aws_sns_secret_access_key',
+    'DH6400_ENABLED': 'dh6400_enabled',
+    'DH6400_SERIAL_PORT': 'dh6400_serial_port',
+    'DH6400_BAUD_RATE': 'dh6400_baud_rate',
+    'DH6400_POLLING_INTERVAL': 'dh6400_polling_interval',
+    'DH6400_ENABLED_CHANNELS': 'dh6400_enabled_channels'
 };
 /**
  * Global Context Helper class

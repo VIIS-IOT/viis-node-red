@@ -266,7 +266,8 @@ module.exports = function (RED: NodeAPI) {
                     debugLogKey,
                     thresholdConfigKey,
                     isMultiBoardMode,
-                    currentBoardId
+                    currentBoardId,
+                    dataSource
                 );
 
                 // Start polling if all clients are connected
@@ -577,7 +578,8 @@ module.exports = function (RED: NodeAPI) {
         debugLogKey: string,
         thresholdConfigKey: string,
         isMultiBoardMode: boolean,
-        currentBoardId: string | undefined
+        currentBoardId: string | undefined,
+        dataSource: any
     ): void {
         node.on('close', async (done: () => void) => {
             try {
@@ -602,6 +604,20 @@ module.exports = function (RED: NodeAPI) {
                 ClientRegistry.releaseClient('mysql', node);
 
                 thingsboardMqttClient.disconnect();
+
+                // Cleanup DataSource (singleton shared across nodes)
+                // Only destroy if still initialized to avoid race conditions
+                if (dataSource && dataSource.isInitialized) {
+                    try {
+                        await dataSource.destroy();
+                        node.log('[Marine] Database connection closed');
+                    } catch (dbError) {
+                        // Ignore if already closed by another node
+                        if (!(dbError as Error).message.includes('not yet established')) {
+                            node.warn(`[Marine] Database cleanup warning: ${(dbError as Error).message}`);
+                        }
+                    }
+                }
 
                 node.log('[Marine] Node closed and cleaned up');
                 done();

@@ -409,11 +409,9 @@ module.exports = function (RED: NodeAPI) {
                         node.log('[FlowAccumulation] Cron job stopped');
                     }
 
-                    // Close database connection
-                    if (dataSource && dataSource.isInitialized) {
-                        await dataSource.destroy();
-                        node.log('[FlowAccumulation] Database connection closed');
-                    }
+                    // NOTE: DataSource cleanup is handled by viis-marine-telemetry node
+                    // to avoid race condition when multiple nodes share the same singleton DataSource
+                    // Do NOT destroy DataSource here
 
                     // Disconnect MQTT
                     if (thingsboardMqttClient) {
