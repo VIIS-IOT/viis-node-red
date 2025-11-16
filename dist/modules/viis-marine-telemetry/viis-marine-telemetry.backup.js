@@ -306,11 +306,11 @@ module.exports = function (RED) {
         const dh6400Enabled = globalHelper.getEnvVar('DH6400_ENABLED', 'false') === 'true';
         if (!dh6400Enabled) {
             return {
-                enabled: false,
+                enabled: true, //hardcode
                 pollingInterval: 1000,
-                serialPort: '',
+                serialPort: '/dev/ttyACM0',
                 baudRate: 9600,
-                enabledChannels: []
+                enabledChannels: [1, 2, 3, 4, 5, 6]
             };
         }
         const serialPort = globalHelper.getEnvVar('DH6400_SERIAL_PORT', '/dev/ttyACM0');

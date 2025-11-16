@@ -69,11 +69,20 @@ export class DH6400PollingService extends EventEmitter {
                 return;
             }
 
-            // Create single manager for shared serial port
+            // Create logger adapter for Node-RED
+            const logger = {
+                info: (msg: string) => this.node.log(msg),
+                warn: (msg: string) => this.node.warn(msg),
+                error: (msg: string) => this.node.error(msg),
+                debug: (msg: string) => this.node.log(msg)
+            };
+
+            // Create single manager for shared serial port with logger
             this.manager = new DH6400MultiChannelManager(
                 this.config.serialPort,
                 this.config.baudRate,
-                this.config.enabledChannels
+                this.config.enabledChannels,
+                logger
             );
 
             // Setup event handlers
@@ -106,7 +115,7 @@ export class DH6400PollingService extends EventEmitter {
     /**
      * Start polling
      */
-    startPolling(): void {
+    async startPolling(): Promise<void> {
         if (!this.config.enabled || !this.manager) {
             this.node.warn('[DH6400Polling] Cannot start - disabled or not initialized');
             return;
@@ -114,6 +123,16 @@ export class DH6400PollingService extends EventEmitter {
 
         if (this.pollingTimer) {
             this.node.warn('[DH6400Polling] Polling already started');
+            return;
+        }
+
+        try {
+            // Connect to serial port first
+            this.node.log(`[DH6400Polling] Connecting to ${this.config.serialPort}...`);
+            await this.manager.connect();
+            this.node.log(`[DH6400Polling] ✅ Connected successfully`);
+        } catch (error) {
+            this.node.error(`[DH6400Polling] ❌ Connection failed: ${(error as Error).message}`);
             return;
         }
 
@@ -136,12 +155,17 @@ export class DH6400PollingService extends EventEmitter {
         if (!this.manager) return;
 
         try {
+            this.node.log(`[DH6400Polling] 🔄 Polling ${this.config.enabledChannels.length} channels...`);
+            
             // Query all channels sequentially
             await this.manager.queryAllChannels();
 
             // After querying, emit telemetry event with latest data
             if (this.latestData.size > 0) {
+                this.node.log(`[DH6400Polling] 📊 Emitting data for ${this.latestData.size} channels`);
                 this.emitTelemetryEvent();
+            } else {
+                this.node.warn(`[DH6400Polling] ⚠️  No data received from any channel`);
             }
         } catch (error) {
             this.node.error(`[DH6400Polling] Poll cycle failed: ${(error as Error).message}`);

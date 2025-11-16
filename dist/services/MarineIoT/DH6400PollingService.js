@@ -42,8 +42,15 @@ class DH6400PollingService extends events_1.EventEmitter {
                 this.node.warn('[DH6400Polling] No enabled channels found');
                 return;
             }
-            // Create single manager for shared serial port
-            this.manager = new dh6400_serial_client_1.DH6400MultiChannelManager(this.config.serialPort, this.config.baudRate, this.config.enabledChannels);
+            // Create logger adapter for Node-RED
+            const logger = {
+                info: (msg) => this.node.log(msg),
+                warn: (msg) => this.node.warn(msg),
+                error: (msg) => this.node.error(msg),
+                debug: (msg) => this.node.log(msg)
+            };
+            // Create single manager for shared serial port with logger
+            this.manager = new dh6400_serial_client_1.DH6400MultiChannelManager(this.config.serialPort, this.config.baudRate, this.config.enabledChannels, logger);
             // Setup event handlers
             this.manager.on('data', (data) => this.handleFlowData(data));
             this.manager.on('error', (error) => this.node.error(`[DH6400Polling] Error: ${error.message}`));
@@ -69,13 +76,23 @@ class DH6400PollingService extends events_1.EventEmitter {
     /**
      * Start polling
      */
-    startPolling() {
+    async startPolling() {
         if (!this.config.enabled || !this.manager) {
             this.node.warn('[DH6400Polling] Cannot start - disabled or not initialized');
             return;
         }
         if (this.pollingTimer) {
             this.node.warn('[DH6400Polling] Polling already started');
+            return;
+        }
+        try {
+            // Connect to serial port first
+            this.node.log(`[DH6400Polling] Connecting to ${this.config.serialPort}...`);
+            await this.manager.connect();
+            this.node.log(`[DH6400Polling] ✅ Connected successfully`);
+        }
+        catch (error) {
+            this.node.error(`[DH6400Polling] ❌ Connection failed: ${error.message}`);
             return;
         }
         this.pollingTimer = setInterval(async () => {
@@ -94,11 +111,16 @@ class DH6400PollingService extends events_1.EventEmitter {
         if (!this.manager)
             return;
         try {
+            this.node.log(`[DH6400Polling] 🔄 Polling ${this.config.enabledChannels.length} channels...`);
             // Query all channels sequentially
             await this.manager.queryAllChannels();
             // After querying, emit telemetry event with latest data
             if (this.latestData.size > 0) {
+                this.node.log(`[DH6400Polling] 📊 Emitting data for ${this.latestData.size} channels`);
                 this.emitTelemetryEvent();
+            }
+            else {
+                this.node.warn(`[DH6400Polling] ⚠️  No data received from any channel`);
             }
         }
         catch (error) {

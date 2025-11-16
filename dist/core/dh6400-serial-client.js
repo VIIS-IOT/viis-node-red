@@ -60,33 +60,40 @@ class DH6400SerialClient extends events_1.EventEmitter {
     /**
      * Initialize serial port
      */
-    initializePort() {
-        try {
-            this.port = new serialport_1.SerialPort({
-                path: this.serialPort,
-                baudRate: this.baudRate,
-                dataBits: 8,
-                stopBits: 1,
-                parity: 'none',
-                autoOpen: false,
-            });
-            // Setup event handlers
-            this.port.on('open', () => this.handleOpen());
-            this.port.on('data', (data) => this.onData(data));
-            this.port.on('error', (error) => this.handleError(error));
-            this.port.on('close', () => this.handleClose());
-            // Open port
-            this.port.open((error) => {
-                if (error) {
-                    this.log(`Failed to open ${this.serialPort}: ${error.message}`, 'error');
-                    this.scheduleReconnect();
-                }
-            });
-        }
-        catch (error) {
-            this.log(`Port initialization failed: ${error.message}`, 'error');
-            this.scheduleReconnect();
-        }
+    async initializePort() {
+        return new Promise((resolve, reject) => {
+            try {
+                this.port = new serialport_1.SerialPort({
+                    path: this.serialPort,
+                    baudRate: this.baudRate,
+                    dataBits: 8,
+                    stopBits: 1,
+                    parity: 'none',
+                    autoOpen: false,
+                });
+                // Setup event handlers
+                this.port.on('open', () => {
+                    this.handleOpen();
+                    resolve(); // Resolve when port opens successfully
+                });
+                this.port.on('data', (data) => this.onData(data));
+                this.port.on('error', (error) => this.handleError(error));
+                this.port.on('close', () => this.handleClose());
+                // Open port
+                this.port.open((error) => {
+                    if (error) {
+                        this.log(`Failed to open ${this.serialPort}: ${error.message}`, 'error');
+                        this.scheduleReconnect();
+                        reject(error);
+                    }
+                });
+            }
+            catch (error) {
+                this.log(`Port initialization failed: ${error.message}`, 'error');
+                this.scheduleReconnect();
+                reject(error);
+            }
+        });
     }
     /**
      * Handle port open
@@ -192,7 +199,7 @@ class DH6400SerialClient extends events_1.EventEmitter {
                 timestamp: Date.now(),
                 rawData: actualResponse
             };
-            this.log(`Slave ${slaveId}: ${instantFlowM3h.toFixed(4)} m³/h, total=${totalAccumulatedM3.toFixed(8)} m³`);
+            this.log(`✅ Slave ${slaveId}: instant=${instantFlowM3h.toFixed(4)} m³/h, total=${totalAccumulatedM3.toFixed(8)} m³`);
             return flowData;
         }
         catch (error) {
@@ -278,7 +285,7 @@ class DH6400SerialClient extends events_1.EventEmitter {
             this.port.flush();
             // Send request
             this.port.write(packet);
-            this.log(`Query sent to slave ${request.slaveId}: ${packet.toString('hex').toUpperCase()}`);
+            this.log(`Query sent to slave ${request.slaveId}: ${packet.toString('hex').toUpperCase()}`, 'debug');
             // Wait for response with timeout
             const timeout = setTimeout(() => {
                 this.log(`Timeout waiting for slave ${request.slaveId} response`, 'warn');
@@ -317,7 +324,13 @@ class DH6400SerialClient extends events_1.EventEmitter {
     }
     log(message, level = 'info') {
         if (this.logger) {
-            this.logger[level](`[DH6400-Client] ${message}`);
+            // Only log debug if logger has debug method
+            if (level === 'debug' && this.logger.debug) {
+                this.logger.debug(`[DH6400-Client] ${message}`);
+            }
+            else if (level !== 'debug') {
+                this.logger[level](`[DH6400-Client] ${message}`);
+            }
         }
     }
 }

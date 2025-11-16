@@ -403,11 +403,11 @@ module.exports = function (RED: NodeAPI) {
 
         if (!dh6400Enabled) {
             return {
-                enabled: false,
+                enabled: true, //hardcode
                 pollingInterval: 1000,
-                serialPort: '',
+                serialPort: '/dev/ttyACM0',
                 baudRate: 9600,
-                enabledChannels: []
+                enabledChannels: [1, 2, 3, 4, 5, 6]
             };
         }
 

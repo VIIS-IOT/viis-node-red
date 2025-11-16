@@ -9,6 +9,7 @@ export interface ViisMarinetTelemetryNodeDef extends ViisTelemetryNodeDef {
     enableMarineIoT?: boolean;
     flowSensorKeys?: string; // Comma-separated list, default: fs01,fs02,fs03,fs04,fs05,fs06
     profileCacheDuration?: number; // Cache duration in milliseconds, default: 300000 (5 min)
+    dh6400PollingInterval?: number; // DH6400 serial polling interval in milliseconds, default: 5000 (5 sec)
 }
 
 export interface MarineIoTConfig {

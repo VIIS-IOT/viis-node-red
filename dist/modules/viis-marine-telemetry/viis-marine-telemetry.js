@@ -97,7 +97,7 @@ module.exports = function (RED) {
                 setupCleanupHandler(node, thingsboardMqttClient, dh6400PollingService, dataSource);
                 // Start DH6400 polling if enabled
                 if (dh6400PollingService) {
-                    dh6400PollingService.startPolling();
+                    await dh6400PollingService.startPolling();
                     node.log('[Marine] DH6400 polling started');
                     node.status({ fill: "green", shape: "dot", text: "DH6400 polling active" });
                 }
@@ -135,10 +135,12 @@ module.exports = function (RED) {
      * Create DH6400 configuration
      */
     function createDH6400Config(globalHelper, config) {
-        const enabled = globalHelper.getEnvVar('DH6400_ENABLED', 'false') === 'true';
+        const enabled = true; // Hard-coded to always enable DH6400
         const serialPort = globalHelper.getEnvVar('DH6400_SERIAL_PORT', '/dev/ttyACM0');
         const baudRate = globalHelper.getNumericEnvVar('DH6400_BAUD_RATE', 9600);
-        const pollingInterval = globalHelper.getNumericEnvVar('DH6400_POLLING_INTERVAL', 1000);
+        // Use config value if provided, otherwise use ENV or default to 5000ms (5 sec)
+        const pollingInterval = config.dh6400PollingInterval
+            || globalHelper.getNumericEnvVar('DH6400_POLLING_INTERVAL', 5000);
         const channelsStr = globalHelper.getEnvVar('DH6400_ENABLED_CHANNELS', '1,2,3,4,5,6');
         const enabledChannels = channelsStr.split(',')
             .map(ch => parseInt(ch.trim()))
