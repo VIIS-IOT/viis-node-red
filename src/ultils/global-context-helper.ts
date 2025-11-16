@@ -49,6 +49,7 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'THINGSBOARD_PORT': 'thingsboard_port',
   'THINGSBOARD_PASSWORD': 'thingsboard_password',
   'THINGSBOARD_URL': 'thingsboard_url',
+  'THINGSBOARD_MQTT_BROKER': 'thingsboard_mqtt_broker',
   // EMQX configuration
   'EMQX_HOST': 'emqx_host',
   'EMQX_PORT': 'emqx_port',

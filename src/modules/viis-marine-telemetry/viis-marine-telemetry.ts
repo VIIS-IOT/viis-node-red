@@ -42,11 +42,15 @@ module.exports = function (RED: NodeAPI) {
             try {
                 node.log('[Marine] Initializing DH6400 serial polling node...');
 
+                // Wait for env-loader to complete first
+                node.log('[Marine] Waiting for env-loader to complete...');
+                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds for env-loader
+
                 // Get device ID
                 const deviceId = globalHelper.getEnvVar('DEVICE_ID', 'unknown-device');
                 node.log(`[Marine] Device ID: ${deviceId}`);
 
-                // Create MQTT clients
+                // Create MQTT clients (after env-loader has completed)
                 const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
                 thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
 
@@ -55,10 +59,6 @@ module.exports = function (RED: NodeAPI) {
                     node.status({ fill: "red", shape: "ring", text: "MQTT init failed" });
                     return;
                 }
-
-                // Initialize TypeORM DataSource for Marine IoT
-                node.log('[Marine] Waiting for env-loader to complete...');
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
 
                 // Verify env variables are loaded
                 const dbHost = globalHelper.getEnvVar('DATABASE_HOST', 'NOT_LOADED');
@@ -143,9 +143,15 @@ module.exports = function (RED: NodeAPI) {
      * Create ThingsBoard MQTT configuration
      */
     function createThingsboardMqttConfig(globalHelper: GlobalContextHelper): MqttConfig {
+        const broker = globalHelper.getEnvVar('THINGSBOARD_MQTT_BROKER', 'mqtt://localhost:1883');
+        const username = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+        
+        console.log('[Marine] MQTT Config - Broker:', broker);
+        console.log('[Marine] MQTT Config - Token:', username ? '***' + username.slice(-4) : 'NOT_SET');
+        
         return {
-            broker: globalHelper.getEnvVar('THINGSBOARD_MQTT_BROKER', 'mqtt://localhost:1883'),
-            username: globalHelper.getEnvVar('THINGSBOARD_ACCESS_TOKEN', ''),
+            broker,
+            username,
             password: '',
             clientId: `thingsboard_${Date.now()}`,
             reconnectPeriod: 5000,
