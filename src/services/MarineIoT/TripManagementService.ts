@@ -1,9 +1,9 @@
 /**
  * @fileoverview Trip Management Service
- * 
+ *
  * Manages voyage/trip lifecycle for Marine IoT fuel consumption tracking
  * Handles start/end/cancel operations for trips
- * 
+ *
  * IMPORTANT: This is separate from FlowAccumulationService (hourly accumulation)
  */
 
@@ -12,6 +12,7 @@ import { DataSource, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { TabiotTrip } from '../../orm/entities/trip/TabiotTrip';
 import { TabiotTripAccumulation } from '../../orm/entities/trip/TabiotTripAccumulation';
+import { FlowCheckpointService } from './FlowCheckpointService';
 
 export interface CreateTripOptions {
     deviceId: string;
@@ -29,15 +30,18 @@ export interface TripWithStats extends TabiotTrip {
 export class TripManagementService {
     private tripRepo: Repository<TabiotTrip>;
     private accumulationRepo: Repository<TabiotTripAccumulation>;
+    private checkpointService: FlowCheckpointService;
 
     constructor(private dataSource: DataSource) {
         this.tripRepo = dataSource.getRepository(TabiotTrip);
         this.accumulationRepo = dataSource.getRepository(TabiotTripAccumulation);
+        this.checkpointService = new FlowCheckpointService(dataSource);
     }
 
     /**
      * Start a new trip
      * Auto-ends any active trips for the same device before starting
+     * Resets trip checkpoints to current TFS values to avoid negative deltas
      */
     async startTrip(options: CreateTripOptions): Promise<TabiotTrip> {
         const { deviceId, tripName, notes } = options;
@@ -60,7 +64,7 @@ export class TripManagementService {
 
         // Initialize accumulation counters for all 6 sensors
         const sensors = ['fs01', 'fs02', 'fs03', 'fs04', 'fs05', 'fs06'];
-        const accumulationRecords = sensors.map(sensor => 
+        const accumulationRecords = sensors.map(sensor =>
             this.accumulationRepo.create({
                 trip_id: tripId,
                 device_id: deviceId,
@@ -74,6 +78,19 @@ export class TripManagementService {
 
         await this.accumulationRepo.save(accumulationRecords);
 
+        // Reset trip checkpoints to current TFS values
+        // This prevents negative deltas when starting a new trip
+        try {
+            const resetCount = await this.checkpointService.resetCheckpointsToCurrentValues(
+                deviceId,
+                'trip'
+            );
+            console.log(`[TripManagement] Reset ${resetCount} trip checkpoints for device ${deviceId}`);
+        } catch (error) {
+            console.error(`[TripManagement] Failed to reset checkpoints: ${(error as Error).message}`);
+            // Don't fail the trip creation if checkpoint reset fails
+        }
+
         return trip;
     }
 
@@ -82,7 +99,7 @@ export class TripManagementService {
      */
     async endTrip(tripId: string): Promise<TabiotTrip | null> {
         const trip = await this.tripRepo.findOne({ where: { id: tripId } });
-        
+
         if (!trip) {
             throw new Error(`Trip ${tripId} not found`);
         }
@@ -103,7 +120,7 @@ export class TripManagementService {
      */
     async cancelTrip(tripId: string, reason?: string): Promise<TabiotTrip | null> {
         const trip = await this.tripRepo.findOne({ where: { id: tripId } });
-        
+
         if (!trip) {
             throw new Error(`Trip ${tripId} not found`);
         }
@@ -121,9 +138,9 @@ export class TripManagementService {
      */
     async getActiveTrip(deviceId: string): Promise<TabiotTrip | null> {
         return await this.tripRepo.findOne({
-            where: { 
-                device_id: deviceId, 
-                status: 'ACTIVE' 
+            where: {
+                device_id: deviceId,
+                status: 'ACTIVE'
             }
         });
     }
@@ -184,7 +201,7 @@ export class TripManagementService {
      * Get trip history for a device
      */
     async getTripHistory(
-        deviceId: string, 
+        deviceId: string,
         limit: number = 50,
         status?: 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
     ): Promise<TabiotTrip[]> {
@@ -209,7 +226,7 @@ export class TripManagementService {
         await this.tripRepo
             .createQueryBuilder()
             .update(TabiotTrip)
-            .set({ 
+            .set({
                 end_time: Date.now(),
                 status: 'COMPLETED',
                 updated_at: new Date()
@@ -224,7 +241,7 @@ export class TripManagementService {
      */
     async deleteOldTrips(deviceId: string, olderThanDays: number = 90): Promise<number> {
         const cutoffTime = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
-        
+
         const result = await this.tripRepo
             .createQueryBuilder()
             .delete()

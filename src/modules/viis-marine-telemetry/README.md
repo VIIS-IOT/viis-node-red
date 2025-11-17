@@ -690,7 +690,30 @@ VALUES ('BO_BOILER', 'ship_001', 'BOILER', 'BO', 950, true);
 SELECT * FROM tabiot_flow_checkpoint
 WHERE device_id = 'ship_001'
 ORDER BY checkpoint_time DESC;
+
+-- Check if checkpoint value > current TFS (causes negative delta)
+SELECT
+    cp.sensor_key,
+    cp.last_tfs_value as checkpoint_value,
+    t.float_value as current_tfs,
+    (t.float_value - cp.last_tfs_value) as delta
+FROM tabiot_flow_checkpoint cp
+LEFT JOIN (
+    SELECT key_name, float_value
+    FROM tabiot_device_telemetry
+    WHERE device_id = 'ship_001'
+      AND key_name IN ('tfs01','tfs02','tfs03','tfs04','tfs05','tfs06')
+    ORDER BY timestamp DESC
+    LIMIT 6
+) t ON cp.sensor_key = t.key_name
+WHERE cp.device_id = 'ship_001'
+  AND cp.checkpoint_type = 'trip';
 ```
+
+**If checkpoint > current TFS (negative delta):**
+- This happens when trip starts with old checkpoint from previous trip
+- **Fixed automatically** in v2.0.0+ when starting new trip
+- For manual fix: Run the query from troubleshooting section above
 
 ### Performance issues
 
