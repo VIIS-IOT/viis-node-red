@@ -10,7 +10,7 @@ import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ViisMarinetTelemetryNodeDef, MarineIoTConfig } from './viis-marine-telemetry-config';
 import { ViisMarinetTelemetryProcessor } from './viis-marine-telemetry-processor';
 import { createDataSource } from '../../orm/dataSource';
-import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent } from '../../services/MarineIoT/DH6400PollingService';
+import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent } from '../../services/MarineIoT/DH6400PollingService';
 
 module.exports = function (RED: NodeAPI) {
     /**
@@ -279,6 +279,30 @@ module.exports = function (RED: NodeAPI) {
                 }
             } catch (error) {
                 node.error(`[Marine] Failed to process DH6400 data: ${(error as Error).message}`);
+            }
+        });
+
+        // Handle DH6400 polling errors
+        dh6400Service.on('polling-error', (event: DH6400PollingErrorEvent) => {
+            try {
+                node.warn(`[Marine] DH6400 polling error: ${event.err_code}`);
+
+                // Send error message in format compatible with viis-error-trigger
+                node.send({
+                    topic: 'dh6400-error',
+                    payload: {
+                        err_code: event.err_code,
+                        message: event.message,
+                        severity: event.severity,
+                        type: event.type,
+                        entity: event.entity,
+                        metadata: event.metadata
+                    }
+                });
+
+                node.log(`[Marine] Error message sent to output: ${event.err_code}`);
+            } catch (error) {
+                node.error(`[Marine] Failed to handle polling error: ${(error as Error).message}`);
             }
         });
     }

@@ -29,6 +29,19 @@ export interface DH6400TelemetryEvent {
 }
 
 /**
+ * DH6400 Polling Error Event
+ */
+export interface DH6400PollingErrorEvent {
+    err_code: string;
+    message: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    type: 'alert' | 'warning' | 'info' | 'error';
+    entity: string;
+    metadata: Record<string, any>;
+    timestamp: number;
+}
+
+/**
  * DH6400 Polling Service
  * Polls 6 channels sequentially and emits telemetry data
  */
@@ -40,6 +53,9 @@ export class DH6400PollingService extends EventEmitter {
     private pollingTimer: NodeJS.Timeout | null = null;
     private isPaused: boolean = false;
     private latestData: Map<number, DH6400FlowData> = new Map();
+    private consecutiveFailures: number = 0;
+    private lastErrorEmitTime: number = 0;
+    private readonly errorEmitThrottle: number = 300000; // 5 minutes throttle for duplicate errors
 
     constructor(node: Node, nodeContext: NodeContext, config: DH6400PollingConfig) {
         super();
@@ -131,8 +147,17 @@ export class DH6400PollingService extends EventEmitter {
             this.node.log(`[DH6400Polling] Connecting to ${this.config.serialPort}...`);
             await this.manager.connect();
             this.node.log(`[DH6400Polling] ✅ Connected successfully`);
+            // Reset failure counter on successful connection
+            this.consecutiveFailures = 0;
         } catch (error) {
             this.node.error(`[DH6400Polling] ❌ Connection failed: ${(error as Error).message}`);
+            this.emitPollingError(
+                'DH6400_CONNECTION_FAILED',
+                `Không thể kết nối với cổng serial ${this.config.serialPort}: ${(error as Error).message}`,
+                'critical',
+                'error',
+                { serialPort: this.config.serialPort, errorDetails: (error as Error).message }
+            );
             return;
         }
 
@@ -156,7 +181,7 @@ export class DH6400PollingService extends EventEmitter {
 
         try {
             this.node.log(`[DH6400Polling] 🔄 Polling ${this.config.enabledChannels.length} channels...`);
-            
+
             // Query all channels sequentially
             await this.manager.queryAllChannels();
 
@@ -164,11 +189,43 @@ export class DH6400PollingService extends EventEmitter {
             if (this.latestData.size > 0) {
                 this.node.log(`[DH6400Polling] 📊 Emitting data for ${this.latestData.size} channels`);
                 this.emitTelemetryEvent();
+                // Reset failure counter on successful poll
+                this.consecutiveFailures = 0;
             } else {
                 this.node.warn(`[DH6400Polling] ⚠️  No data received from any channel`);
+                this.consecutiveFailures++;
+
+                // Emit error if no data after multiple attempts
+                if (this.consecutiveFailures >= 3) {
+                    this.emitPollingError(
+                        'DH6400_NO_DATA',
+                        `Không nhận được dữ liệu từ ${this.config.enabledChannels.length} kênh DH6400 sau ${this.consecutiveFailures} lần thử`,
+                        'high',
+                        'warning',
+                        {
+                            consecutiveFailures: this.consecutiveFailures,
+                            enabledChannels: this.config.enabledChannels,
+                            serialPort: this.config.serialPort
+                        }
+                    );
+                }
             }
         } catch (error) {
             this.node.error(`[DH6400Polling] Poll cycle failed: ${(error as Error).message}`);
+            this.consecutiveFailures++;
+
+            // Emit error for polling failure
+            this.emitPollingError(
+                'DH6400_POLL_FAILED',
+                `Lỗi khi đọc dữ liệu DH6400: ${(error as Error).message}`,
+                'high',
+                'error',
+                {
+                    consecutiveFailures: this.consecutiveFailures,
+                    errorDetails: (error as Error).message,
+                    serialPort: this.config.serialPort
+                }
+            );
         }
     }
 
@@ -253,5 +310,43 @@ export class DH6400PollingService extends EventEmitter {
      */
     isPollingActive(): boolean {
         return this.pollingTimer !== null && !this.isPaused;
+    }
+
+    /**
+     * Emit polling error event with throttling to avoid spam
+     */
+    private emitPollingError(
+        err_code: string,
+        message: string,
+        severity: 'low' | 'medium' | 'high' | 'critical',
+        type: 'alert' | 'warning' | 'info' | 'error',
+        metadata: Record<string, any>
+    ): void {
+        const now = Date.now();
+
+        // Throttle error emission to avoid spam (5 minutes)
+        if (now - this.lastErrorEmitTime < this.errorEmitThrottle) {
+            this.node.log(`[DH6400Polling] Error throttled: ${err_code}`);
+            return;
+        }
+
+        this.lastErrorEmitTime = now;
+
+        const errorEvent: DH6400PollingErrorEvent = {
+            err_code,
+            message,
+            severity,
+            type,
+            entity: `dh6400-${this.config.serialPort}`,
+            metadata: {
+                ...metadata,
+                timestamp: now,
+                pollingInterval: this.config.pollingInterval
+            },
+            timestamp: now
+        };
+
+        this.emit('polling-error', errorEvent);
+        this.node.warn(`[DH6400Polling] Emitted error event: ${err_code}`);
     }
 }

@@ -224,6 +224,28 @@ module.exports = function (RED) {
                 node.error(`[Marine] Failed to process DH6400 data: ${error.message}`);
             }
         });
+        // Handle DH6400 polling errors
+        dh6400Service.on('polling-error', (event) => {
+            try {
+                node.warn(`[Marine] DH6400 polling error: ${event.err_code}`);
+                // Send error message in format compatible with viis-error-trigger
+                node.send({
+                    topic: 'dh6400-error',
+                    payload: {
+                        err_code: event.err_code,
+                        message: event.message,
+                        severity: event.severity,
+                        type: event.type,
+                        entity: event.entity,
+                        metadata: event.metadata
+                    }
+                });
+                node.log(`[Marine] Error message sent to output: ${event.err_code}`);
+            }
+            catch (error) {
+                node.error(`[Marine] Failed to handle polling error: ${error.message}`);
+            }
+        });
     }
     /**
      * Setup input message handler

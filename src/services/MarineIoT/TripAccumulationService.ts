@@ -1,9 +1,9 @@
 /**
  * @fileoverview Trip Accumulation Service
- * 
+ *
  * Handles running total accumulation for active trips
  * Updates total volume based on real-time flow rates
- * 
+ *
  * Formula: total += (flow_rate × time_interval)
  * Interval: 2 seconds (configurable)
  */
@@ -27,7 +27,7 @@ export interface AccumulationUpdate {
 @Service()
 export class TripAccumulationService {
     private accumulationRepo: Repository<TabiotTripAccumulation>;
-    
+
     // Configuration
     private readonly UPDATE_INTERVAL_MS = 2000; // 2 seconds
 
@@ -179,6 +179,7 @@ export class TripAccumulationService {
 
     /**
      * Calculate consumption for a machine in a trip
+     * For machines with return flow (MAIN_ENGINE, GENERATOR_HFO, GENERATOR_DO)
      */
     async getMachineConsumption(
         tripId: string,
@@ -199,33 +200,55 @@ export class TripAccumulationService {
     }
 
     /**
-     * Get total consumption across all machines
+     * Get direct consumption for BOILER (fs01 only, no return flow)
+     */
+    async getBoilerConsumption(tripId: string): Promise<{ m3: number; tons: number } | null> {
+        const flowIn = await this.getSensorAccumulation(tripId, 'fs01');
+
+        if (!flowIn) {
+            return null;
+        }
+
+        return {
+            m3: Number(flowIn.total_volume_m3),
+            tons: Number(flowIn.total_volume_tons)
+        };
+    }
+
+    /**
+     * Get total consumption across all machines (4-machine configuration)
+     * NEW LOGIC:
+     * - BOILER: fs01 (direct consumption, no return)
+     * - MAIN_ENGINE: fs02 (in) - fs03 (return)
+     * - GENERATOR_HFO: fs03 (in) - fs04 (return)
+     * - GENERATOR_DO: fs05 (in) - fs06 (return)
      */
     async getTotalConsumption(tripId: string): Promise<{ m3: number; tons: number }> {
         const accumulations = await this.getTripAccumulation(tripId);
 
-        const flowInSensors = ['fs01', 'fs03', 'fs05'];
-        const flowReturnSensors = ['fs02', 'fs04', 'fs06'];
+        // Create map for easy lookup
+        const accMap = new Map<string, typeof accumulations[0]>();
+        accumulations.forEach(a => accMap.set(a.sensor_key, a));
 
-        const totalInM3 = accumulations
-            .filter(a => flowInSensors.includes(a.sensor_key))
-            .reduce((sum, a) => sum + Number(a.total_volume_m3), 0);
+        // BOILER: fs01 direct consumption (no return)
+        const boilerM3 = Number(accMap.get('fs01')?.total_volume_m3 || 0);
+        const boilerTons = Number(accMap.get('fs01')?.total_volume_tons || 0);
 
-        const totalReturnM3 = accumulations
-            .filter(a => flowReturnSensors.includes(a.sensor_key))
-            .reduce((sum, a) => sum + Number(a.total_volume_m3), 0);
+        // MAIN_ENGINE: fs02 - fs03
+        const mainEngineM3 = Number(accMap.get('fs02')?.total_volume_m3 || 0) - Number(accMap.get('fs03')?.total_volume_m3 || 0);
+        const mainEngineTons = Number(accMap.get('fs02')?.total_volume_tons || 0) - Number(accMap.get('fs03')?.total_volume_tons || 0);
 
-        const totalInTons = accumulations
-            .filter(a => flowInSensors.includes(a.sensor_key))
-            .reduce((sum, a) => sum + Number(a.total_volume_tons), 0);
+        // GENERATOR_HFO: fs03 - fs04
+        const genHfoM3 = Number(accMap.get('fs03')?.total_volume_m3 || 0) - Number(accMap.get('fs04')?.total_volume_m3 || 0);
+        const genHfoTons = Number(accMap.get('fs03')?.total_volume_tons || 0) - Number(accMap.get('fs04')?.total_volume_tons || 0);
 
-        const totalReturnTons = accumulations
-            .filter(a => flowReturnSensors.includes(a.sensor_key))
-            .reduce((sum, a) => sum + Number(a.total_volume_tons), 0);
+        // GENERATOR_DO: fs05 - fs06
+        const genDoM3 = Number(accMap.get('fs05')?.total_volume_m3 || 0) - Number(accMap.get('fs06')?.total_volume_m3 || 0);
+        const genDoTons = Number(accMap.get('fs05')?.total_volume_tons || 0) - Number(accMap.get('fs06')?.total_volume_tons || 0);
 
         return {
-            m3: Number((totalInM3 - totalReturnM3).toFixed(2)),
-            tons: Number((totalInTons - totalReturnTons).toFixed(2))
+            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(2)),
+            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(2))
         };
     }
 }
