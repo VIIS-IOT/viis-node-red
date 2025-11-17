@@ -35,7 +35,7 @@ module.exports = function (RED: NodeAPI) {
         let dataSource: DataSource | null = null;
         let thingsboardMqttClient: MqttClientCore | null = null;
         let deviceId: string = '';
-        
+
         // Statistics
         const stats: AccumulationStatus = {
             lastCalculation: null,
@@ -67,7 +67,7 @@ module.exports = function (RED: NodeAPI) {
                 // if (config.publishToMqtt) {
                 //     const thingsboardConfig = createThingsboardMqttConfig(globalHelper);
                 //     thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
-                //     
+                //
                 //     if (!thingsboardMqttClient) {
                 //         node.warn('[FlowAccumulation] MQTT client not available, publishing disabled');
                 //     } else {
@@ -168,7 +168,7 @@ module.exports = function (RED: NodeAPI) {
                 // Update stats
                 stats.lastSuccess = true;
                 stats.totalCalculations++;
-                
+
                 // Update next scheduled time
                 if (cronJob) {
                     const nextRun = cronJob.nextDate();
@@ -177,10 +177,10 @@ module.exports = function (RED: NodeAPI) {
                     }
                 }
 
-                node.status({ 
-                    fill: "green", 
-                    shape: "dot", 
-                    text: `Calculated ${results.length} sensors` 
+                node.status({
+                    fill: "green",
+                    shape: "dot",
+                    text: `Calculated ${results.length} sensors`
                 });
 
                 node.log(`[FlowAccumulation] Calculation completed: ${results.length} sensors`);
@@ -241,8 +241,8 @@ module.exports = function (RED: NodeAPI) {
 
                 let hourStart: Date;
                 if (payload.hourStart) {
-                    hourStart = typeof payload.hourStart === 'string' 
-                        ? new Date(payload.hourStart) 
+                    hourStart = typeof payload.hourStart === 'string'
+                        ? new Date(payload.hourStart)
                         : payload.hourStart;
                 } else {
                     // Default to previous hour
@@ -253,8 +253,8 @@ module.exports = function (RED: NodeAPI) {
                 const results = await accumulationService.calculateHourlyAccumulation(deviceId, hourStart);
 
                 // Format payload for output
-                const formattedPayload = results.length > 0 
-                    ? formatAccumulationPayload(results) 
+                const formattedPayload = results.length > 0
+                    ? formatAccumulationPayload(results)
                     : null;
 
                 // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
@@ -267,10 +267,10 @@ module.exports = function (RED: NodeAPI) {
                 if (formattedPayload) {
                     node.send({ payload: formattedPayload });
                 }
-                node.status({ 
-                    fill: "green", 
-                    shape: "dot", 
-                    text: `Manual: ${results.length} sensors` 
+                node.status({
+                    fill: "green",
+                    shape: "dot",
+                    text: `Manual: ${results.length} sensors`
                 });
                 node.log(`[FlowAccumulation] Manual calculation completed: ${results.length} sensors`);
 
@@ -289,12 +289,12 @@ module.exports = function (RED: NodeAPI) {
             try {
                 node.status({ fill: "yellow", shape: "ring", text: "Backfilling..." });
 
-                const startDate = typeof payload.startDate === 'string' 
-                    ? new Date(payload.startDate) 
+                const startDate = typeof payload.startDate === 'string'
+                    ? new Date(payload.startDate)
                     : payload.startDate;
-                    
-                const endDate = typeof payload.endDate === 'string' 
-                    ? new Date(payload.endDate) 
+
+                const endDate = typeof payload.endDate === 'string'
+                    ? new Date(payload.endDate)
                     : payload.endDate;
 
                 const processedHours = await accumulationService.backfillAccumulation(
@@ -303,18 +303,18 @@ module.exports = function (RED: NodeAPI) {
                     endDate
                 );
 
-                node.send({ 
-                    payload: { 
+                node.send({
+                    payload: {
                         backfilled: processedHours,
                         startDate: startDate.toISOString(),
                         endDate: endDate.toISOString(),
-                    } 
+                    }
                 });
 
-                node.status({ 
-                    fill: "green", 
-                    shape: "dot", 
-                    text: `Backfilled ${processedHours} hours` 
+                node.status({
+                    fill: "green",
+                    shape: "dot",
+                    text: `Backfilled ${processedHours} hours`
                 });
                 node.log(`[FlowAccumulation] Backfill completed: ${processedHours} hours`);
 
@@ -327,8 +327,8 @@ module.exports = function (RED: NodeAPI) {
         /**
          * Format accumulation results for MQTT publishing (ThingsBoard format)
          * Creates flat structure with ts field and sensor-prefixed keys
-         * 
-         * Example output:
+         *
+         * Example output (default format):
          * {
          *   ts: 1737453600000,
          *   hour_start: "2025-01-20T14:00:00Z",
@@ -342,6 +342,19 @@ module.exports = function (RED: NodeAPI) {
          *   fs02_avg_flow_m3h: 30.2,
          *   ...
          * }
+         *
+         * Example output (TFS format - useTfsKeyFormat=true):
+         * {
+         *   ts: 1737453600000,
+         *   hour_start: "2025-01-20T14:00:00Z",
+         *   hour_end: "2025-01-20T15:00:00Z",
+         *   tfs01_hourly_m3: 25.5,
+         *   tfs01_hourly_tons: 24.225,
+         *   tfs01_avg_flow_m3h: 25.5,
+         *   tfs01_oil_profile: "BO_Generator",
+         *   tfs01_density: 950,
+         *   ...
+         * }
          */
         function formatAccumulationPayload(results: TabiotFlowAccumulation[]): AccumulationPayload {
             if (results.length === 0) {
@@ -349,7 +362,7 @@ module.exports = function (RED: NodeAPI) {
             }
 
             const firstResult = results[0];
-            
+
             // Start with base fields
             // Use hour_start timestamp for ThingsBoard timeseries (not current time)
             const payload: AccumulationPayload = {
@@ -358,16 +371,32 @@ module.exports = function (RED: NodeAPI) {
                 hour_end: firstResult.hour_end.toISOString(),
             };
 
+            // Determine key format based on config
+            const useTfsFormat = config.useTfsKeyFormat === true;
+
             // Add sensor data with flat structure
             results.forEach((result) => {
-                const prefix = result.sensor_key; // fs01, fs02, etc.
-                
-                payload[`${prefix}_avg_flow_m3h`] = result.avg_flow_m3h;
-                payload[`${prefix}_accumulated_m3`] = result.accumulated_m3;
-                payload[`${prefix}_accumulated_tons`] = result.accumulated_tons;
-                payload[`${prefix}_oil_profile`] = result.oil_profile_id || 'unknown';
-                payload[`${prefix}_density`] = result.density_used;
-                payload[`${prefix}_samples`] = result.sample_count;
+                if (useTfsFormat) {
+                    // TFS format: tfs01_hourly_m3, tfs01_hourly_tons
+                    const tfsKey = result.sensor_key.replace('fs', 'tfs'); // fs01 -> tfs01
+
+                    payload[`${tfsKey}_hourly_m3`] = result.accumulated_m3;
+                    payload[`${tfsKey}_hourly_tons`] = result.accumulated_tons;
+                    payload[`${tfsKey}_avg_flow_m3h`] = result.avg_flow_m3h;
+                    payload[`${tfsKey}_oil_profile`] = result.oil_profile_id || 'unknown';
+                    payload[`${tfsKey}_density`] = result.density_used;
+                    payload[`${tfsKey}_samples`] = result.sample_count;
+                } else {
+                    // Default format: fs01_accumulated_m3, fs01_accumulated_tons
+                    const prefix = result.sensor_key; // fs01, fs02, etc.
+
+                    payload[`${prefix}_avg_flow_m3h`] = result.avg_flow_m3h;
+                    payload[`${prefix}_accumulated_m3`] = result.accumulated_m3;
+                    payload[`${prefix}_accumulated_tons`] = result.accumulated_tons;
+                    payload[`${prefix}_oil_profile`] = result.oil_profile_id || 'unknown';
+                    payload[`${prefix}_density`] = result.density_used;
+                    payload[`${prefix}_samples`] = result.sample_count;
+                }
             });
 
             return payload;

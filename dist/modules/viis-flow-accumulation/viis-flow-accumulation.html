@@ -10,7 +10,7 @@
             <i class="fa fa-clock-o"></i> <strong>Auto Calculation</strong>
         </label>
     </div>
-    
+
     <div class="form-row">
         <label for="node-input-enableAutoCalculation">
             <i class="fa fa-toggle-on"></i> Enable Auto Calculation
@@ -53,6 +53,14 @@
         <span class="form-tips">ThingsBoard topic for accumulation data</span>
     </div>
 
+    <div class="form-row">
+        <label for="node-input-useTfsKeyFormat">
+            <i class="fa fa-key"></i> Use TFS Key Format
+        </label>
+        <input type="checkbox" id="node-input-useTfsKeyFormat" style="width:auto;">
+        <span class="form-tips">Use tfs01_hourly_m3 instead of fs01_accumulated_m3</span>
+    </div>
+
     <!-- Backfill Section -->
     <div class="form-row">
         <label style="width: 100%; border-bottom: 2px solid #e67e22; padding-bottom: 5px;">
@@ -71,7 +79,7 @@
 
 <script type="text/html" data-help-name="viis-flow-accumulation">
     <p>Calculate and publish hourly flow accumulation data for Marine IoT systems.</p>
-    
+
     <h3>Features</h3>
     <ul>
         <li><strong>Scheduled Calculation:</strong> Automatically calculate accumulation every hour</li>
@@ -84,13 +92,13 @@
     <dl class="message-properties">
         <dt>Enable Auto Calculation</dt>
         <dd>When enabled, automatically calculates accumulation based on cron schedule</dd>
-        
+
         <dt>Cron Schedule</dt>
         <dd>Cron expression for scheduling (default: "5 * * * *" = 5 min past every hour)</dd>
-        
+
         <dt>Publish to MQTT</dt>
         <dd>Send accumulation results to ThingsBoard via MQTT</dd>
-        
+
         <dt>MQTT Topic</dt>
         <dd>ThingsBoard topic (default: "v1/devices/me/telemetry")</dd>
     </dl>
@@ -107,7 +115,7 @@
     }
 }</pre>
         </dd>
-        
+
         <dt>topic: "backfill"</dt>
         <dd>
             <strong>Backfill historical data:</strong>
@@ -119,7 +127,7 @@
     }
 }</pre>
         </dd>
-        
+
         <dt>topic: "status"</dt>
         <dd>
             <strong>Get node status:</strong>
@@ -207,6 +215,7 @@
             cronSchedule: { value: "5 * * * *", required: true },
             publishToMqtt: { value: true },
             mqttTopic: { value: "v1/devices/me/telemetry" },
+            useTfsKeyFormat: { value: false },
             enableBackfill: { value: false },
         },
         inputs: 1,
@@ -218,11 +227,13 @@
         oneditprepare: function () {
             $("#node-input-enableAutoCalculation").prop("checked", this.enableAutoCalculation !== false);
             $("#node-input-publishToMqtt").prop("checked", this.publishToMqtt !== false);
+            $("#node-input-useTfsKeyFormat").prop("checked", this.useTfsKeyFormat === true);
             $("#node-input-enableBackfill").prop("checked", this.enableBackfill === true);
         },
         oneditsave: function () {
             this.enableAutoCalculation = $("#node-input-enableAutoCalculation").is(":checked");
             this.publishToMqtt = $("#node-input-publishToMqtt").is(":checked");
+            this.useTfsKeyFormat = $("#node-input-useTfsKeyFormat").is(":checked");
             this.enableBackfill = $("#node-input-enableBackfill").is(":checked");
         }
     });

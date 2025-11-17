@@ -14,6 +14,7 @@ export interface ViisFlowAccumulationNodeDef extends NodeDef {
     publishToMqtt: boolean;
     mqttTopic: string;
     enableBackfill: boolean;
+    useTfsKeyFormat?: boolean; // Use tfs01_hourly_m3 instead of fs01_accumulated_m3
 }
 
 /**

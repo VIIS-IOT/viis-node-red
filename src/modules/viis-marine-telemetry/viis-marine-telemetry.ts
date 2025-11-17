@@ -30,6 +30,16 @@ module.exports = function (RED: NodeAPI) {
         let dh6400PollingService: DH6400PollingService | null = null;
         let dataSource: any = null;
 
+        // MQTT publish throttle control
+        const publishState = {
+            lastFsPublishTime: 0,
+            lastTfsPublishTime: 0,
+            fsPublishInterval: config.fsPublishInterval || 600000, // Default: 10 minutes
+            tfsPublishInterval: config.tfsPublishInterval || 3600000, // Default: 1 hour
+            latestFlowData: {} as any,
+            latestTfsData: {} as any
+        };
+
         // Marine IoT configuration
         const marineConfig: MarineIoTConfig = {
             enabled: config.enableMarineIoT !== false, // Default: true
@@ -106,7 +116,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Setup DH6400 event handlers
                 if (dh6400PollingService && marineProcessor) {
-                    setupDH6400EventHandlers(node, dh6400PollingService, marineProcessor, thingsboardMqttClient);
+                    setupDH6400EventHandlers(node, dh6400PollingService, marineProcessor, thingsboardMqttClient, publishState);
                 }
 
                 // Setup input message handler
@@ -145,10 +155,10 @@ module.exports = function (RED: NodeAPI) {
     function createThingsboardMqttConfig(globalHelper: GlobalContextHelper): MqttConfig {
         const broker = globalHelper.getEnvVar('THINGSBOARD_MQTT_BROKER', 'mqtt://localhost:1883');
         const username = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
-        
+
         console.log('[Marine] MQTT Config - Broker:', broker);
         console.log('[Marine] MQTT Config - Token:', username ? '***' + username.slice(-4) : 'NOT_SET');
-        
+
         return {
             broker,
             username,
@@ -166,11 +176,11 @@ module.exports = function (RED: NodeAPI) {
         const enabled = true; // Hard-coded to always enable DH6400
         const serialPort = globalHelper.getEnvVar('DH6400_SERIAL_PORT', '/dev/ttyACM0');
         const baudRate = globalHelper.getNumericEnvVar('DH6400_BAUD_RATE', 9600);
-        
-        // Use config value if provided, otherwise use ENV or default to 5000ms (5 sec)
-        const pollingInterval = config.dh6400PollingInterval 
-            || globalHelper.getNumericEnvVar('DH6400_POLLING_INTERVAL', 5000);
-        
+
+        // Use config value if provided, otherwise use ENV or default to 10000ms (10 sec)
+        const pollingInterval = config.dh6400PollingInterval
+            || globalHelper.getNumericEnvVar('DH6400_POLLING_INTERVAL', 10000);
+
         const channelsStr = globalHelper.getEnvVar('DH6400_ENABLED_CHANNELS', '1,2,3,4,5,6');
         const enabledChannels = channelsStr.split(',')
             .map(ch => parseInt(ch.trim()))
@@ -192,7 +202,15 @@ module.exports = function (RED: NodeAPI) {
         node: Node,
         dh6400Service: DH6400PollingService,
         marineProcessor: ViisMarinetTelemetryProcessor,
-        thingsboardMqtt: MqttClientCore
+        thingsboardMqtt: MqttClientCore,
+        publishState: {
+            lastFsPublishTime: number;
+            lastTfsPublishTime: number;
+            fsPublishInterval: number;
+            tfsPublishInterval: number;
+            latestFlowData: any;
+            latestTfsData: any;
+        }
     ): void {
         // Handle DH6400 telemetry data
         dh6400Service.on('telemetry-data', async (event: DH6400TelemetryEvent) => {
@@ -201,28 +219,49 @@ module.exports = function (RED: NodeAPI) {
 
                 // Process flow sensor data (instantaneous flow - fsXX)
                 const flowSensorData = await marineProcessor.processDH6400FlowData(event.rawData);
-                
+
                 // Process TFS data (total accumulated flow - tfsXX)
                 const tfsData = await marineProcessor.processDH6400Data(event.rawData);
 
-                // Publish to ThingsBoard
-                if (flowSensorData.length > 0 || tfsData.length > 0) {
-                    const telemetryPayload: any = {};
-                    
-                    // Add flow sensor data
-                    flowSensorData.forEach(data => {
-                        telemetryPayload[data.key_name] = data.float_value;
-                    });
-                    
-                    // Add TFS data
-                    tfsData.forEach(data => {
-                        telemetryPayload[data.key_name] = data.tfs_value;
-                    });
+                const now = Date.now();
+                let telemetryPayload: any = {};
+                let shouldPublish = false;
 
-                    // Publish to ThingsBoard
+                // Update latest flow data cache
+                flowSensorData.forEach(data => {
+                    publishState.latestFlowData[data.key_name] = data.float_value;
+                });
+
+                // Update latest TFS data cache
+                tfsData.forEach(data => {
+                    publishState.latestTfsData[data.key_name] = data.tfs_value;
+                });
+
+                // Check if it's time to publish fs data (instant flow)
+                const timeSinceLastFsPublish = now - publishState.lastFsPublishTime;
+                if (timeSinceLastFsPublish >= publishState.fsPublishInterval) {
+                    // Add flow sensor data to payload
+                    Object.assign(telemetryPayload, publishState.latestFlowData);
+                    publishState.lastFsPublishTime = now;
+                    shouldPublish = true;
+                    node.log(`[Marine] Publishing fs data (interval: ${(timeSinceLastFsPublish/1000/60).toFixed(1)}min)`);
+                }
+
+                // Check if it's time to publish tfs data (total accumulated)
+                const timeSinceLastTfsPublish = now - publishState.lastTfsPublishTime;
+                if (timeSinceLastTfsPublish >= publishState.tfsPublishInterval) {
+                    // Add TFS data to payload
+                    Object.assign(telemetryPayload, publishState.latestTfsData);
+                    publishState.lastTfsPublishTime = now;
+                    shouldPublish = true;
+                    node.log(`[Marine] Publishing tfs data (interval: ${(timeSinceLastTfsPublish/1000/60).toFixed(1)}min)`);
+                }
+
+                // Publish to ThingsBoard if there's data to send
+                if (shouldPublish && Object.keys(telemetryPayload).length > 0) {
                     const topic = 'v1/devices/me/telemetry';
                     thingsboardMqtt.publish(topic, JSON.stringify(telemetryPayload));
-                    
+
                     node.log(`[Marine] Published ${Object.keys(telemetryPayload).length} values to ThingsBoard`);
 
                     // Send output message
@@ -233,6 +272,10 @@ module.exports = function (RED: NodeAPI) {
                             _timestamp: event.timestamp
                         }
                     });
+                } else {
+                    const fsTimeRemaining = Math.max(0, (publishState.fsPublishInterval - timeSinceLastFsPublish) / 1000 / 60);
+                    const tfsTimeRemaining = Math.max(0, (publishState.tfsPublishInterval - timeSinceLastTfsPublish) / 1000 / 60);
+                    node.log(`[Marine] Data cached, waiting for publish interval (fs: ${fsTimeRemaining.toFixed(1)}min, tfs: ${tfsTimeRemaining.toFixed(1)}min)`);
                 }
             } catch (error) {
                 node.error(`[Marine] Failed to process DH6400 data: ${(error as Error).message}`);
