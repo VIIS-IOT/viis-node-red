@@ -662,9 +662,10 @@ export class ScheduleService {
             // CRITICAL LOG: MQTT error
             if (this.node) {
                 this.node.warn(`❌ MQTT ERROR: ${schedule.name} | ${(error as Error).message}`);
+                this.node.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
             }
             console.error(`Error publishing MQTT for ${schedule.name}: ${(error as Error).message}`);
-            throw error;
+            // Don't throw - let local services continue even if MQTT fails
         }
     }
 
@@ -1318,7 +1319,10 @@ export class ScheduleService {
 
         } catch (error) {
             console.error(`Error publishing config update for ${configParam.key}: ${(error as Error).message}`);
-            throw error;
+            if (this.node) {
+                this.node.warn(`⚠️  Continuing local operations despite MQTT publish failure for ${configParam.key}`);
+            }
+            // Don't throw - let local services continue even if MQTT fails
         }
     }
 

@@ -76,8 +76,9 @@ export class MqttService implements IMqttService {
         } catch (error) {
             const errorMessage = `Failed to publish ${key}: ${(error as Error).message}`;
             this.logger.error(errorMessage);
-            this.node.status({ fill: "red", shape: "ring", text: "Publish failed" });
-            throw new Error(errorMessage);
+            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
+            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
+            // Don't throw - let local services continue even if MQTT fails
         }
     }
 
@@ -109,8 +110,9 @@ export class MqttService implements IMqttService {
         } catch (error) {
             const errorMessage = `Failed to publish config update for ${key}: ${(error as Error).message}`;
             this.logger.error(errorMessage);
-            this.node.status({ fill: "red", shape: "ring", text: "Config publish failed" });
-            throw new Error(errorMessage);
+            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
+            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
+            // Don't throw - let local services continue even if MQTT fails
         }
     }
 
@@ -137,8 +139,9 @@ export class MqttService implements IMqttService {
         } catch (error) {
             const errorMessage = `Failed to publish multiple values: ${(error as Error).message}`;
             this.logger.error(errorMessage);
-            this.node.status({ fill: "red", shape: "ring", text: "Bulk publish failed" });
-            throw new Error(errorMessage);
+            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
+            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
+            // Don't throw - let local services continue even if MQTT fails
         }
     }
 
@@ -155,8 +158,9 @@ export class MqttService implements IMqttService {
         } catch (error) {
             const errorMessage = `Failed to publish custom payload: ${(error as Error).message}`;
             this.logger.error(errorMessage);
-            this.node.status({ fill: "red", shape: "ring", text: "Custom publish failed" });
-            throw new Error(errorMessage);
+            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
+            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
+            // Don't throw - let local services continue even if MQTT fails
         }
     }
 
