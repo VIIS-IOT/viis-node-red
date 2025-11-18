@@ -152,7 +152,10 @@ class ClientRegistry {
             catch (error) {
                 this.localMqttInstance = null; // Reset on failure
                 node.error(`Failed to connect Local MQTT client: ${error.message}`);
-                throw error;
+                node.warn(`⚠️ Local MQTT unavailable (network may be down) - node will continue without local MQTT connection`);
+                // Don't throw - return null to allow node to continue
+                this.initializingFlags.local = false;
+                return null;
             }
             finally {
                 this.initializingFlags.local = false;
