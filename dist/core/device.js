@@ -24,10 +24,20 @@ async function sendTelemetryByHttp(token, telemetryData) {
 }
 async function getDeviceIntentsByToken(token) {
     try {
-        const response = await axios_1.default.get(`${const_1.httpServerUrl}/api/v2/device-intent/by-device-token/${token}`, { headers: { "Content-Type": "application/json" } });
+        const response = await axios_1.default.get(`${const_1.httpServerUrl}/api/v2/device-intent/by-device-token/${token}`, {
+            headers: { "Content-Type": "application/json" },
+            timeout: 10000 // 10 second timeout
+        });
         return response.data.result;
     }
     catch (error) {
-        throw error;
+        // Log error but return empty array instead of throwing to prevent crash
+        if (axios_1.default.isAxiosError(error)) {
+            console.error(`Failed to fetch device intents: ${error.message} (network may be down)`);
+        }
+        else {
+            console.error("Failed to fetch device intents:", error);
+        }
+        return []; // Return empty array to allow node to continue
     }
 }

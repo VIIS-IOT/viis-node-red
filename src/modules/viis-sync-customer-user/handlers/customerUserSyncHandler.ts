@@ -182,7 +182,10 @@ export class CustomerUserSyncHandler {
 
             logger.errorWithStack(this.node, `Synchronization failed after ${totalDuration}ms`, error as Error, this.showDetailedLogs);
             logger.syncStats(this.node, this.syncStats, this.showDetailedLogs);
-            throw error;
+            logger.warn(this.node, '⚠️  Continuing operations despite sync failure (network may be down)');
+            
+            // Don't throw - return failed result to allow node to continue
+            return result;
         }
     }
 

@@ -83,19 +83,23 @@ class ClientRegistry {
             catch (error) {
                 this.thingsboardMqttInstance = null; // Reset on failure
                 node.error(`Failed to connect Thingsboard MQTT client: ${error.message}`);
+                node.warn(`⚠️ ThingsBoard MQTT unavailable (network may be down) - node will continue without cloud connection`);
                 // Add recovery mechanism - try to reset circuit breaker if it exists
                 if (this.thingsboardMqttInstance && typeof this.thingsboardMqttInstance.resetCircuitBreaker === 'function') {
                     // node.warn("Attempting to reset circuit breaker for recovery");
                     this.thingsboardMqttInstance.resetCircuitBreaker();
                 }
-                throw error;
+                // Don't throw - return null to allow node to continue without MQTT
+                // Throwing here causes Uncaught Exception when network is down
+                this.initializingFlags.thingsboard = false;
+                return null; // Return null instead of throwing
             }
             finally {
                 this.initializingFlags.thingsboard = false;
             }
         }
         // Verify the instance is actually connected before returning
-        if (!this.thingsboardMqttInstance.isConnected()) {
+        if (this.thingsboardMqttInstance && !this.thingsboardMqttInstance.isConnected()) {
             // node.warn("ThingsBoard MQTT instance exists but not connected, attempting recovery");
             try {
                 await this.thingsboardMqttInstance.waitForConnection(10000); // 10 second timeout

@@ -215,7 +215,22 @@ export = function (RED: NodeAPI) {
                 }
 
                 updateNodeStatus('error', 'Sync failed');
-                throw error;
+                logger.warn(node, '⚠️  Continuing operations despite sync failure (network may be down)');
+                
+                // Don't throw - return failed result to allow node to continue
+                return {
+                    success: false,
+                    errorMessage,
+                    customersCreated: 0,
+                    customersUpdated: 0,
+                    usersCreated: 0,
+                    usersUpdated: 0,
+                    credentialsCreated: 0,
+                    credentialsUpdated: 0,
+                    totalCustomers: 0,
+                    totalUsers: 0,
+                    timestamp: Date.now()
+                };
             }
         }
 

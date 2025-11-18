@@ -29,10 +29,19 @@ export async function getDeviceIntentsByToken(
   try {
     const response = await axios.get(
       `${httpServerUrl}/api/v2/device-intent/by-device-token/${token}`,
-      { headers: { "Content-Type": "application/json" } }
+      { 
+        headers: { "Content-Type": "application/json" },
+        timeout: 10000 // 10 second timeout
+      }
     );
     return response.data.result;
   } catch (error) {
-    throw error;
+    // Log error but return empty array instead of throwing to prevent crash
+    if (axios.isAxiosError(error)) {
+      console.error(`Failed to fetch device intents: ${error.message} (network may be down)`);
+    } else {
+      console.error("Failed to fetch device intents:", error);
+    }
+    return []; // Return empty array to allow node to continue
   }
 }
