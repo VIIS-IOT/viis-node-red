@@ -23,15 +23,18 @@ const typeorm_1 = require("typeorm");
 const uuid_1 = require("uuid");
 const TabiotTrip_1 = require("../../orm/entities/trip/TabiotTrip");
 const TabiotTripAccumulation_1 = require("../../orm/entities/trip/TabiotTripAccumulation");
+const FlowCheckpointService_1 = require("./FlowCheckpointService");
 let TripManagementService = class TripManagementService {
     constructor(dataSource) {
         this.dataSource = dataSource;
         this.tripRepo = dataSource.getRepository(TabiotTrip_1.TabiotTrip);
         this.accumulationRepo = dataSource.getRepository(TabiotTripAccumulation_1.TabiotTripAccumulation);
+        this.checkpointService = new FlowCheckpointService_1.FlowCheckpointService(dataSource);
     }
     /**
      * Start a new trip
      * Auto-ends any active trips for the same device before starting
+     * Resets trip checkpoints to current TFS values to avoid negative deltas
      */
     async startTrip(options) {
         const { deviceId, tripName, notes } = options;
@@ -60,6 +63,16 @@ let TripManagementService = class TripManagementService {
             last_update_time: null,
         }));
         await this.accumulationRepo.save(accumulationRecords);
+        // Reset trip checkpoints to current TFS values
+        // This prevents negative deltas when starting a new trip
+        try {
+            const resetCount = await this.checkpointService.resetCheckpointsToCurrentValues(deviceId, 'trip');
+            console.log(`[TripManagement] Reset ${resetCount} trip checkpoints for device ${deviceId}`);
+        }
+        catch (error) {
+            console.error(`[TripManagement] Failed to reset checkpoints: ${error.message}`);
+            // Don't fail the trip creation if checkpoint reset fails
+        }
         return trip;
     }
     /**

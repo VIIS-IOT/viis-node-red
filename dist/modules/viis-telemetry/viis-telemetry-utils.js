@@ -54,12 +54,27 @@ function getChangedKeys(current, previous, thresholdConfig) {
 }
 /**
  * Publish telemetry data to both EMQX and Thingsboard clients.
+ * Handles network failures gracefully to prevent crashes.
  * @param params - Publishing parameters including clients and topics
  */
-function publishTelemetry(params) {
+async function publishTelemetry(params) {
     const payload = JSON.stringify(params.data);
-    params.emqxClient.publish(params.emqxTopic, payload);
-    params.thingsboardClient.publish(params.thingsboardTopic, payload);
+    // Publish to EMQX (local) with error handling
+    try {
+        await params.emqxClient.publish(params.emqxTopic, payload);
+    }
+    catch (error) {
+        // Log but don't crash - local MQTT may be down
+        console.warn(`[Telemetry] Failed to publish to EMQX: ${error.message}`);
+    }
+    // Publish to ThingsBoard with error handling
+    try {
+        await params.thingsboardClient.publish(params.thingsboardTopic, payload);
+    }
+    catch (error) {
+        // Log but don't crash - ThingsBoard may be unreachable due to network issues
+        console.warn(`[Telemetry] Failed to publish to ThingsBoard: ${error.message}`);
+    }
 }
 /**
  * Log debug message if enabled.

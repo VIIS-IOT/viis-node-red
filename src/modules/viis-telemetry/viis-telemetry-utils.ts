@@ -110,12 +110,27 @@ export interface DebugLogParams {
 
 /**
  * Publish telemetry data to both EMQX and Thingsboard clients.
+ * Handles network failures gracefully to prevent crashes.
  * @param params - Publishing parameters including clients and topics
  */
-export function publishTelemetry(params: PublishTelemetryParams): void {
+export async function publishTelemetry(params: PublishTelemetryParams): Promise<void> {
   const payload = JSON.stringify(params.data);
-  params.emqxClient.publish(params.emqxTopic, payload);
-  params.thingsboardClient.publish(params.thingsboardTopic, payload);
+  
+  // Publish to EMQX (local) with error handling
+  try {
+    await params.emqxClient.publish(params.emqxTopic, payload);
+  } catch (error) {
+    // Log but don't crash - local MQTT may be down
+    console.warn(`[Telemetry] Failed to publish to EMQX: ${(error as Error).message}`);
+  }
+  
+  // Publish to ThingsBoard with error handling
+  try {
+    await params.thingsboardClient.publish(params.thingsboardTopic, payload);
+  } catch (error) {
+    // Log but don't crash - ThingsBoard may be unreachable due to network issues
+    console.warn(`[Telemetry] Failed to publish to ThingsBoard: ${(error as Error).message}`);
+  }
 }
 
 /**

@@ -260,11 +260,18 @@ module.exports = function (RED: NodeAPI) {
                 // Publish to ThingsBoard if there's data to send
                 if (shouldPublish && Object.keys(telemetryPayload).length > 0) {
                     const topic = 'v1/devices/me/telemetry';
-                    thingsboardMqtt.publish(topic, JSON.stringify(telemetryPayload));
+                    
+                    // Wrap publish in try-catch to prevent crash when network is down
+                    try {
+                        await thingsboardMqtt.publish(topic, JSON.stringify(telemetryPayload));
+                        node.log(`[Marine] Published ${Object.keys(telemetryPayload).length} values to ThingsBoard`);
+                    } catch (publishError) {
+                        // Log warning but don't crash - local services should continue working
+                        node.warn(`[Marine] Failed to publish to ThingsBoard (network may be down): ${(publishError as Error).message}`);
+                        node.status({ fill: "yellow", shape: "ring", text: "MQTT publish failed - continuing locally" });
+                    }
 
-                    node.log(`[Marine] Published ${Object.keys(telemetryPayload).length} values to ThingsBoard`);
-
-                    // Send output message
+                    // Send output message regardless of MQTT publish status
                     node.send({
                         topic: 'dh6400-telemetry',
                         payload: {

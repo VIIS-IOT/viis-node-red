@@ -162,6 +162,63 @@ let FlowCheckpointService = class FlowCheckpointService {
         const delta = currentTfsValue - checkpoint.last_tfs_value;
         return delta >= 0 ? delta : null; // Return null if negative (reset detected)
     }
+    /**
+     * Reset checkpoints to current TFS values from database
+     * Used when starting a new trip to avoid negative deltas
+     *
+     * @param deviceId - Device ID
+     * @param checkpointType - 'trip' or 'hourly'
+     * @returns Number of checkpoints reset
+     */
+    async resetCheckpointsToCurrentValues(deviceId, checkpointType) {
+        // Get latest TFS values from telemetry table
+        const tfsKeys = ['tfs01', 'tfs02', 'tfs03', 'tfs04', 'tfs05', 'tfs06'];
+        const currentValues = new Map();
+        for (const tfsKey of tfsKeys) {
+            // Query latest TFS value for this sensor
+            const result = await this.dataSource
+                .createQueryBuilder()
+                .select('float_value')
+                .from('tabiot_device_telemetry', 'telem')
+                .where('device_id = :deviceId', { deviceId })
+                .andWhere('key_name = :keyName', { keyName: tfsKey })
+                .orderBy('timestamp', 'DESC')
+                .limit(1)
+                .getRawOne();
+            if (result && result.float_value !== null) {
+                currentValues.set(tfsKey, result.float_value);
+            }
+            else {
+                // If no telemetry data, default to 0
+                currentValues.set(tfsKey, 0);
+            }
+        }
+        // Update or create checkpoints with current values
+        let resetCount = 0;
+        const timestamp = Date.now();
+        for (const [tfsKey, currentValue] of currentValues) {
+            const existing = await this.getCheckpoint(deviceId, tfsKey, checkpointType);
+            if (existing) {
+                // Update existing checkpoint
+                existing.last_tfs_value = currentValue;
+                existing.last_update_time = timestamp;
+                await this.checkpointRepo.save(existing);
+            }
+            else {
+                // Create new checkpoint
+                const newCheckpoint = this.checkpointRepo.create({
+                    device_id: deviceId,
+                    sensor_key: tfsKey,
+                    checkpoint_type: checkpointType,
+                    last_tfs_value: currentValue,
+                    last_update_time: timestamp
+                });
+                await this.checkpointRepo.save(newCheckpoint);
+            }
+            resetCount++;
+        }
+        return resetCount;
+    }
 };
 exports.FlowCheckpointService = FlowCheckpointService;
 exports.FlowCheckpointService = FlowCheckpointService = __decorate([
