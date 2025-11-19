@@ -2,12 +2,21 @@ import { NodeAPI, NodeDef, Node } from "node-red";
 import { DeviceIntent, DeviceLatestData } from "./core/type";
 import { getDeviceIntentsByToken } from "./core/device";
 import { DeviceIntentService } from "./core/deviceIntents";
+import { setupGlobalErrorHandlers } from "./core/offline-resilience";
 
 interface MyNodeDef extends NodeDef {
   configNode: string;
 }
 
+// Global flag to ensure error handlers are setup only once
+let globalErrorHandlersInitialized = false;
+
 module.exports = function (RED: NodeAPI) {
+  // Setup global error handlers (only once for all nodes)
+  if (!globalErrorHandlersInitialized) {
+    setupGlobalErrorHandlers(RED);
+    globalErrorHandlersInitialized = true;
+  }
   function ViisAutomationNode(this: Node, config: MyNodeDef) {
     RED.nodes.createNode(this, config);
 
