@@ -9,7 +9,7 @@ import { NodeDef } from 'node-red';
  */
 export interface ViisTripRealtimeTelemetryNodeDef extends NodeDef {
     name: string;
-    updateInterval: number; // Seconds: 2, 5, 10, 30
+    updateInterval: number; // Seconds: 30, 60, 120, 300 (default: 300 = 5 minutes)
     publishToMqtt: boolean;
     mqttTopic: string;
     includeConsumption: boolean; // Include machine consumption (flow_in - flow_return)

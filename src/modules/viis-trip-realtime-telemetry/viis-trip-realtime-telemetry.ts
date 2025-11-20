@@ -39,7 +39,7 @@ module.exports = function (RED: NodeAPI) {
             tripActive: false,
             currentTripId: null,
             totalUpdates: 0,
-            updateInterval: config.updateInterval || 5,
+            updateInterval: config.updateInterval || 300,
         };
 
         // Wrap async initialization
@@ -82,7 +82,7 @@ module.exports = function (RED: NodeAPI) {
          * Start periodic update timer
          */
         function startPeriodicUpdates(): void {
-            const intervalMs = (config.updateInterval || 5) * 1000;
+            const intervalMs = (config.updateInterval || 300) * 1000;
             
             updateTimer = setInterval(async () => {
                 await publishTripTelemetry();
