@@ -3,6 +3,7 @@ import { ModbusClientCore, ModbusConfig } from "./modbus-client";
 import { MqttClientCore, MqttConfig } from "./mqtt-client";
 import { MySqlClientCore } from "./mysql-client";
 import { MqttRecoveryManager } from "./mqtt-recovery-manager";
+import { executeWithCircuitBreaker } from "./offline-resilience";
 
 // Multi-board configuration interface
 export interface ModbusBoardConfig extends ModbusConfig {
@@ -124,7 +125,15 @@ class ClientRegistry {
         }
     }
 
-    static async getThingsboardMqttClient(config: MqttConfig, node: Node): Promise<MqttClientCore> {
+    /**
+     * Get ThingsBoard MQTT client with offline resilience
+     * @param config - MQTT configuration
+     * @param node - Node-RED node instance
+     * @param allowOffline - If true, returns client even if initial connection fails (default: true for resilience)
+     * @returns MqttClientCore instance
+     * @throws Error only if allowOffline is false and connection fails
+     */
+    static async getThingsboardMqttClient(config: MqttConfig, node: Node, allowOffline: boolean = true): Promise<MqttClientCore> {
         const maxWaitTime = 30000; // 30 seconds max wait
         const startTime = Date.now();
 
@@ -153,20 +162,33 @@ class ClientRegistry {
                 // node.warn("Thingsboard MQTT client connected successfully");
                 this.logActiveConnections(node);
             } catch (error) {
-                this.thingsboardMqttInstance = null; // Reset on failure
-                node.error(`Failed to connect Thingsboard MQTT client: ${(error as Error).message}`);
-                node.warn(`⚠️ ThingsBoard MQTT unavailable (network may be down) - node will continue without cloud connection`);
+                const errorMsg = (error as Error).message;
+                
+                if (allowOffline) {
+                    // OFFLINE MODE: Don't throw, return client that will auto-recover
+                    node.warn(
+                        `[OFFLINE-RESILIENT] ThingsBoard MQTT initial connection failed: ${errorMsg}. ` +
+                        `Client will auto-reconnect when service becomes available. Local operations continue normally.`
+                    );
+                    
+                    // Keep the client instance for auto-recovery (it has circuit breaker and reconnection logic)
+                    if (this.thingsboardMqttInstance) {
+                        this.activeConnections.thingsboardMqtt++;
+                        this.logActiveConnections(node);
+                        // Don't reset to null - let it reconnect automatically
+                    }
+                } else {
+                    // STRICT MODE: Throw error as before (backward compatibility)
+                    this.thingsboardMqttInstance = null; // Reset on failure
+                    node.error(`Failed to connect Thingsboard MQTT client: ${errorMsg}`);
 
-                // Add recovery mechanism - try to reset circuit breaker if it exists
-                if (this.thingsboardMqttInstance && typeof this.thingsboardMqttInstance.resetCircuitBreaker === 'function') {
-                    // node.warn("Attempting to reset circuit breaker for recovery");
-                    this.thingsboardMqttInstance.resetCircuitBreaker();
+                    // Add recovery mechanism - try to reset circuit breaker if it exists
+                    if (this.thingsboardMqttInstance && typeof this.thingsboardMqttInstance.resetCircuitBreaker === 'function') {
+                        this.thingsboardMqttInstance.resetCircuitBreaker();
+                    }
+
+                    throw error;
                 }
-
-                // Don't throw - return null to allow node to continue without MQTT
-                // Throwing here causes Uncaught Exception when network is down
-                this.initializingFlags.thingsboard = false;
-                return null as any; // Return null instead of throwing
             } finally {
                 this.initializingFlags.thingsboard = false;
             }
