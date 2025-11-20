@@ -180,6 +180,9 @@ export class TripAccumulationService {
     /**
      * Calculate consumption for a machine in a trip
      * For machines with return flow (MAIN_ENGINE, GENERATOR_HFO, GENERATOR_DO)
+     * 
+     * IMPORTANT: consumption_tons = consumption_m3 × density
+     * NOT: flowIn_tons - flowReturn_tons (because sensors may use different densities)
      */
     async getMachineConsumption(
         tripId: string,
@@ -193,9 +196,19 @@ export class TripAccumulationService {
             return null;
         }
 
+        // Calculate consumption in m³
+        const consumptionM3 = Number(flowIn.total_volume_m3) - Number(flowReturn.total_volume_m3);
+        
+        // Use the current density from flowIn sensor for consistency
+        // (both sensors should belong to the same machine and use the same oil profile)
+        const density = flowIn.current_density || 1000;
+        
+        // Calculate consumption in tons from m³
+        const consumptionTons = consumptionM3 * (density / 1000);
+
         return {
-            m3: Number((Number(flowIn.total_volume_m3) - Number(flowReturn.total_volume_m3)).toFixed(3)),
-            tons: Number((Number(flowIn.total_volume_tons) - Number(flowReturn.total_volume_tons)).toFixed(3))
+            m3: Number(consumptionM3.toFixed(3)),
+            tons: Number(consumptionTons.toFixed(3))
         };
     }
 
@@ -222,6 +235,8 @@ export class TripAccumulationService {
      * - MAIN_ENGINE: fs02 (in) - fs03 (return)
      * - GENERATOR_HFO: fs03 (in) - fs04 (return)
      * - GENERATOR_DO: fs05 (in) - fs06 (return)
+     * 
+     * IMPORTANT: Calculate tons from m3 using each machine's density
      */
     async getTotalConsumption(tripId: string): Promise<{ m3: number; tons: number }> {
         const accumulations = await this.getTripAccumulation(tripId);
@@ -232,19 +247,23 @@ export class TripAccumulationService {
 
         // BOILER: fs01 direct consumption (no return)
         const boilerM3 = Number(accMap.get('fs01')?.total_volume_m3 || 0);
-        const boilerTons = Number(accMap.get('fs01')?.total_volume_tons || 0);
+        const boilerDensity = accMap.get('fs01')?.current_density || 1000;
+        const boilerTons = boilerM3 * (boilerDensity / 1000);
 
         // MAIN_ENGINE: fs02 - fs03
         const mainEngineM3 = Number(accMap.get('fs02')?.total_volume_m3 || 0) - Number(accMap.get('fs03')?.total_volume_m3 || 0);
-        const mainEngineTons = Number(accMap.get('fs02')?.total_volume_tons || 0) - Number(accMap.get('fs03')?.total_volume_tons || 0);
+        const mainEngineDensity = accMap.get('fs02')?.current_density || 1000;
+        const mainEngineTons = mainEngineM3 * (mainEngineDensity / 1000);
 
         // GENERATOR_HFO: fs03 - fs04
         const genHfoM3 = Number(accMap.get('fs03')?.total_volume_m3 || 0) - Number(accMap.get('fs04')?.total_volume_m3 || 0);
-        const genHfoTons = Number(accMap.get('fs03')?.total_volume_tons || 0) - Number(accMap.get('fs04')?.total_volume_tons || 0);
+        const genHfoDensity = accMap.get('fs03')?.current_density || 1000;
+        const genHfoTons = genHfoM3 * (genHfoDensity / 1000);
 
         // GENERATOR_DO: fs05 - fs06
         const genDoM3 = Number(accMap.get('fs05')?.total_volume_m3 || 0) - Number(accMap.get('fs06')?.total_volume_m3 || 0);
-        const genDoTons = Number(accMap.get('fs05')?.total_volume_tons || 0) - Number(accMap.get('fs06')?.total_volume_tons || 0);
+        const genDoDensity = accMap.get('fs05')?.current_density || 1000;
+        const genDoTons = genDoM3 * (genDoDensity / 1000);
 
         return {
             m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(3)),

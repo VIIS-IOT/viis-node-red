@@ -160,6 +160,11 @@ let MarineTelemetryService = class MarineTelemetryService {
             }
             else if (sensors.flow_return) {
                 const flowReturnAcc = tripAccumulation.find(a => a.sensor_key === sensors.flow_return);
+                // Calculate consumption in m³
+                const consumptionM3 = Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_m3) || 0);
+                // Use density from flowIn sensor for consumption calculation
+                const density = (flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.current_density) || 1000;
+                const consumptionTons = consumptionM3 * (density / 1000);
                 enhanced[machineType] = Object.assign(Object.assign({}, machineData), { trip_accumulation: {
                         total_volume_in: {
                             m3: Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0),
@@ -170,8 +175,8 @@ let MarineTelemetryService = class MarineTelemetryService {
                             tons: Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)
                         },
                         total_consumption: {
-                            m3: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_m3) || 0)).toFixed(3)),
-                            tons: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_tons) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)).toFixed(3))
+                            m3: Number(consumptionM3.toFixed(3)),
+                            tons: Number(consumptionTons.toFixed(3))
                         }
                     } });
             }
