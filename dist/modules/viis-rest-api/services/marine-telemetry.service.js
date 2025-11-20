@@ -87,7 +87,7 @@ let MarineTelemetryService = class MarineTelemetryService {
             };
         });
         // Aggregate by machine
-        const machines = this.aggregateByMachine(dataPoints);
+        const machines = await this.aggregateByMachine(dataPoints, deviceId);
         return {
             device_id: deviceId,
             timestamp: timestamp,
@@ -273,8 +273,12 @@ let MarineTelemetryService = class MarineTelemetryService {
     }
     /**
      * Aggregate telemetry data by machine type
+     *
+     * IMPORTANT: Use sensor snapshot for oil_profile and density
+     * but prefer flow_in sensor for machine identification.
+     * For shared sensors (like fs03), this ensures correct machine profile mapping.
      */
-    aggregateByMachine(dataPoints) {
+    async aggregateByMachine(dataPoints, deviceId) {
         const machines = {};
         // Group by machine type
         const machineTypes = ['BOILER', 'MAIN_ENGINE', 'GENERATOR_HFO', 'GENERATOR_DO'];
@@ -283,6 +287,9 @@ let MarineTelemetryService = class MarineTelemetryService {
             const flowInData = dataPoints.find(d => d.key_name === sensors.flow_in);
             if (!flowInData)
                 continue;
+            // Get active profile for this machine type (not from sensor snapshot)
+            // This is crucial for shared sensors like fs03 (MAIN_ENGINE return / GENERATOR_HFO in)
+            const activeProfile = await this.oilProfileService.getActiveProfileForMachine(deviceId, machineType);
             const flowIn = {
                 key: flowInData.key_name,
                 m3h: flowInData.value,
@@ -297,8 +304,8 @@ let MarineTelemetryService = class MarineTelemetryService {
                         m3h: flowIn.m3h, // Direct consumption equals flow_in
                         th: flowIn.th
                     },
-                    oil_profile: flowInData.oil_profile_id,
-                    density: flowInData.density_snapshot || 0
+                    oil_profile: (activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.name) || null,
+                    density: (activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.density) || 0
                 };
             }
             else if (sensors.flow_return) {
@@ -318,8 +325,8 @@ let MarineTelemetryService = class MarineTelemetryService {
                         flow_in: flowIn,
                         flow_return: flowReturn,
                         consumption_rate: consumption,
-                        oil_profile: flowInData.oil_profile_id,
-                        density: flowInData.density_snapshot || 0
+                        oil_profile: (activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.name) || null,
+                        density: (activeProfile === null || activeProfile === void 0 ? void 0 : activeProfile.density) || 0
                     };
                 }
             }
