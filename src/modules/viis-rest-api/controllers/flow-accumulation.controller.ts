@@ -445,27 +445,60 @@ export class FlowAccumulationController {
             const records = await queryBuilder.getMany();
 
             // Machine sensor mapping (NEW 4-machine configuration)
-            // BOILER: fs01 (direct consumption)
-            // MAIN_ENGINE: fs02-fs03, GENERATOR_HFO: fs03-fs04, GENERATOR_DO: fs05-fs06
+            // BOILER: fs01 (direct consumption, no return)
+            // MAIN_ENGINE: fs02 (in) - fs03 (return)
+            // GENERATOR_HFO: fs03 (in) - fs04 (return)
+            // GENERATOR_DO: fs05 (in) - fs06 (return)
             const machineMap = {
-                'BOILER': ['fs01'],
-                'MAIN_ENGINE': ['fs02', 'fs03'],
-                'GENERATOR_HFO': ['fs03', 'fs04'],
-                'GENERATOR_DO': ['fs05', 'fs06']
+                'BOILER': { sensors: ['fs01'], flow_in: 'fs01', flow_return: null },
+                'MAIN_ENGINE': { sensors: ['fs02', 'fs03'], flow_in: 'fs02', flow_return: 'fs03' },
+                'GENERATOR_HFO': { sensors: ['fs03', 'fs04'], flow_in: 'fs03', flow_return: 'fs04' },
+                'GENERATOR_DO': { sensors: ['fs05', 'fs06'], flow_in: 'fs05', flow_return: 'fs06' }
             };
 
             const machines: any = {};
 
-            Object.entries(machineMap).forEach(([machineType, sensors]) => {
-                const machineRecords = records.filter(r => sensors.includes(r.sensor_key));
+            Object.entries(machineMap).forEach(([machineType, config]) => {
+                const machineRecords = records.filter(r => config.sensors.includes(r.sensor_key));
                 
                 if (machineRecords.length > 0) {
+                    // Calculate consumption based on machine type
+                    let totalM3 = 0;
+                    let totalTons = 0;
+                    
+                    if (config.flow_return === null) {
+                        // BOILER: Direct consumption (no return flow)
+                        totalM3 = machineRecords
+                            .filter(r => r.sensor_key === config.flow_in)
+                            .reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0);
+                        totalTons = machineRecords
+                            .filter(r => r.sensor_key === config.flow_in)
+                            .reduce((sum, r) => sum + (r.accumulated_tons || 0), 0);
+                    } else {
+                        // Machines with return flow: consumption = flow_in - flow_return
+                        const flowInSum = machineRecords
+                            .filter(r => r.sensor_key === config.flow_in)
+                            .reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0);
+                        const flowReturnSum = machineRecords
+                            .filter(r => r.sensor_key === config.flow_return)
+                            .reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0);
+                        
+                        totalM3 = flowInSum - flowReturnSum;
+                        
+                        // Calculate tons from m3 using average density
+                        const flowInRecords = machineRecords.filter(r => r.sensor_key === config.flow_in);
+                        const avgDensity = flowInRecords.length > 0
+                            ? flowInRecords.reduce((sum, r) => sum + (r.density_used || 1000), 0) / flowInRecords.length
+                            : 1000;
+                        totalTons = totalM3 * (avgDensity / 1000);
+                    }
+                    
                     machines[machineType] = {
-                        total_m3: machineRecords.reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0),
-                        total_tons: machineRecords.reduce((sum, r) => sum + (r.accumulated_tons || 0), 0),
+                        total_m3: Number(totalM3.toFixed(3)),
+                        total_tons: Number(totalTons.toFixed(3)),
                         avg_flow_rate: machineRecords.reduce((sum, r) => sum + (r.avg_flow_m3h || 0), 0) / machineRecords.length,
-                        sensors: sensors,
-                        records_count: machineRecords.length / sensors.length
+                        sensors: config.sensors,
+                        records_count: machineRecords.length / config.sensors.length
                     };
                 }
             });

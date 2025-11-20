@@ -33,7 +33,7 @@ export class TabiotTripAccumulation {
     @Column({ 
         type: 'decimal', 
         precision: 12, 
-        scale: 2, 
+        scale: 6, 
         default: 0,
         comment: 'Total accumulated volume in m³'
     })
@@ -42,7 +42,7 @@ export class TabiotTripAccumulation {
     @Column({ 
         type: 'decimal', 
         precision: 12, 
-        scale: 2, 
+        scale: 6, 
         default: 0,
         comment: 'Total accumulated volume in tons'
     })

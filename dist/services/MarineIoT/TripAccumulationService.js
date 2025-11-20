@@ -40,13 +40,16 @@ let TripAccumulationService = class TripAccumulationService {
         const intervalHours = this.UPDATE_INTERVAL_MS / (1000 * 60 * 60);
         const incrementM3 = flowRate.m3h * intervalHours;
         const incrementTons = flowRate.th * intervalHours;
+        // CRITICAL FIX: Use toFixed(6) to ensure proper SQL formatting
+        const incrementM3Str = incrementM3.toFixed(6);
+        const incrementTonsStr = incrementTons.toFixed(6);
         // Update running total using SQL increment
         await this.accumulationRepo
             .createQueryBuilder()
             .update(TabiotTripAccumulation_1.TabiotTripAccumulation)
             .set({
-            total_volume_m3: () => `total_volume_m3 + ${incrementM3}`,
-            total_volume_tons: () => `total_volume_tons + ${incrementTons}`,
+            total_volume_m3: () => `total_volume_m3 + ${incrementM3Str}`,
+            total_volume_tons: () => `total_volume_tons + ${incrementTonsStr}`,
             current_density: density,
             oil_profile_id: oilProfileId,
             last_update_time: Date.now(),
@@ -68,12 +71,15 @@ let TripAccumulationService = class TripAccumulationService {
             for (const update of updates) {
                 const incrementM3 = update.flowRate.m3h * intervalHours;
                 const incrementTons = update.flowRate.th * intervalHours;
+                // CRITICAL FIX: Use toFixed(6) to ensure proper SQL formatting
+                const incrementM3Str = incrementM3.toFixed(6);
+                const incrementTonsStr = incrementTons.toFixed(6);
                 await manager
                     .createQueryBuilder()
                     .update(TabiotTripAccumulation_1.TabiotTripAccumulation)
                     .set({
-                    total_volume_m3: () => `total_volume_m3 + ${incrementM3}`,
-                    total_volume_tons: () => `total_volume_tons + ${incrementTons}`,
+                    total_volume_m3: () => `total_volume_m3 + ${incrementM3Str}`,
+                    total_volume_tons: () => `total_volume_tons + ${incrementTonsStr}`,
                     current_density: update.density,
                     oil_profile_id: update.oilProfileId,
                     last_update_time: timestamp,
@@ -97,12 +103,17 @@ let TripAccumulationService = class TripAccumulationService {
                 // flowRate.m3h and flowRate.th now contain delta values directly
                 const deltaM3 = update.flowRate.m3h;
                 const deltaTons = update.flowRate.th;
+                // CRITICAL FIX: Use toFixed(6) to ensure proper SQL formatting
+                // Without this, JavaScript may use exponential notation or lose precision
+                // which causes MySQL DECIMAL rounding issues during accumulation
+                const deltaM3Str = deltaM3.toFixed(6);
+                const deltaTonsStr = deltaTons.toFixed(6);
                 await manager
                     .createQueryBuilder()
                     .update(TabiotTripAccumulation_1.TabiotTripAccumulation)
                     .set({
-                    total_volume_m3: () => `total_volume_m3 + ${deltaM3}`,
-                    total_volume_tons: () => `total_volume_tons + ${deltaTons}`,
+                    total_volume_m3: () => `total_volume_m3 + ${deltaM3Str}`,
+                    total_volume_tons: () => `total_volume_tons + ${deltaTonsStr}`,
                     current_density: update.density,
                     oil_profile_id: update.oilProfileId,
                     last_update_time: timestamp,
@@ -168,8 +179,8 @@ let TripAccumulationService = class TripAccumulationService {
         // Calculate consumption in tons from m³
         const consumptionTons = consumptionM3 * (density / 1000);
         return {
-            m3: Number(consumptionM3.toFixed(3)),
-            tons: Number(consumptionTons.toFixed(3))
+            m3: Number(consumptionM3.toFixed(6)),
+            tons: Number(consumptionTons.toFixed(6))
         };
     }
     /**
@@ -218,8 +229,8 @@ let TripAccumulationService = class TripAccumulationService {
         const genDoDensity = ((_l = accMap.get('fs05')) === null || _l === void 0 ? void 0 : _l.current_density) || 1000;
         const genDoTons = genDoM3 * (genDoDensity / 1000);
         return {
-            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(3)),
-            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(3))
+            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(6)),
+            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(6))
         };
     }
 };

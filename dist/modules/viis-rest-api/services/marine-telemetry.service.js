@@ -175,8 +175,8 @@ let MarineTelemetryService = class MarineTelemetryService {
                             tons: Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)
                         },
                         total_consumption: {
-                            m3: Number(consumptionM3.toFixed(3)),
-                            tons: Number(consumptionTons.toFixed(3))
+                            m3: Number(consumptionM3.toFixed(6)),
+                            tons: Number(consumptionTons.toFixed(6))
                         }
                     } });
             }
