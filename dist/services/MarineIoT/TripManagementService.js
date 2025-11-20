@@ -152,7 +152,7 @@ let TripManagementService = class TripManagementService {
             .reduce((sum, a) => sum + Number(a.total_volume_tons), 0);
         const durationMs = (trip.end_time || Date.now()) - trip.start_time;
         const durationHours = durationMs / (1000 * 60 * 60);
-        return Object.assign(Object.assign({}, trip), { total_consumption_m3: Number((totalInM3 - totalReturnM3).toFixed(2)), total_consumption_tons: Number((totalInTons - totalReturnTons).toFixed(2)), duration_hours: Number(durationHours.toFixed(2)) });
+        return Object.assign(Object.assign({}, trip), { total_consumption_m3: Number((totalInM3 - totalReturnM3).toFixed(3)), total_consumption_tons: Number((totalInTons - totalReturnTons).toFixed(3)), duration_hours: Number(durationHours.toFixed(3)) });
     }
     /**
      * Get trip history for a device

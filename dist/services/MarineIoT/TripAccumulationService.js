@@ -158,8 +158,8 @@ let TripAccumulationService = class TripAccumulationService {
             return null;
         }
         return {
-            m3: Number((Number(flowIn.total_volume_m3) - Number(flowReturn.total_volume_m3)).toFixed(2)),
-            tons: Number((Number(flowIn.total_volume_tons) - Number(flowReturn.total_volume_tons)).toFixed(2))
+            m3: Number((Number(flowIn.total_volume_m3) - Number(flowReturn.total_volume_m3)).toFixed(3)),
+            tons: Number((Number(flowIn.total_volume_tons) - Number(flowReturn.total_volume_tons)).toFixed(3))
         };
     }
     /**
@@ -202,8 +202,8 @@ let TripAccumulationService = class TripAccumulationService {
         const genDoM3 = Number(((_l = accMap.get('fs05')) === null || _l === void 0 ? void 0 : _l.total_volume_m3) || 0) - Number(((_m = accMap.get('fs06')) === null || _m === void 0 ? void 0 : _m.total_volume_m3) || 0);
         const genDoTons = Number(((_o = accMap.get('fs05')) === null || _o === void 0 ? void 0 : _o.total_volume_tons) || 0) - Number(((_p = accMap.get('fs06')) === null || _p === void 0 ? void 0 : _p.total_volume_tons) || 0);
         return {
-            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(2)),
-            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(2))
+            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(3)),
+            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(3))
         };
     }
 };

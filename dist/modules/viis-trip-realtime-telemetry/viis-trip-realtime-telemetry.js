@@ -134,7 +134,7 @@ module.exports = function (RED) {
                 trip_id: activeTrip.id,
                 trip_start: tripStartTime,
                 trip_status: activeTrip.status,
-                trip_duration_hours: Number(durationHours.toFixed(2)),
+                trip_duration_hours: Number(durationHours.toFixed(3)),
             };
             // Add sensor running totals (flat structure)
             tripAccumulations.forEach((tripAcc) => {

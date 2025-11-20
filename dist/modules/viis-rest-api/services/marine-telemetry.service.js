@@ -114,7 +114,7 @@ let MarineTelemetryService = class MarineTelemetryService {
         const enhancedMachines = this.mergeWithTripData(baseData.machines, tripAccumulation, activeTrip);
         // Calculate trip duration
         const durationMs = Date.now() - activeTrip.start_time;
-        const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(2));
+        const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(3));
         return {
             device_id: deviceId,
             timestamp: baseData.timestamp,
@@ -170,8 +170,8 @@ let MarineTelemetryService = class MarineTelemetryService {
                             tons: Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)
                         },
                         total_consumption: {
-                            m3: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_m3) || 0)).toFixed(2)),
-                            tons: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_tons) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)).toFixed(2))
+                            m3: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_m3) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_m3) || 0)).toFixed(3)),
+                            tons: Number((Number((flowInAcc === null || flowInAcc === void 0 ? void 0 : flowInAcc.total_volume_tons) || 0) - Number((flowReturnAcc === null || flowReturnAcc === void 0 ? void 0 : flowReturnAcc.total_volume_tons) || 0)).toFixed(3))
                         }
                     } });
             }
@@ -264,7 +264,7 @@ let MarineTelemetryService = class MarineTelemetryService {
      * Formula: T/h = (m³/h × density) / 1000
      */
     calculateTons(m3h, density) {
-        return Number(((m3h * density) / 1000).toFixed(2));
+        return Number(((m3h * density) / 1000).toFixed(3));
     }
     /**
      * Aggregate telemetry data by machine type
@@ -306,8 +306,8 @@ let MarineTelemetryService = class MarineTelemetryService {
                         th: flowReturnData.value_tons
                     };
                     const consumption = {
-                        m3h: Number((flowIn.m3h - flowReturn.m3h).toFixed(2)),
-                        th: Number((flowIn.th - flowReturn.th).toFixed(2))
+                        m3h: Number((flowIn.m3h - flowReturn.m3h).toFixed(3)),
+                        th: Number((flowIn.th - flowReturn.th).toFixed(3))
                     };
                     machines[machineType] = {
                         flow_in: flowIn,

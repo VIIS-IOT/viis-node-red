@@ -156,7 +156,7 @@ export class MarineTelemetryService {
 
         // Calculate trip duration
         const durationMs = Date.now() - activeTrip.start_time;
-        const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(2));
+        const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(3));
 
         return {
             device_id: deviceId,
@@ -226,8 +226,8 @@ export class MarineTelemetryService {
                             tons: Number(flowReturnAcc?.total_volume_tons || 0)
                         },
                         total_consumption: {
-                            m3: Number((Number(flowInAcc?.total_volume_m3 || 0) - Number(flowReturnAcc?.total_volume_m3 || 0)).toFixed(2)),
-                            tons: Number((Number(flowInAcc?.total_volume_tons || 0) - Number(flowReturnAcc?.total_volume_tons || 0)).toFixed(2))
+                            m3: Number((Number(flowInAcc?.total_volume_m3 || 0) - Number(flowReturnAcc?.total_volume_m3 || 0)).toFixed(3)),
+                            tons: Number((Number(flowInAcc?.total_volume_tons || 0) - Number(flowReturnAcc?.total_volume_tons || 0)).toFixed(3))
                         }
                     }
                 };
@@ -350,7 +350,7 @@ export class MarineTelemetryService {
      * Formula: T/h = (m³/h × density) / 1000
      */
     private calculateTons(m3h: number, density: number): number {
-        return Number(((m3h * density) / 1000).toFixed(2));
+        return Number(((m3h * density) / 1000).toFixed(3));
     }
 
     /**
@@ -401,8 +401,8 @@ export class MarineTelemetryService {
                     };
 
                     const consumption: ConsumptionRate = {
-                        m3h: Number((flowIn.m3h - flowReturn.m3h).toFixed(2)),
-                        th: Number((flowIn.th - flowReturn.th).toFixed(2))
+                        m3h: Number((flowIn.m3h - flowReturn.m3h).toFixed(3)),
+                        th: Number((flowIn.th - flowReturn.th).toFixed(3))
                     };
 
                     machines[machineType] = {

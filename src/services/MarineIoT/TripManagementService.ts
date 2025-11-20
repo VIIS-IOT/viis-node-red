@@ -191,9 +191,9 @@ export class TripManagementService {
 
         return {
             ...trip,
-            total_consumption_m3: Number((totalInM3 - totalReturnM3).toFixed(2)),
-            total_consumption_tons: Number((totalInTons - totalReturnTons).toFixed(2)),
-            duration_hours: Number(durationHours.toFixed(2))
+            total_consumption_m3: Number((totalInM3 - totalReturnM3).toFixed(3)),
+            total_consumption_tons: Number((totalInTons - totalReturnTons).toFixed(3)),
+            duration_hours: Number(durationHours.toFixed(3))
         };
     }
 

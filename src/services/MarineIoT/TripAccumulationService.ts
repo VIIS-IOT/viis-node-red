@@ -194,8 +194,8 @@ export class TripAccumulationService {
         }
 
         return {
-            m3: Number((Number(flowIn.total_volume_m3) - Number(flowReturn.total_volume_m3)).toFixed(2)),
-            tons: Number((Number(flowIn.total_volume_tons) - Number(flowReturn.total_volume_tons)).toFixed(2))
+            m3: Number((Number(flowIn.total_volume_m3) - Number(flowReturn.total_volume_m3)).toFixed(3)),
+            tons: Number((Number(flowIn.total_volume_tons) - Number(flowReturn.total_volume_tons)).toFixed(3))
         };
     }
 
@@ -247,8 +247,8 @@ export class TripAccumulationService {
         const genDoTons = Number(accMap.get('fs05')?.total_volume_tons || 0) - Number(accMap.get('fs06')?.total_volume_tons || 0);
 
         return {
-            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(2)),
-            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(2))
+            m3: Number((boilerM3 + mainEngineM3 + genHfoM3 + genDoM3).toFixed(3)),
+            tons: Number((boilerTons + mainEngineTons + genHfoTons + genDoTons).toFixed(3))
         };
     }
 }
