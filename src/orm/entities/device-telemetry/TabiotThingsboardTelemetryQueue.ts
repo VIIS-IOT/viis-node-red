@@ -26,6 +26,14 @@ export class TabiotThingsboardTelemetryQueue {
     device_token!: string;
 
     /**
+     * Unique idempotency key to prevent duplicate submissions
+     * Generated as UUID v4 when record is created
+     */
+    @Column({ type: 'varchar', length: 36, unique: true })
+    @Index('idx_idempotency_key')
+    idempotency_key!: string;
+
+    /**
      * Batch telemetry data in ThingsBoard format
      * Format: [{"ts": 1234567890, "values": {"temp": 25, "humidity": 60}}]
      */

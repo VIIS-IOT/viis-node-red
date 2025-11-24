@@ -32,6 +32,11 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotThingsboardTelemetryQueue.prototype, "device_token", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 36, unique: true }),
+    (0, typeorm_1.Index)('idx_idempotency_key'),
+    __metadata("design:type", String)
+], TabiotThingsboardTelemetryQueue.prototype, "idempotency_key", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: 'json' }),
     __metadata("design:type", Array)
 ], TabiotThingsboardTelemetryQueue.prototype, "payload", void 0);

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TelemetryQueueManager = void 0;
+const crypto_1 = require("crypto");
 /**
  * Manager for batching telemetry data and handling failed uploads with retry
  * Supports hot-reload of configuration
@@ -90,6 +91,8 @@ class TelemetryQueueManager {
             const deviceId = records[0].deviceId;
             const payload = records.map(r => r.data);
             try {
+                // Send batch without idempotency key for initial attempt
+                // (idempotency key is only used for retries from database)
                 const result = await this.httpService.sendBatchTelemetry(deviceToken, payload);
                 if (result.success) {
                     this.stats.totalSuccess += records.length;
@@ -119,6 +122,7 @@ class TelemetryQueueManager {
             const queueItem = this.repository.create({
                 device_id: deviceId,
                 device_token: deviceToken,
+                idempotency_key: (0, crypto_1.randomUUID)(), // Generate unique UUID
                 payload: payload,
                 timestamp: Date.now(),
                 retry_count: 0,
@@ -127,7 +131,7 @@ class TelemetryQueueManager {
                 last_error: error
             });
             await this.repository.save(queueItem);
-            this.log(`Saved ${payload.length} failed records to database for retry`);
+            this.log(`Saved ${payload.length} failed records to database for retry (idempotency_key: ${queueItem.idempotency_key})`);
         }
         catch (dbError) {
             this.node.error(`Failed to save to database: ${dbError.message}`);
@@ -142,9 +146,11 @@ class TelemetryQueueManager {
         }
         try {
             // Find pending records that haven't exceeded max retries
+            // CRITICAL FIX: Only select 'pending' status to avoid race condition
+            // If multiple retry jobs run concurrently, they won't pick the same 'retrying' record
             const pendingRecords = await this.repository
                 .createQueryBuilder('queue')
-                .where('queue.status IN (:...statuses)', { statuses: ['pending', 'retrying'] })
+                .where('queue.status = :status', { status: 'pending' })
                 .andWhere('queue.retry_count < queue.max_retries')
                 .andWhere('(queue.last_retry_at IS NULL OR queue.last_retry_at < :threshold)', { threshold: Date.now() - this.getBackoffDelay(1) })
                 .orderBy('queue.created_at', 'ASC')
@@ -173,22 +179,29 @@ class TelemetryQueueManager {
             record.retry_count += 1;
             record.last_retry_at = Date.now();
             await this.repository.save(record);
-            // Attempt to send
-            const result = await this.httpService.sendBatchTelemetry(record.device_token, record.payload);
+            // Attempt to send with idempotency key to prevent duplicates
+            const result = await this.httpService.sendBatchTelemetry(record.device_token, record.payload, record.idempotency_key // Pass idempotency key for retry
+            );
             if (result.success) {
                 // Success - mark as success
                 record.status = 'success';
                 record.last_error = null;
                 await this.repository.save(record);
-                this.log(`✓ Retry successful for record ${record.id} (device: ${record.device_id})`);
+                this.log(`✓ Retry successful for record ${record.id} (device: ${record.device_id}, idempotency_key: ${record.idempotency_key})`);
             }
             else {
                 // Failed again
                 record.last_error = result.error || 'Unknown error';
+                // Check if rate limited (429) with retry-after
+                if (result.statusCode === 429 && result.retryAfter) {
+                    // Update last_retry_at to respect rate limit
+                    record.last_retry_at = Date.now() + (result.retryAfter * 1000);
+                    this.node.warn(`✗ Record ${record.id} rate limited, will retry after ${result.retryAfter}s`);
+                }
                 if (record.retry_count >= record.max_retries) {
                     // Max retries reached - mark as permanently failed
                     record.status = 'failed';
-                    this.node.warn(`✗ Record ${record.id} permanently failed after ${record.retry_count} retries`);
+                    this.node.warn(`✗ Record ${record.id} permanently failed after ${record.retry_count} retries (idempotency_key: ${record.idempotency_key})`);
                 }
                 else {
                     // Still can retry

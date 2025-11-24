@@ -21,7 +21,7 @@ class ThingsboardHttpService {
             : (process.env.VIIS_BACKEND || 'https://iot.viis.tech');
         // Create axios instance with ThingsBoard-specific configuration
         this.axiosInstance = axios_1.default.create({
-            timeout: 30000, // 30 seconds timeout
+            timeout: 60000, // INCREASED: 60 seconds timeout (from 30s) to handle slow networks
             headers: {
                 'Content-Type': 'application/json',
             },
@@ -62,9 +62,10 @@ class ThingsboardHttpService {
      * Send batch telemetry records to ThingsBoard (recommended for efficiency)
      * @param deviceToken - ThingsBoard device access token
      * @param data - Array of telemetry data
+     * @param idempotencyKey - Optional idempotency key to prevent duplicate submissions
      * @returns Response with success status
      */
-    async sendBatchTelemetry(deviceToken, data) {
+    async sendBatchTelemetry(deviceToken, data, idempotencyKey) {
         try {
             if (!data || data.length === 0) {
                 return {
@@ -73,7 +74,14 @@ class ThingsboardHttpService {
                 };
             }
             const url = `${this.baseUrl}/api/v1/${deviceToken}/telemetry`;
-            const response = await this.axiosInstance.post(url, data);
+            // Add idempotency key header if provided
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+            if (idempotencyKey) {
+                headers['X-Idempotency-Key'] = idempotencyKey;
+            }
+            const response = await this.axiosInstance.post(url, data, { headers });
             if (response.status === 200) {
                 return { success: true };
             }
@@ -141,6 +149,7 @@ class ThingsboardHttpService {
             // Server responded with error status
             const status = error.response.status;
             let errorMsg = '';
+            let retryAfter;
             switch (status) {
                 case 400:
                     errorMsg = 'Bad Request - Invalid telemetry data format';
@@ -151,20 +160,29 @@ class ThingsboardHttpService {
                 case 404:
                     errorMsg = 'Not Found - Device or endpoint not found';
                     break;
+                case 429:
+                    // Rate limiting - extract Retry-After header
+                    const retryAfterHeader = error.response.headers['retry-after'];
+                    if (retryAfterHeader) {
+                        retryAfter = parseInt(retryAfterHeader, 10);
+                    }
+                    errorMsg = `Too Many Requests - Rate limited${retryAfter ? `, retry after ${retryAfter}s` : ''}`;
+                    break;
                 default:
                     errorMsg = `HTTP ${status} - ${error.message}`;
             }
             return {
                 success: false,
                 error: errorMsg,
-                statusCode: status
+                statusCode: status,
+                retryAfter
             };
         }
         else if (error.request) {
-            // Request made but no response received
+            // Request made but no response received (timeout or network error)
             return {
                 success: false,
-                error: 'Network error - No response from ThingsBoard server'
+                error: 'Network error - No response from ThingsBoard server (timeout or connection failed)'
             };
         }
         else {

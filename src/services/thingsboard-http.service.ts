@@ -17,6 +17,7 @@ export interface ThingsboardResponse {
     success: boolean;
     error?: string;
     statusCode?: number;
+    retryAfter?: number; // Seconds to wait before retry (from Retry-After header)
 }
 
 /**
@@ -41,7 +42,7 @@ export class ThingsboardHttpService {
         
         // Create axios instance with ThingsBoard-specific configuration
         this.axiosInstance = axios.create({
-            timeout: 30000, // 30 seconds timeout
+            timeout: 60000, // INCREASED: 60 seconds timeout (from 30s) to handle slow networks
             headers: {
                 'Content-Type': 'application/json',
             },
@@ -91,11 +92,13 @@ export class ThingsboardHttpService {
      * Send batch telemetry records to ThingsBoard (recommended for efficiency)
      * @param deviceToken - ThingsBoard device access token
      * @param data - Array of telemetry data
+     * @param idempotencyKey - Optional idempotency key to prevent duplicate submissions
      * @returns Response with success status
      */
     async sendBatchTelemetry(
         deviceToken: string,
-        data: TelemetryData[]
+        data: TelemetryData[],
+        idempotencyKey?: string
     ): Promise<ThingsboardResponse> {
         try {
             if (!data || data.length === 0) {
@@ -107,7 +110,15 @@ export class ThingsboardHttpService {
 
             const url = `${this.baseUrl}/api/v1/${deviceToken}/telemetry`;
             
-            const response = await this.axiosInstance.post(url, data);
+            // Add idempotency key header if provided
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+            };
+            if (idempotencyKey) {
+                headers['X-Idempotency-Key'] = idempotencyKey;
+            }
+            
+            const response = await this.axiosInstance.post(url, data, { headers });
             
             if (response.status === 200) {
                 return { success: true };
@@ -182,6 +193,7 @@ export class ThingsboardHttpService {
             // Server responded with error status
             const status = error.response.status;
             let errorMsg = '';
+            let retryAfter: number | undefined;
 
             switch (status) {
                 case 400:
@@ -193,6 +205,14 @@ export class ThingsboardHttpService {
                 case 404:
                     errorMsg = 'Not Found - Device or endpoint not found';
                     break;
+                case 429:
+                    // Rate limiting - extract Retry-After header
+                    const retryAfterHeader = error.response.headers['retry-after'];
+                    if (retryAfterHeader) {
+                        retryAfter = parseInt(retryAfterHeader, 10);
+                    }
+                    errorMsg = `Too Many Requests - Rate limited${retryAfter ? `, retry after ${retryAfter}s` : ''}`;
+                    break;
                 default:
                     errorMsg = `HTTP ${status} - ${error.message}`;
             }
@@ -200,13 +220,14 @@ export class ThingsboardHttpService {
             return {
                 success: false,
                 error: errorMsg,
-                statusCode: status
+                statusCode: status,
+                retryAfter
             };
         } else if (error.request) {
-            // Request made but no response received
+            // Request made but no response received (timeout or network error)
             return {
                 success: false,
-                error: 'Network error - No response from ThingsBoard server'
+                error: 'Network error - No response from ThingsBoard server (timeout or connection failed)'
             };
         } else {
             // Error setting up request
