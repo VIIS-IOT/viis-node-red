@@ -12,6 +12,14 @@ import { ViisMarinetTelemetryProcessor } from './viis-marine-telemetry-processor
 import { createDataSource } from '../../orm/dataSource';
 import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent } from '../../services/MarineIoT/DH6400PollingService';
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (reason, promise) => {
+  console.error('🚨 Unhandled Exception at:', promise, 'reason:', reason);
+});
+
 module.exports = function (RED: NodeAPI) {
     /**
      * Main viis-marine-telemetry node implementation (DH6400 only)

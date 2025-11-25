@@ -12,6 +12,12 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const viis_marine_telemetry_processor_1 = require("./viis-marine-telemetry-processor");
 const dataSource_1 = require("../../orm/dataSource");
 const DH6400PollingService_1 = require("../../services/MarineIoT/DH6400PollingService");
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (reason, promise) => {
+    console.error('🚨 Unhandled Exception at:', promise, 'reason:', reason);
+});
 module.exports = function (RED) {
     /**
      * Main viis-marine-telemetry node implementation (DH6400 only)
