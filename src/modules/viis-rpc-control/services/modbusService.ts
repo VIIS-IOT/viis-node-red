@@ -269,7 +269,13 @@ export class ModbusService implements IModbusService {
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
             writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
 
-            // Apply scaling for numeric values
+            // Debug: Log the type of writeValue
+            this.node.warn(`[RPC] WRITE-DEBUG ${key}: value=${writeValue} typeof=${typeof writeValue}`);
+
+            // Apply scaling for numeric values - also handle string numbers
+            if (typeof writeValue === "string" && !isNaN(Number(writeValue))) {
+                writeValue = Number(writeValue);
+            }
             if (typeof writeValue === "number") {
                 writeValue = this.scalingUtils.scaleValue(key, writeValue, "write");
             }

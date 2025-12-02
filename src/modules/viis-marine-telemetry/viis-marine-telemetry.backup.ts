@@ -160,15 +160,29 @@ module.exports = function (RED: NodeAPI) {
                 const dbHost = globalHelper.getEnvVar('DATABASE_HOST', 'NOT_LOADED');
                 node.log(`[Marine] DATABASE_HOST from global context: ${dbHost}`);
 
-                // Load SCALE_CONFIGS from env and set to global context
+                // Load SCALE_CONFIGS from env and MERGE with existing global context
                 const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
                 try {
-                    const scaleConfigs = JSON.parse(scaleConfigsJson);
-                    nodeContext.global.set('scaleConfigs', scaleConfigs);
-                    node.log(`[Marine] Loaded ${scaleConfigs.length} scale configurations`);
+                    const newScaleConfigs = JSON.parse(scaleConfigsJson);
+                    const existingConfigs = (nodeContext.global.get('scaleConfigs') as any[] || []);
+                    
+                    // Merge using key+direction as unique identifier
+                    const configMap = new Map<string, any>();
+                    for (const config of existingConfigs) {
+                        const uniqueKey = `${config.key}_${config.direction}`;
+                        configMap.set(uniqueKey, config);
+                    }
+                    for (const config of newScaleConfigs) {
+                        const uniqueKey = `${config.key}_${config.direction}`;
+                        configMap.set(uniqueKey, config);
+                    }
+                    const mergedConfigs = Array.from(configMap.values());
+                    
+                    nodeContext.global.set('scaleConfigs', mergedConfigs);
+                    node.log(`[Marine] Merged scale configs (${existingConfigs.length} existing + ${newScaleConfigs.length} from env = ${mergedConfigs.length} total)`);
                 } catch (error) {
                     node.warn(`[Marine] Failed to parse SCALE_CONFIGS: ${(error as Error).message}`);
-                    nodeContext.global.set('scaleConfigs', []);
+                    // Don't overwrite existing configs on parse error
                 }
 
                 const dataSource = await createDataSource(nodeContext);
