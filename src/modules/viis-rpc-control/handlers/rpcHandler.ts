@@ -242,7 +242,6 @@ export class RpcHandler implements IRpcHandler {
      * Sort to process holding registers first, then coils
      */
     private async handleStandardParams(params: Record<string, any>): Promise<void> {
-        console.log("handleStandardParams", params);
 
         // Get modbus mappings from global variables
         const modbusHoldingRegisters = this.modbusService.getModbusHoldingRegisters() || {};
@@ -298,7 +297,6 @@ export class RpcHandler implements IRpcHandler {
      */
     private async processParameter(key: string, rawValue: any): Promise<void> {
         const mapping = this.modbusService.findModbusMapping(key);
-        console.log("processParameter", key, rawValue, mapping);
         if (mapping) {
             await this.handleModbusMappedParameter(key, rawValue, mapping);
         } else {
@@ -311,36 +309,21 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleModbusMappedParameter(key: string, rawValue: any, mapping: any): Promise<void> {
         try {
-            // Add debug log at the start
-            this.logger.warn(`Processing Modbus parameter: key=${key}, rawValue=${rawValue}, mapping=${JSON.stringify(mapping)}`);
-            
-            // Log auto-detected board ID (if multi-board mode)
-            if (mapping.boardId) {
-                this.logger.warn(`[AUTO-DETECT] Key "${key}" → Board: ${mapping.boardId} (Address: ${mapping.address})`);
-            } else {
-                this.logger.warn(`[SINGLE-BOARD] Key "${key}" → Address: ${mapping.address}`);
-            }
-
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
-            this.logger.warn(`Validated value: ${value}`);
 
             // Write to Modbus with connection error handling
-            this.logger.warn(`Attempting to write to Modbus: key=${key}, value=${value}`);
             await this.writeToModbusWithRetry(key, mapping, value);
-            this.logger.warn(`Modbus write completed for: ${key}`);
 
             // Read back the value to confirm
-            this.logger.warn(`Reading back value from Modbus: ${key}`);
             const readValue = await this.readFromModbusWithRetry(key, mapping);
-            this.logger.warn(`Read value from Modbus: ${key}=${readValue} (type: ${typeof readValue})`);
 
             // Publish the result with retry
             await this.publishResultWithRetry(key, readValue);
 
-            this.logger.warn(`Successfully processed Modbus parameter: ${key}=${readValue}`);
+            this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });
         } catch (error) {
-            this.logger.error(`Failed to process Modbus parameter ${key}: ${(error as Error).message}`);
+            this.logger.error(`Failed to process ${key}: ${(error as Error).message}`);
             throw error;
         }
     }
@@ -352,7 +335,6 @@ export class RpcHandler implements IRpcHandler {
         try {
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
-            this.logger.warn(`Config-only parameter validated: ${key}=${value} (type: ${typeof value})`);
 
             // Update configuration
             const currentConfig = this.configService.getConfigKeyValues();
@@ -363,9 +345,8 @@ export class RpcHandler implements IRpcHandler {
             await this.mqttService.publishConfigUpdate(key, value);
 
             this.node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.CONFIG_UPDATED(key) });
-            this.logger.log(`Successfully updated config parameter: ${key}=${value} (type: ${typeof value})`);
         } catch (error) {
-            this.logger.error(`Failed to process config parameter ${key}: ${(error as Error).message}`);
+            this.logger.error(`Failed to process config ${key}: ${(error as Error).message}`);
             throw error;
         }
     }
