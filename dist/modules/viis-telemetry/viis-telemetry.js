@@ -93,16 +93,28 @@ module.exports = function (RED) {
                 const thresholdConfigKey = `${viis_telemetry_constants_1.CONTEXT_KEYS.THRESHOLD_CONFIG}_${node.id}`;
                 flowContext.set(debugLogKey, configManager.getDebugLogEnabled());
                 flowContext.set(thresholdConfigKey, configManager.getThresholdConfig());
-                // Load SCALE_CONFIGS from env and set to global context
+                // Load SCALE_CONFIGS from env and merge with existing global context
                 const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
                 try {
-                    const scaleConfigs = JSON.parse(scaleConfigsJson);
-                    nodeContext.global.set('scaleConfigs', scaleConfigs);
-                    node.log(`Loaded ${scaleConfigs.length} scale configurations`);
+                    const newScaleConfigs = JSON.parse(scaleConfigsJson);
+                    const existingConfigs = (nodeContext.global.get('scaleConfigs') || []);
+                    // Merge using key+direction as unique identifier
+                    const configMap = new Map();
+                    for (const config of existingConfigs) {
+                        const uniqueKey = `${config.key}_${config.direction}`;
+                        configMap.set(uniqueKey, config);
+                    }
+                    for (const config of newScaleConfigs) {
+                        const uniqueKey = `${config.key}_${config.direction}`;
+                        configMap.set(uniqueKey, config);
+                    }
+                    const mergedConfigs = Array.from(configMap.values());
+                    nodeContext.global.set('scaleConfigs', mergedConfigs);
+                    node.log(`Merged scale configs (${existingConfigs.length} existing + ${newScaleConfigs.length} from env = ${mergedConfigs.length} total)`);
                 }
                 catch (error) {
                     node.warn(`Failed to parse SCALE_CONFIGS: ${error.message}`);
-                    nodeContext.global.set('scaleConfigs', []);
+                    // Don't overwrite existing configs on parse error
                 }
                 // Create client configurations
                 const configData = readModbusConfig(globalHelper);

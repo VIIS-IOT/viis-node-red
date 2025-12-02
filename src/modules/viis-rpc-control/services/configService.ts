@@ -56,8 +56,34 @@ export class ConfigService implements IConfigService {
      */
     updateScaleConfigs(configs: ScaleConfig[]): void {
         this.validateScaleConfigs(configs);
-        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, configs);
-        this.logger.log(`Updated scale configs: ${JSON.stringify(configs)}`);
+        this.mergeAndSetScaleConfigs(configs);
+    }
+
+    /**
+     * Merge new scale configs with existing ones
+     * Uses key+direction as unique identifier - new configs override existing ones with same key+direction
+     */
+    private mergeAndSetScaleConfigs(newConfigs: ScaleConfig[]): void {
+        const existingConfigs = this.getScaleConfigs();
+        
+        // Create a map for efficient lookup using key+direction as unique identifier
+        const configMap = new Map<string, ScaleConfig>();
+        
+        // Add existing configs to map
+        for (const config of existingConfigs) {
+            const uniqueKey = `${config.key}_${config.direction}`;
+            configMap.set(uniqueKey, config);
+        }
+        
+        // Override/add new configs
+        for (const config of newConfigs) {
+            const uniqueKey = `${config.key}_${config.direction}`;
+            configMap.set(uniqueKey, config);
+        }
+        
+        const mergedConfigs = Array.from(configMap.values());
+        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, mergedConfigs);
+        this.logger.log(`Merged scale configs (${existingConfigs.length} existing + ${newConfigs.length} new = ${mergedConfigs.length} total): ${JSON.stringify(mergedConfigs)}`);
     }
 
     /**
@@ -106,8 +132,8 @@ export class ConfigService implements IConfigService {
         this.validateConfigKeys(parsedConfigKeys);
         this.validateScaleConfigs(parsedScaleConfigs);
 
-        // Store configurations
-        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, parsedScaleConfigs);
+        // Store configurations - merge with existing scaleConfigs
+        this.mergeAndSetScaleConfigs(parsedScaleConfigs);
 
         // Initialize global configs if not exist
         if (!this.globalContext.get(CONTEXT_KEYS.GLOBAL_CONFIG_KEYS)) {
