@@ -8,6 +8,7 @@
  */
 
 const net = require('net');
+const mqtt = require('mqtt');
 
 /**
  * Decode 6-bit ASCII to binary (AIS armoring)
@@ -153,6 +154,7 @@ function decodeAISPayload(payload, messageType) {
     result.courseOverGround = cogRaw === 3600 ? null : cogRaw / 10; // 3600 = not available
     const hdgRaw = binaryToInt(extractBits(binary, 128, 9));
     result.trueHeading = hdgRaw === 511 ? null : hdgRaw; // 511 = not available
+    result.timestampSec = binaryToInt(extractBits(binary, 137, 6)); // UTC second when report was generated
     
     // Navigation status text
     const navStatusTexts = [
@@ -246,11 +248,214 @@ const AIS_HOST = '192.168.20.246';
 const AIS_PORT = 8899;
 const RECONNECT_DELAY = 5000; // 5 giây
 
+// MQTT Configuration
+const MQTT_BROKER = 'mqtt://broker.marineconnect.io.vn:1883';
+const MQTT_TOPIC = 'v1/devices/me/telemetry';
+const PUBLISH_INTERVAL = 300000; // 5 phút (300 giây) - giống inject node của boss
+const AIS_TTL_SEC = 3600; // 1 giờ - xóa targets cũ
+
 let client = null;
+let mqttClient = null;
 let buffer = '';
 let messageCount = 0;
 let dataReceivedCount = 0;
 let noDataTimer = null;
+let publishTimer = null;
+
+// State management (equivalent to global.vdrState in boss's flow)
+const vdrState = {
+  ais: {},           // AIS targets by MMSI
+  lastUpdate: null
+};
+
+/**
+ * Convert decoded AIS to boss's format
+ */
+function toBossFormat(decoded, recvAt) {
+  if (!decoded) return null;
+  
+  // Only handle position reports (Type 1, 2, 3, 18)
+  const msgType = decoded.messageType;
+  if (msgType !== 1 && msgType !== 2 && msgType !== 3 && msgType !== 18) {
+    return null;
+  }
+  
+  return {
+    mmsi: String(decoded.mmsi),
+    lat: decoded.latitude,
+    lon: decoded.longitude,
+    sog: decoded.speedOverGround,
+    cog: decoded.courseOverGround,
+    heading: decoded.trueHeading,
+    navStatus: decoded.navigationStatus ?? null,
+    msgType: msgType,
+    posAcc: decoded.positionAccuracy === 1,
+    rotRaw: decoded.rateOfTurn ?? null,
+    timestampSec: decoded.timestampSec ?? null,
+    updatedAt: recvAt
+  };
+}
+
+/**
+ * Update state with new AIS target
+ */
+function updateAisState(target) {
+  if (!target || !target.mmsi) return;
+  
+  const existing = vdrState.ais[target.mmsi] || {};
+  
+  // Merge new data with existing (keep old values if new is null)
+  vdrState.ais[target.mmsi] = {
+    mmsi: target.mmsi,
+    lat: target.lat ?? existing.lat,
+    lon: target.lon ?? existing.lon,
+    sog: target.sog ?? existing.sog,
+    cog: target.cog ?? existing.cog,
+    heading: target.heading ?? existing.heading,
+    navStatus: target.navStatus ?? existing.navStatus,
+    msgType: target.msgType ?? existing.msgType,
+    posAcc: target.posAcc ?? existing.posAcc,
+    rotRaw: target.rotRaw ?? existing.rotRaw,
+    timestampSec: target.timestampSec ?? existing.timestampSec,
+    updatedAt: target.updatedAt
+  };
+  
+  vdrState.lastUpdate = new Date().toISOString();
+}
+
+/**
+ * Cleanup old AIS targets (TTL = 1 hour)
+ */
+function cleanupOldTargets() {
+  const nowMs = Date.now();
+  let removedCount = 0;
+  
+  for (const mmsi of Object.keys(vdrState.ais)) {
+    const target = vdrState.ais[mmsi];
+    if (!target || !target.updatedAt) {
+      delete vdrState.ais[mmsi];
+      removedCount++;
+      continue;
+    }
+    
+    const ts = Date.parse(target.updatedAt);
+    if (isNaN(ts)) {
+      delete vdrState.ais[mmsi];
+      removedCount++;
+      continue;
+    }
+    
+    const ageSec = (nowMs - ts) / 1000;
+    if (ageSec > AIS_TTL_SEC) {
+      delete vdrState.ais[mmsi];
+      removedCount++;
+    }
+  }
+  
+  if (removedCount > 0) {
+    console.log(`🧹 Cleaned up ${removedCount} stale AIS targets`);
+  }
+}
+
+/**
+ * Build MQTT payload (equivalent to function 3 in boss's flow)
+ */
+function buildMqttPayload() {
+  const out = {};
+  
+  // AIS targets
+  const list = [];
+  for (const mmsi of Object.keys(vdrState.ais)) {
+    const t = vdrState.ais[mmsi];
+    if (!t) continue;
+    
+    list.push({
+      mmsi: t.mmsi,
+      lat: t.lat,
+      lon: t.lon,
+      sog: t.sog,
+      cog: t.cog,
+      heading: t.heading,
+      navStatus: t.navStatus,
+      msgType: t.msgType,
+      posAcc: t.posAcc,
+      rotRaw: t.rotRaw,
+      timestampSec: t.timestampSec,
+      updatedAt: t.updatedAt
+    });
+  }
+  
+  if (list.length > 0) {
+    out.ais_targets = list;
+  }
+  
+  return out;
+}
+
+/**
+ * Publish to MQTT
+ */
+function publishToMqtt() {
+  // Cleanup old targets first
+  cleanupOldTargets();
+  
+  const payload = buildMqttPayload();
+  const targetCount = Object.keys(vdrState.ais).length;
+  
+  if (targetCount === 0) {
+    console.log(`\n📡 [${new Date().toISOString()}] No AIS targets to publish`);
+    return;
+  }
+  
+  if (mqttClient && mqttClient.connected) {
+    const jsonPayload = JSON.stringify(payload);
+    mqttClient.publish(MQTT_TOPIC, jsonPayload, { qos: 0 }, (err) => {
+      if (err) {
+        console.error('❌ MQTT publish error:', err.message);
+      } else {
+        console.log(`\n📡 [${new Date().toISOString()}] Published ${targetCount} AIS targets to MQTT`);
+        console.log(`   Topic: ${MQTT_TOPIC}`);
+        console.log(`   Payload size: ${jsonPayload.length} bytes`);
+      }
+    });
+  } else {
+    console.log(`\n⚠️  MQTT not connected, skipping publish (${targetCount} targets in state)`);
+  }
+}
+
+/**
+ * Connect to MQTT broker
+ */
+function connectMqtt() {
+  console.log(`\n🔌 Connecting to MQTT broker: ${MQTT_BROKER}`);
+  
+  mqttClient = mqtt.connect(MQTT_BROKER, {
+    keepalive: 60,
+    clean: true,
+    reconnectPeriod: 5000
+  });
+  
+  mqttClient.on('connect', () => {
+    console.log('✅ Connected to MQTT broker');
+    
+    // Start periodic publishing
+    if (publishTimer) clearInterval(publishTimer);
+    publishTimer = setInterval(publishToMqtt, PUBLISH_INTERVAL);
+    console.log(`⏰ Publishing every ${PUBLISH_INTERVAL / 1000} seconds`);
+  });
+  
+  mqttClient.on('error', (err) => {
+    console.error('❌ MQTT error:', err.message);
+  });
+  
+  mqttClient.on('close', () => {
+    console.log('🔌 MQTT connection closed');
+  });
+  
+  mqttClient.on('reconnect', () => {
+    console.log('🔄 MQTT reconnecting...');
+  });
+}
 
 /**
  * Parse NMEA sentence và hiển thị thông tin
@@ -366,6 +571,15 @@ function parseNMEA(sentence) {
             if (decoded.draught !== undefined) {
               console.log(`  └─ Draught: ${decoded.draught}m`);
             }
+            
+            // Update state with decoded AIS data
+            const recvAt = new Date().toISOString();
+            const bossFormat = toBossFormat(decoded, recvAt);
+            if (bossFormat) {
+              updateAisState(bossFormat);
+              const targetCount = Object.keys(vdrState.ais).length;
+              console.log(`  📊 State updated: ${targetCount} AIS targets in memory`);
+            }
           } else {
             console.log('  └─ Failed to decode payload');
           }
@@ -477,13 +691,23 @@ function cleanup() {
   if (noDataTimer) {
     clearTimeout(noDataTimer);
   }
+  
+  if (publishTimer) {
+    clearInterval(publishTimer);
+  }
 
   if (client) {
     client.destroy();
   }
+  
+  if (mqttClient) {
+    mqttClient.end();
+  }
 
+  const targetCount = Object.keys(vdrState.ais).length;
   console.log(`📊 Total messages received: ${messageCount}`);
   console.log(`📦 Total data chunks received: ${dataReceivedCount}`);
+  console.log(`🚢 AIS targets in state: ${targetCount}`);
   process.exit(0);
 }
 
@@ -493,9 +717,14 @@ process.on('SIGTERM', cleanup);
 
 // Bắt đầu
 console.log('🚢 AIS Gateway Test Script');
-console.log('=' .repeat(80));
+console.log('='.repeat(80));
 console.log(`Gateway: ${AIS_HOST}:${AIS_PORT}`);
+console.log(`MQTT Broker: ${MQTT_BROKER}`);
+console.log(`MQTT Topic: ${MQTT_TOPIC}`);
+console.log(`Publish Interval: ${PUBLISH_INTERVAL / 1000} seconds`);
 console.log('Press Ctrl+C to stop');
 console.log('='.repeat(80));
 
+// Connect to both AIS gateway and MQTT broker
+connectMqtt();
 connectToGateway();
