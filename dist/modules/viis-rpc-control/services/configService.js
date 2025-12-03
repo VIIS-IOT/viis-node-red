@@ -42,8 +42,29 @@ class ConfigService {
      */
     updateScaleConfigs(configs) {
         this.validateScaleConfigs(configs);
-        this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, configs);
-        this.logger.log(`Updated scale configs: ${JSON.stringify(configs)}`);
+        this.mergeAndSetScaleConfigs(configs);
+    }
+    /**
+     * Merge new scale configs with existing ones
+     * Uses key+direction as unique identifier - new configs override existing ones with same key+direction
+     */
+    mergeAndSetScaleConfigs(newConfigs) {
+        const existingConfigs = this.getScaleConfigs();
+        // Create a map for efficient lookup using key+direction as unique identifier
+        const configMap = new Map();
+        // Add existing configs to map
+        for (const config of existingConfigs) {
+            const uniqueKey = `${config.key}_${config.direction}`;
+            configMap.set(uniqueKey, config);
+        }
+        // Override/add new configs
+        for (const config of newConfigs) {
+            const uniqueKey = `${config.key}_${config.direction}`;
+            configMap.set(uniqueKey, config);
+        }
+        const mergedConfigs = Array.from(configMap.values());
+        this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, mergedConfigs);
+        this.logger.log(`Merged scale configs (${existingConfigs.length} existing + ${newConfigs.length} new = ${mergedConfigs.length} total): ${JSON.stringify(mergedConfigs)}`);
     }
     /**
      * Update configuration keys in global context
@@ -87,8 +108,8 @@ class ConfigService {
         // Validate configurations
         this.validateConfigKeys(parsedConfigKeys);
         this.validateScaleConfigs(parsedScaleConfigs);
-        // Store configurations
-        this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, parsedScaleConfigs);
+        // Store configurations - merge with existing scaleConfigs
+        this.mergeAndSetScaleConfigs(parsedScaleConfigs);
         // Initialize global configs if not exist
         if (!this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_KEYS)) {
             this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_CONFIG_KEYS, parsedConfigKeys);
