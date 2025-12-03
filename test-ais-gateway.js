@@ -41,7 +41,7 @@ function payloadToBinary(payload) {
  * Extract bits from binary string
  */
 function extractBits(binary, start, length) {
-  return binary.substr(start, length);
+  return binary.substring(start, start + length);
 }
 
 /**
@@ -68,11 +68,60 @@ function decode6BitText(binary) {
   const charset = '@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !"#$%&\'()*+,-./0123456789:;<=>?';
   let text = '';
   for (let i = 0; i < binary.length; i += 6) {
-    const sixBits = binary.substr(i, 6);
+    const sixBits = binary.substring(i, i + 6);
+    if (sixBits.length < 6) break; // Skip incomplete characters
     const value = parseInt(sixBits, 2);
-    text += charset[value];
+    if (value >= 0 && value < charset.length) {
+      text += charset[value];
+    }
   }
-  return text.trim();
+  return text.trim().replace(/@+$/, ''); // Remove trailing @ (padding)
+}
+
+/**
+ * Get ship type description from code
+ */
+function getShipTypeText(code) {
+  const shipTypes = {
+    0: 'Not available',
+    20: 'Wing in ground (WIG)',
+    30: 'Fishing',
+    31: 'Towing',
+    32: 'Towing (large)',
+    33: 'Dredging or underwater ops',
+    34: 'Diving ops',
+    35: 'Military ops',
+    36: 'Sailing',
+    37: 'Pleasure Craft',
+    40: 'High speed craft (HSC)',
+    50: 'Pilot Vessel',
+    51: 'Search and Rescue vessel',
+    52: 'Tug',
+    53: 'Port Tender',
+    54: 'Anti-pollution equipment',
+    55: 'Law Enforcement',
+    56: 'Spare - Local Vessel',
+    57: 'Spare - Local Vessel',
+    58: 'Medical Transport',
+    59: 'Noncombatant ship',
+    60: 'Passenger',
+    70: 'Cargo',
+    80: 'Tanker',
+    90: 'Other Type'
+  };
+  
+  // Check exact match first
+  if (shipTypes[code]) return shipTypes[code];
+  
+  // Check ranges
+  if (code >= 21 && code <= 29) return 'Wing in ground (WIG)';
+  if (code >= 40 && code <= 49) return 'High speed craft (HSC)';
+  if (code >= 60 && code <= 69) return 'Passenger';
+  if (code >= 70 && code <= 79) return 'Cargo';
+  if (code >= 80 && code <= 89) return 'Tanker';
+  if (code >= 90 && code <= 99) return 'Other Type';
+  
+  return `Unknown (${code})`;
 }
 
 /**
@@ -93,12 +142,17 @@ function decodeAISPayload(payload, messageType) {
     result.mmsi = binaryToInt(extractBits(binary, 8, 30));
     result.navigationStatus = binaryToInt(extractBits(binary, 38, 4));
     result.rateOfTurn = binaryToSignedInt(extractBits(binary, 42, 8));
-    result.speedOverGround = binaryToInt(extractBits(binary, 50, 10)) / 10; // knots
+    const sogRaw = binaryToInt(extractBits(binary, 50, 10));
+    result.speedOverGround = sogRaw === 1023 ? null : sogRaw / 10; // 1023 = not available
     result.positionAccuracy = binaryToInt(extractBits(binary, 60, 1));
-    result.longitude = binaryToSignedInt(extractBits(binary, 61, 28)) / 600000; // degrees
-    result.latitude = binaryToSignedInt(extractBits(binary, 89, 27)) / 600000; // degrees
-    result.courseOverGround = binaryToInt(extractBits(binary, 116, 12)) / 10; // degrees
-    result.trueHeading = binaryToInt(extractBits(binary, 128, 9)); // degrees
+    const lon = binaryToSignedInt(extractBits(binary, 61, 28)) / 600000; // degrees
+    const lat = binaryToSignedInt(extractBits(binary, 89, 27)) / 600000; // degrees
+    result.longitude = (lon === 181) ? null : lon; // 181 = not available
+    result.latitude = (lat === 91) ? null : lat; // 91 = not available
+    const cogRaw = binaryToInt(extractBits(binary, 116, 12));
+    result.courseOverGround = cogRaw === 3600 ? null : cogRaw / 10; // 3600 = not available
+    const hdgRaw = binaryToInt(extractBits(binary, 128, 9));
+    result.trueHeading = hdgRaw === 511 ? null : hdgRaw; // 511 = not available
     
     // Navigation status text
     const navStatusTexts = [
@@ -133,22 +187,34 @@ function decodeAISPayload(payload, messageType) {
     result.dimensionToStern = binaryToInt(extractBits(binary, 249, 9));
     result.dimensionToPort = binaryToInt(extractBits(binary, 258, 6));
     result.dimensionToStarboard = binaryToInt(extractBits(binary, 264, 6));
-    result.etaMonth = binaryToInt(extractBits(binary, 274, 4));
-    result.etaDay = binaryToInt(extractBits(binary, 278, 5));
-    result.etaHour = binaryToInt(extractBits(binary, 283, 5));
-    result.etaMinute = binaryToInt(extractBits(binary, 288, 6));
+    const etaMonth = binaryToInt(extractBits(binary, 274, 4));
+    const etaDay = binaryToInt(extractBits(binary, 278, 5));
+    const etaHour = binaryToInt(extractBits(binary, 283, 5));
+    const etaMinute = binaryToInt(extractBits(binary, 288, 6));
+    // ETA: 0 = not available for month/day, 24 = not available for hour, 60 = not available for minute
+    result.eta = (etaMonth === 0 && etaDay === 0) ? null : {
+      month: etaMonth,
+      day: etaDay,
+      hour: etaHour === 24 ? null : etaHour,
+      minute: etaMinute === 60 ? null : etaMinute
+    };
     result.draught = binaryToInt(extractBits(binary, 294, 8)) / 10; // meters
     result.destination = decode6BitText(extractBits(binary, 302, 120));
   }
   // Type 18: Standard Class B CS Position Report
   else if (msgType === 18) {
     result.mmsi = binaryToInt(extractBits(binary, 8, 30));
-    result.speedOverGround = binaryToInt(extractBits(binary, 46, 10)) / 10; // knots
+    const sog18 = binaryToInt(extractBits(binary, 46, 10));
+    result.speedOverGround = sog18 === 1023 ? null : sog18 / 10; // 1023 = not available
     result.positionAccuracy = binaryToInt(extractBits(binary, 56, 1));
-    result.longitude = binaryToSignedInt(extractBits(binary, 57, 28)) / 600000; // degrees
-    result.latitude = binaryToSignedInt(extractBits(binary, 85, 27)) / 600000; // degrees
-    result.courseOverGround = binaryToInt(extractBits(binary, 112, 12)) / 10; // degrees
-    result.trueHeading = binaryToInt(extractBits(binary, 124, 9)); // degrees
+    const lon18 = binaryToSignedInt(extractBits(binary, 57, 28)) / 600000; // degrees
+    const lat18 = binaryToSignedInt(extractBits(binary, 85, 27)) / 600000; // degrees
+    result.longitude = (lon18 === 181) ? null : lon18; // 181 = not available
+    result.latitude = (lat18 === 91) ? null : lat18; // 91 = not available
+    const cog18 = binaryToInt(extractBits(binary, 112, 12));
+    result.courseOverGround = cog18 === 3600 ? null : cog18 / 10; // 3600 = not available
+    const hdg18 = binaryToInt(extractBits(binary, 124, 9));
+    result.trueHeading = hdg18 === 511 ? null : hdg18; // 511 = not available
   }
   // Type 24: Static Data Report
   else if (msgType === 24) {
@@ -160,9 +226,11 @@ function decodeAISPayload(payload, messageType) {
       // Part A: Ship Name
       result.shipName = decode6BitText(extractBits(binary, 40, 120));
     } else if (partNumber === 1) {
-      // Part B: Static Data
+      // Part B: Static Data (ITU-R M.1371-5)
       result.shipType = binaryToInt(extractBits(binary, 40, 8));
-      result.vendorId = decode6BitText(extractBits(binary, 48, 18));
+      result.vendorId = decode6BitText(extractBits(binary, 48, 18)); // 3 chars
+      result.unitModelCode = binaryToInt(extractBits(binary, 66, 4));
+      result.unitSerialNumber = binaryToInt(extractBits(binary, 70, 20));
       result.callsign = decode6BitText(extractBits(binary, 90, 42));
       result.dimensionToBow = binaryToInt(extractBits(binary, 132, 9));
       result.dimensionToStern = binaryToInt(extractBits(binary, 141, 9));
@@ -248,19 +316,23 @@ function parseNMEA(sentence) {
             // Position report (Type 1, 2, 3, 18)
             if (decoded.latitude !== undefined && decoded.longitude !== undefined) {
               console.log('  ├─ Position:');
-              console.log(`  │  ├─ Latitude: ${decoded.latitude.toFixed(6)}°`);
-              console.log(`  │  └─ Longitude: ${decoded.longitude.toFixed(6)}°`);
+              if (decoded.latitude === null || decoded.longitude === null) {
+                console.log(`  │  └─ Not available`);
+              } else {
+                console.log(`  │  ├─ Latitude: ${decoded.latitude.toFixed(6)}°`);
+                console.log(`  │  └─ Longitude: ${decoded.longitude.toFixed(6)}°`);
+              }
             }
             
-            if (decoded.speedOverGround !== undefined) {
+            if (decoded.speedOverGround !== undefined && decoded.speedOverGround !== null) {
               console.log(`  ├─ Speed Over Ground: ${decoded.speedOverGround.toFixed(1)} knots`);
             }
             
-            if (decoded.courseOverGround !== undefined) {
+            if (decoded.courseOverGround !== undefined && decoded.courseOverGround !== null) {
               console.log(`  ├─ Course Over Ground: ${decoded.courseOverGround.toFixed(1)}°`);
             }
             
-            if (decoded.trueHeading !== undefined && decoded.trueHeading !== 511) {
+            if (decoded.trueHeading !== undefined && decoded.trueHeading !== null) {
               console.log(`  ├─ True Heading: ${decoded.trueHeading}°`);
             }
             
@@ -282,7 +354,13 @@ function parseNMEA(sentence) {
             }
             
             if (decoded.shipType !== undefined) {
-              console.log(`  ├─ Ship Type Code: ${decoded.shipType}`);
+              console.log(`  ├─ Ship Type: ${getShipTypeText(decoded.shipType)} (${decoded.shipType})`);
+            }
+            
+            if (decoded.eta) {
+              const eta = decoded.eta;
+              const etaStr = `${eta.month}/${eta.day} ${eta.hour ?? '--'}:${eta.minute !== null ? String(eta.minute).padStart(2, '0') : '--'}`;
+              console.log(`  ├─ ETA: ${etaStr}`);
             }
             
             if (decoded.draught !== undefined) {
