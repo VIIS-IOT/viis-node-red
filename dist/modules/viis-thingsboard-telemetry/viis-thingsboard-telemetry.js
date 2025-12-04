@@ -35,6 +35,7 @@ module.exports = function (RED) {
         }
         // Wrap async initialization
         (async () => {
+            var _a;
             try {
                 // Initialize database connection
                 if (!dataSource_1.AppDataSource.isInitialized) {
@@ -49,6 +50,8 @@ module.exports = function (RED) {
                     flushInterval: config.flushInterval || 5000,
                     maxRetries: config.maxRetries || 3,
                     retryInterval: config.retryInterval || 30000,
+                    failedRetryInterval: config.failedRetryInterval || 300000, // 5 minutes
+                    maxFailedRetries: (_a = config.maxFailedRetries) !== null && _a !== void 0 ? _a : 10, // 0 = unlimited
                     enableRetry: config.enableRetry !== false,
                     enableLogging: config.enableLogging || false
                 };

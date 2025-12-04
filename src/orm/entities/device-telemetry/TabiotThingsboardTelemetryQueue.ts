@@ -52,13 +52,21 @@ export class TabiotThingsboardTelemetryQueue {
     @Column({ type: 'int', default: 3 })
     max_retries!: number;
 
+    /**
+     * Status of the telemetry record:
+     * - pending: Waiting for retry (within max_retries)
+     * - retrying: Currently being retried
+     * - failed: Exceeded max_retries, will continue retrying with longer interval
+     * - permanently_failed: Exceeded maxFailedRetries, no more retries
+     * - success: Successfully sent to ThingsBoard
+     */
     @Column({
         type: 'enum',
-        enum: ['pending', 'retrying', 'failed', 'success'],
+        enum: ['pending', 'retrying', 'failed', 'permanently_failed', 'success'],
         default: 'pending'
     })
     @Index('idx_status')
-    status!: 'pending' | 'retrying' | 'failed' | 'success';
+    status!: 'pending' | 'retrying' | 'failed' | 'permanently_failed' | 'success';
 
     @Column({ type: 'text', nullable: true })
     last_error?: string;

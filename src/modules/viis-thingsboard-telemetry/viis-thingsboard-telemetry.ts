@@ -19,6 +19,8 @@ interface ViisTbTelemetryNodeDef extends NodeDef {
     flushInterval: number;
     maxRetries: number;
     retryInterval: number;
+    failedRetryInterval: number;  // Retry interval for 'failed' records (default: 300000 = 5 min)
+    maxFailedRetries: number;     // Max retries for 'failed' records (default: 10, 0 = unlimited)
     enableRetry: boolean;
     enableLogging: boolean;
 }
@@ -73,6 +75,8 @@ module.exports = function (RED: NodeAPI) {
                     flushInterval: config.flushInterval || 5000,
                     maxRetries: config.maxRetries || 3,
                     retryInterval: config.retryInterval || 30000,
+                    failedRetryInterval: config.failedRetryInterval || 300000, // 5 minutes
+                    maxFailedRetries: config.maxFailedRetries ?? 10, // 0 = unlimited
                     enableRetry: config.enableRetry !== false,
                     enableLogging: config.enableLogging || false
                 };

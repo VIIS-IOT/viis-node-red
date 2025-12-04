@@ -10,8 +10,10 @@ import { randomUUID } from 'crypto';
 export interface QueueManagerConfig {
     batchSize: number;          // Number of records per batch (default: 10)
     flushInterval: number;      // Auto-flush interval in ms (default: 5000)
-    maxRetries: number;         // Max retry attempts (default: 3)
+    maxRetries: number;         // Max retry attempts before marking as 'failed' (default: 3)
     retryInterval: number;      // Retry check interval in ms (default: 30000)
+    failedRetryInterval: number; // Retry interval for 'failed' records in ms (default: 300000 = 5 minutes)
+    maxFailedRetries: number;   // Max additional retries for 'failed' records (default: 10, 0 = unlimited)
     enableRetry: boolean;       // Enable auto-retry (default: true)
     enableLogging: boolean;     // Enable debug logging (default: false)
 }
@@ -64,6 +66,8 @@ export class TelemetryQueueManager {
             flushInterval: config?.flushInterval || 5000,
             maxRetries: config?.maxRetries || 3,
             retryInterval: config?.retryInterval || 30000,
+            failedRetryInterval: config?.failedRetryInterval || 300000, // 5 minutes
+            maxFailedRetries: config?.maxFailedRetries ?? 10, // 0 = unlimited
             enableRetry: config?.enableRetry !== false,
             enableLogging: config?.enableLogging || false
         };
@@ -211,39 +215,92 @@ export class TelemetryQueueManager {
         }
 
         try {
-            // Find pending records that haven't exceeded max retries
-            // CRITICAL FIX: Only select 'pending' status to avoid race condition
-            // If multiple retry jobs run concurrently, they won't pick the same 'retrying' record
-            const pendingRecords = await this.repository
-                .createQueryBuilder('queue')
-                .where('queue.status = :status', { status: 'pending' })
-                .andWhere('queue.retry_count < queue.max_retries')
-                .andWhere(
-                    '(queue.last_retry_at IS NULL OR queue.last_retry_at < :threshold)',
-                    { threshold: Date.now() - this.getBackoffDelay(1) }
-                )
-                .orderBy('queue.created_at', 'ASC')
-                .limit(50) // Process max 50 at a time
-                .getMany();
+            // 1. Retry 'pending' records (normal retry with backoff)
+            await this.retryPendingRecords();
 
-            if (pendingRecords.length === 0) {
-                return;
-            }
-
-            this.log(`Retrying ${pendingRecords.length} pending records from database`);
-
-            for (const record of pendingRecords) {
-                await this.retryRecord(record);
-            }
-
-            this.stats.totalRetried += pendingRecords.length;
+            // 2. Retry 'failed' records (with longer interval)
+            await this.retryFailedRecords();
         } catch (error) {
             this.node.error(`Error during retry: ${(error as Error).message}`);
         }
     }
 
     /**
-     * Retry a single record
+     * Retry records with 'pending' status
+     */
+    private async retryPendingRecords(): Promise<void> {
+        // Find pending records that haven't exceeded max retries
+        // CRITICAL FIX: Only select 'pending' status to avoid race condition
+        const pendingRecords = await this.repository
+            .createQueryBuilder('queue')
+            .where('queue.status = :status', { status: 'pending' })
+            .andWhere('queue.retry_count < queue.max_retries')
+            .andWhere(
+                '(queue.last_retry_at IS NULL OR queue.last_retry_at < :threshold)',
+                { threshold: Date.now() - this.getBackoffDelay(1) }
+            )
+            .orderBy('queue.created_at', 'ASC')
+            .limit(50) // Process max 50 at a time
+            .getMany();
+
+        if (pendingRecords.length === 0) {
+            return;
+        }
+
+        this.log(`Retrying ${pendingRecords.length} pending records from database`);
+
+        for (const record of pendingRecords) {
+            await this.retryRecord(record);
+        }
+
+        this.stats.totalRetried += pendingRecords.length;
+    }
+
+    /**
+     * Retry records with 'failed' status (longer interval, continues indefinitely or until maxFailedRetries)
+     */
+    private async retryFailedRecords(): Promise<void> {
+        const now = Date.now();
+        const failedThreshold = now - this.config.failedRetryInterval;
+
+        // Build query for failed records
+        let queryBuilder = this.repository
+            .createQueryBuilder('queue')
+            .where('queue.status = :status', { status: 'failed' })
+            .andWhere(
+                '(queue.last_retry_at IS NULL OR queue.last_retry_at < :threshold)',
+                { threshold: failedThreshold }
+            );
+
+        // If maxFailedRetries > 0, limit additional retries
+        // failed_retry_count = retry_count - max_retries (retries after becoming 'failed')
+        if (this.config.maxFailedRetries > 0) {
+            queryBuilder = queryBuilder.andWhere(
+                'queue.retry_count < (queue.max_retries + :maxFailedRetries)',
+                { maxFailedRetries: this.config.maxFailedRetries }
+            );
+        }
+
+        const failedRecords = await queryBuilder
+            .orderBy('queue.created_at', 'ASC')
+            .limit(20) // Process fewer failed records per cycle
+            .getMany();
+
+        if (failedRecords.length === 0) {
+            return;
+        }
+
+        this.log(`Retrying ${failedRecords.length} failed records (interval: ${this.config.failedRetryInterval}ms)`);
+
+        for (const record of failedRecords) {
+            await this.retryFailedRecord(record);
+        }
+
+        this.stats.totalRetried += failedRecords.length;
+    }
+
+    /**
+     * Retry a single 'pending' record
      */
     private async retryRecord(record: TabiotThingsboardTelemetryQueue): Promise<void> {
         try {
@@ -278,11 +335,11 @@ export class TelemetryQueueManager {
                 }
                 
                 if (record.retry_count >= record.max_retries) {
-                    // Max retries reached - mark as permanently failed
+                    // Max retries reached - mark as 'failed' but will continue retrying with longer interval
                     record.status = 'failed';
-                    this.node.warn(`✗ Record ${record.id} permanently failed after ${record.retry_count} retries (idempotency_key: ${record.idempotency_key})`);
+                    this.node.warn(`✗ Record ${record.id} marked as failed after ${record.retry_count} retries, will continue retrying with longer interval`);
                 } else {
-                    // Still can retry
+                    // Still can retry normally
                     record.status = 'pending';
                 }
                 
@@ -293,6 +350,57 @@ export class TelemetryQueueManager {
             record.status = 'pending';
             await this.repository.save(record);
             this.node.error(`✗ Retry exception for record ${record.id}: ${(error as Error).message}`);
+        }
+    }
+
+    /**
+     * Retry a single 'failed' record (with longer interval)
+     */
+    private async retryFailedRecord(record: TabiotThingsboardTelemetryQueue): Promise<void> {
+        try {
+            // Update status to retrying
+            record.status = 'retrying';
+            record.retry_count += 1;
+            record.last_retry_at = Date.now();
+            await this.repository.save(record);
+
+            const failedRetryCount = record.retry_count - record.max_retries;
+            this.log(`Retrying failed record ${record.id} (failed retry #${failedRetryCount})`);
+
+            // Attempt to send
+            const result = await this.httpService.sendBatchTelemetry(
+                record.device_token,
+                record.payload,
+                record.idempotency_key
+            );
+
+            if (result.success) {
+                // Success!
+                record.status = 'success';
+                record.last_error = null;
+                await this.repository.save(record);
+                this.log(`✓ Failed record ${record.id} finally succeeded after ${record.retry_count} total retries`);
+            } else {
+                // Still failing
+                record.last_error = result.error || 'Unknown error';
+                
+                // Check if we've exceeded maxFailedRetries (if configured)
+                if (this.config.maxFailedRetries > 0 && failedRetryCount >= this.config.maxFailedRetries) {
+                    // Mark as permanently_failed - no more retries
+                    record.status = 'permanently_failed';
+                    this.node.warn(`✗ Record ${record.id} permanently failed after ${record.retry_count} total retries (${failedRetryCount} failed retries)`);
+                } else {
+                    // Keep as 'failed' - will retry again after failedRetryInterval
+                    record.status = 'failed';
+                }
+                
+                await this.repository.save(record);
+            }
+        } catch (error) {
+            record.last_error = (error as Error).message;
+            record.status = 'failed'; // Keep as failed for next retry
+            await this.repository.save(record);
+            this.node.error(`✗ Failed record retry exception for ${record.id}: ${(error as Error).message}`);
         }
     }
 
