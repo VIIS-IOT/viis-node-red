@@ -9,6 +9,7 @@ import { ThingsboardHttpService, TelemetryData } from "../../services/thingsboar
 import { TelemetryQueueManager, QueueManagerConfig } from "../../services/telemetry-queue-manager";
 import { AppDataSource } from "../../orm/dataSource";
 import { TabiotThingsboardTelemetryQueue } from "../../orm/entities/device-telemetry/TabiotThingsboardTelemetryQueue";
+import { normalizeTelemetryData } from "../viis-telemetry/viis-telemetry-utils";
 
 /**
  * Node configuration interface
@@ -167,25 +168,38 @@ module.exports = function (RED: NodeAPI) {
 
         /**
          * Process individual payload item
+         * Normalizes data types to ensure consistency (string numbers → numbers)
          */
         async function processPayloadItem(item: any): Promise<void> {
             if (!queueManager) return;
 
             // Check if already in ThingsBoard format
             if (item.ts && item.values) {
-                // Already formatted
+                // Already formatted - normalize the values
+                const normalizedValues = normalizeTelemetryData(item.values);
+                const normalizedItem: TelemetryData = {
+                    ts: typeof item.ts === 'number' ? item.ts : Date.now(),
+                    values: normalizedValues
+                };
                 await queueManager.addFormattedTelemetry(
                     deviceId,
                     deviceToken,
-                    item as TelemetryData
+                    normalizedItem
                 );
             } else if (typeof item === 'object') {
-                // Simple key-value object - convert to ThingsBoard format
+                // Simple key-value object - normalize and convert to ThingsBoard format
+                // First normalize to ensure consistent data types
+                const normalized = normalizeTelemetryData(item);
+                
                 // Extract timestamp if present
-                const timestamp = item.ts || item.timestamp || Date.now();
-                const values = { ...item };
+                const timestamp = typeof normalized.ts === 'number' 
+                    ? normalized.ts 
+                    : (typeof item.timestamp === 'number' ? item.timestamp : Date.now());
+                
+                // Remove timestamp fields from values
+                const values = { ...normalized };
                 delete values.ts;
-                delete values.timestamp;
+                delete (values as any).timestamp;
 
                 await queueManager.addTelemetry(
                     deviceId,
