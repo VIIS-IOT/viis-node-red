@@ -260,6 +260,21 @@ module.exports = function (RED) {
                 node.error(`[Marine] Failed to handle polling error: ${error.message}`);
             }
         });
+        // Handle DH6400 debug data - output successful reads to debug node
+        dh6400Service.on('debug-data', (event) => {
+            node.send({
+                topic: 'dh6400-debug',
+                payload: {
+                    channel: event.channel,
+                    sensorKey: event.sensorKey,
+                    instantFlowM3h: event.instantFlowM3h,
+                    totalAccumulatedM3: event.totalAccumulatedM3,
+                    timestamp: event.timestamp,
+                    rawHex: event.rawHex,
+                    _debugMessage: `✅ ${event.sensorKey}: instant=${event.instantFlowM3h.toFixed(2)} m³/h, total=${event.totalAccumulatedM3.toFixed(4)} m³`
+                }
+            });
+        });
     }
     /**
      * Setup input message handler
@@ -285,20 +300,37 @@ module.exports = function (RED) {
         });
     }
     /**
-     * Setup cleanup handler
+     * Setup cleanup handler with proper port release
      */
     function setupCleanupHandler(node, thingsboardMqttClient, dh6400PollingService, dataSource) {
         node.on('close', async (done) => {
+            const cleanupTimeout = setTimeout(() => {
+                node.warn('[Marine] Cleanup timeout - forcing completion');
+                done();
+            }, 10000); // 10 second max cleanup time
             try {
-                // Cleanup DH6400 polling service
+                node.log('[Marine] Starting cleanup...');
+                // Cleanup DH6400 polling service FIRST and wait for port release
                 if (dh6400PollingService) {
-                    await dh6400PollingService.cleanup();
-                    node.log('[Marine] DH6400 polling service cleaned up');
+                    try {
+                        await dh6400PollingService.cleanup();
+                        node.log('[Marine] DH6400 polling service cleaned up');
+                        // Wait a bit for OS to fully release the port lock
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                    catch (dh6400Error) {
+                        node.warn(`[Marine] DH6400 cleanup warning: ${dh6400Error.message}`);
+                    }
                 }
                 // Disconnect ThingsBoard MQTT
                 if (thingsboardMqttClient) {
-                    thingsboardMqttClient.disconnect();
-                    node.log('[Marine] ThingsBoard MQTT disconnected');
+                    try {
+                        thingsboardMqttClient.disconnect();
+                        node.log('[Marine] ThingsBoard MQTT disconnected');
+                    }
+                    catch (mqttError) {
+                        node.warn(`[Marine] MQTT cleanup warning: ${mqttError.message}`);
+                    }
                 }
                 // Cleanup DataSource (singleton shared across nodes)
                 // Only destroy if still initialized to avoid race conditions
@@ -314,10 +346,12 @@ module.exports = function (RED) {
                         }
                     }
                 }
+                clearTimeout(cleanupTimeout);
                 node.log('[Marine] Node closed and cleaned up');
                 done();
             }
             catch (error) {
+                clearTimeout(cleanupTimeout);
                 node.error(`[Marine] Cleanup error: ${error.message}`);
                 done();
             }

@@ -22,6 +22,10 @@ class DH6400PollingService extends events_1.EventEmitter {
         this.consecutiveFailures = 0;
         this.lastErrorEmitTime = 0;
         this.errorEmitThrottle = 300000; // 5 minutes throttle for duplicate errors
+        this.isReconnecting = false;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 10;
+        this.reconnectDelay = 5000; // 5 seconds
         this.node = node;
         this.nodeContext = nodeContext;
         this.config = config;
@@ -69,15 +73,26 @@ class DH6400PollingService extends events_1.EventEmitter {
      * Handle flow data from DH6400 sensor
      */
     handleFlowData(data) {
+        var _a;
         // Update latest data cache
         this.latestData.set(data.channel, data);
         // Log received data
-        this.node.log(`[DH6400Polling] ${data.sensorKey}: ` +
+        this.node.log(`[DH6400Polling] ✅ ${data.sensorKey}: ` +
             `instant=${data.instantFlowM3h.toFixed(2)} m³/h, ` +
             `total=${data.totalAccumulatedM3.toFixed(4)} m³`);
+        // Emit debug event for successful read
+        const debugEvent = {
+            channel: data.channel,
+            sensorKey: data.sensorKey,
+            instantFlowM3h: data.instantFlowM3h,
+            totalAccumulatedM3: data.totalAccumulatedM3,
+            timestamp: data.timestamp,
+            rawHex: (_a = data.rawData) === null || _a === void 0 ? void 0 : _a.toString('hex').toUpperCase()
+        };
+        this.emit('debug-data', debugEvent);
     }
     /**
-     * Start polling
+     * Start polling with robust error handling
      */
     async startPolling() {
         if (!this.config.enabled || !this.manager) {
@@ -88,27 +103,59 @@ class DH6400PollingService extends events_1.EventEmitter {
             this.node.warn('[DH6400Polling] Polling already started');
             return;
         }
+        // Try to connect with graceful error handling
+        const connected = await this.tryInitialConnection();
+        // Start polling timer regardless of connection status
+        // If not connected, poll() will attempt reconnection
+        this.pollingTimer = setInterval(async () => {
+            if (!this.isPaused) {
+                try {
+                    await this.poll();
+                }
+                catch (pollError) {
+                    // Catch any unhandled errors in poll to prevent crashes
+                    this.node.error(`[DH6400Polling] Unhandled poll error: ${pollError.message}`);
+                }
+            }
+        }, this.config.pollingInterval);
+        if (connected) {
+            this.node.log(`[DH6400Polling] Started with interval ${this.config.pollingInterval}ms`);
+            // Trigger immediate first poll
+            this.poll().catch(e => this.node.error(`[DH6400Polling] First poll error: ${e.message}`));
+        }
+        else {
+            this.node.warn(`[DH6400Polling] Started in disconnected state - will retry on next poll cycle`);
+        }
+    }
+    /**
+     * Try initial connection with graceful error handling
+     * Returns true if connected, false otherwise (will retry later)
+     */
+    async tryInitialConnection() {
+        if (!this.manager)
+            return false;
         try {
-            // Connect to serial port first
             this.node.log(`[DH6400Polling] Connecting to ${this.config.serialPort}...`);
             await this.manager.connect();
             this.node.log(`[DH6400Polling] ✅ Connected successfully`);
-            // Reset failure counter on successful connection
             this.consecutiveFailures = 0;
+            return true;
         }
         catch (error) {
-            this.node.error(`[DH6400Polling] ❌ Connection failed: ${error.message}`);
-            this.emitPollingError('DH6400_CONNECTION_FAILED', `Không thể kết nối với cổng serial ${this.config.serialPort}: ${error.message}`, 'critical', 'error', { serialPort: this.config.serialPort, errorDetails: error.message });
-            return;
-        }
-        this.pollingTimer = setInterval(async () => {
-            if (!this.isPaused) {
-                await this.poll();
+            const errorMsg = error.message;
+            const isLockError = errorMsg.includes('Cannot lock port') ||
+                errorMsg.includes('Resource temporarily unavailable') ||
+                errorMsg.includes('EBUSY');
+            if (isLockError) {
+                // Port lock error - common during deploy, will retry
+                this.node.warn(`[DH6400Polling] ⚠️ Port locked (likely deploy in progress), will retry: ${errorMsg}`);
             }
-        }, this.config.pollingInterval);
-        this.node.log(`[DH6400Polling] Started with interval ${this.config.pollingInterval}ms`);
-        // Trigger immediate first poll
-        this.poll();
+            else {
+                this.node.error(`[DH6400Polling] ❌ Connection failed: ${errorMsg}`);
+                this.emitPollingError('DH6400_CONNECTION_FAILED', `Không thể kết nối với cổng serial ${this.config.serialPort}: ${errorMsg}`, 'critical', 'error', { serialPort: this.config.serialPort, errorDetails: errorMsg });
+            }
+            return false;
+        }
     }
     /**
      * Execute one polling cycle
@@ -116,6 +163,15 @@ class DH6400PollingService extends events_1.EventEmitter {
     async poll() {
         if (!this.manager)
             return;
+        // Check connection status and reconnect if needed
+        if (!this.manager.isConnected()) {
+            this.node.warn('[DH6400Polling] ⚠️  Not connected, attempting to reconnect...');
+            await this.tryReconnect();
+            if (!this.manager.isConnected()) {
+                this.node.warn('[DH6400Polling] ⚠️  Still not connected, skipping poll cycle');
+                return;
+            }
+        }
         try {
             this.node.log(`[DH6400Polling] 🔄 Polling ${this.config.enabledChannels.length} channels...`);
             // Query all channels sequentially
@@ -126,10 +182,15 @@ class DH6400PollingService extends events_1.EventEmitter {
                 this.emitTelemetryEvent();
                 // Reset failure counter on successful poll
                 this.consecutiveFailures = 0;
+                this.reconnectAttempts = 0; // Reset reconnect attempts on successful poll
             }
             else {
                 this.node.warn(`[DH6400Polling] ⚠️  No data received from any channel`);
                 this.consecutiveFailures++;
+                // Check if device might have disconnected
+                if (this.consecutiveFailures >= 3 && !this.manager.isConnected()) {
+                    this.node.warn('[DH6400Polling] Connection lost, will try to reconnect on next poll');
+                }
                 // Emit error if no data after multiple attempts
                 if (this.consecutiveFailures >= 3) {
                     this.emitPollingError('DH6400_NO_DATA', `Không nhận được dữ liệu từ ${this.config.enabledChannels.length} kênh DH6400 sau ${this.consecutiveFailures} lần thử`, 'high', 'warning', {
@@ -149,6 +210,45 @@ class DH6400PollingService extends events_1.EventEmitter {
                 errorDetails: error.message,
                 serialPort: this.config.serialPort
             });
+        }
+    }
+    /**
+     * Try to reconnect to the serial port
+     */
+    async tryReconnect() {
+        if (this.isReconnecting) {
+            this.node.log('[DH6400Polling] Reconnection already in progress...');
+            return;
+        }
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            this.node.error(`[DH6400Polling] Max reconnect attempts (${this.maxReconnectAttempts}) reached`);
+            this.emitPollingError('DH6400_MAX_RECONNECT_ATTEMPTS', `Đã thử kết nối lại ${this.maxReconnectAttempts} lần nhưng không thành công`, 'critical', 'error', {
+                reconnectAttempts: this.reconnectAttempts,
+                serialPort: this.config.serialPort
+            });
+            // Reset counter to allow future attempts after error is emitted
+            this.reconnectAttempts = 0;
+            return;
+        }
+        this.isReconnecting = true;
+        this.reconnectAttempts++;
+        try {
+            this.node.log(`[DH6400Polling] 🔄 Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+            if (this.manager) {
+                await this.manager.connect();
+                this.node.log('[DH6400Polling] ✅ Reconnected successfully');
+                this.reconnectAttempts = 0; // Reset on success
+            }
+        }
+        catch (error) {
+            this.node.warn(`[DH6400Polling] ❌ Reconnect failed: ${error.message}`);
+            // Wait before next attempt
+            if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                this.node.log(`[DH6400Polling] Will retry in ${this.reconnectDelay / 1000}s...`);
+            }
+        }
+        finally {
+            this.isReconnecting = false;
         }
     }
     /**

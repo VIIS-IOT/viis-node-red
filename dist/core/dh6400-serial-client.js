@@ -50,19 +50,72 @@ class DH6400SerialClient extends events_1.EventEmitter {
         this.port = null;
         this.isConnected = false;
         this.reconnectTimer = null;
+        this.isClosing = false;
         this.responseBuffer = Buffer.alloc(0);
         this.expectedResponseLength = 25; // Can vary based on byte_count
         this.currentSlaveId = 0;
         this.requestQueue = [];
         this.isProcessingRequest = false;
+        this.connectionPromise = null; // Prevent concurrent connection attempts
+        this.pendingTimeouts = new Set(); // Track pending timeouts for cleanup
+        this.maxOpenRetries = 5; // Max retries for port open (lock issues)
+        this.openRetryDelay = 2000; // 2 seconds between retries
+        /**
+         * Schedule reconnection with exponential backoff
+         */
+        this.reconnectAttemptCount = 0;
+        this.maxReconnectDelay = 60000; // Max 60 seconds
         this.log(`DH6400 Modbus RTU client initialized on ${serialPort} @ ${baudRate} baud`);
     }
     /**
-     * Initialize serial port
+     * Initialize serial port with retry logic for port lock issues
      */
     async initializePort() {
+        // Retry loop for handling port lock issues during deploy
+        for (let attempt = 1; attempt <= this.maxOpenRetries; attempt++) {
+            // Check if we're closing - abort if so
+            if (this.isClosing) {
+                this.log('Aborting port initialization - client is closing');
+                throw new Error('Client is closing');
+            }
+            try {
+                await this.tryOpenPort();
+                return; // Success, exit retry loop
+            }
+            catch (error) {
+                const errorMsg = error.message;
+                const isLockError = errorMsg.includes('Cannot lock port') ||
+                    errorMsg.includes('Resource temporarily unavailable') ||
+                    errorMsg.includes('EBUSY');
+                if (isLockError && attempt < this.maxOpenRetries) {
+                    this.log(`Port locked, retry ${attempt}/${this.maxOpenRetries} in ${this.openRetryDelay}ms...`, 'warn');
+                    await new Promise(resolve => setTimeout(resolve, this.openRetryDelay));
+                    continue;
+                }
+                this.log(`Failed to open ${this.serialPort} after ${attempt} attempts: ${errorMsg}`, 'error');
+                throw error;
+            }
+        }
+    }
+    /**
+     * Try to open the serial port once
+     */
+    tryOpenPort() {
         return new Promise((resolve, reject) => {
             try {
+                // Clean up any existing port reference first
+                if (this.port) {
+                    try {
+                        this.port.removeAllListeners();
+                        if (this.port.isOpen) {
+                            this.port.close();
+                        }
+                    }
+                    catch (e) {
+                        // Ignore cleanup errors
+                    }
+                    this.port = null;
+                }
                 this.port = new serialport_1.SerialPort({
                     path: this.serialPort,
                     baudRate: this.baudRate,
@@ -82,15 +135,11 @@ class DH6400SerialClient extends events_1.EventEmitter {
                 // Open port
                 this.port.open((error) => {
                     if (error) {
-                        this.log(`Failed to open ${this.serialPort}: ${error.message}`, 'error');
-                        this.scheduleReconnect();
                         reject(error);
                     }
                 });
             }
             catch (error) {
-                this.log(`Port initialization failed: ${error.message}`, 'error');
-                this.scheduleReconnect();
                 reject(error);
             }
         });
@@ -221,19 +270,42 @@ class DH6400SerialClient extends events_1.EventEmitter {
         this.isConnected = false;
         this.log(`Port closed`);
         this.emit('disconnected');
-        this.scheduleReconnect();
+        // Only schedule reconnect if not intentionally closing
+        if (!this.isClosing) {
+            this.scheduleReconnect();
+        }
     }
-    /**
-     * Schedule reconnection
-     */
     scheduleReconnect() {
+        // Don't schedule reconnect if closing
+        if (this.isClosing) {
+            this.log('Skipping reconnect - client is closing');
+            return;
+        }
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
         }
-        this.reconnectTimer = setTimeout(() => {
-            this.log(`Attempting reconnect...`);
-            this.initializePort();
-        }, 5000); // 5s delay
+        // Exponential backoff: 5s, 10s, 20s, 40s, max 60s
+        this.reconnectAttemptCount++;
+        const delay = Math.min(5000 * Math.pow(2, this.reconnectAttemptCount - 1), this.maxReconnectDelay);
+        this.log(`Scheduling reconnect attempt ${this.reconnectAttemptCount} in ${delay / 1000}s...`);
+        this.reconnectTimer = setTimeout(async () => {
+            // Double-check closing flag before reconnecting
+            if (this.isClosing) {
+                this.log('Skipping reconnect - client is closing');
+                return;
+            }
+            this.log(`Attempting reconnect (attempt ${this.reconnectAttemptCount})...`);
+            try {
+                await this.initializePort();
+                this.log('Reconnect successful');
+                this.reconnectAttemptCount = 0; // Reset on success
+            }
+            catch (error) {
+                this.log(`Reconnect failed: ${error.message}`, 'warn');
+                // Schedule another reconnect with increased delay
+                this.scheduleReconnect();
+            }
+        }, delay);
     }
     /**
      * Create Modbus RTU request for DH6400
@@ -275,31 +347,70 @@ class DH6400SerialClient extends events_1.EventEmitter {
             this.isProcessingRequest = false;
             return;
         }
+        // Don't process if closing or not connected
+        if (this.isClosing || !this.isConnected || !this.port) {
+            // Resolve all pending requests with null
+            while (this.requestQueue.length > 0) {
+                const req = this.requestQueue.shift();
+                if (req)
+                    req.callback(null);
+            }
+            this.isProcessingRequest = false;
+            return;
+        }
         this.isProcessingRequest = true;
         const request = this.requestQueue.shift();
         try {
             this.currentSlaveId = request.slaveId;
             this.responseBuffer = Buffer.alloc(0);
             const packet = this.createModbusRequest(request.slaveId);
-            // Clear buffers
-            this.port.flush();
-            // Send request
-            this.port.write(packet);
+            // Clear buffers - with error handling
+            try {
+                if (this.port && this.port.isOpen) {
+                    this.port.flush();
+                }
+            }
+            catch (flushError) {
+                this.log(`Flush error (ignored): ${flushError.message}`, 'warn');
+            }
+            // Check port is still valid before writing
+            if (!this.port || !this.port.isOpen) {
+                this.log(`Port closed before sending query to slave ${request.slaveId}`, 'warn');
+                request.callback(null);
+                this.processRequestQueue();
+                return;
+            }
+            // Send request with error handling
+            this.port.write(packet, (writeError) => {
+                if (writeError) {
+                    this.log(`Write error to slave ${request.slaveId}: ${writeError.message}`, 'error');
+                    request.callback(null);
+                    this.processRequestQueue();
+                    return;
+                }
+            });
             this.log(`Query sent to slave ${request.slaveId}: ${packet.toString('hex').toUpperCase()}`, 'debug');
             // Wait for response with timeout
             const timeout = setTimeout(() => {
+                this.pendingTimeouts.delete(timeout);
+                // Remove the listener to prevent memory leak
+                this.removeAllListeners(`response-${request.slaveId}`);
                 this.log(`Timeout waiting for slave ${request.slaveId} response`, 'warn');
                 request.callback(null);
                 this.processRequestQueue(); // Continue to next
             }, 2000);
+            this.pendingTimeouts.add(timeout);
             // Store callback to call when response arrives
             this.once(`response-${request.slaveId}`, (data) => {
+                this.pendingTimeouts.delete(timeout);
                 clearTimeout(timeout);
                 request.callback(data);
                 // Small delay before next request
-                setTimeout(() => {
+                const delayTimeout = setTimeout(() => {
+                    this.pendingTimeouts.delete(delayTimeout);
                     this.processRequestQueue();
                 }, 100);
+                this.pendingTimeouts.add(delayTimeout);
             });
         }
         catch (error) {
@@ -312,15 +423,95 @@ class DH6400SerialClient extends events_1.EventEmitter {
      * Connect to serial port
      */
     async connect() {
-        await this.initializePort();
+        var _a;
+        // Reset closing flag in case this is a reconnection
+        this.isClosing = false;
+        // If already connected, return
+        if (this.isConnected && ((_a = this.port) === null || _a === void 0 ? void 0 : _a.isOpen)) {
+            this.log('Already connected');
+            return;
+        }
+        // If connection is in progress, wait for it
+        if (this.connectionPromise) {
+            this.log('Connection already in progress, waiting...');
+            return this.connectionPromise;
+        }
+        // Start new connection
+        this.connectionPromise = this.initializePort()
+            .finally(() => {
+            this.connectionPromise = null;
+        });
+        return this.connectionPromise;
     }
     /**
      * Disconnect from serial port
      */
     async disconnect() {
-        if (this.port) {
-            await this.port.close();
+        this.log('Disconnecting from serial port...');
+        // Set closing flag to prevent reconnection
+        this.isClosing = true;
+        // Clear reconnect timer if any
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+            this.log('Cleared reconnect timer');
         }
+        // Clear all pending timeouts
+        for (const timeout of this.pendingTimeouts) {
+            clearTimeout(timeout);
+        }
+        this.pendingTimeouts.clear();
+        // Clear all pending response listeners
+        for (let i = 1; i <= 6; i++) {
+            this.removeAllListeners(`response-${i}`);
+        }
+        // Clear request queue
+        while (this.requestQueue.length > 0) {
+            const request = this.requestQueue.shift();
+            if (request) {
+                request.callback(null);
+            }
+        }
+        this.isProcessingRequest = false;
+        // Wait for any pending connection to complete
+        if (this.connectionPromise) {
+            try {
+                await this.connectionPromise;
+            }
+            catch (e) {
+                // Ignore - we're closing anyway
+            }
+            this.connectionPromise = null;
+        }
+        // Close port if exists
+        if (this.port) {
+            try {
+                // Remove all listeners first to prevent callbacks during close
+                this.port.removeAllListeners();
+                if (this.port.isOpen) {
+                    await new Promise((resolve) => {
+                        this.port.close((err) => {
+                            if (err) {
+                                this.log(`Error closing port: ${err.message}`, 'warn');
+                                // Don't reject, just log - port might already be closed
+                            }
+                            resolve();
+                        });
+                    });
+                }
+                this.log('Serial port closed successfully');
+            }
+            catch (error) {
+                this.log(`Error during disconnect: ${error.message}`, 'warn');
+            }
+            finally {
+                this.port = null;
+            }
+        }
+        this.isConnected = false;
+        this.responseBuffer = Buffer.alloc(0);
+        this.reconnectAttemptCount = 0; // Reset reconnect counter
+        this.log('Disconnect complete');
     }
     log(message, level = 'info') {
         if (this.logger) {

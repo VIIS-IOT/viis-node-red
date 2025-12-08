@@ -10,7 +10,7 @@ import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ViisMarinetTelemetryNodeDef, MarineIoTConfig } from './viis-marine-telemetry-config';
 import { ViisMarinetTelemetryProcessor } from './viis-marine-telemetry-processor';
 import { createDataSource } from '../../orm/dataSource';
-import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent } from '../../services/MarineIoT/DH6400PollingService';
+import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent, DH6400DebugEvent } from '../../services/MarineIoT/DH6400PollingService';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
@@ -320,6 +320,22 @@ module.exports = function (RED: NodeAPI) {
                 node.error(`[Marine] Failed to handle polling error: ${(error as Error).message}`);
             }
         });
+
+        // Handle DH6400 debug data - output successful reads to debug node
+        dh6400Service.on('debug-data', (event: DH6400DebugEvent) => {
+            node.send({
+                topic: 'dh6400-debug',
+                payload: {
+                    channel: event.channel,
+                    sensorKey: event.sensorKey,
+                    instantFlowM3h: event.instantFlowM3h,
+                    totalAccumulatedM3: event.totalAccumulatedM3,
+                    timestamp: event.timestamp,
+                    rawHex: event.rawHex,
+                    _debugMessage: `✅ ${event.sensorKey}: instant=${event.instantFlowM3h.toFixed(2)} m³/h, total=${event.totalAccumulatedM3.toFixed(4)} m³`
+                }
+            });
+        });
     }
 
     /**
@@ -350,7 +366,7 @@ module.exports = function (RED: NodeAPI) {
     }
 
     /**
-     * Setup cleanup handler
+     * Setup cleanup handler with proper port release
      */
     function setupCleanupHandler(
         node: Node,
@@ -359,17 +375,35 @@ module.exports = function (RED: NodeAPI) {
         dataSource: any
     ): void {
         node.on('close', async (done: () => void) => {
+            const cleanupTimeout = setTimeout(() => {
+                node.warn('[Marine] Cleanup timeout - forcing completion');
+                done();
+            }, 10000); // 10 second max cleanup time
+
             try {
-                // Cleanup DH6400 polling service
+                node.log('[Marine] Starting cleanup...');
+
+                // Cleanup DH6400 polling service FIRST and wait for port release
                 if (dh6400PollingService) {
-                    await dh6400PollingService.cleanup();
-                    node.log('[Marine] DH6400 polling service cleaned up');
+                    try {
+                        await dh6400PollingService.cleanup();
+                        node.log('[Marine] DH6400 polling service cleaned up');
+                        
+                        // Wait a bit for OS to fully release the port lock
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    } catch (dh6400Error) {
+                        node.warn(`[Marine] DH6400 cleanup warning: ${(dh6400Error as Error).message}`);
+                    }
                 }
 
                 // Disconnect ThingsBoard MQTT
                 if (thingsboardMqttClient) {
-                    thingsboardMqttClient.disconnect();
-                    node.log('[Marine] ThingsBoard MQTT disconnected');
+                    try {
+                        thingsboardMqttClient.disconnect();
+                        node.log('[Marine] ThingsBoard MQTT disconnected');
+                    } catch (mqttError) {
+                        node.warn(`[Marine] MQTT cleanup warning: ${(mqttError as Error).message}`);
+                    }
                 }
 
                 // Cleanup DataSource (singleton shared across nodes)
@@ -386,9 +420,11 @@ module.exports = function (RED: NodeAPI) {
                     }
                 }
 
+                clearTimeout(cleanupTimeout);
                 node.log('[Marine] Node closed and cleaned up');
                 done();
             } catch (error) {
+                clearTimeout(cleanupTimeout);
                 node.error(`[Marine] Cleanup error: ${(error as Error).message}`);
                 done();
             }

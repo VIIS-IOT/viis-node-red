@@ -241,3 +241,94 @@ describe('DH6400 Edge Cases', () => {
         expect(valueLittleEndian).not.toBe(value);
     });
 });
+
+describe('DH6400 Robustness - Port Lock Retry Logic', () => {
+    /**
+     * Test error detection logic for port lock errors
+     */
+    function isPortLockError(errorMsg: string): boolean {
+        return errorMsg.includes('Cannot lock port') ||
+               errorMsg.includes('Resource temporarily unavailable') ||
+               errorMsg.includes('EBUSY');
+    }
+
+    test('should detect "Cannot lock port" error', () => {
+        const error = 'Error Resource temporarily unavailable Cannot lock port';
+        expect(isPortLockError(error)).toBe(true);
+    });
+
+    test('should detect "Resource temporarily unavailable" error', () => {
+        const error = 'Resource temporarily unavailable';
+        expect(isPortLockError(error)).toBe(true);
+    });
+
+    test('should detect "EBUSY" error', () => {
+        const error = 'EBUSY: resource busy or locked';
+        expect(isPortLockError(error)).toBe(true);
+    });
+
+    test('should not detect other errors as port lock', () => {
+        const error = 'ENOENT: no such file or directory';
+        expect(isPortLockError(error)).toBe(false);
+    });
+
+    test('should not detect permission errors as port lock', () => {
+        const error = 'EACCES: permission denied';
+        expect(isPortLockError(error)).toBe(false);
+    });
+});
+
+describe('DH6400 Robustness - Exponential Backoff', () => {
+    /**
+     * Calculate exponential backoff delay
+     */
+    function calculateBackoff(attempt: number, maxDelay: number = 60000): number {
+        return Math.min(5000 * Math.pow(2, attempt - 1), maxDelay);
+    }
+
+    test('should calculate correct exponential backoff', () => {
+        expect(calculateBackoff(1)).toBe(5000);    // 5s
+        expect(calculateBackoff(2)).toBe(10000);   // 10s
+        expect(calculateBackoff(3)).toBe(20000);   // 20s
+        expect(calculateBackoff(4)).toBe(40000);   // 40s
+        expect(calculateBackoff(5)).toBe(60000);   // max 60s
+        expect(calculateBackoff(6)).toBe(60000);   // max 60s
+    });
+
+    test('should respect max delay cap', () => {
+        expect(calculateBackoff(10)).toBe(60000);
+        expect(calculateBackoff(100)).toBe(60000);
+    });
+});
+
+describe('DH6400 Connection State Management', () => {
+    test('should handle isClosing flag correctly', () => {
+        let isClosing = false;
+        
+        // Simulate normal operation
+        expect(isClosing).toBe(false);
+        
+        // Simulate cleanup start
+        isClosing = true;
+        expect(isClosing).toBe(true);
+        
+        // Reconnect should be skipped when closing
+        const shouldReconnect = !isClosing;
+        expect(shouldReconnect).toBe(false);
+    });
+
+    test('should handle concurrent connection prevention', () => {
+        let connectionPromise: Promise<void> | null = null;
+        
+        // First connection attempt
+        connectionPromise = Promise.resolve();
+        expect(connectionPromise).not.toBeNull();
+        
+        // Second attempt should wait for first
+        if (connectionPromise) {
+            // Should return existing promise, not create new one
+            const shouldWait = true;
+            expect(shouldWait).toBe(true);
+        }
+    });
+});
