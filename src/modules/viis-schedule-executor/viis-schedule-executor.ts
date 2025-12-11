@@ -72,6 +72,52 @@ module.exports = function (RED: NodeAPI) {
             return changed;
         };
 
+        // Helper function to clear status history for a schedule (call when schedule successfully finishes)
+        const clearStatusHistory = (scheduleName: string): void => {
+            const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
+            if (statusHistory[scheduleName]) {
+                debugLog(`Clearing status history for ${scheduleName} (was: ${statusHistory[scheduleName]})`);
+                delete statusHistory[scheduleName];
+                globalContext.set("scheduleStatusHistory", statusHistory);
+            }
+        };
+
+        // Helper function to check and clean stale "running" entries in status history
+        // This runs once per hour to clean up schedules that are stuck as "running"
+        const cleanStaleStatusHistory = (): void => {
+            const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
+            const lastCleanupKey = "scheduleStatusHistoryLastCleanup";
+            const lastCleanup = globalContext.get(lastCleanupKey) as number || 0;
+            const now = Date.now();
+            const oneHour = 15 * 60 * 1000; // 15mins
+
+            // Run cleanup every hour
+            if (now - lastCleanup < oneHour) {
+                return;
+            }
+
+            let cleanedCount = 0;
+            const currentRunningSchedules = Object.keys(
+                (globalContext.get("activeModbusCommands") as Record<string, any>) || {}
+            );
+
+            for (const scheduleId in statusHistory) {
+                // If status is "running" but schedule is NOT in activeModbusCommands, it's stale
+                if (statusHistory[scheduleId] === "running" && !currentRunningSchedules.includes(scheduleId)) {
+                    debugLog(`Cleaning stale status history: ${scheduleId} (was stuck as 'running')`);
+                    delete statusHistory[scheduleId];
+                    cleanedCount++;
+                }
+            }
+
+            if (cleanedCount > 0) {
+                globalContext.set("scheduleStatusHistory", statusHistory);
+                node.warn(`🧹 CLEANUP: Removed ${cleanedCount} stale 'running' entries from scheduleStatusHistory`);
+            }
+
+            globalContext.set(lastCleanupKey, now);
+        };
+
         let scheduleService: ScheduleService;
         try {
             scheduleService = new ScheduleService(node);
@@ -274,6 +320,9 @@ module.exports = function (RED: NodeAPI) {
                             schedule.enable = 0;
                             await scheduleService.updateScheduleStatus(schedule, "finished");
                             
+                            // Clear status history after successful finish so next run will trigger notification
+                            clearStatusHistory(schedule.name);
+                            
                             if (statusChanged) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
@@ -415,6 +464,9 @@ module.exports = function (RED: NodeAPI) {
                         scheduleService.clearActiveCommands(schedule.name);
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         
+                        // Clear status history after successful finish so next run will trigger notification
+                        clearStatusHistory(schedule.name);
+                        
                         // Send success notification
                         await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                         await scheduleService.syncScheduleLog(schedule, true);
@@ -474,6 +526,9 @@ module.exports = function (RED: NodeAPI) {
 
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
                 debugLog(`Found ${schedules.length} schedule(s).`);
+
+                // Run hourly cleanup of stale status history entries
+                cleanStaleStatusHistory();
 
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
@@ -630,6 +685,9 @@ module.exports = function (RED: NodeAPI) {
                         if (resetSuccess) {
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
                             await scheduleService.updateScheduleStatus(schedule, "finished");
+                            
+                            // Clear status history after successful finish so next day's run will trigger notification
+                            clearStatusHistory(schedule.name);
                             
                             if (statusChanged) {
                                 // Send HTTP notification - success case

@@ -17,7 +17,7 @@ exports.CONTEXT_KEYS = {
 // Debounce configuration
 exports.DEBOUNCE_CONFIG = {
     TIME_MS: 200, // 200ms debounce
-    MESSAGE_CACHE_TTL: 100, // 10 seconds
+    MESSAGE_CACHE_TTL: 10000, // 10 seconds - for reliable message deduplication
 };
 // MQTT configuration defaults
 exports.MQTT_CONFIG = {

@@ -153,17 +153,17 @@ class RpcHandler {
             }
             // Try luoi mapping handler first - it now handles actual Modbus writes
             const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
-            // Create a copy of params without luoi parameters for standard processing
-            const standardParams = Object.assign({}, params);
-            Object.keys(this.luoiHandler['luoiMapping'] || {}).forEach(key => {
+            // Create a copy of filteredParams without luoi parameters for standard processing
+            const standardParams = Object.assign({}, filteredParams);
+            const luoiMappingKeys = Object.keys(this.luoiHandler['luoiMapping'] || {});
+            luoiMappingKeys.forEach(key => {
                 delete standardParams[key];
             });
-            // Process remaining parameters with standard handler
+            // Process remaining non-luoi parameters with standard handler
+            // Only process if there are remaining parameters after removing luoi keys
             if (Object.keys(standardParams).length > 0) {
                 await this.handleStandardParams(standardParams);
             }
-            // Fallback to standard processing for non-luoi cases
-            await this.handleStandardParams(filteredParams);
         }
         catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${error.message}`);

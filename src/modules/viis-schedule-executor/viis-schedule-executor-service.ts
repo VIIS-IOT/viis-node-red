@@ -966,6 +966,7 @@ export class ScheduleService {
                 }
                 
                 this.clearActiveCommands(schedule.name);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 
@@ -984,6 +985,7 @@ export class ScheduleService {
                     const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
+                        this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                         await this.updateScheduleStatus(schedule, 'finished');
                         await this.sendNotificationToBackend(schedule, 'end', true);
                         
@@ -1245,6 +1247,21 @@ export class ScheduleService {
         delete activeModbusCommands[scheduleId];
         this.node.context().global.set("activeModbusCommands", activeModbusCommands);
         this.debugLog(`Cleared active commands for schedule ${scheduleId}`);
+    }
+
+    /**
+     * Clear schedule status history for a schedule (call after successful finish)
+     * This ensures the next run will trigger notifications properly
+     */
+    clearScheduleStatusHistory(scheduleId: string): void {
+        if (!this.node) return;
+        
+        const statusHistory: Record<string, string> = this.node.context().global.get("scheduleStatusHistory") as Record<string, string> || {};
+        if (statusHistory[scheduleId]) {
+            this.debugLog(`Clearing status history for ${scheduleId} (was: ${statusHistory[scheduleId]})`);
+            delete statusHistory[scheduleId];
+            this.node.context().global.set("scheduleStatusHistory", statusHistory);
+        }
     }
 
     delay(ms: number): Promise<void> {

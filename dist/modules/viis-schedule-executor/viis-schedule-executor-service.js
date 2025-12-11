@@ -914,6 +914,7 @@ let ScheduleService = class ScheduleService {
                     this.node.warn(`✅ RECOVERY SUCCESS: Schedule ${schedule.name} devices confirmed OFF - updating to finished`);
                 }
                 this.clearActiveCommands(schedule.name);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 // Send recovery notification
@@ -931,6 +932,7 @@ let ScheduleService = class ScheduleService {
                     const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
+                        this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                         await this.updateScheduleStatus(schedule, 'finished');
                         await this.sendNotificationToBackend(schedule, 'end', true);
                         if (this.node) {
@@ -1171,6 +1173,20 @@ let ScheduleService = class ScheduleService {
         delete activeModbusCommands[scheduleId];
         this.node.context().global.set("activeModbusCommands", activeModbusCommands);
         this.debugLog(`Cleared active commands for schedule ${scheduleId}`);
+    }
+    /**
+     * Clear schedule status history for a schedule (call after successful finish)
+     * This ensures the next run will trigger notifications properly
+     */
+    clearScheduleStatusHistory(scheduleId) {
+        if (!this.node)
+            return;
+        const statusHistory = this.node.context().global.get("scheduleStatusHistory") || {};
+        if (statusHistory[scheduleId]) {
+            this.debugLog(`Clearing status history for ${scheduleId} (was: ${statusHistory[scheduleId]})`);
+            delete statusHistory[scheduleId];
+            this.node.context().global.set("scheduleStatusHistory", statusHistory);
+        }
     }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
