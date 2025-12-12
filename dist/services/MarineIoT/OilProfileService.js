@@ -206,7 +206,7 @@ exports.OilProfileService = OilProfileService;
 OilProfileService.SENSOR_MACHINE_MAP = {
     'fs01': 'BOILER',
     'fs02': 'MAIN_ENGINE',
-    'fs03': 'MAIN_ENGINE', // Primary mapping for fs03 is MAIN_ENGINE
+    'fs03': 'GENERATOR_HFO', // Primary mapping for fs03 is MAIN_ENGINE
     'fs04': 'GENERATOR_HFO',
     'fs05': 'GENERATOR_DO',
     'fs06': 'GENERATOR_DO',
