@@ -241,6 +241,13 @@ module.exports = function (RED) {
         const nearbyRadiusNm = config.nearbyRadiusNm || 10;
         const nearbyMaxAgeSec = config.nearbyMaxAgeSec || 600; // 10 minutes
         const useOwnShipFromAis = config.useOwnShipFromAis !== false;
+        const enableLogging = config.enableLogging === true;
+        // Helper function for conditional logging
+        function logDebug(message) {
+            if (enableLogging) {
+                node.log(message);
+            }
+        }
         // State
         const vdrState = {
             ais: {},
@@ -280,7 +287,7 @@ module.exports = function (RED) {
             if (startIdx === -1)
                 return;
             const nmeaLine = trimmed.slice(startIdx);
-            const m = nmeaLine.match(/^([$!].*)\\*([0-9A-Fa-f]{2})$/);
+            const m = nmeaLine.match(/^([$!].*)\*([0-9A-Fa-f]{2})$/);
             if (!m)
                 return;
             const body = m[1].slice(1);
@@ -354,6 +361,8 @@ module.exports = function (RED) {
                             };
                         }
                         vdrState.lastUpdate = now;
+                        // Log AIS target update if logging enabled
+                        logDebug(`[AIS] Updated target MMSI ${mmsi} - lat: ${info.lat}, lon: ${info.lon}, sog: ${info.sogKnots}, type: ${type}`);
                     }
                 }
             }
@@ -703,11 +712,17 @@ module.exports = function (RED) {
         function outputData() {
             const removedCount = cleanupOldTargets();
             if (removedCount > 0) {
-                node.log(`[AIS] Cleaned up ${removedCount} stale targets`);
+                logDebug(`[AIS] Cleaned up ${removedCount} stale targets`);
             }
             const payload = buildPayload();
             const targetCount = Object.keys(vdrState.ais).length;
-            node.log(`[AIS] Outputting data: ${targetCount} AIS targets, ${messageCount} messages received`);
+            // Always log output event (summary) to confirm interval is working
+            node.log(`[AIS] Output triggered @ ${new Date().toISOString()} - ${targetCount} AIS targets, ${messageCount} messages received since connect`);
+            // Log detailed payload if logging enabled
+            if (enableLogging && targetCount > 0) {
+                const mmsiList = Object.keys(vdrState.ais).slice(0, 5).join(', ');
+                logDebug(`[AIS] Targets: ${mmsiList}${targetCount > 5 ? ` ... and ${targetCount - 5} more` : ''}`);
+            }
             node.send({
                 topic: "ais-telemetry",
                 payload
@@ -737,15 +752,21 @@ module.exports = function (RED) {
                 buffer += data.toString();
                 const lines = buffer.split(/\r?\n/);
                 buffer = lines.pop() || "";
+                let parsedCount = 0;
                 for (const line of lines) {
                     if (line.trim()) {
                         try {
                             parseNmeaLine(line);
+                            parsedCount++;
                         }
                         catch (err) {
                             node.warn(`[AIS] Parse error: ${err.message}`);
                         }
                     }
+                }
+                // Log data reception if logging enabled (batch log to avoid spam)
+                if (enableLogging && parsedCount > 0) {
+                    logDebug(`[AIS] Received ${data.length} bytes, parsed ${parsedCount} NMEA lines, total messages: ${messageCount}`);
                 }
             });
             tcpClient.on("error", (err) => {

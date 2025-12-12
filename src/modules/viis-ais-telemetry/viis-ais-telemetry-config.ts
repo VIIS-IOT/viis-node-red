@@ -20,6 +20,9 @@ export interface ViisAisTelemetryNodeDef extends NodeDef {
   
   // Own ship position source
   useOwnShipFromAis: boolean; // Use AIVDO (own ship) as position source
+  
+  // Logging
+  enableLogging: boolean;    // Enable verbose logging for AIS data (default: false)
 }
 
 export interface AisGatewayConfig {

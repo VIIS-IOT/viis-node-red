@@ -57,6 +57,18 @@
         <input type="checkbox" id="node-input-useOwnShipFromAis" style="width:auto;" checked>
         <span class="form-tips">Use own ship AIS (AIVDO) as position source</span>
     </div>
+
+    <!-- Logging Configuration -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #888; padding-bottom: 5px;">
+            <i class="fa fa-file-text-o"></i> <strong>Logging</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableLogging"><i class="fa fa-bug"></i> Enable Debug Logging</label>
+        <input type="checkbox" id="node-input-enableLogging" style="width:auto;">
+        <span class="form-tips">Enable verbose logging for AIS data reception and parsing (warning: AIS streams data continuously)</span>
+    </div>
 </script>
 
 <script type="text/html" data-help-name="viis-ais-telemetry">
@@ -180,7 +192,8 @@
             aisTtlSec: { value: 3600, validate: RED.validators.number() },
             nearbyRadiusNm: { value: 10, validate: RED.validators.number() },
             nearbyMaxAgeSec: { value: 600, validate: RED.validators.number() },
-            useOwnShipFromAis: { value: true }
+            useOwnShipFromAis: { value: true },
+            enableLogging: { value: false }
         },
         inputs: 1,
         outputs: 1,
@@ -191,9 +204,11 @@
         paletteLabel: "AIS Telemetry",
         oneditprepare: function () {
             $("#node-input-useOwnShipFromAis").prop("checked", this.useOwnShipFromAis !== false);
+            $("#node-input-enableLogging").prop("checked", this.enableLogging === true);
         },
         oneditsave: function () {
             this.useOwnShipFromAis = $("#node-input-useOwnShipFromAis").is(":checked");
+            this.enableLogging = $("#node-input-enableLogging").is(":checked");
         }
     });
 </script>
