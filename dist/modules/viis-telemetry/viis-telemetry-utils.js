@@ -115,6 +115,7 @@ const STRING_KEYS = [
 /**
  * Normalize telemetry value to ensure consistent data type.
  * Converts string numbers to actual numbers, preserves known string keys.
+ * Arrays and objects are JSON stringified for ThingsBoard compatibility.
  *
  * @param key - Telemetry key name
  * @param value - Raw value (may be string or number)
@@ -133,6 +134,14 @@ function normalizeValue(key, value) {
     // Handle boolean
     if (typeof value === 'boolean') {
         return value;
+    }
+    // Handle arrays - JSON stringify for ThingsBoard compatibility
+    if (Array.isArray(value)) {
+        return JSON.stringify(value);
+    }
+    // Handle objects (non-array) - JSON stringify for ThingsBoard compatibility
+    if (typeof value === 'object') {
+        return JSON.stringify(value);
     }
     // Handle string that might be a number
     if (typeof value === 'string') {
@@ -157,8 +166,8 @@ function normalizeValue(key, value) {
         }
         return value;
     }
-    // For other types, convert to string
-    return String(value);
+    // For any remaining types, JSON stringify to ensure proper serialization
+    return JSON.stringify(value);
 }
 /**
  * Normalize all values in a telemetry object.
