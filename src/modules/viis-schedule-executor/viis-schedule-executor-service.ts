@@ -38,7 +38,7 @@ export class ScheduleService {
         this.globalHelper = node ? new GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
-            this.syncScheduleService = node 
+            this.syncScheduleService = node
                 ? new SyncScheduleService(node.context())
                 : Container.get(SyncScheduleService);
             this.debugLog("SyncScheduleService initialized successfully");
@@ -81,10 +81,10 @@ export class ScheduleService {
         let allCoils: Record<string, number> = {};
 
         // Try to load legacy single-board coils first
-        const legacyCoils = this.globalHelper 
-            ? this.globalHelper.getJsonEnvVar("MODBUS_COILS", {}) 
+        const legacyCoils = this.globalHelper
+            ? this.globalHelper.getJsonEnvVar("MODBUS_COILS", {})
             : JSON.parse(process.env.MODBUS_COILS || "{}");
-        
+
         if (Object.keys(legacyCoils).length > 0) {
             this.debugLog(`Loaded ${Object.keys(legacyCoils).length} legacy coil mappings`);
             allCoils = { ...allCoils, ...legacyCoils };
@@ -92,11 +92,11 @@ export class ScheduleService {
 
         // Check if we're in multi-board mode
         const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : process.env.MODBUS_BOARDS;
-        
+
         if (boardsConfigStr) {
             try {
                 let boards;
-                
+
                 // Handle both already-parsed array and JSON string
                 if (Array.isArray(boardsConfigStr)) {
                     boards = boardsConfigStr;
@@ -106,17 +106,17 @@ export class ScheduleService {
                     this.debugLog(`Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
                     return allCoils;
                 }
-                
+
                 if (Array.isArray(boards) && boards.length > 0) {
                     this.debugLog(`Multi-board mode detected with ${boards.length} boards`);
-                    
+
                     // Load coils from each board
                     for (const board of boards) {
                         const boardId = board.id.toUpperCase();
-                        const boardCoils = this.globalHelper 
+                        const boardCoils = this.globalHelper
                             ? this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_COILS`, {})
                             : {};
-                        
+
                         if (Object.keys(boardCoils).length > 0) {
                             this.debugLog(`Loaded ${Object.keys(boardCoils).length} coil mappings from board ${board.id}`);
                             allCoils = { ...allCoils, ...boardCoils };
@@ -140,10 +140,10 @@ export class ScheduleService {
         let allHolding: Record<string, number> = {};
 
         // Try to load legacy single-board holding registers first
-        const legacyHolding = this.globalHelper 
-            ? this.globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) 
+        const legacyHolding = this.globalHelper
+            ? this.globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {})
             : JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-        
+
         if (Object.keys(legacyHolding).length > 0) {
             this.debugLog(`Loaded ${Object.keys(legacyHolding).length} legacy holding register mappings`);
             allHolding = { ...allHolding, ...legacyHolding };
@@ -151,11 +151,11 @@ export class ScheduleService {
 
         // Check if we're in multi-board mode
         const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : process.env.MODBUS_BOARDS;
-        
+
         if (boardsConfigStr) {
             try {
                 let boards;
-                
+
                 // Handle both already-parsed array and JSON string
                 if (Array.isArray(boardsConfigStr)) {
                     boards = boardsConfigStr;
@@ -165,17 +165,17 @@ export class ScheduleService {
                     this.debugLog(`Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
                     return allHolding;
                 }
-                
+
                 if (Array.isArray(boards) && boards.length > 0) {
                     this.debugLog(`Multi-board mode detected with ${boards.length} boards`);
-                    
+
                     // Load holding registers from each board
                     for (const board of boards) {
                         const boardId = board.id.toUpperCase();
-                        const boardHolding = this.globalHelper 
+                        const boardHolding = this.globalHelper
                             ? this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_HOLDING_REGISTERS`, {})
                             : {};
-                        
+
                         if (Object.keys(boardHolding).length > 0) {
                             this.debugLog(`Loaded ${Object.keys(boardHolding).length} holding register mappings from board ${board.id}`);
                             allHolding = { ...allHolding, ...boardHolding };
@@ -189,6 +189,14 @@ export class ScheduleService {
 
         this.debugLog(`Total holding register mappings loaded: ${Object.keys(allHolding).length}`);
         return allHolding;
+    }
+
+    public getAllModbusCoils(): Record<string, number> {
+        return this.loadAllModbusCoils();
+    }
+
+    public getAllModbusHoldingRegisters(): Record<string, number> {
+        return this.loadAllModbusHoldingRegisters();
     }
 
     /**
@@ -270,7 +278,7 @@ export class ScheduleService {
                     // - Comma-separated: "1,3,5" -> [1, 3, 5]
                     // - JSON array: "[1,3,5]" -> [1, 3, 5]
                     const trimmedInterval = schedule.interval.trim();
-                    
+
                     if (trimmedInterval.startsWith('[') && trimmedInterval.endsWith(']')) {
                         // JSON array format
                         allowedDays = JSON.parse(trimmedInterval);
@@ -492,7 +500,7 @@ export class ScheduleService {
                 this.node.warn(`  ├─ Step 2: Delay 5 seconds`);
                 this.node.warn(`  └─ Step 3: Writing ${controlCoils.length} PUMP/POWER coils`);
             }
-            
+
             // Khi start: ghi valve trước, delay 5s, sau đó ghi pump/power
             this.debugLog(`Starting schedule ${schedule?.name}: executing valve coils first`);
 
@@ -546,7 +554,7 @@ export class ScheduleService {
                 this.node.warn(`  ├─ Step 2: Delay 5 seconds`);
                 this.node.warn(`  └─ Step 3: Closing ${valveCoils.length} VALVE coils`);
             }
-            
+
             // Khi finish: ghi tắt pump/power trước, delay 5s, sau đó tắt valve
             this.debugLog(`Finishing schedule ${schedule?.name}: executing pump/power coils first`);
 
@@ -652,7 +660,7 @@ export class ScheduleService {
                 return false;
             }
         }
-        
+
         // CRITICAL LOG: All verifications passed
         if (this.node && commands.length > 0) {
             this.node.warn(`✅ VERIFICATION SUCCESS: All ${commands.length} commands verified`);
@@ -692,7 +700,7 @@ export class ScheduleService {
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published MQTT notification to EMQX local for ${schedule.name}`);
-            
+
             // CRITICAL LOG: MQTT published successfully
             if (this.node) {
                 this.node.warn(`📡 MQTT PUBLISHED: ${schedule.name} | Status: ${schedule.status} | Topics: ThingsBoard + EMQX`);
@@ -725,12 +733,12 @@ export class ScheduleService {
         try {
             const requestId = uuidv4();
             const allCommands = [...commands.holdingCommands, ...commands.coilCommands];
-            
+
             // Build human-readable message
             const actionText = action === 'start' ? 'bắt đầu' : 'kết thúc';
             const statusText = success ? 'thành công' : 'thất bại';
             const changedKeys = allCommands.map(cmd => `${cmd.key}=${cmd.value}`).join(', ');
-            
+
             let message: string;
             if (success) {
                 message = `Lịch trình "${schedule.label || schedule.name}" ${actionText}: ${changedKeys || 'không có thay đổi'}`;
@@ -775,7 +783,7 @@ export class ScheduleService {
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published audit log to EMQX local for schedule ${schedule.name} (${action})`);
-            
+
             // Log success
             if (this.node) {
                 this.node.warn(`📝 AUDIT LOG PUBLISHED: ${schedule.name} | Action: ${action} | Keys: ${allCommands.length} | Status: ${success ? 'SUCCESS' : 'FAIL'}`);
@@ -817,7 +825,7 @@ export class ScheduleService {
 
                 await this.syncScheduleService.logSchedule(scheduleLogBody);
                 this.debugLog(`Logged schedule ${schedule.name} successfully`);
-                
+
                 // CRITICAL LOG: Schedule log synced successfully
                 if (this.node) {
                     this.node.warn(`📝 SCHEDULE LOG SYNCED: ${schedule.name} | ${success ? 'Success' : 'Failed'}`);
@@ -851,7 +859,7 @@ export class ScheduleService {
             const repository = AppDataSource.getRepository(TabiotSchedule);
 
             const previousStatus = schedule.status;
-            
+
             // Cập nhật trạng thái
             schedule.status = status;
 
@@ -906,35 +914,36 @@ export class ScheduleService {
         schedules: TabiotSchedule[]
     ): Promise<void> {
         const now = moment();
-        
+
         for (const schedule of schedules) {
             // Only check schedules that are "running" and past their end time
             if (schedule.status !== 'running') continue;
-            
+
             const endDateTime = moment(`${schedule.end_date} ${schedule.end_time}`, "YYYY-MM-DD HH:mm:ss");
             const minutesPastEnd = now.diff(endDateTime, 'minutes');
-            
+
             // Only check if at least 2 minutes past end time (grace period)
             if (minutesPastEnd < 2) continue;
-            
+
             this.debugLog(`🔍 RECOVERY CHECK: Schedule ${schedule.name} is stuck in "running" status ${minutesPastEnd} minutes past end time`);
-            
+
             // Get the commands that should have been reset
             const activeCommands = this.getActiveCommands(schedule.name);
             if (activeCommands.length === 0) {
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 continue;
             }
-            
+
             // Verify if devices are actually OFF by reading Modbus
             let allDevicesOff = true;
             for (const cmd of activeCommands) {
                 try {
                     let readResult: { data: any[] };
                     let currentValue: number | boolean;
-                    
+
                     if (cmd.fc === 5) {
                         readResult = await modbusClient.readCoils(cmd.address, 1);
                         currentValue = Boolean(readResult.data[0]);
@@ -958,17 +967,18 @@ export class ScheduleService {
                     break;
                 }
             }
-            
+
             // If all devices are confirmed OFF, update status to finished
             if (allDevicesOff) {
                 if (this.node) {
                     this.node.warn(`✅ RECOVERY SUCCESS: Schedule ${schedule.name} devices confirmed OFF - updating to finished`);
                 }
-                
+
                 this.clearActiveCommands(schedule.name);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
-                
+
                 // Send recovery notification
                 if (this.node) {
                     this.node.warn(`📡 RECOVERY NOTIFICATION: ${schedule.name} auto-recovered after manual shutdown`);
@@ -980,13 +990,14 @@ export class ScheduleService {
                     if (this.node) {
                         this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
                     }
-                    
+
                     const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
+                        this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                         await this.updateScheduleStatus(schedule, 'finished');
                         await this.sendNotificationToBackend(schedule, 'end', true);
-                        
+
                         if (this.node) {
                             this.node.warn(`✅ RECOVERY RETRY SUCCESS: ${schedule.name} reset succeeded on retry`);
                         }
@@ -1247,6 +1258,21 @@ export class ScheduleService {
         this.debugLog(`Cleared active commands for schedule ${scheduleId}`);
     }
 
+    /**
+     * Clear schedule status history for a schedule (call after successful finish)
+     * This ensures the next run will trigger notifications properly
+     */
+    clearScheduleStatusHistory(scheduleId: string): void {
+        if (!this.node) return;
+
+        const statusHistory: Record<string, string> = this.node.context().global.get("scheduleStatusHistory") as Record<string, string> || {};
+        if (statusHistory[scheduleId]) {
+            this.debugLog(`Clearing status history for ${scheduleId} (was: ${statusHistory[scheduleId]})`);
+            delete statusHistory[scheduleId];
+            this.node.context().global.set("scheduleStatusHistory", statusHistory);
+        }
+    }
+
     delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -1368,17 +1394,17 @@ export class ScheduleService {
     public processRpcControlCommand(key: string, value: any): { success: boolean; action: 'modbus' | 'config'; result?: any } {
         try {
             // Get modbus mappings
-            const modbusCoils: Record<string, number> = this.globalHelper?.getJsonEnvVar("MODBUS_COILS", {}) || {};
-            const modbusHolding: Record<string, number> = this.globalHelper?.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) || {};
+            const modbusCoils: Record<string, number> = this.getAllModbusCoils();
+            const modbusHolding: Record<string, number> = this.getAllModbusHoldingRegisters();
 
             // Check if key exists in modbus mapping
             if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
                 // Key found in modbus mapping - should be handled by modbus logic
                 this.debugLog(`RPC control key ${key} found in modbus mapping, should be handled by modbus`);
-                
+
                 const isCoil = modbusCoils.hasOwnProperty(key);
                 const address = isCoil ? modbusCoils[key] : modbusHolding[key];
-                
+
                 return {
                     success: true,
                     action: 'modbus',
@@ -1632,7 +1658,7 @@ export class ScheduleService {
             if (this.node) {
                 this.node.warn(`❌ MQTT COMPLETE FAILURE: ${schedule.name} | Both brokers failed`);
             }
-            
+
             // Queue for later retry if enabled
             if (queueOnFailure) {
                 MqttFailedQueue.getInstance().add({
@@ -1720,7 +1746,7 @@ export class ScheduleService {
 
         for (let i = items.length - 1; i >= 0; i--) {
             const item = items[i];
-            
+
             try {
                 if (item.type === 'notification' && item.schedule) {
                     await this.publishMqttNotificationWithRetry(
@@ -1771,10 +1797,10 @@ export class ScheduleService {
         } = options || {};
 
         // Get backend URL and device access token from environment
-        const backendUrl = this.globalHelper 
-            ? this.globalHelper.getEnvVar('VIIS_BACKEND', '') 
+        const backendUrl = this.globalHelper
+            ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
             : (process.env.VIIS_BACKEND || '');
-        
+
         const deviceAccessToken = this.globalHelper
             ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '')
             : (process.env.DEVICE_ACCESS_TOKEN || '');
@@ -1794,7 +1820,7 @@ export class ScheduleService {
         // Set severity to 'error' for ANY failure (start or end)
         const severity = !success ? 'error' : 'notification';
         const alarmStatus = isStart ? 'Pending' : 'Clear';
-        
+
         // Build notification message - clearly indicate success/failure for both start and end
         let message: string;
         if (isStart) {
@@ -1863,7 +1889,7 @@ export class ScheduleService {
 
             return true;
         } catch (error) {
-            const errorMessage = error instanceof AxiosError 
+            const errorMessage = error instanceof AxiosError
                 ? `${error.message} (${error.response?.status || 'N/A'})`
                 : (error as Error).message;
 

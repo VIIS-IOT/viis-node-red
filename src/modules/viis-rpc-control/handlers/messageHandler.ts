@@ -3,6 +3,7 @@
  * Handles message deduplication and processing
  */
 
+import * as crypto from 'crypto';
 import {
     IMessageHandler,
     ServiceOptions
@@ -23,6 +24,11 @@ export class MessageHandler implements IMessageHandler {
 
     /**
      * Generate a unique message ID based on payload content and node ID
+     * Uses SHA256 hash to ensure the ENTIRE payload (including values) is considered
+     * 
+     * BUG FIX: Previously used base64.slice(0,16) which only captured ~12 chars,
+     * causing collisions when key names were long (e.g., "COIL_OUTPUT_WATER_IN")
+     * and the value (true/false) was not included in the hash.
      */
     generateMessageId(payload: any): string {
         try {
@@ -42,9 +48,11 @@ export class MessageHandler implements IMessageHandler {
                 }
                 return value;
             });
-            // Tạo hash base64 từ paramsStr và lấy 16 ký tự đầu
-            const base64Hash = Buffer.from(paramsStr).toString('base64').slice(0, 16);
-            return `${base64Hash}_${this.nodeId}`;
+            // Use SHA256 hash to capture the ENTIRE paramsStr (including values)
+            // This fixes the bug where only the first 12 chars were considered,
+            // causing true/false values to produce the same messageId
+            const hash = crypto.createHash('sha256').update(paramsStr).digest('hex').slice(0, 16);
+            return `${hash}_${this.nodeId}`;
         } catch (error) {
             // Fallback về ID dựa trên timestamp nếu có lỗi
             this.logger.warn(`Failed to generate stable message ID: ${(error as Error).message}`);

@@ -3,8 +3,42 @@
  * Message Handler for VIIS RPC Control Node
  * Handles message deduplication and processing
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MessageHandler = void 0;
+const crypto = __importStar(require("crypto"));
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 class MessageHandler {
@@ -15,6 +49,11 @@ class MessageHandler {
     }
     /**
      * Generate a unique message ID based on payload content and node ID
+     * Uses SHA256 hash to ensure the ENTIRE payload (including values) is considered
+     *
+     * BUG FIX: Previously used base64.slice(0,16) which only captured ~12 chars,
+     * causing collisions when key names were long (e.g., "COIL_OUTPUT_WATER_IN")
+     * and the value (true/false) was not included in the hash.
      */
     generateMessageId(payload) {
         try {
@@ -34,9 +73,11 @@ class MessageHandler {
                 }
                 return value;
             });
-            // Tạo hash base64 từ paramsStr và lấy 16 ký tự đầu
-            const base64Hash = Buffer.from(paramsStr).toString('base64').slice(0, 16);
-            return `${base64Hash}_${this.nodeId}`;
+            // Use SHA256 hash to capture the ENTIRE paramsStr (including values)
+            // This fixes the bug where only the first 12 chars were considered,
+            // causing true/false values to produce the same messageId
+            const hash = crypto.createHash('sha256').update(paramsStr).digest('hex').slice(0, 16);
+            return `${hash}_${this.nodeId}`;
         }
         catch (error) {
             // Fallback về ID dựa trên timestamp nếu có lỗi

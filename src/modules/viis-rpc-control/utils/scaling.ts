@@ -20,16 +20,24 @@ export class ScalingUtils implements IScalingUtils {
      */
     scaleValue(key: string, value: number, direction: "read" | "write"): number {
         const scaleConfigs = this.configService.getScaleConfigs();
+        this.logger.warn(`scaleConfigs is ${scaleConfigs}`)
         const config = scaleConfigs.find((c) => c.key === key && c.direction === direction);
         
         if (!config) {
+            // Debug: Log when no config found for write operations
+            if (direction === "write") {
+                const writeConfigs = scaleConfigs.filter((c) => c.direction === "write");
+                const keyConfigs = scaleConfigs.filter((c) => c.key === key);
+                this.logger.warn(`[SCALE-DEBUG] No config for key="${key}" direction="${direction}" | Total configs: ${scaleConfigs.length} | Write configs: ${JSON.stringify(writeConfigs)} | Configs for this key: ${JSON.stringify(keyConfigs)}`);
+            }
             return value;
         }
 
         const shouldMultiply = config.operation === "multiply";
         const scaledValue = shouldMultiply ? value * config.factor : value / config.factor;
         
-        this.logger.debug(`Scaled ${key} (${direction}): ${value} -> ${scaledValue} (${config.operation} by ${config.factor})`);
+        // Always log scaling operations at warn level for debugging
+        this.logger.warn(`[SCALE-APPLIED] ${key} (${direction}): ${value} → ${scaledValue} | op=${config.operation} factor=${config.factor} shouldMultiply=${shouldMultiply}`);
         
         return scaledValue;
     }

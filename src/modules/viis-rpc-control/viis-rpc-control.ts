@@ -114,10 +114,7 @@ module.exports = function (RED: NodeAPI) {
             try {
                 // Add random delay to stagger initialization when multiple nodes deploy simultaneously
                 const initDelay = Math.random() * 2000; // 0-2 seconds
-                logger.warn(`[INIT] Node ${node.id} waiting ${Math.round(initDelay)}ms before initialization to avoid conflicts`);
                 await new Promise(resolve => setTimeout(resolve, initDelay));
-
-                logger.warn(`[INIT] Node ${node.id} starting initialization sequence`);
 
                 // Initialize configuration service
                 const configService = new ConfigService(serviceOptions);
@@ -187,8 +184,6 @@ module.exports = function (RED: NodeAPI) {
                         qos: MQTT_CONFIG.LOCAL.QOS,
                     };
 
-                logger.log(`mqttConfig: ${JSON.stringify(mqttConfig, null, 2)}`);
-
                 // Define MQTT topics
                 const subscribeTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
@@ -196,7 +191,6 @@ module.exports = function (RED: NodeAPI) {
                 const publishTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
                     : `v1/devices/me/telemetry/${deviceId}`;
-                logger.log(`MQTT Configuration: ${JSON.stringify(mqttConfig, null, 2)}`);
 
                 // Initialize clients with better error handling
                 let modbusClient: any;
@@ -231,31 +225,15 @@ module.exports = function (RED: NodeAPI) {
 
                 try {
                     // Initialize MQTT client
-                    logger.warn("[MQTT-INIT] Starting MQTT client initialization...");
-                    logger.warn(`[MQTT-INIT] Node ID: ${node.id}`);
-                    logger.warn(`[MQTT-INIT] Broker type: ${config.mqttBroker}`);
-                    logger.warn(`[MQTT-INIT] MQTT config: ${JSON.stringify(mqttConfig, null, 2)}`);
-
-                    // Log current client registry state
-                    ClientRegistry.logConnectionCounts(node);
-
                     // Add delay to avoid race conditions with other nodes
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
                     mqttClient = config.mqttBroker === "thingsboard"
                         ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
                         : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
-
-                    logger.warn("[MQTT-INIT] MQTT client initialized successfully");
-                    logger.warn(`[MQTT-INIT] Client connected status: ${mqttClient.isConnected()}`);
-
-                    // Log final client registry state
-                    ClientRegistry.logConnectionCounts(node);
                 } catch (error) {
                     const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
-                    logger.error(`[MQTT-INIT] ${errorMsg}`);
-                    logger.error(`[MQTT-INIT] Error stack: ${(error as Error).stack}`);
-                    node.error(errorMsg);
+                    logger.error(errorMsg);
                     node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
                     return;
                 }
@@ -265,8 +243,6 @@ module.exports = function (RED: NodeAPI) {
                     node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.CLIENT_INIT_FAILED });
                     return;
                 }
-
-                logger.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
 
                 // Initialize services
                 const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
@@ -286,26 +262,16 @@ module.exports = function (RED: NodeAPI) {
 
                 // Set up MQTT subscription
                 try {
-                    logger.warn("[MQTT-SUB] Setting up MQTT subscription...");
-                    logger.warn(`[MQTT-SUB] Node ID: ${node.id}`);
-                    logger.warn(`[MQTT-SUB] Subscribe topic: ${subscribeTopic}`);
-                    logger.warn(`[MQTT-SUB] Publish topic: ${publishTopic}`);
-
                     // Verify MQTT client is still valid
                     if (!mqttClient) {
                         throw new Error("MQTT client is null after initialization");
                     }
 
-                    logger.warn(`[MQTT-SUB] MQTT client instance exists: ${!!mqttClient}`);
-                    logger.warn(`[MQTT-SUB] MQTT client type: ${mqttClient.constructor.name}`);
-
                     // Wait for connection before subscribing with shorter timeout for faster recovery
                     if (!mqttClient.isConnected()) {
-                        logger.warn("[MQTT-SUBSCRIBE] Waiting for MQTT connection before subscribing...");
                         try {
                             await mqttClient.waitForConnection(10000); // Wait up to 10 seconds for faster failure detection
                         } catch (error) {
-                            logger.error(`[MQTT-SUBSCRIBE] Connection timeout: ${(error as Error).message}`);
                             // Trigger circuit breaker reset for immediate recovery
                             if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
                                 mqttClient.resetCircuitBreaker();
@@ -316,18 +282,15 @@ module.exports = function (RED: NodeAPI) {
 
                     // Subscribe with more aggressive retries
                     let retryCount = 0;
-                    const maxRetries = 5; // Increased from 3
+                    const maxRetries = 5;
 
                     while (retryCount < maxRetries) {
                         try {
                             await mqttClient.subscribe(subscribeTopic);
-                            logger.warn(`[MQTT-SUB] Successfully subscribed to topic: ${subscribeTopic}`);
                             break;
                         } catch (error) {
                             retryCount++;
-                            logger.error(`[MQTT-SUB] Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`);
-                            logger.error(`[MQTT-SUB] Error stack: ${(error as Error).stack}`);
-                            logger.error(`[MQTT-SUB] Retrying subscription in 2 seconds...`);
+                            logger.error(`Failed to subscribe (${retryCount}/${maxRetries}): ${(error as Error).message}`);
                             await new Promise(resolve => setTimeout(resolve, 2000));
                         }
                     }
@@ -336,10 +299,8 @@ module.exports = function (RED: NodeAPI) {
                         throw new Error(`Failed to subscribe to ${subscribeTopic} after ${maxRetries} retries`);
                     }
                 } catch (error) {
-                    const errorMsg = `Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`;
-                    logger.error(`[MQTT-SUB] ${errorMsg}`);
-                    logger.error(`[MQTT-SUB] Error stack: ${(error as Error).stack}`);
-                    node.error(errorMsg);
+                    const errorMsg = `Failed to subscribe: ${(error as Error).message}`;
+                    logger.error(errorMsg);
                     node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
 
                     // Attempt to reconnect and resubscribe after a delay
@@ -354,15 +315,12 @@ module.exports = function (RED: NodeAPI) {
                                 mqttClient.once("mqtt-status", async ({ status }: any) => {
                                     if (status === "connected") {
                                         await mqttClient.subscribe(subscribeTopic);
-                                        logger.log(`Resubscribed on reconnection: ${subscribeTopic}`);
                                         node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
                                     } else if (status === 'disconnected') {
-                                        logger.warn("[MQTT-STATUS] MQTT disconnected - recovery will be attempted");
                                         node.status({ fill: "yellow", shape: "ring", text: "Disconnected - recovering" });
                                         // Trigger immediate recovery attempt
                                         if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
                                             setTimeout(() => {
-                                                logger.warn("[MQTT-STATUS] Triggering circuit breaker reset for recovery");
                                                 mqttClient.resetCircuitBreaker();
                                             }, 1000); // 1 second delay to avoid rapid resets
                                         }
@@ -377,34 +335,21 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 // Set up MQTT message handler
-                logger.warn("[MQTT-HANDLER] Setting up MQTT message event listener...");
                 mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
-                    logger.warn(`[MQTT-HANDLER] Received MQTT message on topic: ${message.topic}`);
-                    logger.warn(`[MQTT-HANDLER] Message content: ${JSON.stringify(message)}`);
-                    logger.warn(`[MQTT-HANDLER] Expected subscribe topic: ${subscribeTopic}`);
-
                     try {
-                        const result = messageHandler.processMqttMessage(
+                        messageHandler.processMqttMessage(
                             message,
                             subscribeTopic,
                             async (payload: any) => {
-                                logger.warn("[MQTT-HANDLER] Processing MQTT RPC message with payload:");
-                                logger.warn(`[MQTT-HANDLER] Payload: ${JSON.stringify(payload)}`);
-                                ClientRegistry.logConnectionCounts(node);
+                                // Log incoming RPC request
+                                node.warn(`[RPC] Received: ${JSON.stringify(payload)}`);
                                 await rpcHandler.handleRpcRequest(payload);
                             }
                         );
-
-                        if (result === null) {
-                            logger.warn("[MQTT-HANDLER] Message was rejected or filtered out");
-                        } else {
-                            logger.warn("[MQTT-HANDLER] Message processed successfully");
-                        }
                     } catch (error) {
-                        logger.error(`[MQTT-HANDLER] Error processing MQTT message: ${(error as Error).message}`);
+                        logger.error(`Error processing MQTT message: ${(error as Error).message}`);
                     }
                 });
-                logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
 
                 // Auto-detect config changes every 30 seconds
                 configCheckInterval = setInterval(async () => {
@@ -441,7 +386,7 @@ module.exports = function (RED: NodeAPI) {
                         }
 
                         if (hasChanged) {
-                            logger.warn(`[HOT-RELOAD] Config change detected: ${changeDescription}`);
+                            logger.log(`Config change detected: ${changeDescription}`);
                             
                             // Reinitialize based on new mode
                             if (newConfig.mode === 'multi') {
@@ -470,7 +415,6 @@ module.exports = function (RED: NodeAPI) {
                             
                             currentModbusConfig = { ...newConfig };
                             isMultiBoardMode = newConfig.mode === 'multi';
-                            logger.warn(`[HOT-RELOAD] Modbus reloaded: ${changeDescription}`);
                             
                             node.status({ fill: "green", shape: "dot", text: `Reloaded: ${changeDescription}` });
                             setTimeout(() => {
@@ -483,15 +427,8 @@ module.exports = function (RED: NodeAPI) {
                 }, 30000); // Check every 30 seconds
 
                 // Node initialization completed successfully
-                logger.warn("[INIT] ===== VIIS RPC Control Node initialization completed successfully =====");
-                logger.warn(`[INIT] Node ID: ${node.id}`);
-                logger.warn(`[INIT] MQTT Broker: ${config.mqttBroker}`);
-                logger.warn(`[INIT] Subscribe Topic: ${subscribeTopic}`);
-                logger.warn(`[INIT] Publish Topic: ${publishTopic}`);
-                logger.warn(`[INIT] MQTT Connected: ${mqttClient.isConnected()}`);
-                logger.warn(`[INIT] Modbus Connected: ${modbusClient.isConnectedCheck()}`);
-                logger.warn(`[INIT] Hot-reload enabled: Checking config every 30s`);
-                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                logger.log(`Initialized: ${config.mqttBroker} | topic=${subscribeTopic}`);
+                node.status({ fill: "green", shape: "dot", text: "Ready" });
 
                 // Handle input messages for dynamic configuration updates and RPC commands
                 node.on('input', async (msg: any) => {
@@ -500,7 +437,7 @@ module.exports = function (RED: NodeAPI) {
 
                     // Handle manual Modbus config reload command
                     if (msg.topic === 'reload-modbus-config' || msg.payload === 'reload-modbus-config') {
-                        logger.warn("[MANUAL-RELOAD] Manual Modbus config reload requested");
+                        logger.log("Manual Modbus config reload requested");
                         
                         try {
                             const newConfig = readModbusConfig();
@@ -527,9 +464,9 @@ module.exports = function (RED: NodeAPI) {
                             }
                             currentModbusConfig = { ...newConfig };
                             
-                            logger.warn("[MANUAL-RELOAD] Manual reload completed successfully");
+                            logger.log("Manual reload completed");
                         } catch (error) {
-                            logger.error(`[MANUAL-RELOAD] Manual reload failed: ${(error as Error).message}`);
+                            logger.error(`Manual reload failed: ${(error as Error).message}`);
                         }
                         return;
                     }
@@ -538,8 +475,7 @@ module.exports = function (RED: NodeAPI) {
                     if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
                         (typeof msg.method === 'string' && msg.method === 'set_state')) {
 
-                        logger.warn("Processing RPC input");
-
+    
                         try {
                             let rpcBody: RpcMessage;
                             if (typeof msg.payload === 'object' && msg.payload.method === 'set_state') {

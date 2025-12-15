@@ -23,6 +23,7 @@
     "test:flow-accumulation": "jest viis-flow-accumulation",
     "test:flow-accumulation:watch": "jest viis-flow-accumulation --watch",
     "test:flow-accumulation:coverage": "jest viis-flow-accumulation --coverage",
+    "build:win": "npx rimraf dist && npx tsc && npx copyfiles -u 2 \"src/icons/**/*\" dist && npx copyfiles -u 1 \"src/**/*.html\" dist",
     "build": "rimraf dist && npx tsc && copyfiles -u 2 \"src/icons/**/*\" dist && copyfiles -u 1 \"src/**/*.html\" dist",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "migration:generate": "npm run typeorm -- migration:generate src/orm/migrations/migrate -d src/orm/dataSource.ts",

@@ -200,6 +200,12 @@ let ScheduleService = class ScheduleService {
         this.debugLog(`Total holding register mappings loaded: ${Object.keys(allHolding).length}`);
         return allHolding;
     }
+    getAllModbusCoils() {
+        return this.loadAllModbusCoils();
+    }
+    getAllModbusHoldingRegisters() {
+        return this.loadAllModbusHoldingRegisters();
+    }
     /**
      * Lấy danh sách schedule từ DB
      */
@@ -873,6 +879,7 @@ let ScheduleService = class ScheduleService {
             const activeCommands = this.getActiveCommands(schedule.name);
             if (activeCommands.length === 0) {
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 continue;
@@ -914,6 +921,7 @@ let ScheduleService = class ScheduleService {
                     this.node.warn(`✅ RECOVERY SUCCESS: Schedule ${schedule.name} devices confirmed OFF - updating to finished`);
                 }
                 this.clearActiveCommands(schedule.name);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 // Send recovery notification
@@ -931,6 +939,7 @@ let ScheduleService = class ScheduleService {
                     const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
+                        this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                         await this.updateScheduleStatus(schedule, 'finished');
                         await this.sendNotificationToBackend(schedule, 'end', true);
                         if (this.node) {
@@ -1172,6 +1181,20 @@ let ScheduleService = class ScheduleService {
         this.node.context().global.set("activeModbusCommands", activeModbusCommands);
         this.debugLog(`Cleared active commands for schedule ${scheduleId}`);
     }
+    /**
+     * Clear schedule status history for a schedule (call after successful finish)
+     * This ensures the next run will trigger notifications properly
+     */
+    clearScheduleStatusHistory(scheduleId) {
+        if (!this.node)
+            return;
+        const statusHistory = this.node.context().global.get("scheduleStatusHistory") || {};
+        if (statusHistory[scheduleId]) {
+            this.debugLog(`Clearing status history for ${scheduleId} (was: ${statusHistory[scheduleId]})`);
+            delete statusHistory[scheduleId];
+            this.node.context().global.set("scheduleStatusHistory", statusHistory);
+        }
+    }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -1282,11 +1305,10 @@ let ScheduleService = class ScheduleService {
      * Process RPC control command - write to configKeyValues if not found in modbus mapping
      */
     processRpcControlCommand(key, value) {
-        var _a, _b;
         try {
             // Get modbus mappings
-            const modbusCoils = ((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getJsonEnvVar("MODBUS_COILS", {})) || {};
-            const modbusHolding = ((_b = this.globalHelper) === null || _b === void 0 ? void 0 : _b.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {})) || {};
+            const modbusCoils = this.getAllModbusCoils();
+            const modbusHolding = this.getAllModbusHoldingRegisters();
             // Check if key exists in modbus mapping
             if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
                 // Key found in modbus mapping - should be handled by modbus logic

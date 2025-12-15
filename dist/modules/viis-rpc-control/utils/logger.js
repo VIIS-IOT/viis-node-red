@@ -20,7 +20,7 @@ class Logger {
      * Log warning message
      */
     warn(message) {
-        // this.node.warn(`[${this.prefix}] ${message}`);
+        this.node.warn(`[${this.prefix}] ${message}`);
     }
     /**
      * Log error message

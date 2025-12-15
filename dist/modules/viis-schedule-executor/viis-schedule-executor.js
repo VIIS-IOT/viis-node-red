@@ -13,19 +13,57 @@ module.exports = function (RED) {
         const node = this;
         // Initialize global activeModbusCommands with type
         const globalContext = node.context().global;
-        if (!globalContext.get("activeModbusCommands")) {
-            globalContext.set("activeModbusCommands", {});
+        // STARTUP RECOVERY: Track if this is a fresh startup (power cycle recovery)
+        // Use a unique startup ID to detect restarts
+        const currentStartupId = `startup_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const lastStartupId = globalContext.get("scheduleExecutorStartupId") || null;
+        const isStartupRecovery = !lastStartupId || lastStartupId !== currentStartupId;
+        if (isStartupRecovery) {
+            // Mark this startup
+            globalContext.set("scheduleExecutorStartupId", currentStartupId);
+            globalContext.set("scheduleExecutorStartupTime", Date.now());
+            // CRITICAL: Clear all potentially stale global state on startup
+            // This prevents stuck schedules after power outage
+            const existingActiveCommands = globalContext.get("activeModbusCommands") || {};
+            const existingStatusHistory = globalContext.get("scheduleStatusHistory") || {};
+            const existingTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
+            const staleCommandCount = Object.keys(existingActiveCommands).length;
+            const staleStatusCount = Object.keys(existingStatusHistory).length;
+            const staleTimestampCount = Object.keys(existingTimestamps).length;
+            if (staleCommandCount > 0 || staleStatusCount > 0 || staleTimestampCount > 0) {
+                node.warn(`🔄 STARTUP RECOVERY: Detected potential stale state from power outage`);
+                node.warn(`   - activeModbusCommands: ${staleCommandCount} entries (clearing)`);
+                node.warn(`   - scheduleStatusHistory: ${staleStatusCount} entries (clearing)`);
+                node.warn(`   - scheduleLastCheckTimestamps: ${staleTimestampCount} entries (clearing)`);
+                // Clear all stale state - schedules will be re-evaluated fresh
+                globalContext.set("activeModbusCommands", {});
+                globalContext.set("scheduleStatusHistory", {});
+                globalContext.set("scheduleLastCheckTimestamps", {});
+                globalContext.set("manualModbusOverrides", {});
+                node.warn(`✅ STARTUP RECOVERY: Cleared stale global state - schedules will start fresh`);
+            }
+            else {
+                // Initialize empty objects
+                globalContext.set("activeModbusCommands", {});
+                globalContext.set("manualModbusOverrides", {});
+                globalContext.set("scheduleLastCheckTimestamps", {});
+                globalContext.set("scheduleStatusHistory", {});
+            }
         }
-        if (!globalContext.get("manualModbusOverrides")) {
-            globalContext.set("manualModbusOverrides", {});
-        }
-        // Initialize last check timestamps to avoid frequent re-execution checks
-        if (!globalContext.get("scheduleLastCheckTimestamps")) {
-            globalContext.set("scheduleLastCheckTimestamps", {});
-        }
-        // Initialize schedule status tracking to detect status changes
-        if (!globalContext.get("scheduleStatusHistory")) {
-            globalContext.set("scheduleStatusHistory", {});
+        else {
+            // Not a fresh startup, just ensure variables exist
+            if (!globalContext.get("activeModbusCommands")) {
+                globalContext.set("activeModbusCommands", {});
+            }
+            if (!globalContext.get("manualModbusOverrides")) {
+                globalContext.set("manualModbusOverrides", {});
+            }
+            if (!globalContext.get("scheduleLastCheckTimestamps")) {
+                globalContext.set("scheduleLastCheckTimestamps", {});
+            }
+            if (!globalContext.get("scheduleStatusHistory")) {
+                globalContext.set("scheduleStatusHistory", {});
+            }
         }
         node.name = config.name;
         const scheduleInterval = config.scheduleInterval;
@@ -55,6 +93,43 @@ module.exports = function (RED) {
             statusHistory[scheduleName] = newStatus;
             globalContext.set("scheduleStatusHistory", statusHistory);
             return changed;
+        };
+        // Helper function to clear status history for a schedule (call when schedule successfully finishes)
+        const clearStatusHistory = (scheduleName) => {
+            const statusHistory = globalContext.get("scheduleStatusHistory") || {};
+            if (statusHistory[scheduleName]) {
+                debugLog(`Clearing status history for ${scheduleName} (was: ${statusHistory[scheduleName]})`);
+                delete statusHistory[scheduleName];
+                globalContext.set("scheduleStatusHistory", statusHistory);
+            }
+        };
+        // Helper function to check and clean stale "running" entries in status history
+        // This runs once per hour to clean up schedules that are stuck as "running"
+        const cleanStaleStatusHistory = () => {
+            const statusHistory = globalContext.get("scheduleStatusHistory") || {};
+            const lastCleanupKey = "scheduleStatusHistoryLastCleanup";
+            const lastCleanup = globalContext.get(lastCleanupKey) || 0;
+            const now = Date.now();
+            const oneHour = 15 * 60 * 1000; // 15mins
+            // Run cleanup every hour
+            if (now - lastCleanup < oneHour) {
+                return;
+            }
+            let cleanedCount = 0;
+            const currentRunningSchedules = Object.keys(globalContext.get("activeModbusCommands") || {});
+            for (const scheduleId in statusHistory) {
+                // If status is "running" but schedule is NOT in activeModbusCommands, it's stale
+                if (statusHistory[scheduleId] === "running" && !currentRunningSchedules.includes(scheduleId)) {
+                    debugLog(`Cleaning stale status history: ${scheduleId} (was stuck as 'running')`);
+                    delete statusHistory[scheduleId];
+                    cleanedCount++;
+                }
+            }
+            if (cleanedCount > 0) {
+                globalContext.set("scheduleStatusHistory", statusHistory);
+                node.warn(`🧹 CLEANUP: Removed ${cleanedCount} stale 'running' entries from scheduleStatusHistory`);
+            }
+            globalContext.set(lastCleanupKey, now);
         };
         let scheduleService;
         try {
@@ -212,7 +287,7 @@ module.exports = function (RED) {
                             }
                         }
                         // Reset time_valve_ and set_flow keys
-                        const holdingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -241,6 +316,8 @@ module.exports = function (RED) {
                             schedule.status = "finished";
                             schedule.enable = 0;
                             await scheduleService.updateScheduleStatus(schedule, "finished");
+                            // Clear status history after successful finish so next run will trigger notification
+                            clearStatusHistory(schedule.name);
                             if (statusChanged) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
@@ -356,6 +433,8 @@ module.exports = function (RED) {
                         schedule.enable = 0;
                         scheduleService.clearActiveCommands(schedule.name);
                         await scheduleService.updateScheduleStatus(schedule, "finished");
+                        // Clear status history after successful finish so next run will trigger notification
+                        clearStatusHistory(schedule.name);
                         // Send success notification
                         await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                         await scheduleService.syncScheduleLog(schedule, true);
@@ -405,6 +484,8 @@ module.exports = function (RED) {
                 }
                 const schedules = await scheduleService.getDueSchedules();
                 debugLog(`Found ${schedules.length} schedule(s).`);
+                // Run hourly cleanup of stale status history entries
+                cleanStaleStatusHistory();
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
                     const now = (0, moment_1.default)().utc().add(7, 'hours');
@@ -429,10 +510,17 @@ module.exports = function (RED) {
                             endDateTime.add(1, 'day');
                         }
                     }
-                    if (isDue && schedule.status !== "running") {
+                    // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
+                    // This happens after power outage when activeModbusCommands was cleared on startup
+                    const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
+                    const isStaleRunningStatus = schedule.status === "running" && existingActiveCommands.length === 0;
+                    if (isStaleRunningStatus && isDue) {
+                        node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
+                    }
+                    if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
                         debugLog("start running schedule");
                         const statusChanged = hasStatusChanged(schedule.name, "running");
-                        const holdingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         let actionObj = {};
                         if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
@@ -520,7 +608,7 @@ module.exports = function (RED) {
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        const holdingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -546,6 +634,8 @@ module.exports = function (RED) {
                         if (resetSuccess) {
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
                             await scheduleService.updateScheduleStatus(schedule, "finished");
+                            // Clear status history after successful finish so next day's run will trigger notification
+                            clearStatusHistory(schedule.name);
                             if (statusChanged) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
