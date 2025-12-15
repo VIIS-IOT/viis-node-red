@@ -873,6 +873,7 @@ let ScheduleService = class ScheduleService {
             const activeCommands = this.getActiveCommands(schedule.name);
             if (activeCommands.length === 0) {
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 continue;
