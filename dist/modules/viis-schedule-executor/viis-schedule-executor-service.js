@@ -200,6 +200,12 @@ let ScheduleService = class ScheduleService {
         this.debugLog(`Total holding register mappings loaded: ${Object.keys(allHolding).length}`);
         return allHolding;
     }
+    getAllModbusCoils() {
+        return this.loadAllModbusCoils();
+    }
+    getAllModbusHoldingRegisters() {
+        return this.loadAllModbusHoldingRegisters();
+    }
     /**
      * Lấy danh sách schedule từ DB
      */
@@ -1299,11 +1305,10 @@ let ScheduleService = class ScheduleService {
      * Process RPC control command - write to configKeyValues if not found in modbus mapping
      */
     processRpcControlCommand(key, value) {
-        var _a, _b;
         try {
             // Get modbus mappings
-            const modbusCoils = ((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getJsonEnvVar("MODBUS_COILS", {})) || {};
-            const modbusHolding = ((_b = this.globalHelper) === null || _b === void 0 ? void 0 : _b.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {})) || {};
+            const modbusCoils = this.getAllModbusCoils();
+            const modbusHolding = this.getAllModbusHoldingRegisters();
             // Check if key exists in modbus mapping
             if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {
                 // Key found in modbus mapping - should be handled by modbus logic

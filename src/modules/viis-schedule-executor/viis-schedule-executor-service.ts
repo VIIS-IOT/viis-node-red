@@ -191,6 +191,14 @@ export class ScheduleService {
         return allHolding;
     }
 
+    public getAllModbusCoils(): Record<string, number> {
+        return this.loadAllModbusCoils();
+    }
+
+    public getAllModbusHoldingRegisters(): Record<string, number> {
+        return this.loadAllModbusHoldingRegisters();
+    }
+
     /**
      * Lấy danh sách schedule từ DB
      */
@@ -1386,8 +1394,8 @@ export class ScheduleService {
     public processRpcControlCommand(key: string, value: any): { success: boolean; action: 'modbus' | 'config'; result?: any } {
         try {
             // Get modbus mappings
-            const modbusCoils: Record<string, number> = this.globalHelper?.getJsonEnvVar("MODBUS_COILS", {}) || {};
-            const modbusHolding: Record<string, number> = this.globalHelper?.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {}) || {};
+            const modbusCoils: Record<string, number> = this.getAllModbusCoils();
+            const modbusHolding: Record<string, number> = this.getAllModbusHoldingRegisters();
 
             // Check if key exists in modbus mapping
             if (modbusCoils.hasOwnProperty(key) || modbusHolding.hasOwnProperty(key)) {

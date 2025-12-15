@@ -328,7 +328,7 @@ module.exports = function (RED: NodeAPI) {
                         }
 
                         // Reset time_valve_ and set_flow keys
-                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -610,7 +610,7 @@ module.exports = function (RED: NodeAPI) {
 
                         const statusChanged = hasStatusChanged(schedule.name, "running");
 
-                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         let actionObj: Record<string, any> = {};
                         if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
@@ -706,7 +706,7 @@ module.exports = function (RED: NodeAPI) {
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
 
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))

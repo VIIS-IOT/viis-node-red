@@ -287,7 +287,7 @@ module.exports = function (RED) {
                             }
                         }
                         // Reset time_valve_ and set_flow keys
-                        const holdingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -520,7 +520,7 @@ module.exports = function (RED) {
                     if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
                         debugLog("start running schedule");
                         const statusChanged = hasStatusChanged(schedule.name, "running");
-                        const holdingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         let actionObj = {};
                         if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
@@ -608,7 +608,7 @@ module.exports = function (RED) {
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        const holdingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
+                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                         debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
