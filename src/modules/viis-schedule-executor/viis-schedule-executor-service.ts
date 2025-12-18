@@ -445,8 +445,10 @@ export class ScheduleService {
                         console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}, storing as config parameter`);
                         try {
                             const configParam = this.storeConfigParameter(key, value, schedule.name);
-                            configParameters.push(configParam);
-                            this.debugLog(`Successfully stored config parameter: ${key}=${configParam.value} (type: ${configParam.type})`);
+                            if (configParam) {
+                                configParameters.push(configParam);
+                                this.debugLog(`Successfully stored config parameter: ${key}=${configParam.value} (type: ${configParam.type})`);
+                            }
                         } catch (error) {
                             console.error(`Failed to store config parameter ${key}: ${(error as Error).message}`);
                         }
@@ -1367,7 +1369,14 @@ export class ScheduleService {
     /**
      * Store configuration parameter (for schedule execution)
      */
-    private storeConfigParameter(key: string, value: any, scheduleId: string): ConfigParameter {
+    private storeConfigParameter(key: string, value: any, scheduleId: string): ConfigParameter | null {
+        // Skip if value is falsy (empty string, null, undefined)
+        // Note: 0 and false are valid values for configuration
+        if (value === "" || value === null || value === undefined) {
+            console.warn(`Skipping config parameter storage for ${key}: value is empty/null/undefined (schedule: ${scheduleId})`);
+            return null;
+        }
+
         const validatedValue = this.validateAndConvertValue(key, value);
         const type = this.detectParameterType(validatedValue);
 
@@ -1393,6 +1402,17 @@ export class ScheduleService {
      */
     public processRpcControlCommand(key: string, value: any): { success: boolean; action: 'modbus' | 'config'; result?: any } {
         try {
+            // Skip if value is falsy (empty string, null, undefined)
+            // Note: 0 and false are valid values for control commands
+            if (value === "" || value === null || value === undefined) {
+                console.warn(`Skipping RPC control command for ${key}: value is empty/null/undefined`);
+                return { 
+                    success: false, 
+                    action: 'config',
+                    result: { key, error: 'Empty or null value not allowed' }
+                };
+            }
+
             // Get modbus mappings
             const modbusCoils: Record<string, number> = this.getAllModbusCoils();
             const modbusHolding: Record<string, number> = this.getAllModbusHoldingRegisters();

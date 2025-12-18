@@ -332,6 +332,14 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleConfigOnlyParameter(key: string, rawValue: any): Promise<void> {
         try {
+            // Skip if value is falsy (empty string, null, undefined, 0, false)
+            // Note: 0 and false are valid values, so only skip empty strings and null/undefined
+            if (rawValue === "" || rawValue === null || rawValue === undefined) {
+                this.logger.warn(`Skipping config write for ${key}: value is empty/null/undefined`);
+                this.node.status({ fill: "yellow", shape: "ring", text: `Skipped: ${key} (empty value)` });
+                return;
+            }
+
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
 
