@@ -34,8 +34,9 @@ export class ModbusClientCore extends EventEmitter {
     private node: Node;
     private isConnected: boolean = false;
     private reconnectTimer?: NodeJS.Timeout;
+    private connectionCheckTimer?: NodeJS.Timeout; // Timer for periodic connection checks
     private wasConnected: boolean = false; // Track connection state
-    
+
     // Request queue for serializing Modbus operations
     private requestQueue: Promise<any> = Promise.resolve();
     private queueLength: number = 0;
@@ -75,7 +76,7 @@ export class ModbusClientCore extends EventEmitter {
     private async enqueueRequest<T>(operation: () => Promise<T>): Promise<T> {
         // Add to queue
         this.queueLength++;
-        
+
         // Chain the operation to the queue
         const result = this.requestQueue.then(async () => {
             try {
@@ -88,10 +89,10 @@ export class ModbusClientCore extends EventEmitter {
                 this.queueLength--;
             }
         });
-        
+
         // Update queue reference
         this.requestQueue = result.catch(() => {}); // Catch to prevent queue blocking on errors
-        
+
         return result;
     }
 
@@ -407,8 +408,14 @@ export class ModbusClientCore extends EventEmitter {
 
 
     private startConnectionCheck(): void {
+        // Clear existing timer if any
+        if (this.connectionCheckTimer) {
+            clearInterval(this.connectionCheckTimer);
+            this.connectionCheckTimer = undefined;
+        }
+
         // Kiểm tra kết nối ít thường xuyên hơn cho STM32 (mỗi 15 giây)
-        setInterval(async () => {
+        this.connectionCheckTimer = setInterval(async () => {
             try {
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
                 if (!this.isConnected || !this.client.isOpen) {
@@ -693,10 +700,18 @@ export class ModbusClientCore extends EventEmitter {
     // Ngắt kết nối
     public disconnect(): void {
         ////this.node.log("Modbus: Disconnecting client..."); // Log disconnect start
+
+        // Clear all timers to prevent memory leaks
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
         }
+
+        if (this.connectionCheckTimer) {
+            clearInterval(this.connectionCheckTimer);
+            this.connectionCheckTimer = undefined;
+        }
+
         this.client.close(() => {
             this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
             this.isConnected = false;
@@ -717,16 +732,16 @@ export class ModbusClientCore extends EventEmitter {
     // Public method to manually trigger reconnection
     public async reconnect(): Promise<void> {
         this.node.warn("[MODBUS-RECONNECT] Manual reconnection requested");
-        
+
         // Clear any existing reconnect timer
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
         }
-        
+
         // Mark as disconnected
         this.isConnected = false;
-        
+
         // Close existing connection
         try {
             if (this.client.isOpen) {
@@ -735,10 +750,10 @@ export class ModbusClientCore extends EventEmitter {
         } catch (closeErr) {
             // Ignore close errors
         }
-        
+
         // Create new client instance
         this.client = new ModbusRTU();
-        
+
         // Attempt to reconnect
         await this.initializeClient();
     }

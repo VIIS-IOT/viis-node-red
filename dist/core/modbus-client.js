@@ -323,8 +323,13 @@ class ModbusClientCore extends events_1.EventEmitter {
         }, delay);
     }
     startConnectionCheck() {
+        // Clear existing timer if any
+        if (this.connectionCheckTimer) {
+            clearInterval(this.connectionCheckTimer);
+            this.connectionCheckTimer = undefined;
+        }
         // Kiểm tra kết nối ít thường xuyên hơn cho STM32 (mỗi 15 giây)
-        setInterval(async () => {
+        this.connectionCheckTimer = setInterval(async () => {
             try {
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
                 if (!this.isConnected || !this.client.isOpen) {
@@ -573,9 +578,14 @@ class ModbusClientCore extends events_1.EventEmitter {
     // Ngắt kết nối
     disconnect() {
         ////this.node.log("Modbus: Disconnecting client..."); // Log disconnect start
+        // Clear all timers to prevent memory leaks
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
+        }
+        if (this.connectionCheckTimer) {
+            clearInterval(this.connectionCheckTimer);
+            this.connectionCheckTimer = undefined;
         }
         this.client.close(() => {
             this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
