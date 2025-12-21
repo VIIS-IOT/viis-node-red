@@ -10,6 +10,7 @@ import { DatabaseService } from './services/databaseService';
 import { CustomerUserSyncHandler } from './handlers/customerUserSyncHandler';
 import { SyncResult } from './services/syncStateService';
 import { SYNC_DEFAULTS } from './constants';
+import { GlobalContextHelper } from '../../ultils/global-context-helper';
 
 /**
  * Configuration definition for the VIIS sync customer user node
@@ -17,8 +18,10 @@ import { SYNC_DEFAULTS } from './constants';
  * @extends NodeDef
  */
 interface ViisSyncCustomerUserNodeDef extends NodeDef {
-    /** Device ID for authentication */
-    deviceId: string;
+    /** Device ID for authentication (optional, auto-loaded from env if not provided) */
+    deviceId?: string;
+    /** Use environment variable for device ID */
+    useEnvDeviceId: boolean;
     /** Sync interval in minutes */
     syncInterval: number;
     /** Whether to sync on startup */
@@ -44,7 +47,34 @@ export = function (RED: NodeAPI) {
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
 
+        // Auto-load device ID from environment if not provided or if useEnvDeviceId is enabled
+        const globalHelper = new GlobalContextHelper(node.context());
+        let deviceId: string;
+        
+        if (config.useEnvDeviceId) {
+            // Force load from environment
+            deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            if (!deviceId) {
+                node.error('DEVICE_ID environment variable not found');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ID env' });
+                return;
+            }
+            logger.info(node, 'Using Device ID from DEVICE_ID environment variable');
+        } else {
+            // Use config or fallback to environment
+            deviceId = config.deviceId || globalHelper.getEnvVar('DEVICE_ID', '');
+            if (!deviceId) {
+                node.error('Device ID not configured and DEVICE_ID not found in environment variables');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing Device ID' });
+                return;
+            }
+            if (!config.deviceId) {
+                logger.info(node, 'Device ID auto-loaded from DEVICE_ID environment variable');
+            }
+        }
+
         logger.info(node, 'Initializing VIIS Sync Customer User Node');
+        logger.info(node, `Using Device ID: ${deviceId.substring(0, 8)}...`);
 
         const dbService = new DatabaseService();
         let syncIntervalId: NodeJS.Timeout | null = null;
@@ -61,7 +91,7 @@ export = function (RED: NodeAPI) {
                 customerUserSyncHandler = new CustomerUserSyncHandler(
                     dbService,
                     node,
-                    config.deviceId,
+                    deviceId,
                     config.showDetailedLogs,
                     config.maxRetries
                 );
@@ -178,7 +208,7 @@ export = function (RED: NodeAPI) {
 
             const syncStartTime = Date.now();
             logger.info(node, `Performing ${type} sync`);
-            logger.debug(node, `Sync configuration: deviceId=${config.deviceId}, maxRetries=${config.maxRetries}, showDetailedLogs=${config.showDetailedLogs}`, config.showDetailedLogs);
+            logger.debug(node, `Sync configuration: deviceId=${deviceId}, maxRetries=${config.maxRetries}, showDetailedLogs=${config.showDetailedLogs}`, config.showDetailedLogs);
             updateNodeStatus('syncing', `${type.charAt(0).toUpperCase() + type.slice(1)} sync...`);
 
             try {

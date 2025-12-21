@@ -11,6 +11,7 @@ import { ScheduleSyncHandler } from './handlers/scheduleSyncHandler';
 import { ExtendedNodeMessage } from './interfaces/types';
 import { SyncResult } from './services/syncStateService';
 import { SYNC_DEFAULTS } from './constants';
+import { GlobalContextHelper } from '../../ultils/global-context-helper';
 
 /**
  * Configuration definition for the VIIS sync schedule node
@@ -18,8 +19,10 @@ import { SYNC_DEFAULTS } from './constants';
  * @extends NodeDef
  */
 interface ViisSyncScheduleNodeDef extends NodeDef {
-    /** Access token for device authentication */
-    accessToken: string;
+    /** Access token for device authentication (optional, auto-loaded from env if not provided) */
+    accessToken?: string;
+    /** Use environment variable for access token */
+    useEnvAccessToken: boolean;
     /** Sync interval in minutes */
     syncInterval: number;
     /** Whether to sync on startup */
@@ -45,7 +48,34 @@ export = function(RED: NodeAPI) {
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
 
+        // Auto-load access token from environment if not provided or if useEnvAccessToken is enabled
+        const globalHelper = new GlobalContextHelper(node.context());
+        let accessToken: string;
+        
+        if (config.useEnvAccessToken) {
+            // Force load from environment
+            accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('DEVICE_ACCESS_TOKEN environment variable not found');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ACCESS_TOKEN env' });
+                return;
+            }
+            logger.info(node, 'Using Access Token from DEVICE_ACCESS_TOKEN environment variable');
+        } else {
+            // Use config or fallback to environment
+            accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found in environment variables');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
+                return;
+            }
+            if (!config.accessToken) {
+                logger.info(node, 'Access Token auto-loaded from DEVICE_ACCESS_TOKEN environment variable');
+            }
+        }
+
         logger.info(node, 'Initializing VIIS Sync Schedule Node');
+        logger.info(node, `Using Access Token: ${accessToken.substring(0, 8)}...`);
         
         const dbService = new DatabaseService();
         let syncIntervalId: NodeJS.Timeout | null = null;
@@ -59,7 +89,7 @@ export = function(RED: NodeAPI) {
                 logger.info(node, 'Database initialized successfully');
 
                 // Initialize the sync handler
-                scheduleSyncHandler = new ScheduleSyncHandler(dbService, node, config.accessToken);
+                scheduleSyncHandler = new ScheduleSyncHandler(dbService, node, accessToken);
                 
                 // Update node status with initial state
                 updateNodeStatus('ready');

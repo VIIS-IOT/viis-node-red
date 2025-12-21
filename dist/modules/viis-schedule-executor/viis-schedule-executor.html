@@ -10,16 +10,19 @@
         </div>
     </div>
     <div class="form-row">
-        <label for="node-input-scheduleInterval"><i class="fa fa-clock-o"></i> Schedule Check Interval (seconds)</label>
-        <input type="number" id="node-input-scheduleInterval" placeholder="10" min="1">
-    </div>
-    <div class="form-row">
         <label for="node-input-description"><i class="fa fa-info-circle"></i> Description</label>
         <input type="text" id="node-input-description" placeholder="Optional description">
     </div>
     <div class="form-row">
         <label for="node-input-debugEnable"><i class="fa fa-bug"></i> Enable Debug</label>
         <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+    </div>
+    <div class="form-row">
+        <label for="node-input-cleanupInterval"><i class="fa fa-trash-o"></i> Cleanup Interval (minutes)</label>
+        <input type="number" id="node-input-cleanupInterval" placeholder="15" min="1">
+        <div style="margin-left: 105px; color: #666; font-size: 11px;">
+            Interval to clean stale 'running' entries from status history
+        </div>
     </div>
 </script>
 
@@ -29,9 +32,9 @@
         color: "#a6bbcf",
         defaults: {
             name: { value: "" },
-            scheduleInterval: { value: 10, required: true },
             description: { value: "" },
-            debugEnable: { value: false }
+            debugEnable: { value: false },
+            cleanupInterval: { value: 15, required: true }
         },
         inputs: 1,
         outputs: 1,
@@ -60,9 +63,12 @@
         <b>MQTT Publishing:</b> Automatically publishes schedule status to both ThingsBoard and EMQX Local brokers.
     </p>
     <p>
-        <b>Schedule Check Interval:</b> The interval (in seconds) at which the node checks for due schedules.
+        <b>Usage:</b> Connect an Inject node to this node to trigger schedule checks at your desired interval.
     </p>
     <p>
         <b>Description:</b> An optional field to provide additional information about this node.
+    </p>
+    <p>
+        <b>Cleanup Interval:</b> The interval (in minutes) at which the node cleans up stale 'running' entries from schedule status history. Default is 15 minutes.
     </p>
 </script>

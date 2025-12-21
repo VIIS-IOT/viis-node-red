@@ -8,6 +8,7 @@ const logger_1 = require("./utils/logger");
 const databaseService_1 = require("./services/databaseService");
 const scheduleSyncHandler_1 = require("./handlers/scheduleSyncHandler");
 const constants_1 = require("./constants");
+const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     /**
      * Constructor for the VIIS sync schedule node
@@ -21,7 +22,33 @@ module.exports = function (RED) {
         config.maxRetries = config.maxRetries || 3;
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
+        // Auto-load access token from environment if not provided or if useEnvAccessToken is enabled
+        const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+        let accessToken;
+        if (config.useEnvAccessToken) {
+            // Force load from environment
+            accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('DEVICE_ACCESS_TOKEN environment variable not found');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ACCESS_TOKEN env' });
+                return;
+            }
+            logger_1.logger.info(node, 'Using Access Token from DEVICE_ACCESS_TOKEN environment variable');
+        }
+        else {
+            // Use config or fallback to environment
+            accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found in environment variables');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
+                return;
+            }
+            if (!config.accessToken) {
+                logger_1.logger.info(node, 'Access Token auto-loaded from DEVICE_ACCESS_TOKEN environment variable');
+            }
+        }
         logger_1.logger.info(node, 'Initializing VIIS Sync Schedule Node');
+        logger_1.logger.info(node, `Using Access Token: ${accessToken.substring(0, 8)}...`);
         const dbService = new databaseService_1.DatabaseService();
         let syncIntervalId = null;
         let scheduleSyncHandler = null;
@@ -32,7 +59,7 @@ module.exports = function (RED) {
                 await dbService.initialize();
                 logger_1.logger.info(node, 'Database initialized successfully');
                 // Initialize the sync handler
-                scheduleSyncHandler = new scheduleSyncHandler_1.ScheduleSyncHandler(dbService, node, config.accessToken);
+                scheduleSyncHandler = new scheduleSyncHandler_1.ScheduleSyncHandler(dbService, node, accessToken);
                 // Update node status with initial state
                 updateNodeStatus('ready');
                 // Set up sync interval if configured

@@ -75,8 +75,8 @@ module.exports = function (RED: NodeAPI) {
         }
 
         node.name = config.name;
-        const scheduleInterval = config.scheduleInterval;
         const debugEnable = config.debugEnable; // Read debugEnable from config
+        const cleanupInterval = config.cleanupInterval || 15; // Read cleanupInterval from config, default 15 minutes
 
         // Multi-board state variables
         let currentBoardId: string | undefined = config.boardId;
@@ -90,7 +90,7 @@ module.exports = function (RED: NodeAPI) {
             }
         };
 
-        debugLog(`Schedule interval set to: ${scheduleInterval}`);
+        debugLog(`Cleanup interval set to: ${cleanupInterval} minutes`);
 
         // Initialize GlobalContextHelper
         const globalHelper = new GlobalContextHelper(node.context());
@@ -123,16 +123,16 @@ module.exports = function (RED: NodeAPI) {
         };
 
         // Helper function to check and clean stale "running" entries in status history
-        // This runs once per hour to clean up schedules that are stuck as "running"
+        // This runs periodically to clean up schedules that are stuck as "running"
         const cleanStaleStatusHistory = (): void => {
             const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
             const lastCleanupKey = "scheduleStatusHistoryLastCleanup";
             const lastCleanup = globalContext.get(lastCleanupKey) as number || 0;
             const now = Date.now();
-            const oneHour = 15 * 60 * 1000; // 15mins
+            const cleanupIntervalMs = cleanupInterval * 60 * 1000; // Convert minutes to milliseconds
 
-            // Run cleanup every hour
-            if (now - lastCleanup < oneHour) {
+            // Run cleanup based on configured interval
+            if (now - lastCleanup < cleanupIntervalMs) {
                 return;
             }
 
