@@ -324,7 +324,7 @@ export class ScheduleHandler {
                     
                     if (boards && boards.length > 0) {
                         const defaultBoard = globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id);
-                        modbusClient = ClientRegistry.getModbusClientV2(defaultBoard, this.node);
+                        modbusClient = await ClientRegistry.getModbusClientV2(defaultBoard, this.node);
                         this.node.warn(`Using multi-board mode with board: ${defaultBoard}`);
                     }
                 } else {
@@ -337,7 +337,7 @@ export class ScheduleHandler {
                             type: globalHelper.getEnvVar('MODBUS_TYPE', 'TCP'),
                             unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1)
                         };
-                        modbusClient = ClientRegistry.getModbusClientV2(config, this.node);
+                        modbusClient = await ClientRegistry.getModbusClientV2(config, this.node);
                     }
                 }
                 

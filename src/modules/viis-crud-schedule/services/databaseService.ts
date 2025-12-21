@@ -36,18 +36,20 @@ export class DatabaseService {
     }
 
     async destroy(): Promise<void> {
-        if (this.initialized) {
+        if (this.initialized && this.dataSource && this.dataSource.isInitialized) {
             try {
                 logger.info(null, 'Destroying database connection...');
                 await this.dataSource.destroy();
                 this.initialized = false;
                 logger.info(null, 'Database connection destroyed');
             } catch (error) {
+                // Log but don't throw - prevent crash during cleanup
                 logger.error(null, `Error while destroying database connection: ${(error as Error).message}`);
-                throw error;
+                this.initialized = false;
             }
         } else {
-            logger.info(null, 'Destroy called, but database is not initialized.');
+            logger.info(null, 'Destroy called, but database is not initialized or already destroyed.');
+            this.initialized = false;
         }
     }
 

@@ -18,11 +18,28 @@ export = function (RED: NodeAPI) {
         const node = this;
 
         const dbService = new DatabaseService();
+        let isInitialized = false;
+
+        // Register close handler OUTSIDE async IIFE to ensure it's always registered
+        node.on('close', async (done: () => void) => {
+            try {
+                logger.info(node, 'Node closing');
+                if (isInitialized) {
+                    await dbService.destroy();
+                }
+            } catch (error) {
+                logger.error(node, `Error during cleanup: ${(error as Error).message}`);
+            }
+            if (typeof done === 'function') {
+                done();
+            }
+        });
 
         // Khởi tạo database đồng bộ
         (async () => {
             try {
                 await dbService.initialize();
+                isInitialized = true;
                 logger.info(node, "Database initialized successfully");
 
                 const scheduleHandler = new ScheduleHandler(dbService, node);
@@ -52,10 +69,6 @@ export = function (RED: NodeAPI) {
                     }
                 });
 
-                node.on('close', async () => {
-                    logger.info(node, 'Node closing');
-                    await dbService.destroy();
-                });
             } catch (err) {
                 logger.error(node, `Failed to initialize node: ${(err as Error).message}`);
                 node.error(`Node initialization failed: ${(err as Error).message}`);

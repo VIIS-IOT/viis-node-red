@@ -195,9 +195,9 @@ module.exports = function (RED: NodeAPI) {
         }
 
         // Initialize Modbus client
-        function initializeModbusClient(): void {
+        async function initializeModbusClient(): Promise<void> {
             try {
-                modbusClient = ClientRegistry.getModbusClientV2(config.boardId || 'board1', node);
+                modbusClient = await ClientRegistry.getModbusClientV2(config.boardId || 'board1', node);
                 
                 if (config.enableLogging) {
                     node.log(`Modbus client initialized for board: ${config.boardId || 'board1'}`);

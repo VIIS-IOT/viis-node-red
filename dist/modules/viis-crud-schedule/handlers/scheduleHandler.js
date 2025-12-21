@@ -272,7 +272,7 @@ class ScheduleHandler {
                     }
                     if (boards && boards.length > 0) {
                         const defaultBoard = globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id);
-                        modbusClient = client_registry_1.default.getModbusClientV2(defaultBoard, this.node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(defaultBoard, this.node);
                         this.node.warn(`Using multi-board mode with board: ${defaultBoard}`);
                     }
                 }
@@ -286,7 +286,7 @@ class ScheduleHandler {
                             type: globalHelper.getEnvVar('MODBUS_TYPE', 'TCP'),
                             unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1)
                         };
-                        modbusClient = client_registry_1.default.getModbusClientV2(config, this.node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(config, this.node);
                     }
                 }
                 if (!modbusClient) {

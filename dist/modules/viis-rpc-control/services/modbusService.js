@@ -30,11 +30,11 @@ class ModbusService {
      * In multi-board mode, gets client from ClientRegistry
      * In single-board mode, returns default client
      */
-    getModbusClient(boardId) {
+    async getModbusClient(boardId) {
         if (boardId) {
             // Multi-board mode: Get client for specific board
             try {
-                const client = client_registry_1.default.getModbusClientV2(boardId, this.node);
+                const client = await client_registry_1.default.getModbusClientV2(boardId, this.node);
                 return client;
             }
             catch (error) {
@@ -240,7 +240,7 @@ class ModbusService {
             const fcName = mapping.fc === 6 ? 'WRITE_REGISTER' : mapping.fc === 5 ? 'WRITE_COIL' : `FC${mapping.fc}`;
             this.node.warn(`[RPC] WRITE ${key}: original=${originalValue} → scaled=${writeValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
-            const modbusClient = this.getModbusClient(mapping.boardId);
+            const modbusClient = await this.getModbusClient(mapping.boardId);
             // Check if Modbus client is connected
             if (!modbusClient) {
                 throw new Error("Modbus client is not initialized");
@@ -277,7 +277,7 @@ class ModbusService {
     async readFromModbus(key, mapping) {
         try {
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
-            const modbusClient = this.getModbusClient(mapping.boardId);
+            const modbusClient = await this.getModbusClient(mapping.boardId);
             const readFc = this.getReadFunctionCode(mapping.fc);
             let result;
             // Perform the read operation based on function code

@@ -47,11 +47,11 @@ export class ModbusService implements IModbusService {
      * In multi-board mode, gets client from ClientRegistry
      * In single-board mode, returns default client
      */
-    private getModbusClient(boardId?: string): any {
+    private async getModbusClient(boardId?: string): Promise<any> {
         if (boardId) {
             // Multi-board mode: Get client for specific board
             try {
-                const client = ClientRegistry.getModbusClientV2(boardId, this.node);
+                const client = await ClientRegistry.getModbusClientV2(boardId, this.node);
                 return client;
             } catch (error) {
                 this.logger.error(`Failed to get client for board ${boardId}: ${error}`);
@@ -285,7 +285,7 @@ export class ModbusService implements IModbusService {
             this.node.warn(`[RPC] WRITE ${key}: original=${originalValue} → scaled=${writeValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
 
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
-            const modbusClient = this.getModbusClient(mapping.boardId);
+            const modbusClient = await this.getModbusClient(mapping.boardId);
             
             // Check if Modbus client is connected
             if (!modbusClient) {
@@ -327,7 +327,7 @@ export class ModbusService implements IModbusService {
     async readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean> {
         try {
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
-            const modbusClient = this.getModbusClient(mapping.boardId);
+            const modbusClient = await this.getModbusClient(mapping.boardId);
             
             const readFc = this.getReadFunctionCode(mapping.fc);
             let result: ModbusData;

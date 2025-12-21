@@ -107,42 +107,46 @@ module.exports = function (RED: NodeAPI) {
             ClientRegistry.logConnectionCounts(node);
 
             // Determine which client to get based on mode and configuration
-            let modbusClient;
-            if (isMultiBoardMode) {
-                const boardToUse = currentBoardId || configData.defaultBoard;
-                logger.log(`Getting client for board: ${boardToUse}`);
-                modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
-            } else {
-                modbusClient = ClientRegistry.getModbusClientV2(configData.config, node);
-            }
+            let modbusClient: any;
             
-            if (!modbusClient) {
-                throw new Error("Failed to initialize Modbus client");
-            }
+            // Wrap async initialization in IIFE
+            (async () => {
+                try {
+                    if (isMultiBoardMode) {
+                        const boardToUse = currentBoardId || configData.defaultBoard;
+                        logger.log(`Getting client for board: ${boardToUse}`);
+                        modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                    } else {
+                        modbusClient = await ClientRegistry.getModbusClientV2(configData.config, node);
+                    }
+                    
+                    if (!modbusClient) {
+                        throw new Error("Failed to initialize Modbus client");
+                    }
 
-            logger.log("Modbus client initialized successfully");
-            ClientRegistry.logConnectionCounts(node);
+                    logger.log("Modbus client initialized successfully");
+                    ClientRegistry.logConnectionCounts(node);
 
-            // Create service options with enableLogging flag
-            const serviceOptions: ServiceOptions = {
-                node: node,
-                nodeId: node.id,
-                enableLogging: config.enableLogging
-            };
+                    // Create service options with enableLogging flag
+                    const serviceOptions: ServiceOptions = {
+                        node: node,
+                        nodeId: node.id,
+                        enableLogging: config.enableLogging
+                    };
 
-            // Initialize modbus getter service
-            modbusGetterService = new ModbusGetterService(serviceOptions, modbusClient);
-            logger.log("ModbusGetterService initialized successfully");
+                    // Initialize modbus getter service
+                    modbusGetterService = new ModbusGetterService(serviceOptions, modbusClient);
+                    logger.log("ModbusGetterService initialized successfully");
 
-            // Log configuration status
-            if (config.enableLogging) {
-                logger.log("Detailed logging is ENABLED");
-            } else {
-                logger.log("Detailed logging is DISABLED");
-            }
+                    // Log configuration status
+                    if (config.enableLogging) {
+                        logger.log("Detailed logging is ENABLED");
+                    } else {
+                        logger.log("Detailed logging is DISABLED");
+                    }
 
-            // Set ready status
-            node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
+                    // Set ready status
+                    node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
 
             // Auto-detect config changes every 30 seconds
             configCheckInterval = setInterval(async () => {
@@ -192,12 +196,12 @@ module.exports = function (RED: NodeAPI) {
                             
                             // Get new client for current board
                             const boardToUse = currentBoardId || newConfig.defaultBoard;
-                            modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
+                            modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
                         } else {
                             // Single mode reload
                             const reloaded = await ClientRegistry.reloadModbusConfig(newConfig.config, node);
                             if (reloaded) {
-                                modbusClient = ClientRegistry.getModbusClientV2(newConfig.config, node);
+                                modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
                             }
                         }
                         
@@ -245,7 +249,7 @@ module.exports = function (RED: NodeAPI) {
                         
                         // Get client for requested board
                         try {
-                            modbusClient = ClientRegistry.getModbusClientV2(requestedBoardId, node);
+                            modbusClient = await ClientRegistry.getModbusClientV2(requestedBoardId, node);
                             currentBoardId = requestedBoardId;
                             
                             // Update service with new client
@@ -313,6 +317,13 @@ module.exports = function (RED: NodeAPI) {
             });
 
             logger.log("VIIS Modbus Getter Node initialized successfully");
+
+                } catch (initError) {
+                    const errorMessage = initError instanceof Error ? initError.message : 'Unknown async initialization error';
+                    logger.error(`Async initialization failed: ${errorMessage}`);
+                    node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.ERROR });
+                }
+            })();
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown initialization error';

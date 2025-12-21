@@ -255,10 +255,31 @@ export class ContainerSetup {
     }
 
     /**
-     * Reset container (useful for testing)
+     * Reset container (useful for testing and cleanup)
+     * Safely handles cases where DataSource may not be initialized
      */
     static reset(): void {
-        Container.reset();
+        try {
+            // Check and safely destroy DataSource before container reset
+            if (Container.has(DataSource)) {
+                const dataSource = Container.get(DataSource);
+                if (dataSource && dataSource.isInitialized) {
+                    // Don't destroy here - let DatabaseService handle it
+                    // dataSource.destroy() is async and Container.reset() is sync
+                    console.log('[VIIS-REST-API] DataSource will be cleaned up by DatabaseService');
+                }
+            }
+            
+            // Reset container - this may throw if services have destroy callbacks
+            // that try to access disconnected DataSource
+            try {
+                Container.reset();
+            } catch (resetError) {
+                console.warn('[VIIS-REST-API] Container reset warning:', (resetError as Error).message);
+            }
+        } catch (error) {
+            console.warn('[VIIS-REST-API] Container reset error (non-fatal):', (error as Error).message);
+        }
         this.isInitialized = false;
     }
 

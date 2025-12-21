@@ -172,10 +172,10 @@ module.exports = function (RED) {
                     if (isMultiBoardMode) {
                         const boardToUse = currentBoardId || configData.defaultBoard;
                         logger.log(`Getting client for board: ${boardToUse}`);
-                        modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
                     }
                     else {
-                        modbusClient = client_registry_1.default.getModbusClientV2(configData.config, node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(configData.config, node);
                     }
                     // Wait a moment for Modbus connection to establish
                     await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for connection
@@ -347,13 +347,13 @@ module.exports = function (RED) {
                                 client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
                                 // Get new client for current board
                                 const boardToUse = currentBoardId || newConfig.defaultBoard;
-                                modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                                modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
                             }
                             else {
                                 // Single mode reload
                                 const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
                                 if (reloaded) {
-                                    modbusClient = client_registry_1.default.getModbusClientV2(newConfig.config, node);
+                                    modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
                                 }
                             }
                             // Update service with new client
@@ -393,12 +393,12 @@ module.exports = function (RED) {
                                 };
                                 client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
                                 const boardToUse = currentBoardId || newConfig.defaultBoard;
-                                modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                                modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
                             }
                             else {
                                 const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
                                 if (reloaded) {
-                                    modbusClient = client_registry_1.default.getModbusClientV2(newConfig.config, node);
+                                    modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
                                 }
                             }
                             if (modbusService && modbusClient) {

@@ -33,80 +33,103 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AppDataSource = void 0;
-exports.createDataSource = createDataSource;
+exports.AppDataSource = exports.getDataSourceRefCount = exports.releaseDataSource = exports.createDataSource = exports.DataSourceManager = void 0;
 require("reflect-metadata");
 const dotenv_1 = require("dotenv");
 const typeorm_1 = require("typeorm");
 const global_context_helper_1 = require("../ultils/global-context-helper");
 const path = __importStar(require("path"));
-// Load common.env from centralized env directory
-// Provides DB_* variables for migrations from host (localhost:3308)
 (0, dotenv_1.config)({ path: path.resolve(__dirname, "../../../../../env/common.env") });
-// Shared DataSource instance (singleton pattern)
-let sharedDataSource = null;
 /**
- * Factory function to create or get shared DataSource with proper configuration
- * Can use NodeContext for global context access or fallback to process.env
+ * DataSource Manager - Thread-safe singleton with reference counting
  *
- * @param nodeContext - Optional Node-RED context for accessing global variables
- * @returns DataSource instance (shared singleton)
+ * Usage:
+ *   const ds = await DataSourceManager.acquire(nodeContext);
+ *   // ... use ds ...
+ *   await DataSourceManager.release();
  */
-function createDataSource(nodeContext) {
-    // Return existing instance if available
-    if (sharedDataSource) {
-        return sharedDataSource;
+class DataSourceManager {
+    static async acquire(nodeContext) {
+        var _a;
+        this.refCount++;
+        if ((_a = this.instance) === null || _a === void 0 ? void 0 : _a.isInitialized) {
+            return this.instance;
+        }
+        if (!this.initPromise) {
+            this.initPromise = this.initialize(nodeContext);
+        }
+        this.instance = await this.initPromise;
+        this.initPromise = null;
+        return this.instance;
     }
-    // Create new instance
-    // Use GlobalContextHelper if nodeContext is available
-    const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
-    // Helper function to get config value with fallback
-    const getConfigValue = (envKey, defaultValue) => {
-        if (helper) {
-            return helper.getEnvVar(envKey, defaultValue);
+    static async release() {
+        var _a;
+        this.refCount = Math.max(0, this.refCount - 1);
+        if (this.refCount === 0 && ((_a = this.instance) === null || _a === void 0 ? void 0 : _a.isInitialized)) {
+            await this.instance.destroy().catch(() => { });
+            this.instance = null;
         }
-        return process.env[envKey] || defaultValue;
-    };
-    const getNumericValue = (envKey, defaultValue) => {
-        if (helper) {
-            return helper.getNumericEnvVar(envKey, defaultValue);
-        }
-        return parseInt(process.env[envKey] || String(defaultValue));
-    };
-    // Dual config support:
-    // - Inside container (helper exists): Use DATABASE_* (from GlobalContext via env-loader)
-    // - From host/migrations (no helper): Use DB_* (from .env file via process.env)
-    const dbHost = helper
-        ? getConfigValue('DATABASE_HOST', 'viis-local-mysql')
-        : getConfigValue('DB_HOST', 'localhost');
-    const dbPort = helper
-        ? getNumericValue('DATABASE_PORT', 3306)
-        : getNumericValue('DB_PORT', 3308);
-    const dbUsername = helper
-        ? getConfigValue('DATABASE_USERNAME', 'root')
-        : getConfigValue('DB_USERNAME', 'root');
-    const dbPassword = helper
-        ? getConfigValue('DATABASE_PASSWORD', 'admin@123')
-        : getConfigValue('DB_PASSWORD', 'admin@123');
-    const dbDatabase = helper
-        ? getConfigValue('DATABASE_NAME', 'viis_local')
-        : getConfigValue('DB_DATABASE', 'viis_local');
-    // Create and cache the shared instance
-    sharedDataSource = new typeorm_1.DataSource({
-        type: "mysql",
-        host: dbHost,
-        port: dbPort,
-        username: dbUsername,
-        password: dbPassword,
-        database: dbDatabase,
-        // Sử dụng glob pattern để load tất cả các file .ts hoặc .js trong thư mục entities và các thư mục con
-        entities: [__dirname + "/entities/**/*.{js,ts}"],
-        // Tương tự cho migrations
-        migrations: [__dirname + "/migrations/**/*.{js,ts}"],
-        synchronize: false, // Sử dụng false trong production, dùng migration thay cho synchronize
-        logging: false,
-    });
-    return sharedDataSource;
+    }
+    static getRefCount() {
+        return this.refCount;
+    }
+    static async initialize(nodeContext) {
+        const cfg = this.getConfig(nodeContext);
+        const ds = new typeorm_1.DataSource({
+            type: "mysql",
+            host: cfg.host,
+            port: cfg.port,
+            username: cfg.username,
+            password: cfg.password,
+            database: cfg.database,
+            entities: [__dirname + "/entities/**/*.{js,ts}"],
+            migrations: [__dirname + "/migrations/**/*.{js,ts}"],
+            synchronize: false,
+            logging: false,
+        });
+        await ds.initialize();
+        return ds;
+    }
+    static getConfig(nodeContext) {
+        const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
+        const get = (key, fallback) => { var _a, _b; return (_b = (_a = helper === null || helper === void 0 ? void 0 : helper.getEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : process.env[key]) !== null && _b !== void 0 ? _b : fallback; };
+        const getNum = (key, fallback) => { var _a, _b; return (_a = helper === null || helper === void 0 ? void 0 : helper.getNumericEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : parseInt((_b = process.env[key]) !== null && _b !== void 0 ? _b : String(fallback)); };
+        // Container uses DATABASE_*, host/migrations use DB_*
+        return helper ? {
+            host: get('DATABASE_HOST', 'viis-local-mysql'),
+            port: getNum('DATABASE_PORT', 3306),
+            username: get('DATABASE_USERNAME', 'root'),
+            password: get('DATABASE_PASSWORD', 'admin@123'),
+            database: get('DATABASE_NAME', 'viis_local'),
+        } : {
+            host: get('DB_HOST', 'localhost'),
+            port: getNum('DB_PORT', 3308),
+            username: get('DB_USERNAME', 'root'),
+            password: get('DB_PASSWORD', 'admin@123'),
+            database: get('DB_DATABASE', 'viis_local'),
+        };
+    }
 }
-// Default instance for backward compatibility (uses process.env)
-exports.AppDataSource = createDataSource();
+exports.DataSourceManager = DataSourceManager;
+DataSourceManager.instance = null;
+DataSourceManager.refCount = 0;
+DataSourceManager.initPromise = null;
+// Backward compatibility aliases
+exports.createDataSource = DataSourceManager.acquire.bind(DataSourceManager);
+exports.releaseDataSource = DataSourceManager.release.bind(DataSourceManager);
+exports.getDataSourceRefCount = DataSourceManager.getRefCount.bind(DataSourceManager);
+// Legacy sync export for TypeORM CLI (migrations)
+// CLI commands need a synchronously available DataSource
+const cfg = DataSourceManager['getConfig'](undefined);
+exports.AppDataSource = new typeorm_1.DataSource({
+    type: "mysql",
+    host: cfg.host,
+    port: cfg.port,
+    username: cfg.username,
+    password: cfg.password,
+    database: cfg.database,
+    entities: [__dirname + "/entities/**/*.{js,ts}"],
+    migrations: [__dirname + "/migrations/**/*.{js,ts}"],
+    synchronize: false,
+    logging: false,
+});

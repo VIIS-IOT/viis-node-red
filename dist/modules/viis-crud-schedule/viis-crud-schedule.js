@@ -11,10 +11,27 @@ module.exports = function (RED) {
         RED.nodes.createNode(this, config);
         const node = this;
         const dbService = new databaseService_1.DatabaseService();
+        let isInitialized = false;
+        // Register close handler OUTSIDE async IIFE to ensure it's always registered
+        node.on('close', async (done) => {
+            try {
+                logger_1.logger.info(node, 'Node closing');
+                if (isInitialized) {
+                    await dbService.destroy();
+                }
+            }
+            catch (error) {
+                logger_1.logger.error(node, `Error during cleanup: ${error.message}`);
+            }
+            if (typeof done === 'function') {
+                done();
+            }
+        });
         // Khởi tạo database đồng bộ
         (async () => {
             try {
                 await dbService.initialize();
+                isInitialized = true;
                 logger_1.logger.info(node, "Database initialized successfully");
                 const scheduleHandler = new scheduleHandler_1.ScheduleHandler(dbService, node);
                 const schedulePlanHandler = new schedulePlanHandler_1.SchedulePlanHandler(dbService, node);
@@ -42,10 +59,6 @@ module.exports = function (RED) {
                         msg.payload = { error: error.message };
                         node.send(msg);
                     }
-                });
-                node.on('close', async () => {
-                    logger_1.logger.info(node, 'Node closing');
-                    await dbService.destroy();
                 });
             }
             catch (err) {

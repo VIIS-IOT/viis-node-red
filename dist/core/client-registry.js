@@ -5,6 +5,19 @@ const mqtt_client_1 = require("./mqtt-client");
 const mysql_client_1 = require("./mysql-client");
 const mqtt_recovery_manager_1 = require("./mqtt-recovery-manager");
 class ClientRegistry {
+    static async withLock(type, fn) {
+        let release;
+        const next = new Promise(r => { release = r; });
+        const current = this.locks[type];
+        this.locks[type] = next;
+        await current;
+        try {
+            return await fn();
+        }
+        finally {
+            release();
+        }
+    }
     // Start automatic recovery mechanism
     static startRecoveryMechanism() {
         if (this.recoveryTimer)
@@ -57,197 +70,97 @@ class ClientRegistry {
     }
     /**
      * Get ThingsBoard MQTT client with offline resilience
-     * @param config - MQTT configuration
-     * @param node - Node-RED node instance
-     * @param allowOffline - If true, returns client even if initial connection fails (default: true for resilience)
-     * @returns MqttClientCore instance
-     * @throws Error only if allowOffline is false and connection fails
      */
     static async getThingsboardMqttClient(config, node, allowOffline = true) {
-        const maxWaitTime = 30000; // 30 seconds max wait
-        const startTime = Date.now();
-        // Wait if another node is already initializing, but with timeout
-        while (this.initializingFlags.thingsboard) {
-            if (Date.now() - startTime > maxWaitTime) {
-                node.error("[THINGSBOARD-INIT] Timeout waiting for other node initialization, forcing reset");
-                this.initializingFlags.thingsboard = false;
-                this.thingsboardMqttInstance = null;
-                break;
-            }
-            // node.warn("[THINGSBOARD-INIT] Another node is initializing ThingsBoard client, waiting...");
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        if (!this.thingsboardMqttInstance) {
-            this.initializingFlags.thingsboard = true;
-            // node.warn(`[THINGSBOARD-INIT] Node ${node.id} starting ThingsBoard MQTT client initialization`);
+        await this.withLock('thingsboard', async () => {
+            if (this.thingsboardMqttInstance)
+                return;
+            this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
             try {
-                this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
-                // node.warn("Created new Thingsboard MqttClientCore instance");
                 await this.thingsboardMqttInstance.waitForConnection();
                 this.activeConnections.thingsboardMqtt++;
-                // node.warn("Thingsboard MQTT client connected successfully");
-                this.logActiveConnections(node);
             }
             catch (error) {
-                const errorMsg = error.message;
                 if (allowOffline) {
-                    // OFFLINE MODE: Don't throw, return client that will auto-recover
-                    node.warn(`[OFFLINE-RESILIENT] ThingsBoard MQTT initial connection failed: ${errorMsg}. ` +
-                        `Client will auto-reconnect when service becomes available. Local operations continue normally.`);
-                    // Keep the client instance for auto-recovery (it has circuit breaker and reconnection logic)
-                    if (this.thingsboardMqttInstance) {
-                        this.activeConnections.thingsboardMqtt++;
-                        this.logActiveConnections(node);
-                        // Don't reset to null - let it reconnect automatically
-                    }
+                    node.warn(`ThingsBoard MQTT offline - will auto-reconnect: ${error.message}`);
+                    this.activeConnections.thingsboardMqtt++;
                 }
                 else {
-                    // STRICT MODE: Throw error as before (backward compatibility)
-                    this.thingsboardMqttInstance = null; // Reset on failure
-                    node.error(`Failed to connect Thingsboard MQTT client: ${errorMsg}`);
-                    // Add recovery mechanism - try to reset circuit breaker if it exists
-                    if (this.thingsboardMqttInstance && typeof this.thingsboardMqttInstance.resetCircuitBreaker === 'function') {
-                        this.thingsboardMqttInstance.resetCircuitBreaker();
-                    }
+                    this.thingsboardMqttInstance = null;
                     throw error;
                 }
             }
-            finally {
-                this.initializingFlags.thingsboard = false;
-            }
-        }
-        // Verify the instance is actually connected before returning
+        });
+        // Attempt recovery if disconnected
         if (this.thingsboardMqttInstance && !this.thingsboardMqttInstance.isConnected()) {
-            // node.warn("ThingsBoard MQTT instance exists but not connected, attempting recovery");
-            try {
-                await this.thingsboardMqttInstance.waitForConnection(10000); // 10 second timeout
-            }
-            catch (error) {
-                // node.warn(`Recovery attempt failed: ${(error as Error).message}`);
-                // Don't throw here, let the node try to use the instance and handle errors
-            }
+            await this.thingsboardMqttInstance.waitForConnection(10000).catch(() => { });
         }
         this.referenceCount.thingsboard++;
         this.clientUsers.thingsboard.add(node.id);
-        // node.warn(`[THINGSBOARD-INIT] Node ${node.id} got ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
-        // node.warn(`[THINGSBOARD-INIT] Active users: ${Array.from(this.clientUsers.thingsboard).join(', ')}`);
-        // Start recovery mechanism if this is the first client
         if (this.referenceCount.thingsboard === 1) {
             this.startRecoveryMechanism();
         }
         return this.thingsboardMqttInstance;
     }
     static async getLocalMqttClient(config, node) {
-        // Wait if another node is already initializing
-        while (this.initializingFlags.local) {
-            // node.warn("[LOCAL-INIT] Another node is initializing Local MQTT client, waiting...");
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        if (!this.localMqttInstance) {
-            this.initializingFlags.local = true;
-            // node.warn(`[LOCAL-INIT] Node ${node.id} starting Local MQTT client initialization`);
+        const failed = await this.withLock('local', async () => {
+            if (this.localMqttInstance)
+                return false;
+            this.localMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
+            if (!this.recoveryManager) {
+                this.recoveryManager = mqtt_recovery_manager_1.MqttRecoveryManager.getInstance({
+                    aggressiveMode: true,
+                    quickRecoveryInterval: 2000,
+                    normalRecoveryInterval: 10000,
+                    maxQuickRecoveryAttempts: 10,
+                    networkCheckInterval: 5000,
+                    powerOutageDetection: true
+                });
+            }
+            this.recoveryManager.registerClient('local-mqtt', this.localMqttInstance, node);
             try {
-                this.localMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
-                // node.warn("Created new Local MqttClientCore instance");
-                // Initialize recovery manager if not exists
-                if (!this.recoveryManager) {
-                    this.recoveryManager = mqtt_recovery_manager_1.MqttRecoveryManager.getInstance({
-                        aggressiveMode: true,
-                        quickRecoveryInterval: 2000,
-                        normalRecoveryInterval: 10000,
-                        maxQuickRecoveryAttempts: 10,
-                        networkCheckInterval: 5000,
-                        powerOutageDetection: true
-                    });
-                }
-                // Register with recovery manager for enhanced recovery
-                this.recoveryManager.registerClient('local-mqtt', this.localMqttInstance, node);
                 await this.localMqttInstance.waitForConnection();
                 this.activeConnections.localMqtt++;
-                // node.warn("Local MQTT client connected successfully");
-                this.logActiveConnections(node);
+                return false;
             }
             catch (error) {
-                this.localMqttInstance = null; // Reset on failure
-                node.error(`Failed to connect Local MQTT client: ${error.message}`);
-                node.warn(`⚠️ Local MQTT unavailable (network may be down) - node will continue without local MQTT connection`);
-                // Don't throw - return null to allow node to continue
-                this.initializingFlags.local = false;
-                return null;
+                this.localMqttInstance = null;
+                node.warn(`Local MQTT unavailable: ${error.message}`);
+                return true; // Signal failure
             }
-            finally {
-                this.initializingFlags.local = false;
-            }
-        }
+        });
+        if (failed)
+            return null;
         this.referenceCount.local++;
         this.clientUsers.local.add(node.id);
-        // node.warn(`[LOCAL-INIT] Node ${node.id} got Local MQTT client, ref count: ${this.referenceCount.local}`);
-        // node.warn(`[LOCAL-INIT] Active users: ${Array.from(this.clientUsers.local).join(', ')}`);
         return this.localMqttInstance;
     }
-    /**
-     * Validate if the provided config matches the existing shared config
-     * This ensures only ONE modbus connection is used across all nodes
-     */
-    static validateModbusConfig(config, node) {
-        if (!this.modbusConfig) {
-            return true; // No existing config, any config is valid
-        }
-        const configMatches = (this.modbusConfig.type === config.type &&
+    static validateModbusConfig(config) {
+        if (!this.modbusConfig)
+            return true;
+        return (this.modbusConfig.type === config.type &&
             this.modbusConfig.host === config.host &&
             this.modbusConfig.tcpPort === config.tcpPort &&
-            this.modbusConfig.serialPort === config.serialPort &&
-            this.modbusConfig.baudRate === config.baudRate &&
-            this.modbusConfig.parity === config.parity &&
             this.modbusConfig.unitId === config.unitId);
-        if (!configMatches) {
-            // node.warn(`[MODBUS-SINGLE-CONNECTION-ENFORCED] Node ${node.id} config differs from shared config:`);
-            // node.warn(`  Existing shared config: ${this.modbusConfig.type} ${this.modbusConfig.host}:${this.modbusConfig.tcpPort} unit=${this.modbusConfig.unitId}`);
-            // node.warn(`  Requested config: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
-            // node.warn(`  ENFORCING SINGLE CONNECTION: Using existing shared connection to prevent multiple modbus connections.`);
-            // node.warn(`  All VIIS nodes MUST use the same modbus connection for proper resource management.`);
-        }
-        return configMatches;
     }
-    static getModbusClient(config, node) {
-        // Wait if another node is already initializing
-        while (this.initializingFlags.modbus) {
-            // node.warn("[MODBUS-SINGLE-CONNECTION] Another node is initializing Modbus client, waiting...");
-            // Use synchronous wait to avoid async issues in this method
-            const start = Date.now();
-            while (Date.now() - start < 100) { /* busy wait */ }
-        }
-        // Validate config compatibility - ENFORCES SINGLE CONNECTION
-        this.validateModbusConfig(config, node);
-        if (!this.modbusInstance || !this.modbusInstance.isConnectedCheck()) {
-            this.initializingFlags.modbus = true;
-            // node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} creating THE ONLY modbus connection for all VIIS nodes`);
-            try {
-                if (this.modbusInstance) {
-                    this.modbusInstance.disconnect();
-                    this.activeConnections.modbus--;
-                    node.log("Previous Modbus instance disconnected due to invalid state");
-                }
-                // Store the config from the first node that creates the connection
-                if (!this.modbusConfig) {
-                    this.modbusConfig = Object.assign({}, config);
-                    // node.warn(`[MODBUS-SINGLE-CONNECTION] Storing shared config for ALL nodes: ${config.type} ${config.host}:${config.tcpPort} unit=${config.unitId}`);
-                }
-                // Always use the stored config to ensure consistency - SINGLE CONNECTION ENFORCED
-                this.modbusInstance = new modbus_client_1.ModbusClientCore(this.modbusConfig, node);
-                this.activeConnections.modbus++;
-                // node.warn(`[MODBUS-SINGLE-CONNECTION] Created THE ONLY ModbusClientCore instance - all nodes will share this connection`);
-                this.logActiveConnections(node);
+    static async getModbusClient(config, node) {
+        await this.withLock('modbus', async () => {
+            var _a;
+            this.validateModbusConfig(config);
+            if ((_a = this.modbusInstance) === null || _a === void 0 ? void 0 : _a.isConnectedCheck())
+                return;
+            if (this.modbusInstance) {
+                this.modbusInstance.disconnect();
+                this.activeConnections.modbus--;
             }
-            finally {
-                this.initializingFlags.modbus = false;
+            if (!this.modbusConfig) {
+                this.modbusConfig = Object.assign({}, config);
             }
-        }
+            this.modbusInstance = new modbus_client_1.ModbusClientCore(this.modbusConfig, node);
+            this.activeConnections.modbus++;
+        });
         this.referenceCount.modbus++;
         this.clientUsers.modbus.add(node.id);
-        // node.warn(`[MODBUS-SINGLE-CONNECTION] Node ${node.id} got shared Modbus client, ref count: ${this.referenceCount.modbus}`);
-        // node.warn(`[MODBUS-SINGLE-CONNECTION] Active users sharing THE SAME connection: ${Array.from(this.clientUsers.modbus).join(', ')}`);
-        // node.warn(`[MODBUS-SINGLE-CONNECTION] Shared connection config: ${this.modbusConfig?.type} ${this.modbusConfig?.host}:${this.modbusConfig?.tcpPort}`);
         return this.modbusInstance;
     }
     /**
@@ -271,9 +184,9 @@ class ClientRegistry {
      * Get Modbus client with multi-board support
      * @param config - ModbusConfig for single mode, board ID string for multi mode, or object with boardId
      * @param node - Node-RED node instance
-     * @returns ModbusClientCore instance
+     * @returns Promise<ModbusClientCore> instance
      */
-    static getModbusClientV2(config, node) {
+    static async getModbusClientV2(config, node) {
         // Handle different input types
         if (typeof config === 'string') {
             // Board ID provided - multi-board mode
@@ -285,11 +198,11 @@ class ClientRegistry {
         }
         else if (typeof config === 'object' && 'config' in config && config.config) {
             // Object with config - single mode
-            return this.getModbusClient(config.config, node);
+            return await this.getModbusClient(config.config, node);
         }
         else {
             // Direct ModbusConfig - single mode (backward compatible)
-            return this.getModbusClient(config, node);
+            return await this.getModbusClient(config, node);
         }
     }
     /**
@@ -408,46 +321,23 @@ class ClientRegistry {
         return configMatches;
     }
     static async getMySqlClient(config, node) {
-        // Wait if another node is already initializing
-        while (this.initializingFlags.mysql) {
-            // node.warn("[MYSQL-INIT] Another node is initializing MySQL client, waiting...");
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        // Validate config compatibility - ENFORCES SINGLE CONNECTION
-        this.validateMySqlConfig(config, node);
-        if (!this.mysqlInstance || !this.mysqlInstance.isConnectedCheck()) {
-            this.initializingFlags.mysql = true;
-            // node.warn(`[MYSQL-INIT] Node ${node.id} starting MySQL client initialization`);
-            try {
-                if (this.mysqlInstance) {
-                    this.mysqlInstance.disconnect();
-                    this.activeConnections.mysql--;
-                    node.log("Previous MySQL instance disconnected due to invalid state");
-                }
-                // Store the config from the first node that creates the connection
-                if (!this.mysqlConfig) {
-                    this.mysqlConfig = Object.assign({}, config);
-                    // node.warn(`[MYSQL-INIT] Storing shared config for ALL nodes: ${config.host}:${config.port}/${config.database} user=${config.user}`);
-                }
-                // Always use the stored config to ensure consistency - SINGLE CONNECTION ENFORCED
-                this.mysqlInstance = new mysql_client_1.MySqlClientCore(this.mysqlConfig, node);
-                this.activeConnections.mysql++;
-                // node.warn(`[MYSQL-INIT] Created new MySQL client instance - all nodes will share this connection`);
-                this.logActiveConnections(node);
+        await this.withLock('mysql', async () => {
+            var _a;
+            this.validateMySqlConfig(config, node);
+            if ((_a = this.mysqlInstance) === null || _a === void 0 ? void 0 : _a.isConnectedCheck())
+                return;
+            if (this.mysqlInstance) {
+                this.mysqlInstance.disconnect();
+                this.activeConnections.mysql--;
             }
-            catch (error) {
-                this.mysqlInstance = null; // Reset on failure
-                node.error(`Failed to connect MySQL client: ${error.message}`);
-                throw error;
+            if (!this.mysqlConfig) {
+                this.mysqlConfig = Object.assign({}, config);
             }
-            finally {
-                this.initializingFlags.mysql = false;
-            }
-        }
+            this.mysqlInstance = new mysql_client_1.MySqlClientCore(this.mysqlConfig, node);
+            this.activeConnections.mysql++;
+        });
         this.referenceCount.mysql++;
         this.clientUsers.mysql.add(node.id);
-        // node.warn(`[MYSQL-INIT] Node ${node.id} got MySQL client, ref count: ${this.referenceCount.mysql}`);
-        // node.warn(`[MYSQL-INIT] Active users: ${Array.from(this.clientUsers.mysql).join(', ')}`);
         return this.mysqlInstance;
     }
     static releaseClient(type, node) {
@@ -712,12 +602,12 @@ ClientRegistry.activeConnections = {
 ClientRegistry.modbusConfig = null;
 // Store the config used for the shared mysql client
 ClientRegistry.mysqlConfig = null;
-// Mutex-like flags to prevent race conditions
-ClientRegistry.initializingFlags = {
-    thingsboard: false,
-    local: false,
-    modbus: false,
-    mysql: false
+// Async mutex locks - simple promise-based implementation
+ClientRegistry.locks = {
+    thingsboard: Promise.resolve(),
+    local: Promise.resolve(),
+    modbus: Promise.resolve(),
+    mysql: Promise.resolve()
 };
 // Track which nodes are using which clients for debugging
 ClientRegistry.clientUsers = {

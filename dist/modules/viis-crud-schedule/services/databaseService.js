@@ -33,7 +33,7 @@ class DatabaseService {
         return status;
     }
     async destroy() {
-        if (this.initialized) {
+        if (this.initialized && this.dataSource && this.dataSource.isInitialized) {
             try {
                 logger_1.logger.info(null, 'Destroying database connection...');
                 await this.dataSource.destroy();
@@ -41,12 +41,14 @@ class DatabaseService {
                 logger_1.logger.info(null, 'Database connection destroyed');
             }
             catch (error) {
+                // Log but don't throw - prevent crash during cleanup
                 logger_1.logger.error(null, `Error while destroying database connection: ${error.message}`);
-                throw error;
+                this.initialized = false;
             }
         }
         else {
-            logger_1.logger.info(null, 'Destroy called, but database is not initialized.');
+            logger_1.logger.info(null, 'Destroy called, but database is not initialized or already destroyed.');
+            this.initialized = false;
         }
     }
     getScheduleRepository() {

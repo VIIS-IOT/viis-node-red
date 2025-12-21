@@ -221,21 +221,39 @@ module.exports = function (RED) {
         // Get Modbus client
         let modbusClient;
         let modbusUnitId;
-        if (isMultiBoardMode) {
-            const boardToUse = currentBoardId || configData.defaultBoard;
-            debugLog(`Getting client for board: ${boardToUse}`);
-            modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
-            // Get unitId from board config
-            const boardConfig = configData.boards.find((b) => b.id === boardToUse);
-            modbusUnitId = (boardConfig === null || boardConfig === void 0 ? void 0 : boardConfig.unitId) || 1;
-        }
-        else {
-            modbusClient = client_registry_1.default.getModbusClientV2(configData.config, node);
-            modbusUnitId = configData.config.unitId;
-        }
+        // Async initialization - defer Modbus client setup
+        const modbusClientPromise = (async () => {
+            if (isMultiBoardMode) {
+                const boardToUse = currentBoardId || configData.defaultBoard;
+                debugLog(`Getting client for board: ${boardToUse}`);
+                const client = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+                // Get unitId from board config
+                const boardConfig = configData.boards.find((b) => b.id === boardToUse);
+                return { client, unitId: (boardConfig === null || boardConfig === void 0 ? void 0 : boardConfig.unitId) || 1 };
+            }
+            else {
+                const client = await client_registry_1.default.getModbusClientV2(configData.config, node);
+                return { client, unitId: configData.config.unitId };
+            }
+        })();
+        // Initialize synchronously - actual connection happens in background
+        modbusClientPromise.then(({ client, unitId }) => {
+            modbusClient = client;
+            modbusUnitId = unitId;
+            debugLog(`Modbus client initialized for unitId: ${modbusUnitId}`);
+        }).catch(error => {
+            node.error(`Failed to initialize Modbus client: ${error.message}`);
+        });
         node.on("input", async function (msg, send, done) {
             var _a;
             try {
+                // Ensure Modbus client is ready before processing
+                if (!modbusClient) {
+                    await modbusClientPromise.then(({ client, unitId }) => {
+                        modbusClient = client;
+                        modbusUnitId = unitId;
+                    });
+                }
                 // Initialize MQTT clients
                 const thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, node);
                 const emqxClient = await client_registry_1.default.getLocalMqttClient(emqxConfig, node);

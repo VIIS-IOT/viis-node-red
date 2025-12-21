@@ -83,25 +83,42 @@ module.exports = function (RED) {
             isMultiBoardMode = false;
             node.log(`Single-board mode`);
         }
-        // Get Modbus client
+        // Get Modbus client - use deferred initialization
         let modbusClient;
-        if (isMultiBoardMode) {
-            const boardToUse = currentBoardId || configData.defaultBoard;
-            node.log(`Getting client for board: ${boardToUse}`);
-            modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
-        }
-        else {
-            modbusClient = client_registry_1.default.getModbusClientV2(configData.config, node);
-        }
-        if (!modbusClient) {
-            node.error("Failed to initialize Modbus client");
-            node.status({ fill: "red", shape: "ring", text: "Modbus client failed" });
-            return;
-        }
+        // Async initialization wrapper
+        const initModbusClient = async () => {
+            if (isMultiBoardMode) {
+                const boardToUse = currentBoardId || configData.defaultBoard;
+                node.log(`Getting client for board: ${boardToUse}`);
+                modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+            }
+            else {
+                modbusClient = await client_registry_1.default.getModbusClientV2(configData.config, node);
+            }
+            if (!modbusClient) {
+                node.error("Failed to initialize Modbus client");
+                node.status({ fill: "red", shape: "ring", text: "Modbus client failed" });
+                return false;
+            }
+            return true;
+        };
+        // Initialize Modbus client in background
+        initModbusClient().then(success => {
+            if (success) {
+                node.log("Modbus client initialized successfully");
+                node.status({ fill: "green", shape: "dot", text: "Running" });
+            }
+        }).catch(err => {
+            node.error(`Failed to initialize Modbus client: ${err.message}`);
+        });
         // Trạng thái theo dõi thời gian bật của các coil
         const coilTimers = {};
         // Hàm đọc trạng thái coil từ Modbus
         async function readCoil(address) {
+            if (!modbusClient) {
+                node.warn("Modbus client not ready yet");
+                return false;
+            }
             try {
                 const result = await modbusClient.readCoils(address, 1);
                 return Boolean(result.data[0]);
@@ -114,6 +131,10 @@ module.exports = function (RED) {
         }
         // Hàm ghi trạng thái coil vào Modbus
         async function writeCoil(address, value) {
+            if (!modbusClient) {
+                node.warn("Modbus client not ready yet");
+                return;
+            }
             try {
                 await modbusClient.writeCoil(address, value);
                 node.log(`Wrote to coil at address ${address}: ${value}`);
@@ -242,12 +263,12 @@ module.exports = function (RED) {
                         };
                         client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
                         const boardToUse = currentBoardId || newConfig.defaultBoard;
-                        modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
                     }
                     else {
                         const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
                         if (reloaded) {
-                            modbusClient = client_registry_1.default.getModbusClientV2(newConfig.config, node);
+                            modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
                         }
                     }
                     currentModbusConfig = Object.assign({}, newConfig);

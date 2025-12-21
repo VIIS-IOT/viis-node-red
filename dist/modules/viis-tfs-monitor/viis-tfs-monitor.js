@@ -155,9 +155,9 @@ module.exports = function (RED) {
             }
         }
         // Initialize Modbus client
-        function initializeModbusClient() {
+        async function initializeModbusClient() {
             try {
-                modbusClient = client_registry_1.default.getModbusClientV2(config.boardId || 'board1', node);
+                modbusClient = await client_registry_1.default.getModbusClientV2(config.boardId || 'board1', node);
                 if (config.enableLogging) {
                     node.log(`Modbus client initialized for board: ${config.boardId || 'board1'}`);
                 }

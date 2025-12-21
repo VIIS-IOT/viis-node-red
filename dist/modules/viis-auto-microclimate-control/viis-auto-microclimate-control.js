@@ -124,10 +124,10 @@ module.exports = function (RED) {
                 if (isMultiBoardMode) {
                     const boardToUse = currentBoardId || configData.defaultBoard;
                     logger.log(`Getting client for board: ${boardToUse}`);
-                    modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                    modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
                 }
                 else {
-                    modbusClient = client_registry_1.default.getModbusClientV2(configData.config, node);
+                    modbusClient = await client_registry_1.default.getModbusClientV2(configData.config, node);
                 }
                 if (!modbusClient) {
                     throw new Error("Failed to initialize Modbus client");
@@ -195,12 +195,12 @@ module.exports = function (RED) {
                                     boards: newConfig.boards
                                 }, node);
                                 const boardToUse = currentBoardId || newConfig.defaultBoard;
-                                modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                                modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
                             }
                             else {
                                 const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
                                 if (reloaded) {
-                                    modbusClient = client_registry_1.default.getModbusClientV2(newConfig.config, node);
+                                    modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
                                 }
                             }
                             modbusService.modbusClient = modbusClient;

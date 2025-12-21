@@ -204,9 +204,9 @@ module.exports = function (RED: NodeAPI) {
                     if (isMultiBoardMode) {
                         const boardToUse = currentBoardId || configData.defaultBoard;
                         logger.log(`Getting client for board: ${boardToUse}`);
-                        modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
+                        modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
                     } else {
-                        modbusClient = ClientRegistry.getModbusClientV2(configData.config, node);
+                        modbusClient = await ClientRegistry.getModbusClientV2(configData.config, node);
                     }
 
                     // Wait a moment for Modbus connection to establish
@@ -399,12 +399,12 @@ module.exports = function (RED: NodeAPI) {
                                 
                                 // Get new client for current board
                                 const boardToUse = currentBoardId || newConfig.defaultBoard;
-                                modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
+                                modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
                             } else {
                                 // Single mode reload
                                 const reloaded = await ClientRegistry.reloadModbusConfig(newConfig.config, node);
                                 if (reloaded) {
-                                    modbusClient = ClientRegistry.getModbusClientV2(newConfig.config, node);
+                                    modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
                                 }
                             }
                             
@@ -451,11 +451,11 @@ module.exports = function (RED: NodeAPI) {
                                 };
                                 ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
                                 const boardToUse = currentBoardId || newConfig.defaultBoard;
-                                modbusClient = ClientRegistry.getModbusClientV2(boardToUse, node);
+                                modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
                             } else {
                                 const reloaded = await ClientRegistry.reloadModbusConfig(newConfig.config, node);
                                 if (reloaded) {
-                                    modbusClient = ClientRegistry.getModbusClientV2(newConfig.config, node);
+                                    modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
                                 }
                             }
                             

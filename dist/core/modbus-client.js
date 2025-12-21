@@ -15,6 +15,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         // Request queue for serializing Modbus operations
         this.requestQueue = Promise.resolve();
         this.queueLength = 0;
+        this.isShuttingDown = false; // Flag to prevent new operations during shutdown
         this.node = node; // Set node first before calling other methods
         this.config = Object.assign({ tcpPort: 502, baudRate: 9600, parity: "none", unitId: 1, timeout: 5000, reconnectInterval: 5000, 
             // Board-specific defaults
@@ -239,6 +240,10 @@ class ModbusClientCore extends events_1.EventEmitter {
         }
     }
     scheduleReconnect() {
+        // Don't schedule reconnect if shutting down
+        if (this.isShuttingDown) {
+            return;
+        }
         // Nếu đã có timer đang chạy, không tạo thêm
         if (this.reconnectTimer) {
             //this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
@@ -578,25 +583,47 @@ class ModbusClientCore extends events_1.EventEmitter {
     // Ngắt kết nối
     disconnect() {
         ////this.node.log("Modbus: Disconnecting client..."); // Log disconnect start
-        // Clear all timers to prevent memory leaks
+        this.cleanup();
+    }
+    /**
+     * Comprehensive cleanup method - ensures all resources are released
+     * Call this when node is being removed or destroyed
+     */
+    cleanup() {
+        // Set shutdown flag to prevent new operations
+        this.isShuttingDown = true;
+        // Clear ALL timers to prevent memory leaks
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
+            this.node.log("[MODBUS-CLEANUP] Reconnect timer cleared");
         }
         if (this.connectionCheckTimer) {
             clearInterval(this.connectionCheckTimer);
             this.connectionCheckTimer = undefined;
+            this.node.log("[MODBUS-CLEANUP] Connection check timer cleared");
         }
-        this.client.close(() => {
-            this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
-            this.isConnected = false;
-            if (this.wasConnected) { // Chỉ log khi trạng thái thay đổi
-                ////this.node.log(`Modbus: isConnected status changed to false (Disconnected)`);
-                this.node.status({ fill: "grey", shape: "ring", text: "Disconnected" });
-                this.emit("modbus-status", { status: "disconnected" });
+        // Close the client connection
+        try {
+            if (this.client && this.client.isOpen) {
+                this.client.close(() => {
+                    this.wasConnected = this.isConnected;
+                    this.isConnected = false;
+                    if (this.wasConnected) {
+                        this.node.status({ fill: "grey", shape: "ring", text: "Disconnected" });
+                        this.emit("modbus-status", { status: "disconnected" });
+                    }
+                    this.node.log("[MODBUS-CLEANUP] Client connection closed");
+                });
             }
-            ////this.node.log("Modbus: Client disconnected."); // Log disconnect complete
-        });
+        }
+        catch (error) {
+            // Silently handle close errors during cleanup
+            this.node.warn(`[MODBUS-CLEANUP] Error during close: ${error.message}`);
+        }
+        // Remove all event listeners to prevent memory leaks
+        this.removeAllListeners();
+        this.node.log("[MODBUS-CLEANUP] Cleanup complete");
     }
     // Kiểm tra trạng thái kết nối
     isConnectedCheck() {
