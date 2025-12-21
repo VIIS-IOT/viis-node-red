@@ -200,14 +200,22 @@ exports.OilProfileService = OilProfileService;
 // NEW MAPPING (4 machines):
 // - fs01: BOILER (direct consumption)
 // - fs02-fs03: MAIN_ENGINE (fs02 in - fs03 return)
-// - fs03-fs04: GENERATOR_HFO (fs03 in - fs04 return) 
+// - fs03-fs04: GENERATOR_HFO (fs03 in - fs04 return)
 // - fs05-fs06: GENERATOR_DO (fs05 in - fs06 return)
 // Note: fs03 is shared between MAIN_ENGINE (return) and GENERATOR_HFO (in)
 OilProfileService.SENSOR_MACHINE_MAP = {
+    // Flow rate sensors (fs01-fs06)
     'fs01': 'BOILER',
     'fs02': 'MAIN_ENGINE',
-    'fs03': 'MAIN_ENGINE', // Primary mapping for fs03 is MAIN_ENGINE
+    'fs03': 'GENERATOR_HFO', // Primary mapping for fs03 is MAIN_ENGINE
     'fs04': 'GENERATOR_HFO',
     'fs05': 'GENERATOR_DO',
     'fs06': 'GENERATOR_DO',
+    // Total flow sensors (tfs01-tfs06) - same mapping as fs
+    'tfs01': 'BOILER',
+    'tfs02': 'MAIN_ENGINE',
+    'tfs03': 'GENERATOR_HFO',
+    'tfs04': 'GENERATOR_HFO',
+    'tfs05': 'GENERATOR_DO',
+    'tfs06': 'GENERATOR_DO',
 };

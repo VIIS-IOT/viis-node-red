@@ -21,16 +21,24 @@ export class OilProfileService {
     // NEW MAPPING (4 machines):
     // - fs01: BOILER (direct consumption)
     // - fs02-fs03: MAIN_ENGINE (fs02 in - fs03 return)
-    // - fs03-fs04: GENERATOR_HFO (fs03 in - fs04 return) 
+    // - fs03-fs04: GENERATOR_HFO (fs03 in - fs04 return)
     // - fs05-fs06: GENERATOR_DO (fs05 in - fs06 return)
     // Note: fs03 is shared between MAIN_ENGINE (return) and GENERATOR_HFO (in)
     private static readonly SENSOR_MACHINE_MAP: Record<string, MachineType> = {
+        // Flow rate sensors (fs01-fs06)
         'fs01': 'BOILER',
         'fs02': 'MAIN_ENGINE',
-        'fs03': 'MAIN_ENGINE', // Primary mapping for fs03 is MAIN_ENGINE
+        'fs03': 'GENERATOR_HFO', // Primary mapping for fs03 is MAIN_ENGINE
         'fs04': 'GENERATOR_HFO',
         'fs05': 'GENERATOR_DO',
         'fs06': 'GENERATOR_DO',
+        // Total flow sensors (tfs01-tfs06) - same mapping as fs
+        'tfs01': 'BOILER',
+        'tfs02': 'MAIN_ENGINE',
+        'tfs03': 'GENERATOR_HFO',
+        'tfs04': 'GENERATOR_HFO',
+        'tfs05': 'GENERATOR_DO',
+        'tfs06': 'GENERATOR_DO',
     };
 
     constructor(private dataSource: DataSource) {
@@ -83,13 +91,13 @@ export class OilProfileService {
      * Set a profile as active (deactivates all others for the same device & machine)
      */
     async setActiveProfile(profileName: string): Promise<TabiotOilProfile> {
-        const profile = await this.oilProfileRepo.findOne({ 
-            where: { 
+        const profile = await this.oilProfileRepo.findOne({
+            where: {
                 name: profileName,
                 deleted_at: null as any
-            } 
+            }
         });
-        
+
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
@@ -100,7 +108,7 @@ export class OilProfileService {
         // Activate this profile
         profile.is_active = true;
         profile.modified = new Date();
-        
+
         return await this.oilProfileRepo.save(profile);
     }
 
@@ -160,7 +168,7 @@ export class OilProfileService {
      */
     async getProfilesByDevice(deviceId: string): Promise<TabiotOilProfile[]> {
         return await this.oilProfileRepo.find({
-            where: { 
+            where: {
                 device_id: deviceId,
                 deleted_at: null as any
             },
@@ -175,13 +183,13 @@ export class OilProfileService {
         profileName: string,
         updates: Partial<TabiotOilProfile>
     ): Promise<TabiotOilProfile> {
-        const profile = await this.oilProfileRepo.findOne({ 
-            where: { 
+        const profile = await this.oilProfileRepo.findOne({
+            where: {
                 name: profileName,
                 deleted_at: null as any
-            } 
+            }
         });
-        
+
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
@@ -202,13 +210,13 @@ export class OilProfileService {
      * Profile is marked as deleted but data is preserved for historical flow accumulation records
      */
     async deleteProfile(profileName: string): Promise<void> {
-        const profile = await this.oilProfileRepo.findOne({ 
-            where: { 
+        const profile = await this.oilProfileRepo.findOne({
+            where: {
                 name: profileName,
                 deleted_at: null as any
-            } 
+            }
         });
-        
+
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
@@ -227,11 +235,11 @@ export class OilProfileService {
      * Restore a soft-deleted profile
      */
     async restoreProfile(profileName: string): Promise<TabiotOilProfile> {
-        const profile = await this.oilProfileRepo.findOne({ 
+        const profile = await this.oilProfileRepo.findOne({
             where: { name: profileName },
             withDeleted: true
         });
-        
+
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }
@@ -250,11 +258,11 @@ export class OilProfileService {
      * WARNING: This will fail if profile is referenced in flow_accumulation table
      */
     async permanentlyDeleteProfile(profileName: string): Promise<void> {
-        const profile = await this.oilProfileRepo.findOne({ 
+        const profile = await this.oilProfileRepo.findOne({
             where: { name: profileName },
             withDeleted: true
         });
-        
+
         if (!profile) {
             throw new Error(`Profile ${profileName} not found`);
         }

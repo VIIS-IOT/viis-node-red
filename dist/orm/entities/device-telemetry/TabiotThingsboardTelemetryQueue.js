@@ -55,7 +55,7 @@ __decorate([
 __decorate([
     (0, typeorm_1.Column)({
         type: 'enum',
-        enum: ['pending', 'retrying', 'failed', 'success'],
+        enum: ['pending', 'retrying', 'failed', 'permanently_failed', 'success'],
         default: 'pending'
     }),
     (0, typeorm_1.Index)('idx_status'),

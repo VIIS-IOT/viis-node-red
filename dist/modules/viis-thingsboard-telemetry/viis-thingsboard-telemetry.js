@@ -9,6 +9,7 @@ const thingsboard_http_service_1 = require("../../services/thingsboard-http.serv
 const telemetry_queue_manager_1 = require("../../services/telemetry-queue-manager");
 const dataSource_1 = require("../../orm/dataSource");
 const TabiotThingsboardTelemetryQueue_1 = require("../../orm/entities/device-telemetry/TabiotThingsboardTelemetryQueue");
+const viis_telemetry_utils_1 = require("../viis-telemetry/viis-telemetry-utils");
 /**
  * Register the node with Node-RED
  */
@@ -35,6 +36,7 @@ module.exports = function (RED) {
         }
         // Wrap async initialization
         (async () => {
+            var _a;
             try {
                 // Initialize database connection
                 if (!dataSource_1.AppDataSource.isInitialized) {
@@ -49,6 +51,8 @@ module.exports = function (RED) {
                     flushInterval: config.flushInterval || 5000,
                     maxRetries: config.maxRetries || 3,
                     retryInterval: config.retryInterval || 30000,
+                    failedRetryInterval: config.failedRetryInterval || 300000, // 5 minutes
+                    maxFailedRetries: (_a = config.maxFailedRetries) !== null && _a !== void 0 ? _a : 10, // 0 = unlimited
                     enableRetry: config.enableRetry !== false,
                     enableLogging: config.enableLogging || false
                 };
@@ -125,20 +129,31 @@ module.exports = function (RED) {
         });
         /**
          * Process individual payload item
+         * Normalizes data types to ensure consistency (string numbers → numbers)
          */
         async function processPayloadItem(item) {
             if (!queueManager)
                 return;
             // Check if already in ThingsBoard format
             if (item.ts && item.values) {
-                // Already formatted
-                await queueManager.addFormattedTelemetry(deviceId, deviceToken, item);
+                // Already formatted - normalize the values
+                const normalizedValues = (0, viis_telemetry_utils_1.normalizeTelemetryData)(item.values);
+                const normalizedItem = {
+                    ts: typeof item.ts === 'number' ? item.ts : Date.now(),
+                    values: normalizedValues
+                };
+                await queueManager.addFormattedTelemetry(deviceId, deviceToken, normalizedItem);
             }
             else if (typeof item === 'object') {
-                // Simple key-value object - convert to ThingsBoard format
+                // Simple key-value object - normalize and convert to ThingsBoard format
+                // First normalize to ensure consistent data types
+                const normalized = (0, viis_telemetry_utils_1.normalizeTelemetryData)(item);
                 // Extract timestamp if present
-                const timestamp = item.ts || item.timestamp || Date.now();
-                const values = Object.assign({}, item);
+                const timestamp = typeof normalized.ts === 'number'
+                    ? normalized.ts
+                    : (typeof item.timestamp === 'number' ? item.timestamp : Date.now());
+                // Remove timestamp fields from values
+                const values = Object.assign({}, normalized);
                 delete values.ts;
                 delete values.timestamp;
                 await queueManager.addTelemetry(deviceId, deviceToken, values, timestamp);

@@ -8,6 +8,8 @@
             flushInterval: { value: 5000, validate: RED.validators.number() },
             maxRetries: { value: 3, validate: RED.validators.number() },
             retryInterval: { value: 30000, validate: RED.validators.number() },
+            failedRetryInterval: { value: 300000, validate: RED.validators.number() },
+            maxFailedRetries: { value: 10, validate: RED.validators.number() },
             enableRetry: { value: true },
             enableLogging: { value: false }
         },
@@ -24,8 +26,10 @@
             // Initialize tooltips if needed
             $("#node-input-batchSize").attr('title', 'Number of telemetry records to batch before sending');
             $("#node-input-flushInterval").attr('title', 'Auto-flush interval in milliseconds (e.g., 5000 = 5 seconds)');
-            $("#node-input-maxRetries").attr('title', 'Maximum number of retry attempts for failed uploads');
+            $("#node-input-maxRetries").attr('title', 'Maximum number of retry attempts before marking as failed');
             $("#node-input-retryInterval").attr('title', 'Interval between retry attempts in milliseconds');
+            $("#node-input-failedRetryInterval").attr('title', 'Retry interval for failed records (default: 5 minutes)');
+            $("#node-input-maxFailedRetries").attr('title', 'Max additional retries for failed records (0 = unlimited)');
         },
         oneditsave: function () {
             // Validation before save
@@ -77,7 +81,19 @@
     <div class="form-row">
         <label for="node-input-retryInterval"><i class="fa fa-hourglass"></i> Retry Interval</label>
         <input type="number" id="node-input-retryInterval" placeholder="30000" min="5000" step="5000" style="width: 100px;">
-        <span style="margin-left: 10px; color: #999;">ms (retry check)</span>
+        <span style="margin-left: 10px; color: #999;">ms (pending retry)</span>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-failedRetryInterval"><i class="fa fa-clock-o"></i> Failed Retry</label>
+        <input type="number" id="node-input-failedRetryInterval" placeholder="300000" min="60000" step="60000" style="width: 100px;">
+        <span style="margin-left: 10px; color: #999;">ms (failed records, default 5min)</span>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-maxFailedRetries"><i class="fa fa-repeat"></i> Max Failed Retries</label>
+        <input type="number" id="node-input-maxFailedRetries" placeholder="10" min="0" max="100" style="width: 70px;">
+        <span style="margin-left: 10px; color: #999;">0 = unlimited</span>
     </div>
 
     <div class="form-row">
@@ -108,7 +124,13 @@
         <dd>Maximum retry attempts for failed uploads (default: 3)</dd>
         
         <dt>Retry Interval <span class="property-type">number</span></dt>
-        <dd>Interval between retry attempts in milliseconds (default: 30000ms = 30s)</dd>
+        <dd>Interval between retry attempts for pending records (default: 30000ms = 30s)</dd>
+        
+        <dt>Failed Retry Interval <span class="property-type">number</span></dt>
+        <dd>Retry interval for failed records with longer delay (default: 300000ms = 5 minutes)</dd>
+        
+        <dt>Max Failed Retries <span class="property-type">number</span></dt>
+        <dd>Maximum additional retries for failed records. Set to 0 for unlimited retries (default: 10)</dd>
         
         <dt>Enable Retry <span class="property-type">boolean</span></dt>
         <dd>Enable automatic retry for failed uploads (default: true)</dd>
