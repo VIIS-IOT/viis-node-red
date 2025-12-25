@@ -80,7 +80,8 @@
       "viis-flow-accumulation": "dist/modules/viis-flow-accumulation/viis-flow-accumulation.js",
       "viis-trip-realtime-telemetry": "dist/modules/viis-trip-realtime-telemetry/viis-trip-realtime-telemetry.js",
       "viis-tfs-monitor": "dist/modules/viis-tfs-monitor/viis-tfs-monitor.js",
-      "viis-ais-telemetry": "dist/modules/viis-ais-telemetry/viis-ais-telemetry.js"
+      "viis-ais-telemetry": "dist/modules/viis-ais-telemetry/viis-ais-telemetry.js",
+      "viis-coil-tracker": "dist/modules/viis-coil-tracker/viis-coil-tracker.js"
     }
   },
   "dependencies": {
