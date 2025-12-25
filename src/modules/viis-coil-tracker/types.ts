@@ -42,6 +42,8 @@ export interface TrackingSession {
     startSnapshot: Record<string, any>;
     endSnapshot?: Record<string, any>;
     lastCoilValue: boolean;
+    previousCoilValue: boolean;
+    eventSequence: number;
 }
 
 /**
@@ -63,19 +65,49 @@ export interface StateChangeEvent {
 }
 
 /**
- * MQTT publish payload
+ * MQTT publish payload - Enhanced structure for frontend tracking
  */
 export interface MqttTrackingPayload {
-    event: 'state_change';
-    tracking_key: string;
-    coil_key: string;
-    session_id: string;
-    board_id?: string;
-    device_id: string;
-    state: 'started' | 'completed';
+    // Meta Information
+    type: 'coil_tracking';
+    version: string;
     timestamp: string;
-    duration_seconds?: number;
-    data: Record<string, any>;
+    device_id: string;
+
+    // Tracking Session Info
+    session: {
+        id: string;
+        tracking_key: string;
+        status: 'started' | 'completed';
+        coil: {
+            key: string;
+            board_id?: string;
+            current_value: boolean;
+            previous_value: boolean;
+        };
+    };
+
+    // Timing Information
+    timing: {
+        started_at: string;
+        completed_at: string | null;
+        duration_seconds: number | null;
+        elapsed_seconds: number;
+    };
+
+    // Telemetry Data
+    telemetry: {
+        start_snapshot: Record<string, any>;
+        end_snapshot: Record<string, any> | null;
+        delta: Record<string, number> | null;
+    };
+
+    // State Change Event
+    event: {
+        type: 'state_changed';
+        trigger: 'coil_on' | 'coil_off';
+        sequence: number;
+    };
 }
 
 /**
