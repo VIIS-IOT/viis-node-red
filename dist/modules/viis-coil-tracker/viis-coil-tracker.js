@@ -26,7 +26,7 @@ module.exports = function (RED) {
                             host: globalHelper.getEnvVar('database_host', 'viis-local-mysql'),
                             port: globalHelper.getNumericEnvVar('database_port', 3306),
                             user: globalHelper.getEnvVar('database_username', 'root'),
-                            password: globalHelper.getEnvVar('db_password', 'password'),
+                            password: globalHelper.getEnvVar('db_password', 'admin@123'),
                             database: globalHelper.getEnvVar('db_database', 'viis_local')
                         };
                         mysqlClient = await client_registry_1.default.getMySqlClient(mysqlConfig, node);
