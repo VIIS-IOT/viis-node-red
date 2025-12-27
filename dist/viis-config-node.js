@@ -64,11 +64,17 @@ module.exports = function (RED) {
                     });
                 });
                 this.device.clientMQtt.on("message", (topic, message) => {
-                    this.log(`Device ${this.device.id} connected to MQTT`);
+                    this.log(`Device ${this.device.id} received MQTT message on topic: ${topic}`);
                     const payload = parseMesssageIgnoreError(message.toString());
                     if (payload) {
+                        // Include topic in the emitted message for proper validation
                         node.emit("mqtt-message", {
-                            message: payload,
+                            message: {
+                                topic: topic,
+                                message: message.toString(),
+                                payload: payload,
+                                timestamp: Date.now()
+                            },
                         });
                     }
                 });
