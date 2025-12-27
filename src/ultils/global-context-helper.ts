@@ -333,6 +333,44 @@ export class GlobalContextHelper {
   }
 
   /**
+   * Gets a generic global variable by name
+   * @param varName - Variable name in global context
+   * @param defaultValue - Default value if not found
+   * @returns Variable value or default
+   */
+  getGlobalVar(varName: string, defaultValue?: any): any {
+    const value = this.globalContext.get(varName);
+    return value !== undefined ? value : defaultValue;
+  }
+
+  /**
+   * Sets a generic global variable by name
+   * @param varName - Variable name in global context
+   * @param value - Value to set
+   */
+  setGlobalVar(varName: string, value: any): void {
+    this.globalContext.set(varName, value);
+  }
+
+  /**
+   * Gets config key values from global context
+   * Used for calibration flags and settings
+   * @returns Config key values object
+   */
+  getGlobalConfigKeyValues(): Record<string, any> {
+    return this.globalContext.get('configKeyValues') || {};
+  }
+
+  /**
+   * Gets holding register data from global context
+   * Contains current Modbus register values
+   * @returns Holding register data object
+   */
+  getGlobalHoldingRegisterData(): Record<string, any> {
+    return this.globalContext.get('holdingRegisterData') || {};
+  }
+
+  /**
    * Gets debug information about the helper state
    * @returns Debug information object
    */
