@@ -215,42 +215,66 @@ module.exports = function (RED) {
                 const messageHandler = new messageHandler_1.MessageHandler(serviceOptions);
                 const luoiHandler = new luoi_mapping_handler_1.LuoiMappingHandler(node, modbusService, validationService, mqttService);
                 const rpcHandler = new rpcHandler_1.RpcHandler(serviceOptions, configService, validationService, modbusService, mqttService, luoiHandler);
-                // Set up MQTT subscription
-                try {
-                    // Verify MQTT client is still valid
-                    if (!mqttClient) {
-                        throw new Error("MQTT client is null after initialization");
-                    }
-                    // Wait for connection before subscribing with shorter timeout for faster recovery
-                    if (!mqttClient.isConnected()) {
-                        try {
-                            await mqttClient.waitForConnection(10000); // Wait up to 10 seconds for faster failure detection
+                // Set up MQTT subscription with auto-recovery
+                const setupSubscription = async (isRetry = false) => {
+                    try {
+                        // Verify MQTT client is still valid
+                        if (!mqttClient) {
+                            throw new Error("MQTT client is null after initialization");
                         }
-                        catch (error) {
-                            // Trigger circuit breaker reset for immediate recovery
-                            if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
-                                mqttClient.resetCircuitBreaker();
+                        // Wait for connection before subscribing with shorter timeout for faster recovery
+                        if (!mqttClient.isConnected()) {
+                            try {
+                                await mqttClient.waitForConnection(10000); // Wait up to 10 seconds for faster failure detection
                             }
-                            throw error;
+                            catch (error) {
+                                // Trigger circuit breaker reset for immediate recovery
+                                if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
+                                    mqttClient.resetCircuitBreaker();
+                                }
+                                throw error;
+                            }
                         }
-                    }
-                    // Subscribe with more aggressive retries
-                    let retryCount = 0;
-                    const maxRetries = 5;
-                    while (retryCount < maxRetries) {
-                        try {
-                            await mqttClient.subscribe(subscribeTopic);
-                            break;
+                        // Subscribe with more aggressive retries
+                        let retryCount = 0;
+                        const maxRetries = 5;
+                        while (retryCount < maxRetries) {
+                            try {
+                                await mqttClient.subscribe(subscribeTopic);
+                                logger.log(`Successfully subscribed to ${subscribeTopic}`);
+                                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                                return true;
+                            }
+                            catch (error) {
+                                retryCount++;
+                                logger.error(`Failed to subscribe (${retryCount}/${maxRetries}): ${error.message}`);
+                                if (retryCount < maxRetries) {
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                }
+                            }
                         }
-                        catch (error) {
-                            retryCount++;
-                            logger.error(`Failed to subscribe (${retryCount}/${maxRetries}): ${error.message}`);
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                        }
-                    }
-                    if (retryCount >= maxRetries) {
                         throw new Error(`Failed to subscribe to ${subscribeTopic} after ${maxRetries} retries`);
                     }
+                    catch (error) {
+                        if (!isRetry) {
+                            // Schedule periodic retry every 30 seconds if initial subscription fails
+                            logger.error(`Initial subscription failed, will retry every 30s: ${error.message}`);
+                            const subscriptionRetryInterval = setInterval(async () => {
+                                logger.log(`Retrying MQTT subscription to ${subscribeTopic}...`);
+                                const success = await setupSubscription(true).catch(() => false);
+                                if (success) {
+                                    clearInterval(subscriptionRetryInterval);
+                                    logger.log(`Subscription recovery successful`);
+                                }
+                            }, 30000); // Retry every 30 seconds
+                            // Store interval for cleanup
+                            node.context().set('subscriptionRetryInterval', subscriptionRetryInterval);
+                        }
+                        throw error;
+                    }
+                };
+                try {
+                    await setupSubscription();
                 }
                 catch (error) {
                     const errorMsg = `Failed to subscribe: ${error.message}`;
@@ -447,6 +471,12 @@ module.exports = function (RED) {
                             clearInterval(configCheckInterval);
                             configCheckInterval = null;
                             logger.log("[CLEANUP] Config check interval stopped");
+                        }
+                        // Stop subscription retry interval if exists
+                        const subscriptionRetryInterval = node.context().get('subscriptionRetryInterval');
+                        if (subscriptionRetryInterval) {
+                            clearInterval(subscriptionRetryInterval);
+                            logger.log("[CLEANUP] Subscription retry interval stopped");
                         }
                         // Clear all timeouts and caches
                         mqttService.clearAllTimeouts();

@@ -29,13 +29,21 @@ class ModbusClientCore extends events_1.EventEmitter {
     /**
      * Enqueue a Modbus request to serialize operations
      * This prevents overwhelming STM32 when multiple nodes poll simultaneously
+     * Now with timeout protection to prevent queue deadlock
      */
     async enqueueRequest(operation) {
         // Add to queue
         this.queueLength++;
-        // Chain the operation to the queue
+        const queueTimeout = 30000; // 30 seconds max wait time in queue
+        const queueStartTime = Date.now();
+        // Chain the operation to the queue with timeout protection
         const result = this.requestQueue.then(async () => {
             try {
+                // Check if request has been waiting too long
+                const waitTime = Date.now() - queueStartTime;
+                if (waitTime > queueTimeout) {
+                    throw new Error(`[QUEUE-TIMEOUT] Request timed out after waiting ${waitTime}ms in queue`);
+                }
                 // Add small delay between requests for STM32 stability
                 if (this.queueLength > 1) {
                     await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
@@ -333,7 +341,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             clearInterval(this.connectionCheckTimer);
             this.connectionCheckTimer = undefined;
         }
-        // Kiểm tra kết nối ít thường xuyên hơn cho STM32 (mỗi 15 giây)
+        // Kiểm tra kết nối thường xuyên hơn cho STM32 (mỗi 5 giây thay vì 15 giây)
         this.connectionCheckTimer = setInterval(async () => {
             try {
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
@@ -386,7 +394,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     this.handleError(err);
                 }
             }
-        }, 15000); // Kiểm tra mỗi 15 giây cho STM32
+        }, 5000); // Kiểm tra mỗi 5 giây cho phát hiện nhanh hơn (giảm từ 15s)
     }
     async ensureConnected() {
         // Kiểm tra kết nối hiện tại
