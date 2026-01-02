@@ -933,8 +933,8 @@ let ScheduleService = class ScheduleService {
             }
             else {
                 // Devices still ON - try to reset again
-                if (minutesPastEnd >= 5) {
-                    // After 5 minutes, try one more time to reset
+                if (minutesPastEnd >= 3) {
+                    // After 3 minutes, try one more time to reset
                     if (this.node) {
                         this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
                     }

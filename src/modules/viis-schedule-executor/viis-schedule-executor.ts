@@ -76,7 +76,7 @@ module.exports = function (RED: NodeAPI) {
 
         node.name = config.name;
         const debugEnable = config.debugEnable; // Read debugEnable from config
-        const cleanupInterval = config.cleanupInterval || 15; // Read cleanupInterval from config, default 15 minutes
+        const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
 
         // Multi-board state variables
         let currentBoardId: string | undefined = config.boardId;
@@ -816,7 +816,7 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
-                // This runs every 2 minutes and handles cases where reset failed but devices were manually turned off
+                // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
                 try {
                     await scheduleService.checkAndRecoverStuckSchedules(modbusClient, schedules);
                 } catch (error) {
