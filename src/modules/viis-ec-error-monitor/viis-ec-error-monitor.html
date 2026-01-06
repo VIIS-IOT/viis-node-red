@@ -1,0 +1,143 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-ec-error-monitor', {
+        category: 'VIIS',
+        color: '#87CEEB',
+        defaults: {
+            name: { value: "" },
+            debounceMinutes: { value: 5, validate: RED.validators.number() },
+            minRunningMinutes: { value: 1, validate: RED.validators.number() },
+            enableTestMode: { value: true }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "font-awesome/fa-flask",
+        label: function () {
+            return this.name || "EC Error Monitor";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        },
+        button: {
+            enabled: function() { return this.enableTestMode; },
+            visible: function() { return this.enableTestMode; },
+            onclick: function() {
+                var node = this;
+                var label = this.name || 'ec-error-monitor';
+                $.ajax({
+                    url: 'viis-ec-error-monitor/' + node.id,
+                    type: 'POST',
+                    success: function(resp) {
+                        RED.notify('Test notification sent for ' + label, 'success');
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        if (jqXHR.status == 404) {
+                            RED.notify('Node endpoint not found. Trying alternative method...', 'warning');
+                        } else {
+                            RED.notify('Failed to send test: ' + textStatus, 'error');
+                        }
+                    }
+                });
+            }
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-ec-error-monitor">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="EC Error Monitor">
+    </div>
+    <div class="form-row">
+        <label for="node-input-debounceMinutes"><i class="fa fa-clock-o"></i> Debounce (min)</label>
+        <input type="number" id="node-input-debounceMinutes" placeholder="5" step="1" min="1">
+        <span style="margin-left: 5px; color: #999; font-size: 11px;">Minutes between error notifications</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-minRunningMinutes"><i class="fa fa-hourglass-start"></i> Min Running (min)</label>
+        <input type="number" id="node-input-minRunningMinutes" placeholder="1" step="0.5" min="0.5">
+        <span style="margin-left: 5px; color: #999; font-size: 11px;">Minimum running time before checking EC</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableTestMode" style="width: auto;"><i class="fa fa-flask"></i> Enable Test Button</label>
+        <input type="checkbox" id="node-input-enableTestMode" style="width: auto; margin-left: 10px;">
+        <span style="margin-left: 5px; color: #999; font-size: 11px;">Show test notification button on node</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-ec-error-monitor">
+    <p>Monitors Electrical Conductivity (EC) values and detects out-of-range errors.</p>
+    
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>trigger <span class="property-type">any</span></dt>
+        <dd>Any message will trigger an EC check cycle.</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Modbus command to stop pump if EC error detected (F1 high EC).</dd>
+    </dl>
+
+    <h3>Details</h3>
+    <p>This node monitors EC values and detects two types of errors:</p>
+    <ul>
+        <li><strong>F1 Error:</strong> EC too high (current_ec > EC_max) - auto-stops pump</li>
+        <li><strong>F2 Error:</strong> EC too low (current_ec < EC_min)</li>
+    </ul>
+
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Debounce (min)</dt>
+        <dd>Minimum minutes between error notifications to prevent spam (default: 5)</dd>
+        
+        <dt>Min Running (min)</dt>
+        <dd>Minimum running time before checking EC (default: 1)</dd>
+    </dl>
+
+    <h3>Required Global Context</h3>
+    <ul>
+        <li><code>inputRegisterData.current_ec</code> - Current EC measurement</li>
+        <li><code>configKeyValues.EC_max</code> - Maximum EC threshold from config</li>
+        <li><code>configKeyValues.EC_min</code> - Minimum EC threshold from config</li>
+        <li><code>coilRegisterData</code> - Machine status (main_pump, power)</li>
+        <li><code>modbusErrMap</code> - Error code descriptions (F1, F2)</li>
+        <li><code>modbusCoils</code> - Coil address mappings (for stopping pump)</li>
+        <li><code>device_label</code> - Device label for notifications</li>
+        <li><code>moment</code> - Moment.js library</li>
+    </ul>
+
+    <h3>Behavior</h3>
+    <p><strong>Machine Idle:</strong> No checks performed, state is reset.</p>
+    <p><strong>Machine Running:</strong></p>
+    <ul>
+        <li>Waits for minimum running time (default 1 minute)</li>
+        <li>Checks EC against thresholds</li>
+        <li>If EC > EC_max → F1 error + stop pump</li>
+        <li>If EC < EC_min → F2 error (warning only)</li>
+        <li>Debouncing prevents duplicate notifications</li>
+    </ul>
+
+    <h3>Error Notifications</h3>
+    <p>Errors are sent to:</p>
+    <ul>
+        <li>Local database (TabiotNotification)</li>
+        <li>Backend API via HTTP POST to <code>/api/v2/alarm/notification-by-token</code></li>
+    </ul>
+
+    <h3>Status Display</h3>
+    <ul>
+        <li><strong>Grey ring:</strong> Ready, not started</li>
+        <li><strong>Green ring:</strong> Machine idle</li>
+        <li><strong>Blue ring:</strong> Waiting for minimum running time</li>
+        <li><strong>Green dot:</strong> EC within acceptable range</li>
+        <li><strong>Yellow dot/ring:</strong> Error detected but within debounce period</li>
+        <li><strong>Red dot:</strong> EC too high (F1)</li>
+        <li><strong>Red ring:</strong> EC too low (F2)</li>
+    </ul>
+
+    <h3>References</h3>
+    <ul>
+        <li><a href="https://docs.viis.tech" target="_blank">VIIS Documentation</a></li>
+    </ul>
+</script>
