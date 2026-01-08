@@ -64,16 +64,10 @@ module.exports = function (RED) {
                         node.warn('✅ Test notification sent successfully');
                         node.status({ fill: 'green', shape: 'dot', text: 'Test notification sent' });
                     }
-                    catch (dbError) {
-                        // If DB not ready, still show success in UI but log warning
-                        if (dbError.message === 'Notification repository not initialized' ||
-                            dbError.message === 'Database not initialized') {
-                            node.warn('⚠️ Test notification: DB not ready, but notification API call would be triggered');
-                            node.status({ fill: 'yellow', shape: 'dot', text: 'Test sent (DB pending)' });
-                        }
-                        else {
-                            throw dbError; // Re-throw unexpected errors
-                        }
+                    catch (err) {
+                        node.error(`Test notification failed: ${err.message}`);
+                        node.status({ fill: 'red', shape: 'ring', text: 'Test failed' });
+                        throw err;
                     }
                     setTimeout(() => {
                         node.status({ fill: 'grey', shape: 'ring', text: 'Ready' });

@@ -1,7 +1,7 @@
 /**
  * Error Notification Service
  * Creates and manages error/warning notifications with deduplication
- * 
+ *
  * @author VIIS Team
  * @version 1.0.0
  */
@@ -37,6 +37,7 @@ export class ErrorNotificationService {
   private globalHelper: GlobalContextHelper;
   private notificationRepo: Repository<TabiotNotification> | null = null;
   private initialized: boolean = false;
+  private notificationCache: Map<string, number> = new Map(); // Cache for deduplication when DB not ready
 
   /**
    * Creates a new ErrorNotificationService instance
@@ -55,15 +56,22 @@ export class ErrorNotificationService {
   private async initializeRepository(): Promise<void> {
     try {
       const dataSource = createDataSource(this.nodeContext);
-      
+
       // Initialize DataSource if not already initialized
       if (!dataSource.isInitialized) {
         await dataSource.initialize();
         console.log('[ErrorNotificationService] DataSource initialized successfully');
       }
-      
+
       this.notificationRepo = dataSource.getRepository(TabiotNotification);
       this.initialized = true;
+
+      // Clear notification cache when DB becomes ready (no longer needed)
+      if (this.notificationCache.size > 0) {
+        console.log(`[ErrorNotificationService] DB ready, clearing ${this.notificationCache.size} cached entries`);
+        this.notificationCache.clear();
+      }
+
       console.log('[ErrorNotificationService] Repository initialized successfully');
     } catch (error) {
       console.error('[ErrorNotificationService] Failed to initialize repository:', error);
@@ -85,7 +93,7 @@ export class ErrorNotificationService {
   ): Promise<TabiotNotification | null> {
     // Parse error using mapping service
     const parsedError = this.errorMappingService.parseModbusError(source, deviceType);
-    
+
     if (!parsedError) {
       // No error or no mapping found
       return null;
@@ -109,6 +117,62 @@ export class ErrorNotificationService {
    * @returns Created or updated notification
    */
   async createFromBusinessLogic(errorData: BusinessLogicError): Promise<TabiotNotification> {
+    // If database not ready, use memory-based deduplication and send HTTP only
+    if (!this.notificationRepo || !this.initialized) {
+      console.warn('[ErrorNotificationService] Database not ready, using memory-based deduplication');
+
+      // Check memory-based deduplication (prevent spam during DB initialization)
+      const cacheKey = `${errorData.entity}_${errorData.err_code}`;
+      const lastSentTime = this.notificationCache.get(cacheKey);
+      const now = Date.now();
+
+      // Debounce: Don't send if sent within last 5 minutes
+      if (lastSentTime && (now - lastSentTime) < 5 * 60 * 1000) {
+        console.warn(`[ErrorNotificationService] Notification ${errorData.err_code} for ${errorData.entity} skipped (debounced, sent ${Math.floor((now - lastSentTime) / 1000)}s ago)`);
+
+        // Return cached notification (don't create new one)
+        const cachedNotification = new TabiotNotification();
+        cachedNotification.name = this.generateNotificationName(errorData.entity, errorData.err_code);
+        cachedNotification.entity = errorData.entity;
+        cachedNotification.err_code = errorData.err_code;
+        cachedNotification.message = errorData.message;
+        return cachedNotification;
+      }
+
+      // Create temporary notification object for HTTP sending
+      const tempNotification = new TabiotNotification();
+      tempNotification.name = this.generateNotificationName(errorData.entity, errorData.err_code);
+      tempNotification.entity = errorData.entity;
+      tempNotification.type = errorData.type;
+      tempNotification.severity = errorData.severity;
+      tempNotification.message = errorData.message;
+      tempNotification.err_code = errorData.err_code;
+      tempNotification.entity_label = errorData.entity_label || errorData.entity;
+      tempNotification.is_read = 0;
+      tempNotification.is_sent = 0;
+      tempNotification.created_at = new Date();
+      tempNotification.metadata = JSON.stringify({
+        occurrence_count: 1,
+        first_occurred: new Date().toISOString(),
+        last_occurred: new Date().toISOString(),
+        db_skipped: true,
+        ...errorData.metadata
+      });
+
+      // Send HTTP notification directly (await to ensure it's sent)
+      try {
+        await this.sendNotificationToBackend(tempNotification, 'create');
+        // Update cache on successful send
+        this.notificationCache.set(cacheKey, now);
+        console.log(`[ErrorNotificationService] HTTP notification sent (DB pending): ${errorData.err_code}`);
+      } catch (error: any) {
+        console.error(`[ErrorNotificationService] Failed to send HTTP notification: ${error.message}`);
+        // Don't cache on failure, allow retry next time
+      }
+
+      return tempNotification;
+    }
+
     return await this.createOrUpdateNotification(
       errorData.err_code,
       errorData.message,
@@ -158,7 +222,7 @@ export class ErrorNotificationService {
     if (existing) {
       // Update existing notification
       console.log(`[ErrorNotificationService] Updating existing notification: ${existing.name}`);
-      
+
       // Update occurrence tracking in metadata only
       const updates: any = {
         message // Update message in case it changed
@@ -168,8 +232,8 @@ export class ErrorNotificationService {
       let existingMetadata: any = {};
       try {
         if (existing.metadata) {
-          existingMetadata = typeof existing.metadata === 'string' 
-            ? JSON.parse(existing.metadata) 
+          existingMetadata = typeof existing.metadata === 'string'
+            ? JSON.parse(existing.metadata)
             : existing.metadata;
         }
       } catch (error) {
@@ -187,21 +251,21 @@ export class ErrorNotificationService {
 
       // Update directly via repository
       await this.notificationRepo.update({ name: existing.name }, updates);
-      
+
       // Fetch and return updated notification
       const updatedNotification = await this.notificationRepo.findOne({ where: { name: existing.name } }) || existing;
-      
+
       // Send notification to backend (async, don't await to avoid blocking)
       this.sendNotificationToBackend(updatedNotification, 'create').catch(error => {
         console.error('[ErrorNotificationService] Failed to sync notification to backend:', error.message);
       });
-      
+
       return updatedNotification;
     }
 
     // Create new notification
     console.log(`[ErrorNotificationService] Creating new notification: ${err_code} for ${entity}`);
-    
+
     // Create new notification directly
     const notification = new TabiotNotification();
     notification.name = this.generateNotificationName(entity, err_code);
@@ -222,12 +286,12 @@ export class ErrorNotificationService {
     });
 
     const savedNotification = await this.notificationRepo.save(notification);
-    
+
     // Send notification to backend (async, don't await to avoid blocking)
     this.sendNotificationToBackend(savedNotification, 'create').catch(error => {
       console.error('[ErrorNotificationService] Failed to sync notification to backend:', error.message);
     });
-    
+
     return savedNotification;
   }
 
@@ -290,7 +354,7 @@ export class ErrorNotificationService {
   ): Promise<boolean> {
     // Check if value indicates error is cleared
     const isCleared = this.isErrorCleared(source);
-    
+
     if (!isCleared) {
       return false;
     }
@@ -302,8 +366,8 @@ export class ErrorNotificationService {
     }
 
     // Find register mapping
-    const registerMap = mapping.mappings?.find((m: any) => 
-      m.register_type === source.register_type && 
+    const registerMap = mapping.mappings?.find((m: any) =>
+      m.register_type === source.register_type &&
       m.address === source.address
     );
 
@@ -342,10 +406,10 @@ export class ErrorNotificationService {
    */
   private async resolveNotification(err_code: string, entity: string): Promise<boolean> {
     const notification = await this.findUnresolvedNotification(err_code, entity);
-    
+
     if (notification) {
       console.log(`[ErrorNotificationService] Auto-resolving notification: ${notification.name}`);
-      
+
       // Parse existing metadata
       let existingMetadata: any = {};
       try {
@@ -368,11 +432,11 @@ export class ErrorNotificationService {
           })
         }
       );
-      
+
       // Note: We don't send HTTP notification on resolve
       // Only send when creating new error notification
       console.log(`[ErrorNotificationService] Notification resolved (local only): ${notification.name}`);
-      
+
       return true;
     }
 
@@ -462,7 +526,7 @@ export class ErrorNotificationService {
   ): Promise<boolean> {
     // Check if value indicates error is cleared
     const isCleared = this.isErrorCleared(source);
-    
+
     if (!isCleared) {
       return false;
     }
@@ -474,8 +538,8 @@ export class ErrorNotificationService {
     }
 
     // Find register mapping
-    const registerMap = mapping.mappings?.find((m: any) => 
-      m.register_type === source.register_type && 
+    const registerMap = mapping.mappings?.find((m: any) =>
+      m.register_type === source.register_type &&
       m.address === source.address
     );
 
@@ -519,7 +583,7 @@ export class ErrorNotificationService {
       // Determine severity and status based on action
       const isResolve = action === 'resolve';
       const alarmStatus = isResolve ? 'Clear' : 'Pending';
-      
+
       // Map notification severity to alarm severity
       let severity = 'notification';
       if (notification.severity === 'critical' || notification.severity === 'high') {
@@ -618,7 +682,29 @@ export class ErrorNotificationService {
   getStats() {
     return {
       mappingService: this.errorMappingService.getMappingStats(),
-      repositoryInitialized: this.notificationRepo !== null
+      repositoryInitialized: this.notificationRepo !== null,
+      cacheSize: this.notificationCache.size
     };
+  }
+
+  /**
+   * Clean up expired cache entries (older than 10 minutes)
+   * Should be called periodically to prevent memory leak
+   */
+  cleanupCache(): void {
+    const now = Date.now();
+    const expiryThreshold = 10 * 60 * 1000; // 10 minutes
+    let cleanedCount = 0;
+
+    for (const [key, timestamp] of this.notificationCache.entries()) {
+      if (now - timestamp > expiryThreshold) {
+        this.notificationCache.delete(key);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(`[ErrorNotificationService] Cache cleanup: removed ${cleanedCount} expired entries`);
+    }
   }
 }

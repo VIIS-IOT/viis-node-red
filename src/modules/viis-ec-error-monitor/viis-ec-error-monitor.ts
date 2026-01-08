@@ -2,7 +2,7 @@
  * @fileoverview VIIS EC Error Monitor Node
  * Monitors Electrical Conductivity (EC) values and detects out-of-range errors
  * Creates notifications via ErrorNotificationService and sends to backend API
- * 
+ *
  * Features:
  * - Monitors current EC against EC_max and EC_min thresholds
  * - Detects F1 errors (EC too high) and F2 errors (EC too low)
@@ -10,7 +10,7 @@
  * - Uses shared ErrorNotificationService for backend sync
  * - Debouncing to prevent error spam
  * - Only checks when machine is running
- * 
+ *
  * @author VIIS Team
  * @version 1.0.0
  */
@@ -78,17 +78,12 @@ module.exports = function (RED: NodeAPI) {
                         await errorNotificationService.createFromBusinessLogic(testError);
                         node.warn('✅ Test notification sent successfully');
                         node.status({ fill: 'green', shape: 'dot', text: 'Test notification sent' });
-                    } catch (dbError: any) {
-                        // If DB not ready, still show success in UI but log warning
-                        if (dbError.message === 'Notification repository not initialized' || 
-                            dbError.message === 'Database not initialized') {
-                            node.warn('⚠️ Test notification: DB not ready, but notification API call would be triggered');
-                            node.status({ fill: 'yellow', shape: 'dot', text: 'Test sent (DB pending)' });
-                        } else {
-                            throw dbError; // Re-throw unexpected errors
-                        }
+                    } catch (err: any) {
+                        node.error(`Test notification failed: ${err.message}`);
+                        node.status({ fill: 'red', shape: 'ring', text: 'Test failed' });
+                        throw err;
                     }
-                    
+
                     setTimeout(() => {
                         node.status({ fill: 'grey', shape: 'ring', text: 'Ready' });
                     }, 3000);
@@ -238,10 +233,10 @@ module.exports = function (RED: NodeAPI) {
 
                 // Wait for minimum running time before checking
                 if (elapsedRunTime < minRunningMinutes) {
-                    node.status({ 
-                        fill: 'blue', 
-                        shape: 'ring', 
-                        text: `Waiting ${elapsedRunTime.toFixed(1)}/${minRunningMinutes} min` 
+                    node.status({
+                        fill: 'blue',
+                        shape: 'ring',
+                        text: `Waiting ${elapsedRunTime.toFixed(1)}/${minRunningMinutes} min`
                     });
                     node.context().set('elapsedRunTime', elapsedRunTime);
                     done();
@@ -256,22 +251,22 @@ module.exports = function (RED: NodeAPI) {
                     if (shouldSendError(lastErrorTime, currentTimestamp)) {
                         await createECError('max', currentEC, ecMax);
                         node.context().set('lastErrorTime', currentTimestamp);
-                        
+
                         // Stop pump on high EC
                         stopPump();
                         errorDetected = true;
-                        
-                        node.status({ 
-                            fill: 'red', 
-                            shape: 'dot', 
-                            text: `EC HIGH: ${currentEC.toFixed(2)} > ${ecMax.toFixed(2)}` 
+
+                        node.status({
+                            fill: 'red',
+                            shape: 'dot',
+                            text: `EC HIGH: ${currentEC.toFixed(2)} > ${ecMax.toFixed(2)}`
                         });
                     } else {
                         node.warn(`EC too high (${currentEC.toFixed(2)} > ${ecMax.toFixed(2)}), but within debounce period`);
-                        node.status({ 
-                            fill: 'yellow', 
-                            shape: 'dot', 
-                            text: `EC HIGH (debounced): ${currentEC.toFixed(2)}` 
+                        node.status({
+                            fill: 'yellow',
+                            shape: 'dot',
+                            text: `EC HIGH (debounced): ${currentEC.toFixed(2)}`
                         });
                     }
                 } else if (currentEC < ecMin) {
@@ -280,26 +275,26 @@ module.exports = function (RED: NodeAPI) {
                         await createECError('min', currentEC, ecMin);
                         node.context().set('lastErrorTime', currentTimestamp);
                         errorDetected = true;
-                        
-                        node.status({ 
-                            fill: 'red', 
-                            shape: 'ring', 
-                            text: `EC LOW: ${currentEC.toFixed(2)} < ${ecMin.toFixed(2)}` 
+
+                        node.status({
+                            fill: 'red',
+                            shape: 'ring',
+                            text: `EC LOW: ${currentEC.toFixed(2)} < ${ecMin.toFixed(2)}`
                         });
                     } else {
                         node.warn(`EC too low (${currentEC.toFixed(2)} < ${ecMin.toFixed(2)}), but within debounce period`);
-                        node.status({ 
-                            fill: 'yellow', 
-                            shape: 'ring', 
-                            text: `EC LOW (debounced): ${currentEC.toFixed(2)}` 
+                        node.status({
+                            fill: 'yellow',
+                            shape: 'ring',
+                            text: `EC LOW (debounced): ${currentEC.toFixed(2)}`
                         });
                     }
                 } else {
                     // EC within range
-                    node.status({ 
-                        fill: 'green', 
-                        shape: 'dot', 
-                        text: `EC OK: ${currentEC.toFixed(2)} (${ecMin.toFixed(2)}-${ecMax.toFixed(2)})` 
+                    node.status({
+                        fill: 'green',
+                        shape: 'dot',
+                        text: `EC OK: ${currentEC.toFixed(2)} (${ecMin.toFixed(2)}-${ecMax.toFixed(2)})`
                     });
                 }
 
@@ -329,7 +324,7 @@ module.exports = function (RED: NodeAPI) {
         RED.httpAdmin.post('/viis-ec-error-monitor/:id', (req: any, res: any) => {
             const nodeId = req.params.id;
             const targetNode = RED.nodes.getNode(nodeId);
-            
+
             if (targetNode) {
                 // Send test message to the node
                 (targetNode as any).receive({
