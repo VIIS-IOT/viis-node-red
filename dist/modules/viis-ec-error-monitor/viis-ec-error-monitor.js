@@ -27,12 +27,15 @@ module.exports = function (RED) {
         // Configuration with defaults
         const debounceMinutes = config.debounceMinutes || 5;
         const minRunningMinutes = config.minRunningMinutes || 1;
+        const enableDebugLogs = config.enableDebugLogs || false;
         node.on('input', async (msg, send, done) => {
             send = send || ((...args) => node.send.apply(node, args));
             done = done || ((err) => { if (err)
                 node.error(err, msg); });
-            // Debug: Log input received
-            node.warn(`EC Monitor received input: ${JSON.stringify({ topic: msg.topic, testNotification: msg.testNotification })}`);
+            // Debug: Only log test notifications or errors (avoid log spam)
+            if (enableDebugLogs && (msg.topic === 'test-notification' || msg.testNotification === true)) {
+                node.warn(`EC Monitor received test notification request`);
+            }
             // Handle test notification request
             if (msg.topic === 'test-notification' || msg.testNotification === true) {
                 try {
@@ -46,9 +49,13 @@ module.exports = function (RED) {
                     const now = moment().add(7, 'hours');
                     const deviceLabel = globalContext.get('device_label') || globalHelper.getEnvVar('DEVICE_ID', 'unknown');
                     const deviceId = globalHelper.getEnvVar('DEVICE_ID', 'unknown');
+                    // Create test message that looks like production F1 error
+                    const testECValue = 2.85;
+                    const testECMax = 2.50;
+                    const testMessage = `[TEST] Giá trị EC đã vượt ngưỡng tối đa, hệ thống sẽ tự động dừng bơm để bảo vệ cây trồng. EC hiện tại: ${testECValue.toFixed(2)} (ngưỡng tối đa: ${testECMax.toFixed(2)})`;
                     const testError = {
-                        err_code: 'TEST_EC',
-                        message: `[TEST] EC Error Monitor - Test notification sent at ${now.format('YYYY-MM-DD HH:mm:ss')}`,
+                        err_code: 'F1',
+                        message: testMessage,
                         severity: 'low',
                         type: 'info',
                         entity: deviceId,
@@ -56,6 +63,9 @@ module.exports = function (RED) {
                         metadata: {
                             test_mode: true,
                             node_type: 'ec-error-monitor',
+                            current_ec: testECValue,
+                            threshold: testECMax,
+                            threshold_type: 'max',
                             ts: now.format('YYYY-MM-DD HH:mm:ss')
                         }
                     };
@@ -106,12 +116,16 @@ module.exports = function (RED) {
                 const ecMin = configKeyValues.EC_min;
                 // Validate EC data
                 if (currentEC === undefined || currentEC === null) {
-                    node.warn('current_ec not available in inputRegisterData');
+                    // Silent skip - data not ready yet (common during startup)
                     done();
                     return;
                 }
                 if (ecMax === undefined || ecMin === undefined) {
-                    node.warn('EC_max or EC_min not set in global context');
+                    // Only log once per node lifecycle to avoid spam
+                    if (!node.context().get('ec_config_warning_logged')) {
+                        node.warn('EC_max or EC_min not set in global context - EC monitoring disabled');
+                        node.context().set('ec_config_warning_logged', true);
+                    }
                     done();
                     return;
                 }
@@ -120,8 +134,8 @@ module.exports = function (RED) {
                 let elapsedRunTime = node.context().get('elapsedRunTime') || 0;
                 let lastErrorTime = node.context().get('lastErrorTime') || 0;
                 const currentTimestamp = now.valueOf();
-                // Check if machine is running
-                const isMachineRunning = coilRegisterData.main_pump === 1 || coilRegisterData.power === 1;
+                // Check if machine is running (support both boolean and number)
+                const isMachineRunning = !!(coilRegisterData.main_pump) || !!(coilRegisterData.power);
                 // === HELPER FUNCTIONS ===
                 function shouldSendError(lastTime, currentTime) {
                     if (lastTime === 0)
@@ -130,10 +144,15 @@ module.exports = function (RED) {
                     return elapsedMinutes > debounceMinutes;
                 }
                 async function createECError(type, currentValue, thresholdValue) {
-                    var _a;
                     const errorCode = type === 'max' ? 'F1' : 'F2';
-                    const errorDescription = ((_a = errMapping[errorCode]) === null || _a === void 0 ? void 0 : _a.description) || 'Unknown EC error';
-                    const message = `${errorDescription} - EC hiện tại: ${currentValue.toFixed(2)}, ${type.toUpperCase()}: ${thresholdValue.toFixed(2)}.`;
+                    // Create descriptive title and message based on error type
+                    let message;
+                    if (type === 'max') {
+                        message = `Giá trị EC đã vượt ngưỡng tối đa, hệ thống sẽ tự động dừng bơm để bảo vệ cây trồng. EC hiện tại: ${currentValue.toFixed(2)} (ngưỡng tối đa: ${thresholdValue.toFixed(2)})`;
+                    }
+                    else {
+                        message = `Giá trị EC thấp hơn ngưỡng tối thiểu, cần kiểm tra nguồn phân bón. EC hiện tại: ${currentValue.toFixed(2)} (ngưỡng tối thiểu: ${thresholdValue.toFixed(2)})`;
+                    }
                     const errorData = {
                         err_code: errorCode,
                         message: message,

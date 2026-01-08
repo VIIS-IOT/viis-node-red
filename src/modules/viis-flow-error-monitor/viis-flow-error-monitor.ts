@@ -2,7 +2,7 @@
  * @fileoverview VIIS Flow Error Monitor Node
  * Monitors flow rate errors by comparing actual volumes with expected set flow rates
  * Creates notifications via ErrorNotificationService and sends to backend API
- * 
+ *
  * Features:
  * - Monitors irrigation flow rates across multiple channels
  * - Detects F4 errors (flow rate deviation)
@@ -10,7 +10,7 @@
  * - Auto-stops pump on critical first-minute errors
  * - Uses shared ErrorNotificationService for backend sync
  * - Debouncing to prevent error spam
- * 
+ *
  * @author VIIS Team
  * @version 1.0.0
  */
@@ -25,6 +25,7 @@ interface FlowErrorMonitorConfig extends NodeDef {
     toleranceStopped: number;    // Tolerance when machine stops
     debounceMinutes: number;     // Minutes to wait before logging another error
     enableTestMode: boolean;     // Enable test notification button
+    enableDebugLogs: boolean;    // Enable debug logging (default: false)
 }
 
 interface VolumeData {
@@ -52,13 +53,16 @@ module.exports = function (RED: NodeAPI) {
         const toleranceRunning = config.toleranceRunning || 0.2;
         const toleranceStopped = config.toleranceStopped || 0.03;
         const debounceMinutes = config.debounceMinutes || 3;
+        const enableDebugLogs = config.enableDebugLogs || false;
 
         node.on('input', async (msg: any, send: any, done: any) => {
             send = send || ((...args: any[]) => node.send.apply(node, args));
             done = done || ((err?: any) => { if (err) node.error(err, msg); });
 
-            // Debug: Log input received
-            node.warn(`Flow Monitor received input: ${JSON.stringify({ topic: msg.topic, testNotification: msg.testNotification })}`);
+            // Debug: Only log test notifications or errors (avoid log spam)
+            if (enableDebugLogs && (msg.topic === 'test-notification' || msg.testNotification === true)) {
+                node.warn(`Flow Monitor received test notification request`);
+            }
 
             // Handle test notification request
             if (msg.topic === 'test-notification' || msg.testNotification === true) {
@@ -75,9 +79,16 @@ module.exports = function (RED: NodeAPI) {
                     const deviceLabel = globalContext.get('device_label') || globalHelper.getEnvVar('DEVICE_ID', 'unknown');
                     const deviceId = globalHelper.getEnvVar('DEVICE_ID', 'unknown');
 
+                    // Create test message that looks like production F5 error
+                    const testChannel = 'A1';
+                    const testActualFlow = 6.5;
+                    const testExpectedFlow = 10.0;
+                    const testElapsedTime = 1.2;
+                    const testMessage = `[TEST] Phát hiện lọt khí hoặc hết phân tại kênh ${testChannel}, hệ thống sẽ tự động dừng bơm để bảo vệ thiết bị. Lưu lượng thực tế: ${testActualFlow.toFixed(2)} lít, Mong đợi: ${testExpectedFlow.toFixed(2)} lít, Thời gian: ${testElapsedTime.toFixed(2)} phút`;
+
                     const testError: BusinessLogicError = {
-                        err_code: 'TEST_FLOW',
-                        message: `[TEST] Flow Error Monitor - Test notification sent at ${now.format('YYYY-MM-DD HH:mm:ss')}`,
+                        err_code: 'F5',
+                        message: testMessage,
                         severity: 'low',
                         type: 'info',
                         entity: deviceId,
@@ -85,6 +96,11 @@ module.exports = function (RED: NodeAPI) {
                         metadata: {
                             test_mode: true,
                             node_type: 'flow-error-monitor',
+                            channel: testChannel,
+                            actualVolume: testActualFlow,
+                            expectedVolume: testExpectedFlow,
+                            elapsedMinutes: testElapsedTime,
+                            threshold: 0.8,
                             ts: now.format('YYYY-MM-DD HH:mm:ss')
                         }
                     };
@@ -95,7 +111,7 @@ module.exports = function (RED: NodeAPI) {
                         node.status({ fill: 'green', shape: 'dot', text: 'Test notification sent' });
                     } catch (dbError: any) {
                         // If DB not ready, still show success in UI but log warning
-                        if (dbError.message === 'Notification repository not initialized' || 
+                        if (dbError.message === 'Notification repository not initialized' ||
                             dbError.message === 'Database not initialized') {
                             node.warn('⚠️ Test notification: DB not ready, but notification API call would be triggered');
                             node.status({ fill: 'yellow', shape: 'dot', text: 'Test sent (DB pending)' });
@@ -103,7 +119,7 @@ module.exports = function (RED: NodeAPI) {
                             throw dbError; // Re-throw unexpected errors
                         }
                     }
-                    
+
                     setTimeout(() => {
                         node.status({ fill: 'grey', shape: 'ring', text: 'Ready' });
                     }, 3000);
@@ -237,25 +253,19 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 function buildF4Error(channel: string, actualFlow: number, expectedFlow: number, elapsedMinutes: number): string {
-                    const errorCode = 'F4';
-                    const errorMessage = errMapping[errorCode]?.description || 'Lỗi lưu lượng';
-
                     const a = Math.round(actualFlow * 100) / 100;
                     const e = Math.round(expectedFlow * 100) / 100;
                     const t = Math.round(elapsedMinutes * 100) / 100;
 
-                    return `${errorMessage} Kênh ${channel}: Thực tế ${a}, Mong đợi ${e}, Thời gian ${t} phút`;
+                    return `Lưu lượng kênh ${channel} không đạt chuẩn sau khi dừng, cần kiểm tra hệ thống tưới. Thực tế: ${a} lít, Mong đợi: ${e} lít, Thời gian: ${t} phút`;
                 }
 
                 function buildF5Error(channel: string, actualFlow: number, expectedFlow: number, elapsedMinutes: number): string {
-                    const errorCode = 'F5';
-                    const errorMessage = errMapping[errorCode]?.description || 'Lỗi lọt khí hoặc hết phân';
-
                     const a = Math.round(actualFlow * 100) / 100;
                     const e = Math.round(expectedFlow * 100) / 100;
                     const t = Math.round(elapsedMinutes * 100) / 100;
 
-                    return `${errorMessage}. Lưu lượng Kênh ${channel}: Thực tế ${a}, Mong đợi ${e}, Thời gian ${t} phút`;
+                    return `Phát hiện lọt khí hoặc hết phân tại kênh ${channel}, hệ thống sẽ tự động dừng bơm để bảo vệ thiết bị. Lưu lượng thực tế: ${a} lít, Mong đợi: ${e} lít, Thời gian: ${t} phút`;
                 }
 
                 function checkFlow(
@@ -267,7 +277,9 @@ module.exports = function (RED: NodeAPI) {
                 ): { hasError: boolean; message: string; metadata: any } | null {
                     const roundedElapsedTime = Math.round(elapsedTimeMinutes * 10) / 10;
 
-                    node.log(`Checking flow for channel ${channel}: actual=${actualVolume}, setFlow=${setFlow}, time=${roundedElapsedTime}, tolerance=${tolerance}`);
+                    if (enableDebugLogs) {
+                        node.log(`Checking flow for channel ${channel}: actual=${actualVolume}, setFlow=${setFlow}, time=${roundedElapsedTime}, tolerance=${tolerance}`);
+                    }
 
                     const expectedVolume = setFlow * roundedElapsedTime;
                     const lowerBound = expectedVolume * (1 - tolerance);
@@ -354,9 +366,13 @@ module.exports = function (RED: NodeAPI) {
                             await createBusinessError('F4', error.message, error.metadata);
                         }
                         node.context().set('lastErrorTime', currentTimestamp);
-                        node.warn(`Detected ${errors.length} flow error(s) after machine stopped`);
+                        if (enableDebugLogs) {
+                            node.warn(`Detected ${errors.length} flow error(s) after machine stopped`);
+                        }
                     } else if (errors.length > 0) {
-                        node.log('Flow errors detected but within debounce period');
+                        if (enableDebugLogs) {
+                            node.log('Flow errors detected but within debounce period');
+                        }
                     }
                 }
 
@@ -372,7 +388,9 @@ module.exports = function (RED: NodeAPI) {
                 if (!isMachineRunning) {
                     if (previousMachineState) {
                         // Machine just stopped - check final flow with strict tolerance
-                        node.warn('Machine stopped. Checking flow with strict tolerance.');
+                        if (enableDebugLogs) {
+                            node.warn('Machine stopped. Checking flow with strict tolerance.');
+                        }
                         await checkFlowWithToleranceWhenFinish(toleranceStopped);
                     }
                     resetMachineState();
@@ -401,7 +419,9 @@ module.exports = function (RED: NodeAPI) {
 
                 // First minute check (1 to 1.5 minutes)
                 if (elapsedRunTime < 1.5) {
-                    node.warn(`Machine running ${elapsedRunTime.toFixed(2)} min. Checking initial flow rates.`);
+                    if (enableDebugLogs) {
+                        node.warn(`Machine running ${elapsedRunTime.toFixed(2)} min. Checking initial flow rates.`);
+                    }
 
                     for (const channel in volumeData) {
                         if (setFlowData[channel] > 0 && timeValveData[channel] > 0) {
@@ -434,6 +454,9 @@ module.exports = function (RED: NodeAPI) {
 
             } catch (err: any) {
                 node.error(`Flow error monitor failed: ${err.message}`, msg);
+                if (enableDebugLogs) {
+                    node.warn(`Flow error monitor error details: ${JSON.stringify({ message: err.message, stack: err.stack })}`);
+                }
                 node.status({ fill: 'red', shape: 'ring', text: 'Error' });
                 done(err);
             }
@@ -452,7 +475,7 @@ module.exports = function (RED: NodeAPI) {
         RED.httpAdmin.post('/viis-flow-error-monitor/:id', (req: any, res: any) => {
             const nodeId = req.params.id;
             const targetNode = RED.nodes.getNode(nodeId);
-            
+
             if (targetNode) {
                 // Send test message to the node
                 (targetNode as any).receive({

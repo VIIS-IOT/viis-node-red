@@ -6,7 +6,8 @@
             name: { value: "" },
             debounceMinutes: { value: 5, validate: RED.validators.number() },
             minRunningMinutes: { value: 1, validate: RED.validators.number() },
-            enableTestMode: { value: true }
+            enableTestMode: { value: true },
+            enableDebugLogs: { value: false }
         },
         inputs: 1,
         outputs: 1,
@@ -62,11 +63,16 @@
         <input type="checkbox" id="node-input-enableTestMode" style="width: auto; margin-left: 10px;">
         <span style="margin-left: 5px; color: #999; font-size: 11px;">Show test notification button on node</span>
     </div>
+    <div class="form-row">
+        <label for="node-input-enableDebugLogs" style="width: auto;"><i class="fa fa-bug"></i> Enable Debug Logs</label>
+        <input type="checkbox" id="node-input-enableDebugLogs" style="width: auto; margin-left: 10px;">
+        <span style="margin-left: 5px; color: #999; font-size: 11px;">Show detailed debug logs (disable in production)</span>
+    </div>
 </script>
 
 <script type="text/html" data-help-name="viis-ec-error-monitor">
     <p>Monitors Electrical Conductivity (EC) values and detects out-of-range errors.</p>
-    
+
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>trigger <span class="property-type">any</span></dt>
@@ -90,7 +96,7 @@
     <dl class="message-properties">
         <dt>Debounce (min)</dt>
         <dd>Minimum minutes between error notifications to prevent spam (default: 5)</dd>
-        
+
         <dt>Min Running (min)</dt>
         <dd>Minimum running time before checking EC (default: 1)</dd>
     </dl>

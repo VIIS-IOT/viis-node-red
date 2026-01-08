@@ -7,7 +7,8 @@
             toleranceRunning: { value: 0.2, validate: RED.validators.number() },
             toleranceStopped: { value: 0.03, validate: RED.validators.number() },
             debounceMinutes: { value: 3, validate: RED.validators.number() },
-            enableTestMode: { value: true }
+            enableTestMode: { value: true },
+            enableDebugLogs: { value: false }
         },
         inputs: 1,
         outputs: 1,
@@ -68,11 +69,16 @@
         <input type="checkbox" id="node-input-enableTestMode" style="width: auto; margin-left: 10px;">
         <span style="margin-left: 5px; color: #999; font-size: 11px;">Show test notification button on node</span>
     </div>
+    <div class="form-row">
+        <label for="node-input-enableDebugLogs" style="width: auto;"><i class="fa fa-bug"></i> Enable Debug Logs</label>
+        <input type="checkbox" id="node-input-enableDebugLogs" style="width: auto; margin-left: 10px;">
+        <span style="margin-left: 5px; color: #999; font-size: 11px;">Show detailed debug logs (disable in production)</span>
+    </div>
 </script>
 
 <script type="text/html" data-help-name="viis-flow-error-monitor">
     <p>Monitors irrigation flow rates and detects errors automatically.</p>
-    
+
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>trigger <span class="property-type">any</span></dt>
@@ -96,10 +102,10 @@
     <dl class="message-properties">
         <dt>Tolerance (Stopped)</dt>
         <dd>Acceptable deviation when machine stops (default: 0.03 = 3%)</dd>
-        
+
         <dt>Tolerance (Running)</dt>
         <dd>Acceptable deviation while running (default: 0.2 = 20%, currently not used)</dd>
-        
+
         <dt>Debounce (min)</dt>
         <dd>Minimum minutes between error notifications to prevent spam (default: 3)</dd>
     </dl>
@@ -133,6 +139,16 @@
     <ul>
         <li>Local database (TabiotNotification)</li>
         <li>Backend API via HTTP POST to <code>/api/v2/alarm/notification-by-token</code></li>
+    </ul>
+
+    <h3>Status Display</h3>
+    <ul>
+        <li><strong>Grey ring:</strong> Ready, not started</li>
+        <li><strong>Green ring:</strong> Machine idle</li>
+        <li><strong>Blue ring:</strong> Waiting for minimum running time (< 1 min)</li>
+        <li><strong>Yellow dot:</strong> Initial flow check (1-1.5 min)</li>
+        <li><strong>Green dot:</strong> Machine running normally</li>
+        <li><strong>Red ring:</strong> Flow error detected</li>
     </ul>
 
     <h3>References</h3>
