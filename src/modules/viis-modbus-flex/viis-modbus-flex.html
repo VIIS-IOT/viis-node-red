@@ -1,5 +1,5 @@
 <script type="text/javascript">
-    RED.nodes.registerType('viis-modbus-getter', {
+    RED.nodes.registerType('viis-modbus-flex', {
         category: 'VIIS',
         color: '#3FADB5',
         defaults: {
@@ -9,7 +9,7 @@
         },
         inputs: 1,
         outputs: 1,
-        icon: "viis-modbus-getter/logo.png",
+        icon: "viis-modbus-flex/logo.png",
         label: function () {
             return this.name || "VIIS Modbus Getter";
         },
@@ -19,24 +19,24 @@
         oneditprepare: function () {
             // Initialize board selector dropdown
             var boardSelect = $("#node-input-boardId");
-            
+
             // Default 3 board options
             var exampleBoards = [
                 { id: "board1", name: "Board 1" },
                 { id: "board2", name: "Board 2" },
                 { id: "board3", name: "Board 3" }
             ];
-            
+
             // Check if we have boards configured
             RED.nodes.eachConfig(function(config) {
                 // This is a placeholder for dynamic board loading
                 // In production, boards would come from backend
             });
-            
+
             // Add board options
             exampleBoards.forEach(function(board) {
                 var selected = (board.id === this.boardId) ? ' selected' : '';
-                boardSelect.append('<option value="' + board.id + '"' + selected + '>' + 
+                boardSelect.append('<option value="' + board.id + '"' + selected + '>' +
                                  board.name + '</option>');
             }.bind(this));
         },
@@ -46,29 +46,29 @@
     });
 </script>
 
-<script type="text/html" data-template-name="viis-modbus-getter">
+<script type="text/html" data-template-name="viis-modbus-flex">
     <div class="form-row">
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
-    
+
     <div class="form-row">
         <label for="node-input-boardId"><i class="fa fa-microchip"></i> Board</label>
         <select id="node-input-boardId" style="width: 70%;">
             <!-- Options populated dynamically in oneditprepare -->
         </select>
         <div class="form-tips" style="margin-top: 5px; margin-bottom: 10px;">
-            <small><i class="fa fa-info-circle"></i> Select a board (default: Board 1). 
+            <small><i class="fa fa-info-circle"></i> Select a board (default: Board 1).
             You can override dynamically using <code>msg.payload.boardId</code></small>
         </div>
     </div>
-    
+
     <div class="form-row">
         <label for="node-input-enableLogging"><i class="fa fa-file-text-o"></i> Enable Logging</label>
         <input type="checkbox" id="node-input-enableLogging" style="display: inline-block; width: auto; vertical-align: top;">
         <label for="node-input-enableLogging" style="width: auto; margin-left: 5px;">Enable detailed logging (terminal & debug)</label>
     </div>
-    
+
     <div class="form-tips">
         <p><strong>Input:</strong> Message with payload containing modbus request:</p>
         <pre>{
@@ -84,9 +84,9 @@
     </div>
 </script>
 
-<script type="text/html" data-help-name="viis-modbus-getter">
+<script type="text/html" data-help-name="viis-modbus-flex">
     <p>A custom Node-RED node for reading data from Modbus devices using shared connection resources.</p>
-    
+
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">object</span></dt>
@@ -152,6 +152,6 @@ return msg;</pre>
 
     <h3>Details</h3>
     <p>This node provides a simple interface for reading data from Modbus devices. It uses the shared modbus client from the VIIS system, ensuring efficient resource usage when multiple nodes need to communicate with the same Modbus device.</p>
-    
+
     <p>The node validates all input parameters and provides detailed error messages for troubleshooting. It supports all standard Modbus read function codes and handles both coil/discrete input (boolean) and register (numeric) data types.</p>
 </script>

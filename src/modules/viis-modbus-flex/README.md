@@ -132,7 +132,7 @@ Common error scenarios:
 ## Architecture
 
 ```
-viis-modbus-getter/
+viis-modbus-flex/
 ├── constants.ts              # Configuration constants
 ├── interfaces/
 │   └── types.ts             # TypeScript interfaces
@@ -142,8 +142,8 @@ viis-modbus-getter/
 │   └── logger.ts            # Logging utilities
 ├── icons/
 │   └── logo.png             # Node icon
-├── viis-modbus-getter.html  # UI definition
-└── viis-modbus-getter.ts    # Main node implementation
+├── viis-modbus-flex.html  # UI definition
+└── viis-modbus-flex.ts    # Main node implementation
 ```
 
 ## Development

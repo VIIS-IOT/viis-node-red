@@ -8,7 +8,7 @@
     },
     {
         "id": "modbus-getter-1",
-        "type": "viis-modbus-getter",
+        "type": "viis-modbus-flex",
         "z": "demo-flow",
         "name": "Temperature Sensor",
         "x": 200,
@@ -16,8 +16,8 @@
         "wires": [["debug-temp"]]
     },
     {
-        "id": "modbus-getter-2", 
-        "type": "viis-modbus-getter",
+        "id": "modbus-getter-2",
+        "type": "viis-modbus-flex",
         "z": "demo-flow",
         "name": "Humidity Sensor",
         "x": 200,
@@ -26,7 +26,7 @@
     },
     {
         "id": "modbus-getter-3",
-        "type": "viis-modbus-getter", 
+        "type": "viis-modbus-flex",
         "z": "demo-flow",
         "name": "Pressure Sensor",
         "x": 200,
@@ -57,7 +57,7 @@
     {
         "id": "inject-humidity",
         "type": "inject",
-        "z": "demo-flow", 
+        "z": "demo-flow",
         "name": "Read Humidity",
         "props": [
             {
@@ -79,7 +79,7 @@
         "id": "inject-pressure",
         "type": "inject",
         "z": "demo-flow",
-        "name": "Read Pressure", 
+        "name": "Read Pressure",
         "props": [
             {
                 "p": "payload"
@@ -158,7 +158,7 @@
         "wires": []
     },
     {
-        "id": "comment-2", 
+        "id": "comment-2",
         "type": "comment",
         "z": "demo-flow",
         "name": "Cách test:",

@@ -61,11 +61,11 @@ Xây dựng hệ thống quản lý error và warning toàn diện trên gateway
 
 ### 2.2. Components Còn thiếu
 
-❌ **Error Mapping Service**: Parse error codes thành messages  
-❌ **Modbus Error Monitoring Node**: Node-RED node để poll Modbus errors  
-❌ **Error Code Configuration**: Cấu trúc lưu trữ mapping table  
-❌ **Deduplication Logic**: Tránh tạo duplicate notifications  
-❌ **Auto-resolve Logic**: Tự động resolve khi lỗi hết  
+❌ **Error Mapping Service**: Parse error codes thành messages
+❌ **Modbus Error Monitoring Node**: Node-RED node để poll Modbus errors
+❌ **Error Code Configuration**: Cấu trúc lưu trữ mapping table
+❌ **Deduplication Logic**: Tránh tạo duplicate notifications
+❌ **Auto-resolve Logic**: Tự động resolve khi lỗi hết
 
 ## 3. Kiến trúc Đề xuất (Proposed Architecture)
 
@@ -212,17 +212,17 @@ interface ParsedError {
 
 class ErrorMappingService {
   private mappings: Map<string, ErrorCodeMapping>;
-  
+
   constructor(nodeContext: NodeContext) {
     // Load từ error-codes.json hoặc env variable
     this.loadMappings();
   }
-  
+
   parseModbusError(source: ModbusErrorSource, deviceType: string): ParsedError | null {
     // Tìm mapping phù hợp
     // Parse error code thành message
   }
-  
+
   reloadMappings() {
     // Hot-reload mapping khi config thay đổi
   }
@@ -237,7 +237,7 @@ class ErrorNotificationService {
   private notificationService: NotificationService;
   private errorMappingService: ErrorMappingService;
   private activeErrors: Map<string, string>; // err_code -> notification_name
-  
+
   async createFromModbus(
     source: ModbusErrorSource,
     deviceType: string,
@@ -246,12 +246,12 @@ class ErrorNotificationService {
     // 1. Parse error qua ErrorMappingService
     const parsedError = this.errorMappingService.parseModbusError(source, deviceType);
     if (!parsedError) return null;
-    
+
     // 2. Check duplicate (nếu err_code đã có trong activeErrors)
     if (this.isDuplicate(parsedError.err_code, entity)) {
       return null; // Skip nếu đã tạo
     }
-    
+
     // 3. Create notification
     const notification = await this.notificationService.createNotification({
       entity,
@@ -263,13 +263,13 @@ class ErrorNotificationService {
       isRead: 0,
       isSent: 0
     });
-    
+
     // 4. Track active error
     this.activeErrors.set(`${parsedError.err_code}_${entity}`, notification.name);
-    
+
     return notification;
   }
-  
+
   async autoResolveIfClear(
     source: ModbusErrorSource,
     deviceType: string,
@@ -278,7 +278,7 @@ class ErrorNotificationService {
     // Kiểm tra nếu error code = 0 hoặc coil = false
     // Tự động mark notification as resolved (is_read = 1)
   }
-  
+
   async createFromBusinessLogic(
     err_code: string,
     message: string,
@@ -331,20 +331,20 @@ module.exports = function (RED: NodeAPI) {
   function ViisModbusErrorMonitorNode(this: Node, config: any) {
     RED.nodes.createNode(this, config);
     const node = this;
-    
+
     const errorNotificationService = new ErrorNotificationService(node.context());
     const modbusClient = ClientRegistry.getModbusClientV2(config.boardId, node);
-    
+
     let pollInterval: NodeJS.Timeout;
-    
+
     const pollErrors = async () => {
       // Load error mapping config
       const mapping = loadErrorMapping(config.errorMappingFile);
-      
+
       // Poll từng register trong mapping
       for (const map of mapping.mappings) {
         let value;
-        
+
         if (map.register_type === 'holding') {
           const result = await modbusClient.readHoldingRegisters(map.address, 1);
           value = result.data[0];
@@ -352,7 +352,7 @@ module.exports = function (RED: NodeAPI) {
           const result = await modbusClient.readCoils(map.address, 1);
           value = result.data[0];
         }
-        
+
         // Check nếu có error
         if (value !== 0 && value !== false) {
           await errorNotificationService.createFromModbus(
@@ -375,16 +375,16 @@ module.exports = function (RED: NodeAPI) {
         }
       }
     };
-    
+
     // Start polling
     pollInterval = setInterval(pollErrors, config.pollInterval || 5000);
-    
+
     node.on('close', () => {
       clearInterval(pollInterval);
       ClientRegistry.releaseModbusClientV2(config.boardId, node);
     });
   }
-  
+
   RED.nodes.registerType("viis-modbus-error-monitor", ViisModbusErrorMonitorNode);
 };
 ```
@@ -421,12 +421,12 @@ module.exports = function (RED: NodeAPI) {
   function ViisErrorTriggerNode(this: Node, config: any) {
     RED.nodes.createNode(this, config);
     const node = this;
-    
+
     const errorNotificationService = new ErrorNotificationService(node.context());
-    
+
     node.on('input', async (msg: any) => {
       const payload = msg.payload;
-      
+
       try {
         const notification = await errorNotificationService.createFromBusinessLogic(
           payload.err_code,
@@ -435,7 +435,7 @@ module.exports = function (RED: NodeAPI) {
           payload.entity,
           payload.type || 'warning'
         );
-        
+
         msg.notification = notification;
         node.send(msg);
       } catch (error) {
@@ -443,7 +443,7 @@ module.exports = function (RED: NodeAPI) {
       }
     });
   }
-  
+
   RED.nodes.registerType("viis-error-trigger", ViisErrorTriggerNode);
 };
 ```
@@ -459,7 +459,7 @@ const errorNotificationService = new ErrorNotificationService(node.context());
 
 async function checkProtection() {
   // ... existing logic ...
-  
+
   // Khi phát hiện violation
   if (timeSinceStarted > maxTime) {
     await errorNotificationService.createFromBusinessLogic(
@@ -469,7 +469,7 @@ async function checkProtection() {
       node.id,
       'alert'
     );
-    
+
     // Turn off device
     await writeCoil(coilAddress, false);
   }
@@ -593,7 +593,7 @@ DELETE /api/iot-notification/:name    # Delete notification
 
 **Node-RED Flow**:
 ```
-[viis-modbus-getter] → [function: check threshold] → [viis-error-trigger] → [debug]
+[viis-modbus-flex] → [function: check threshold] → [viis-error-trigger] → [debug]
 ```
 
 **Function node code**:

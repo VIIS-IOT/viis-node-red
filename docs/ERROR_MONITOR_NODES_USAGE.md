@@ -1,6 +1,6 @@
 # 🔧 Error Monitor Nodes - Usage Guide
 
-**Version**: 1.0  
+**Version**: 1.0
 **Date**: 2025-10-17
 
 ---
@@ -10,7 +10,7 @@
 | Node | Use Case | Modbus Integration | Input Required |
 |------|----------|-------------------|----------------|
 | **viis-modbus-error-monitor** | Standalone polling | ✅ Built-in | ❌ No (polls itself) |
-| **viis-error-monitor** | Downstream from getter | ❌ No (data from input) | ✅ Yes (from viis-modbus-getter) |
+| **viis-error-monitor** | Downstream from getter | ❌ No (data from input) | ✅ Yes (from viis-modbus-flex) |
 | **viis-error-trigger** | Business logic errors | ❌ No | ✅ Yes (custom payload) |
 
 ---
@@ -20,7 +20,7 @@
 ### Flow Architecture
 
 ```
-[viis-modbus-getter] → [viis-error-monitor] → [debug/output]
+[viis-modbus-flex] → [viis-error-monitor] → [debug/output]
    (poll coils only)     (check errors)        (result)
 ```
 
@@ -84,7 +84,7 @@ docker restart viis-local-nodered
 
 ### Step 3: Create Flow in Node-RED
 
-#### Node 1: viis-modbus-getter
+#### Node 1: viis-modbus-flex
 
 **Config**:
 - Function Code: `1` (Read Coils)
@@ -92,7 +92,7 @@ docker restart viis-local-nodered
 - Quantity: `10` (số coils cần đọc)
 - Board ID: (select your board)
 
-**Output**: 
+**Output**:
 ```javascript
 {
   success: true,
@@ -108,7 +108,7 @@ docker restart viis-local-nodered
 - Start Address: `500`
 - Name: (optional)
 
-**Input**: From viis-modbus-getter
+**Input**: From viis-modbus-flex
 **Output**:
 ```javascript
 {
@@ -158,7 +158,7 @@ docker restart viis-local-nodered
            │
            ▼
 ┌─────────────────────┐
-│ viis-modbus-getter  │
+│ viis-modbus-flex  │
 │  - FC: 1 (Coils)    │
 │  - Address: 500     │
 │  - Quantity: 10     │
@@ -180,7 +180,7 @@ docker restart viis-local-nodered
 ### Flow 2: With Conditional Actions
 
 ```
-[inject] → [viis-modbus-getter] → [viis-error-monitor] → [switch]
+[inject] → [viis-modbus-flex] → [viis-error-monitor] → [switch]
                                                               ├─ errors > 0 → [send alert]
                                                               ├─ critical   → [stop pump]
                                                               └─ ok         → [continue]
@@ -189,10 +189,10 @@ docker restart viis-local-nodered
 ### Flow 3: Multiple Boards
 
 ```
-[inject] → [viis-modbus-getter] → [viis-error-monitor] → [join]
+[inject] → [viis-modbus-flex] → [viis-error-monitor] → [join]
               (board1, coils)         (Board1 errors)        │
                                                              │
-[inject] → [viis-modbus-getter] → [viis-error-monitor] ────┤
+[inject] → [viis-modbus-flex] → [viis-error-monitor] ────┤
               (board2, holding)       (Board2 errors)        │
                                                              ▼
                                                         [aggregate]
@@ -202,7 +202,7 @@ docker restart viis-local-nodered
 
 ## 🎨 UI Configuration
 
-### viis-modbus-getter Config
+### viis-modbus-flex Config
 
 ```
 ┌─────────────────────────────────────┐
@@ -278,7 +278,7 @@ if (created.length > 0) {
     msg.payload = {
         to: "admin@example.com",
         subject: `Alert: ${created.length} errors detected`,
-        body: created.map(e => 
+        body: created.map(e =>
             `${e.err_code}: ${e.message} (address: ${e.address})`
         ).join('\n')
     };
@@ -312,7 +312,7 @@ return msg;
 ### Test 1: Verify Error Detection
 
 1. Set coil 501 = true (manually or via Modbus simulator)
-2. Trigger viis-modbus-getter
+2. Trigger viis-modbus-flex
 3. Check viis-error-monitor output
 4. Expected: `msg.errorMonitor.notifications.created` has ERR_PUMP_FAULT
 
@@ -320,7 +320,7 @@ return msg;
 
 1. Error exists in database (from Test 1)
 2. Set coil 501 = false
-3. Trigger viis-modbus-getter
+3. Trigger viis-modbus-flex
 4. Expected: `msg.errorMonitor.notifications.resolved` has address 501
 
 ### Test 3: Check Database
@@ -337,7 +337,7 @@ docker exec viis-local-mysql mysql -u root -p'admin@123' viis_local \
 ### 1. Polling Interval
 
 ```javascript
-// viis-modbus-getter config
+// viis-modbus-flex config
 {
   pollInterval: 5000  // 5 seconds for normal monitoring
   pollInterval: 1000  // 1 second for critical systems
@@ -376,7 +376,7 @@ return msg;
 |-------|-------|----------|
 | No notifications created | No mapping found | Check deviceType matches JSON file |
 | Node status "No mapping found" | env-loader not deployed | Deploy env-loader in Node-RED |
-| Data not passing through | Wrong payload format | Ensure viis-modbus-getter output format |
+| Data not passing through | Wrong payload format | Ensure viis-modbus-flex output format |
 | Errors not auto-resolving | auto_resolve: false | Check JSON mapping config |
 | Node showing error | viis-error-monitor not built | Run `npm run build` |
 

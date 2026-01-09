@@ -8,7 +8,7 @@ The VIIS Modbus Getter Node is a custom Node-RED node that provides a simple int
 
 ### File Structure
 ```
-viis-modbus-getter/
+viis-modbus-flex/
 ├── constants.ts                    # Configuration constants and enums
 ├── interfaces/
 │   └── types.ts                   # TypeScript interfaces and type guards
@@ -18,8 +18,8 @@ viis-modbus-getter/
 │   └── logger.ts                  # Logging utilities
 ├── icons/
 │   └── logo.png                   # Node icon
-├── viis-modbus-getter.html        # UI definition and help
-├── viis-modbus-getter.ts          # Main node implementation
+├── viis-modbus-flex.html        # UI definition and help
+├── viis-modbus-flex.ts          # Main node implementation
 ├── test-example.js                # Usage examples
 ├── README.md                      # Documentation
 └── IMPLEMENTATION_SUMMARY.md      # This file
@@ -54,7 +54,7 @@ viis-modbus-getter/
 - **logModbusOperation**: Operation-specific logging
 - **logModbusResult/Error**: Result-specific logging
 
-#### 5. Main Node (`viis-modbus-getter.ts`)
+#### 5. Main Node (`viis-modbus-flex.ts`)
 - **ViisModbusGetterNode**: Main node implementation
 - **ClientRegistry integration**: Shared resource management
 - **Error handling**: Comprehensive error management

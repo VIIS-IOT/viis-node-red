@@ -123,9 +123,9 @@ params: { "RELAY_1": true }
 // 4. Handle connection pooling
 ```
 
-## Comparison with viis-modbus-getter
+## Comparison with viis-modbus-flex
 
-| Feature | viis-rpc-control | viis-modbus-getter |
+| Feature | viis-rpc-control | viis-modbus-flex |
 |---------|------------------|-------------------|
 | **Purpose** | High-level control (WHAT) | Low-level access (WHERE) |
 | **Input** | Parameter names | Raw addresses |
@@ -198,7 +198,7 @@ MODBUS_BOARD1_COILS={"P1":0,"F1":1}
 ### Issue: Parameter not found
 **Symptom**: `Key "UNKNOWN_KEY" not found in any board mapping`
 
-**Solution**: 
+**Solution**:
 1. Check spelling of parameter name
 2. Verify parameter exists in board mappings
 3. Check env file loaded correctly

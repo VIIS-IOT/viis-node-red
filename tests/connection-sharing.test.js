@@ -4,7 +4,7 @@
  */
 
 const helper = require("node-red-node-test-helper");
-const viisModbusGetterNode = require("../src/modules/viis-modbus-getter/viis-modbus-getter");
+const viisModbusGetterNode = require("../src/modules/viis-modbus-flex/viis-modbus-flex");
 
 helper.init(require.resolve('node-red'));
 
@@ -22,13 +22,13 @@ describe('VIIS Modbus Getter Connection Sharing', function () {
         const flow = [
             {
                 id: "node1",
-                type: "viis-modbus-getter",
+                type: "viis-modbus-flex",
                 name: "Modbus Getter 1",
                 wires: [["helper1"]]
             },
             {
-                id: "node2", 
-                type: "viis-modbus-getter",
+                id: "node2",
+                type: "viis-modbus-flex",
                 name: "Modbus Getter 2",
                 wires: [["helper2"]]
             },
@@ -37,7 +37,7 @@ describe('VIIS Modbus Getter Connection Sharing', function () {
                 type: "helper"
             },
             {
-                id: "helper2", 
+                id: "helper2",
                 type: "helper"
             }
         ];
@@ -104,7 +104,7 @@ describe('VIIS Modbus Getter Connection Sharing', function () {
         const flow = [
             {
                 id: "node1",
-                type: "viis-modbus-getter",
+                type: "viis-modbus-flex",
                 name: "Modbus Getter 1"
             }
         ];
@@ -117,10 +117,10 @@ describe('VIIS Modbus Getter Connection Sharing', function () {
 
         helper.load(viisModbusGetterNode, flow, function () {
             const node1 = helper.getNode("node1");
-            
+
             // Node should still initialize despite potential config differences
             node1.should.have.property('name', 'Modbus Getter 1');
-            
+
             done();
         });
     });
@@ -129,14 +129,14 @@ describe('VIIS Modbus Getter Connection Sharing', function () {
         const flow = [
             {
                 id: "node1",
-                type: "viis-modbus-getter",
+                type: "viis-modbus-flex",
                 name: "Modbus Getter 1"
             }
         ];
 
         helper.load(viisModbusGetterNode, flow, function () {
             const node1 = helper.getNode("node1");
-            
+
             // Simulate node removal
             setTimeout(() => {
                 helper.unload();

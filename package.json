@@ -69,7 +69,7 @@
       "viis-sync-schedule": "dist/modules/viis-sync-schedule/viis-sync-schedule.js",
       "viis-sync-customer-user": "dist/modules/viis-sync-customer-user/viis-sync-customer-user.js",
       "viis-auto-microclimate-control": "dist/modules/viis-auto-microclimate-control/viis-auto-microclimate-control.js",
-      "viis-modbus-getter": "dist/modules/viis-modbus-getter/viis-modbus-getter.js",
+      "viis-modbus-flex": "dist/modules/viis-modbus-flex/viis-modbus-flex.js",
       "viis-modbus-poller": "dist/modules/viis-modbus-poller/viis-modbus-poller.js",
       "viis-rest-api": "dist/modules/viis-rest-api/viis-rest-api.js",
       "viis-modbus-error-monitor": "dist/modules/viis-modbus-error-monitor/viis-modbus-error-monitor.js",

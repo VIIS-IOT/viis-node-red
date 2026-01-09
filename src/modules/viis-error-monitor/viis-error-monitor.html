@@ -26,7 +26,7 @@
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
-    
+
     <div class="form-row">
         <label for="node-input-boardId"><i class="fa fa-microchip"></i> Board ID</label>
         <input type="text" id="node-input-boardId" placeholder="e.g., board1">
@@ -34,7 +34,7 @@
             <b>Tip:</b> Must match board_id in error code mapping JSON file (e.g., board1.json)
         </div>
     </div>
-    
+
     <div class="form-row">
         <label for="node-input-registerType"><i class="fa fa-list"></i> Register Type</label>
         <select id="node-input-registerType">
@@ -43,7 +43,7 @@
             <option value="coil">Coil</option>
         </select>
     </div>
-    
+
     <div class="form-row">
         <label for="node-input-startAddress"><i class="fa fa-map-marker"></i> Start Address</label>
         <input type="number" id="node-input-startAddress" placeholder="e.g., 500">
@@ -51,13 +51,13 @@
             <b>Tip:</b> First address of the data array from Modbus getter
         </div>
     </div>
-    
+
     <div class="form-tips" style="margin-top: 15px;">
         <b>Usage:</b><br>
-        Connect this node after <code>viis-modbus-getter</code>.<br>
+        Connect this node after <code>viis-modbus-flex</code>.<br>
         Input: <code>msg.payload = [false, true, false, ...]</code><br>
         Output: <code>msg.errorMonitor = { checked, notifications, stats }</code><br><br>
-        
+
         <b>Override via msg:</b><br>
         - <code>msg.boardId</code> - Override board ID<br>
         - <code>msg.registerType</code> - Override register type<br>
@@ -68,21 +68,21 @@
 
 <script type="text/html" data-help-name="viis-error-monitor">
     <p>Monitors Modbus data arrays for errors and creates/resolves notifications automatically.</p>
-    
+
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">array | object</span></dt>
-        <dd>Array of values from Modbus, or { data: [...] } format from viis-modbus-getter</dd>
-        
+        <dd>Array of values from Modbus, or { data: [...] } format from viis-modbus-flex</dd>
+
         <dt class="optional">boardId <span class="property-type">string</span></dt>
         <dd>Override board ID (must match board_id in error code mapping JSON file)</dd>
-        
+
         <dt class="optional">registerType <span class="property-type">string</span></dt>
         <dd>Override register type: 'holding', 'input', or 'coil'</dd>
-        
+
         <dt class="optional">startAddress <span class="property-type">number</span></dt>
         <dd>Override starting address of the data array</dd>
-        
+
         <dt class="optional">entity | deviceId <span class="property-type">string</span></dt>
         <dd>Unique identifier for the device/entity</dd>
     </dl>
@@ -106,34 +106,34 @@
 
     <h3>Details</h3>
     <p>This node monitors Modbus data for errors based on error code mappings loaded via env-loader.</p>
-    
+
     <h4>Error Detection</h4>
     <ul>
         <li><b>Holding/Input registers:</b> value != 0 indicates error</li>
         <li><b>Coils:</b> value === true indicates error</li>
     </ul>
-    
+
     <h4>Auto-resolve</h4>
     <ul>
         <li><b>Holding/Input registers:</b> value === 0 clears error</li>
         <li><b>Coils:</b> value === false clears error</li>
         <li>Only errors with <code>auto_resolve: true</code> in mapping will auto-resolve</li>
     </ul>
-    
+
     <h4>Example Flow</h4>
     <pre>
-[viis-modbus-getter] → [viis-error-monitor] → [debug]
+[viis-modbus-flex] → [viis-error-monitor] → [debug]
    (poll coils)         (check errors)         (output)
     </pre>
-    
-    <h4>Example msg.payload from viis-modbus-getter</h4>
+
+    <h4>Example msg.payload from viis-modbus-flex</h4>
     <pre>
 {
   success: true,
   data: [false, true, false, true]  // Coil values
 }
     </pre>
-    
+
     <h3>References</h3>
     <ul>
         <li><a href="https://github.com/viis">Error Code Mapping Documentation</a></li>

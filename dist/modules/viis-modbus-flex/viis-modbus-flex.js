@@ -335,5 +335,5 @@ module.exports = function (RED) {
         });
     }
     // Register the node type
-    RED.nodes.registerType("viis-modbus-getter", ViisModbusGetterNode);
+    RED.nodes.registerType("viis-modbus-flex", ViisModbusGetterNode);
 };

@@ -65,7 +65,7 @@ module.exports = function (RED) {
                     dataArray = msg.payload;
                 }
                 else if (((_a = msg.payload) === null || _a === void 0 ? void 0 : _a.data) && Array.isArray(msg.payload.data)) {
-                    // Support viis-modbus-getter format: { success: true, data: [...] }
+                    // Support viis-modbus-flex format: { success: true, data: [...] }
                     dataArray = msg.payload.data;
                 }
                 else {

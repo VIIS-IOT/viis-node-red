@@ -33,9 +33,9 @@ dist/
 ├── configs/
 ├── core/
 ├── modules/
-│   ├── viis-modbus-getter/
-│   │   ├── viis-modbus-getter.js
-│   │   ├── viis-modbus-getter.html
+│   ├── viis-modbus-flex/
+│   │   ├── viis-modbus-flex.js
+│   │   ├── viis-modbus-flex.html
 │   │   └── ...
 │   └── ...
 ├── icons/ (PNG files)

@@ -1,6 +1,6 @@
 /**
  * Test example for VIIS Modbus Getter Node
- * 
+ *
  * This file demonstrates how to use the VIIS Modbus Getter node
  * in a Node-RED flow to read data from Modbus devices.
  */
@@ -69,7 +69,7 @@ return msg;
     },
     {
         "id": "modbus-getter-node",
-        "type": "viis-modbus-getter",
+        "type": "viis-modbus-flex",
         "name": "Modbus Getter",
         "x": 550,
         "y": 100,
@@ -103,10 +103,10 @@ if (msg.payload.success) {
     const address = msg.payload.address;
     const quantity = msg.payload.quantity;
     const functionCode = msg.payload.functionCode;
-    
+
     node.log(\`Successfully read \${quantity} values from address \${address} using FC \${functionCode}\`);
     node.log(\`Data: \${JSON.stringify(data)}\`);
-    
+
     // Process the data as needed
     msg.processedData = {
         values: data,
@@ -114,7 +114,7 @@ if (msg.payload.success) {
         startAddress: address,
         readTime: new Date(msg.payload.timestamp).toISOString()
     };
-    
+
 } else {
     // Error response
     node.error(\`Modbus read failed: \${msg.payload.error}\`);
@@ -173,7 +173,7 @@ const usageExamples = {
         address: 0,
         quantity: 4
     },
-    
+
     // Read digital inputs (coils)
     readDigitalInputs: {
         fc: 1,
@@ -181,7 +181,7 @@ const usageExamples = {
         address: 0,
         quantity: 16
     },
-    
+
     // Read analog inputs (input registers)
     readAnalogInputs: {
         fc: 4,
@@ -189,7 +189,7 @@ const usageExamples = {
         address: 100,
         quantity: 8
     },
-    
+
     // Read system status (discrete inputs)
     readSystemStatus: {
         fc: 2,
@@ -210,7 +210,7 @@ const responseExamples = {
         functionCode: 3,
         timestamp: 1640995200000
     },
-    
+
     // Success response for coils
     coilResponse: {
         success: true,
@@ -220,7 +220,7 @@ const responseExamples = {
         functionCode: 1,
         timestamp: 1640995200000
     },
-    
+
     // Error response
     errorResponse: {
         error: "Modbus client not connected",

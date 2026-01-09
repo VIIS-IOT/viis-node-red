@@ -36,11 +36,11 @@ module.exports = function (RED: NodeAPI) {
             const readModbusConfig = () => {
                 // Check for multi-board configuration
                 const boardsConfig = globalHelper.getEnvVar(ENV_KEYS.MODBUS_BOARDS, null);
-                
+
                 if (boardsConfig) {
                     try {
                         let boards;
-                        
+
                         // Handle both already-parsed array and JSON string
                         if (Array.isArray(boardsConfig)) {
                             boards = boardsConfig;
@@ -50,7 +50,7 @@ module.exports = function (RED: NodeAPI) {
                             logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
                             boards = null;
                         }
-                        
+
                         if (Array.isArray(boards) && boards.length > 0) {
                             // Multi-board mode
                             return {
@@ -63,7 +63,7 @@ module.exports = function (RED: NodeAPI) {
                         logger.error(`Failed to parse MODBUS_BOARDS: ${e}`);
                     }
                 }
-                
+
                 // Single-board mode (backward compatible)
                 return {
                     mode: 'single',
@@ -89,7 +89,7 @@ module.exports = function (RED: NodeAPI) {
             if (configData.mode === 'multi') {
                 isMultiBoardMode = true;
                 logger.log(`Multi-board mode detected with ${configData.boards.length} boards`);
-                
+
                 // Initialize multi-board configuration
                 const multiConfig: MultiModbusConfig = {
                     mode: 'multi',
@@ -108,7 +108,7 @@ module.exports = function (RED: NodeAPI) {
 
             // Determine which client to get based on mode and configuration
             let modbusClient: any;
-            
+
             // Wrap async initialization in IIFE
             (async () => {
                 try {
@@ -119,7 +119,7 @@ module.exports = function (RED: NodeAPI) {
                     } else {
                         modbusClient = await ClientRegistry.getModbusClientV2(configData.config, node);
                     }
-                    
+
                     if (!modbusClient) {
                         throw new Error("Failed to initialize Modbus client");
                     }
@@ -152,11 +152,11 @@ module.exports = function (RED: NodeAPI) {
             configCheckInterval = setInterval(async () => {
                 try {
                     const newConfig = readModbusConfig();
-                    
+
                     // Check if mode has changed or if critical config has changed
                     let hasChanged = false;
                     let changeDescription = "";
-                    
+
                     if (currentModbusConfig.mode !== newConfig.mode) {
                         hasChanged = true;
                         changeDescription = `mode changed from ${currentModbusConfig.mode} to ${newConfig.mode}`;
@@ -164,7 +164,7 @@ module.exports = function (RED: NodeAPI) {
                         // Check single mode config changes
                         const oldCfg = currentModbusConfig.config;
                         const newCfg = newConfig.config;
-                        hasChanged = 
+                        hasChanged =
                             oldCfg.host !== newCfg.host ||
                             oldCfg.tcpPort !== newCfg.tcpPort ||
                             oldCfg.serialPort !== newCfg.serialPort ||
@@ -184,7 +184,7 @@ module.exports = function (RED: NodeAPI) {
 
                     if (hasChanged) {
                         logger.log(`[HOT-RELOAD] Config change detected: ${changeDescription}`);
-                        
+
                         // Reinitialize based on new mode
                         if (newConfig.mode === 'multi') {
                             const multiConfig: MultiModbusConfig = {
@@ -193,7 +193,7 @@ module.exports = function (RED: NodeAPI) {
                                 boards: newConfig.boards
                             };
                             ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
-                            
+
                             // Get new client for current board
                             const boardToUse = currentBoardId || newConfig.defaultBoard;
                             modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
@@ -204,16 +204,16 @@ module.exports = function (RED: NodeAPI) {
                                 modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
                             }
                         }
-                        
+
                         // Update service with new client
                         if (modbusGetterService && modbusClient) {
                             (modbusGetterService as any).modbusClient = modbusClient;
                         }
-                        
+
                         currentModbusConfig = { ...newConfig };
                         isMultiBoardMode = newConfig.mode === 'multi';
                         logger.log(`[HOT-RELOAD] Modbus reloaded: ${changeDescription}`);
-                        
+
                         // Show brief reload notification
                         node.status({ fill: "green", shape: "dot", text: `Reloaded: ${changeDescription}` });
                         setTimeout(() => {
@@ -237,26 +237,26 @@ module.exports = function (RED: NodeAPI) {
                     // Check if a different board is requested in the payload (multi-board mode)
                     // Priority: msg.payload.boardId > config.boardId > defaultBoard
                     const targetBoardId = (msg.payload && msg.payload.boardId) || currentBoardId;
-                    
+
                     if (isMultiBoardMode && targetBoardId && targetBoardId !== currentBoardId) {
                         const requestedBoardId = targetBoardId;
                         logger.log(`Switching to board: ${requestedBoardId}`);
-                        
+
                         // Release current board connection
                         if (currentBoardId) {
                             ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
                         }
-                        
+
                         // Get client for requested board
                         try {
                             modbusClient = await ClientRegistry.getModbusClientV2(requestedBoardId, node);
                             currentBoardId = requestedBoardId;
-                            
+
                             // Update service with new client
                             if (modbusGetterService) {
                                 (modbusGetterService as any).modbusClient = modbusClient;
                             }
-                            
+
                             logger.log(`Switched to board: ${requestedBoardId}`);
                         } catch (error) {
                             throw new Error(`Failed to switch to board ${requestedBoardId}: ${(error as Error).message}`);
@@ -379,5 +379,5 @@ module.exports = function (RED: NodeAPI) {
     }
 
     // Register the node type
-    RED.nodes.registerType("viis-modbus-getter", ViisModbusGetterNode);
+    RED.nodes.registerType("viis-modbus-flex", ViisModbusGetterNode);
 };

@@ -2,7 +2,7 @@
  * @fileoverview VIIS Error Monitor Node
  * Monitors Modbus data (holding registers, input registers, coils) for errors
  * and creates/resolves notifications automatically based on error code mappings.
- * 
+ *
  * Features:
  * - Auto-detect errors from Modbus data arrays
  * - Support holding registers, input registers, and coils
@@ -10,7 +10,7 @@
  * - Uses error code mappings from global context
  * - Deduplication via ErrorNotificationService
  * - Configurable via UI or msg properties
- * 
+ *
  * @author VIIS Team
  * @version 1.0.0
  */
@@ -76,11 +76,11 @@ module.exports = function (RED: NodeAPI) {
 
                 // Get data array from msg.payload
                 let dataArray: any[] = [];
-                
+
                 if (Array.isArray(msg.payload)) {
                     dataArray = msg.payload;
                 } else if (msg.payload?.data && Array.isArray(msg.payload.data)) {
-                    // Support viis-modbus-getter format: { success: true, data: [...] }
+                    // Support viis-modbus-flex format: { success: true, data: [...] }
                     dataArray = msg.payload.data;
                 } else {
                     node.error('msg.payload must be an array or { data: [...] }', msg);
@@ -138,7 +138,7 @@ module.exports = function (RED: NodeAPI) {
                                     message: notification.message,
                                     severity: notification.severity
                                 });
-                                
+
                                 node.warn(`Error detected at ${registerType} ${address}: ${notification.err_code}`);
                             }
                         } catch (dbError: any) {
