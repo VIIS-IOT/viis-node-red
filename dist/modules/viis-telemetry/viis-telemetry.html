@@ -1,0 +1,499 @@
+<script type="text/html" data-template-name="viis-telemetry">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalCoil"><i class="fa fa-clock-o"></i> Coil Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalCoil" placeholder="1000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalInput"><i class="fa fa-clock-o"></i> Input Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalInput" placeholder="1000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollIntervalHolding"><i class="fa fa-clock-o"></i> Holding Poll Interval (ms)</label>
+        <input type="text" id="node-input-pollIntervalHolding" placeholder="5000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-coilStartAddress"><i class="fa fa-map-marker"></i> Coil Start Address</label>
+        <input type="text" id="node-input-coilStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-coilQuantity"><i class="fa fa-list"></i> Coil Quantity</label>
+        <input type="text" id="node-input-coilQuantity" placeholder="32">
+    </div>
+    <div class="form-row">
+        <label for="node-input-inputStartAddress"><i class="fa fa-map-marker"></i> Input Start Address</label>
+        <input type="text" id="node-input-inputStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-inputQuantity"><i class="fa fa-list"></i> Input Quantity</label>
+        <input type="text" id="node-input-inputQuantity" placeholder="26">
+    </div>
+    <div class="form-row">
+        <label for="node-input-holdingStartAddress"><i class="fa fa-map-marker"></i> Holding Start Address</label>
+        <input type="text" id="node-input-holdingStartAddress" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-holdingQuantity"><i class="fa fa-list"></i> Holding Quantity</label>
+        <input type="text" id="node-input-holdingQuantity" placeholder="29">
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableDebugLog"><i class="fa fa-bug"></i> Enable Debug Log</label>
+        <input type="checkbox" id="node-input-enableDebugLog" style="width:auto;">
+    </div>
+    <!-- Threshold Configuration Section -->
+    <div class="form-row">
+        <label><i class="fa fa-sliders"></i> Threshold Configuration</label>
+        <div class="threshold-config-section">
+            <div class="threshold-header">
+                <span class="threshold-description">Configure change thresholds for telemetry publishing</span>
+            </div>
+            <div id="threshold-config-container" class="threshold-container"></div>
+            <div class="threshold-actions">
+                <button id="add-threshold-config" type="button" class="red-ui-button red-ui-button-small">
+                    <i class="fa fa-plus"></i> Add Threshold
+                </button>
+            </div>
+            <input type="hidden" id="node-input-thresholdConfig">
+        </div>
+    </div>
+
+    <!-- Periodic Snapshot Configuration Section -->
+    <div class="form-row">
+        <label><i class="fa fa-camera"></i> Periodic Snapshot Configuration</label>
+        <div class="snapshot-config-section">
+            <div class="snapshot-description">
+                Set intervals for periodic data snapshots (0 = disabled)
+            </div>
+            <div class="snapshot-grid">
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalCoil" class="snapshot-label">
+                        <i class="fa fa-circle-o"></i> Coil Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalCoil" placeholder="0" class="snapshot-input">
+                </div>
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalInput" class="snapshot-label">
+                        <i class="fa fa-sign-in"></i> Input Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalInput" placeholder="0" class="snapshot-input">
+                </div>
+                <div class="snapshot-item">
+                    <label for="node-input-periodicSnapshotIntervalHolding" class="snapshot-label">
+                        <i class="fa fa-database"></i> Holding Interval (ms)
+                    </label>
+                    <input type="text" id="node-input-periodicSnapshotIntervalHolding" placeholder="0" class="snapshot-input">
+                </div>
+            </div>
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-telemetry">
+    <p>A node to periodically poll Modbus Coils, Input Registers, and Holding Registers, then publish telemetry data to ThingsBoard and local EMQX.</p>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>Telemetry data as key-value pairs (numbers or booleans) sent to ThingsBoard and EMQX local.</dd>
+    </dl>
+    <h3>Details</h3>
+    <p>This node uses a shared instance of ModbusClientCore and two MqttClientCore instances (one for ThingsBoard, one for EMQX local) to poll data from Modbus mappings defined in environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>). It publishes changes to <code>v1/devices/me/telemetry</code> (ThingsBoard) and <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX local).</p>
+</script>
+
+<!-- CodeMirror dependencies removed as they are no longer used -->
+
+<style>
+    /* Threshold Configuration Styles */
+    .threshold-config-section {
+        background: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 12px;
+        margin-top: 5px;
+    }
+
+    .threshold-header {
+        margin-bottom: 10px;
+    }
+
+    .threshold-description {
+        font-size: 12px;
+        color: #666;
+        font-style: italic;
+    }
+
+    .threshold-container {
+        margin-bottom: 10px;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 3px;
+        padding: 5px;
+        background: white;
+    }
+
+    .threshold-row {
+        display: flex;
+        margin-bottom: 8px;
+        align-items: center;
+        padding: 5px;
+        background: #fafafa;
+        border-radius: 3px;
+        border: 1px solid #eee;
+    }
+
+    .threshold-row:last-child {
+        margin-bottom: 0;
+    }
+
+    .threshold-key {
+        flex: 2;
+        margin-right: 8px;
+    }
+
+    .threshold-value {
+        flex: 1;
+        margin-right: 8px;
+    }
+
+    .threshold-button {
+        flex: 0 0 auto;
+        min-width: 30px;
+    }
+
+    .threshold-row select,
+    .threshold-row input {
+        width: 100%;
+        padding: 4px 6px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 12px;
+    }
+
+    .threshold-actions {
+        text-align: center;
+        padding-top: 5px;
+        border-top: 1px solid #eee;
+    }
+
+    /* Periodic Snapshot Configuration Styles */
+    .snapshot-config-section {
+        background: #f0f8ff;
+        border: 1px solid #b0d4f1;
+        border-radius: 4px;
+        padding: 12px;
+        margin-top: 5px;
+    }
+
+    .snapshot-description {
+        font-size: 12px;
+        color: #2c5aa0;
+        font-style: italic;
+        margin-bottom: 12px;
+        text-align: center;
+    }
+
+    .snapshot-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+    }
+
+    .snapshot-item {
+        background: white;
+        border: 1px solid #d0e7ff;
+        border-radius: 4px;
+        padding: 10px;
+        text-align: center;
+    }
+
+    .snapshot-label {
+        display: block;
+        font-size: 11px;
+        font-weight: bold;
+        color: #2c5aa0;
+        margin-bottom: 6px;
+        text-align: center;
+    }
+
+    .snapshot-label i {
+        margin-right: 4px;
+    }
+
+    .snapshot-input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 12px;
+        text-align: center;
+    }
+
+    .snapshot-input:focus {
+        border-color: #2c5aa0;
+        outline: none;
+        box-shadow: 0 0 3px rgba(44, 90, 160, 0.3);
+    }
+
+    /* Responsive design for smaller screens */
+    @media (max-width: 600px) {
+        .snapshot-grid {
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .threshold-row {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .threshold-key,
+        .threshold-value,
+        .threshold-button {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        .threshold-button {
+            align-self: center;
+            margin-bottom: 0;
+        }
+    }
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-telemetry", {
+        category: "function",
+        color: "#99BC85",
+        defaults: {
+            name: { value: "" },
+            pollIntervalCoil: { value: "1000", required: true, validate: RED.validators.number() },
+            pollIntervalInput: { value: "1000", required: true, validate: RED.validators.number() },
+            pollIntervalHolding: { value: "5000", required: true, validate: RED.validators.number() },
+            coilStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            coilQuantity: { value: "32", required: true, validate: RED.validators.number() },
+            inputStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            inputQuantity: { value: "26", required: true, validate: RED.validators.number() },
+            holdingStartAddress: { value: "0", required: true, validate: RED.validators.number() },
+            holdingQuantity: { value: "29", required: true, validate: RED.validators.number() },
+            enableDebugLog: { value: false },
+            thresholdConfig: { value: "{}" },
+            periodicSnapshotIntervalCoil: { value: "0" },
+            periodicSnapshotIntervalInput: { value: "0" },
+            periodicSnapshotIntervalHolding: { value: "0" },
+        },
+        inputs: 0,
+        outputs: 1,
+        icon: "spider-web.png",
+        label: function () {
+            return this.name || "viis-telemetry";
+        },
+        oneditprepare: function () {
+            // Handle enableDebugLog checkbox
+            $("#node-input-enableDebugLog").prop("checked", this.enableDebugLog === true);
+            // Handle thresholdConfig with new UI
+            const thresholdConfigField = $("#node-input-thresholdConfig");
+            const thresholdConfigContainer = $("#threshold-config-container");
+            let thresholdConfig = {};
+
+            try {
+                const thresholdConfigValue = thresholdConfigField.val();
+                if (thresholdConfigValue) {
+                    thresholdConfig = JSON.parse(thresholdConfigValue);
+                }
+            } catch (e) {
+                console.error("Failed to parse thresholdConfig", e);
+                thresholdConfig = {};
+            }
+
+            // Get list of keys from environment variables or use default list
+            const getModbusKeys = function () {
+                // Try to get from API endpoint first
+                let envKeys = [];
+
+                try {
+                    // Call API to get environment variables (synchronous)
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', '/viis-telemetry/modbus-keys', false); // false = synchronous
+                    xhr.send();
+
+                    if (xhr.status === 200) {
+                        const response = JSON.parse(xhr.responseText);
+                        if (response.success && response.keys) {
+                            envKeys = response.keys;
+                        }
+                    }
+                } catch (error) {
+                    console.warn("Could not fetch Modbus keys from environment:", error);
+                }
+
+                // If can't get from environment, use default list
+                if (envKeys.length === 0) {
+                    envKeys = [
+                        // // Holding Registers (thường dùng cho cảm biến analog)
+                        // "temperature", "humidity", "pressure", "voltage", "current",
+                        // "power", "energy", "flow_rate", "level", "speed",
+                        // "setpoint_temp", "setpoint_pressure", "analog_input_1",
+                        // "analog_input_2", "analog_input_3", "analog_input_4",
+
+                        // // Input Registers (thường dùng cho trạng thái đọc)
+                        // "sensor_status", "alarm_status", "system_status",
+                        // "input_register_1", "input_register_2", "input_register_3",
+
+                        // // Coils (thường dùng cho digital I/O)
+                        // "pump_status", "valve_status", "motor_status", "alarm_active",
+                        // "manual_mode", "auto_mode", "emergency_stop", "system_enable",
+                        // "coil_1", "coil_2", "coil_3", "coil_4", "coil_5",
+
+                        // Special key
+                        "all" // Default threshold for all keys
+                    ];
+                }
+
+                // Add special key "all" if not present
+                if (!envKeys.includes("all")) {
+                    envKeys.push("all");
+                }
+
+                // Remove duplicates and sort
+                return [...new Set(envKeys)].sort();
+            };
+
+            // Function to add a threshold configuration row
+            const addThresholdRow = function (key = "", value = 0.1) {
+                const row = $("<div>").addClass("threshold-row");
+
+                // Select box cho key
+                const keySelect = $("<select>").addClass("threshold-key");
+                const keys = getModbusKeys();
+
+                // Thêm option cho mỗi key
+                keys.forEach(k => {
+                    const option = $("<option>").val(k).text(k);
+                    keySelect.append(option);
+                });
+
+                // Thêm option cho custom key
+                keySelect.append($("<option>").val("__custom__").text("Custom Key..."));
+
+                // Thêm thông tin hướng dẫn
+                if (keys.length === 1 && keys[0] === "all") {
+                    keySelect.append($("<option>").attr("disabled", true).text("--- Note: Using default keys ---"));
+                    keySelect.append($("<option>").attr("disabled", true).text("--- Deploy node to see actual Modbus keys ---"));
+                }
+
+                // Input cho custom key (ẩn ban đầu)
+                const customKeyInput = $("<input>")
+                    .attr("type", "text")
+                    .attr("placeholder", "Custom key")
+                    .addClass("threshold-key")
+                    .hide();
+
+                // Input cho threshold value
+                const valueInput = $("<input>")
+                    .attr("type", "number")
+                    .attr("step", "0.01")
+                    .attr("min", "0")
+                    .addClass("threshold-value")
+                    .val(value);
+
+                // Nút xóa
+                const removeBtn = $("<button>")
+                    .addClass("red-ui-button threshold-button")
+                    .html('<i class="fa fa-trash"></i>')
+                    .on("click", function () {
+                        row.remove();
+                    });
+
+                // Xử lý khi chọn custom key
+                keySelect.on("change", function () {
+                    if ($(this).val() === "__custom__") {
+                        $(this).hide();
+                        customKeyInput.show().focus();
+                    }
+                });
+
+                // Xử lý khi blur khỏi custom key input
+                customKeyInput.on("blur", function () {
+                    const customValue = $(this).val();
+                    if (!customValue) {
+                        $(this).hide();
+                        keySelect.val(keys[0]).show();
+                    }
+                });
+
+                // Nếu key đã tồn tại trong danh sách, chọn nó
+                if (keys.includes(key)) {
+                    keySelect.val(key);
+                } else if (key) {
+                    // Nếu là custom key
+                    keySelect.val("__custom__").hide();
+                    customKeyInput.val(key).show();
+                }
+
+                // Thêm các phần tử vào dòng
+                row.append(keySelect)
+                    .append(customKeyInput)
+                    .append(valueInput)
+                    .append(removeBtn);
+
+                // Thêm dòng vào container
+                thresholdConfigContainer.append(row);
+            };
+
+            // Thêm dòng cho mỗi cấu hình threshold hiện có
+            Object.entries(thresholdConfig).forEach(([key, value]) => {
+                addThresholdRow(key, value);
+            });
+
+            // Nếu không có cấu hình nào, thêm một dòng mặc định
+            if (Object.keys(thresholdConfig).length === 0) {
+                addThresholdRow("all", 0.1);
+            }
+
+            // Xử lý nút thêm threshold
+            $("#add-threshold-config").on("click", function () {
+                addThresholdRow();
+            });
+        },
+        oneditsave: function () {
+            // Lưu trạng thái enableDebugLog
+            this.enableDebugLog = $("#node-input-enableDebugLog").is(":checked");
+
+            // Lưu thresholdConfig từ form
+            const thresholdConfig = {};
+
+            $(".threshold-row").each(function () {
+                let key;
+                const keySelect = $(this).find("select.threshold-key");
+                const customKeyInput = $(this).find("input.threshold-key");
+                const valueInput = $(this).find("input.threshold-value");
+
+                // Lấy key từ select hoặc custom input
+                if (keySelect.is(":visible") && keySelect.val() !== "__custom__") {
+                    key = keySelect.val();
+                } else {
+                    key = customKeyInput.val();
+                }
+
+                // Lấy value
+                const value = parseFloat(valueInput.val());
+
+                // Thêm vào config nếu hợp lệ
+                if (key && !isNaN(value)) {
+                    thresholdConfig[key] = value;
+                }
+            });
+
+            // Lưu vào hidden input
+            $("#node-input-thresholdConfig").val(JSON.stringify(thresholdConfig));
+
+            // Lưu periodicSnapshotInterval
+            this.periodicSnapshotIntervalCoil = $("#node-input-periodicSnapshotIntervalCoil").val() || "0";
+            this.periodicSnapshotIntervalInput = $("#node-input-periodicSnapshotIntervalInput").val() || "0";
+            this.periodicSnapshotIntervalHolding = $("#node-input-periodicSnapshotIntervalHolding").val() || "0";
+        }
+    });
+</script>

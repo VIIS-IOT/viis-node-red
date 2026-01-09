@@ -1,0 +1,126 @@
+<!--
+  VIIS Sync Customer User Node
+  This node synchronizes customer and customer user data between the local database and server
+-->
+
+<script type="text/html" data-template-name="viis-sync-customer-user">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-deviceId"><i class="fa fa-key"></i> Device ID</label>
+        <input type="text" id="node-input-deviceId" placeholder="Auto-loaded from DEVICE_ID env">
+        <div style="margin-left: 105px; color: #666; font-size: 11px;">
+            Optional - Auto-loads from DEVICE_ID environment variable if not provided
+        </div>
+    </div>
+    <div class="form-row">
+        <label for="node-input-useEnvDeviceId"><i class="fa fa-toggle-on"></i> Use Env Variable</label>
+        <input type="checkbox" id="node-input-useEnvDeviceId" style="width: auto;">
+        <div style="margin-left: 105px; color: #666; font-size: 11px;">
+            Always load from DEVICE_ID environment variable (ignore input above)
+        </div>
+    </div>
+    <div class="form-row">
+        <label for="node-input-syncInterval"><i class="fa fa-clock-o"></i> Sync Interval (min)</label>
+        <input type="number" id="node-input-syncInterval" min="0" placeholder="60">
+    </div>
+    <div class="form-row">
+        <label for="node-input-syncOnStartup"><i class="fa fa-play"></i> Sync on Startup</label>
+        <input type="checkbox" id="node-input-syncOnStartup" style="width: auto;" checked>
+    </div>
+    <div class="form-row">
+        <label for="node-input-showDetailedLogs"><i class="fa fa-list"></i> Detailed Logs</label>
+        <input type="checkbox" id="node-input-showDetailedLogs" style="width: auto;">
+    </div>
+    <div class="form-row">
+        <label for="node-input-maxRetries"><i class="fa fa-repeat"></i> Max Retries</label>
+        <input type="number" id="node-input-maxRetries" min="1" max="10" placeholder="3">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-sync-customer-user">
+    <p>A node for synchronizing customers and customer users between VIIS IoT server and local database.</p>
+    
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload
+            <span class="property-type">object | any</span>
+        </dt>
+        <dd>Any input message will trigger a manual sync operation. The message payload can be of any type.</dd>
+    </dl>
+    
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload
+            <span class="property-type">object</span>
+        </dt>
+        <dd>
+            <p>Contains the result of the sync operation:</p>
+            <ul>
+                <li><code>status</code> - "success" or "error"</li>
+                <li><code>message</code> - Description of the result</li>
+                <li><code>result</code> - Detailed sync statistics (only on success)</li>
+            </ul>
+        </dd>
+    </dl>
+    
+    <h3>Details</h3>
+    <p>This node synchronizes customer and customer user data between the VIIS IoT server and the local database. It performs the following operations:</p>
+    <ul>
+        <li>Fetches customer and user data from the VIIS IoT server</li>
+        <li>Creates new customers and users in the local database if they don't exist</li>
+        <li>Updates existing customers and users if the server version is newer</li>
+        <li>Marks users as deleted if they no longer exist on the server</li>
+        <li>Synchronizes customer user credentials</li>
+    </ul>
+    
+    <h3>Configuration</h3>
+    <ul>
+        <li><code>Device ID</code> - (Optional) Device ID for authentication with the VIIS IoT API. If not provided, will auto-load from DEVICE_ID environment variable.</li>
+        <li><code>Use Env Variable</code> - When checked, always loads from DEVICE_ID environment variable and ignores the Device ID input field.</li>
+        <li><code>Sync Interval</code> - How often to automatically sync (in minutes, 0 to disable)</li>
+        <li><code>Sync on Startup</code> - Whether to perform a sync when the node starts</li>
+        <li><code>Detailed Logs</code> - Enable to see more detailed log information</li>
+        <li><code>Max Retries</code> - Maximum number of retry attempts for API calls</li>
+    </ul>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('viis-sync-customer-user', {
+        category: 'VIIS IoT',
+        color: '#a6bbcf',
+        defaults: {
+            name: { value: "" },
+            deviceId: { value: "", required: false },
+            useEnvDeviceId: { value: false },
+            syncInterval: { value: 60, required: true, validate: RED.validators.number() },
+            syncOnStartup: { value: true },
+            showDetailedLogs: { value: false },
+            maxRetries: { value: 3, required: true, validate: RED.validators.number() }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "sync.png",
+        label: function () {
+            return this.name || "viis-sync-customer-user";
+        },
+        paletteLabel: "sync customer user",
+        inputLabels: ["trigger sync"],
+        outputLabels: ["sync result"],
+        oneditprepare: function() {
+            // Disable device ID input when useEnvDeviceId is checked
+            const updateDeviceIdState = function() {
+                const useEnv = $('#node-input-useEnvDeviceId').is(':checked');
+                $('#node-input-deviceId').prop('disabled', useEnv);
+                if (useEnv) {
+                    $('#node-input-deviceId').val('');
+                }
+            };
+            
+            $('#node-input-useEnvDeviceId').on('change', updateDeviceIdState);
+            updateDeviceIdState();
+        }
+    });
+</script>

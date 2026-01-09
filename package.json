@@ -56,7 +56,7 @@
   },
   "node-red": {
     "nodes": {
-      "viis-automation-node": "dist/viis-automation-node.js",
+      "viis-automation-node": "dist/modules/viis-automation-node/viis-automation-node.js",
       "viis-config-node": "dist/viis-config-node.js",
       "viis-device-events": "dist/viis-device-events.js",
       "viis-upload-events": "dist/viis-upload-telemetry.js",
