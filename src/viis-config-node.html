@@ -34,10 +34,16 @@
   </div>
   <div class="form-row">
     <label><i class="fa fa-desktop"></i> Device ID</label>
-    <input type="text" id="device-id" placeholder="Device ID" />
+    <input type="text" id="device-id" placeholder="Auto-loaded from env or enter manually" />
+    <div class="form-tips" style="margin-top: 5px;">
+      <small style="color: #666;"><i class="fa fa-info-circle"></i> Leave empty to auto-load from <code>device_id</code> in global context or <code>DEVICE_ID</code> env var</small>
+    </div>
   </div>
   <div class="form-row">
     <label><i class="fa fa-key"></i> Token</label>
-    <input type="text" id="device-token" placeholder="Access Token" />
+    <input type="text" id="device-token" placeholder="Auto-loaded from env or enter manually" />
+    <div class="form-tips" style="margin-top: 5px;">
+      <small style="color: #666;"><i class="fa fa-info-circle"></i> Leave empty to auto-load from <code>device_access_token</code> in global context or <code>DEVICE_ACCESS_TOKEN</code> env var</small>
+    </div>
   </div>
 </script>

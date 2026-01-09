@@ -27,8 +27,19 @@ module.exports = function (RED: NodeAPI) {
       node.error("Configuration node not found");
       return;
     }
-    // Lấy thông tin thiết bị được chọn
+
+    // Get device credentials (auto-loaded from config node)
     const selectedDevice = configNode.device;
+
+    // Validate credentials
+    if (!selectedDevice || !selectedDevice.id || !selectedDevice.accessToken) {
+      node.error("Device credentials not found. Configure viis-config-node or set device_id/device_access_token in env-loader");
+      node.status({ fill: "red", shape: "ring", text: "No credentials" });
+      return;
+    }
+
+    node.log(`Using device: ${selectedDevice.id}`);
+    // Lấy thông tin thiết bị được chọn
 
     async function processIntents(
       intents: DeviceIntent[],
