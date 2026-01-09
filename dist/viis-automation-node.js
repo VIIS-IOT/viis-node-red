@@ -75,7 +75,7 @@ module.exports = function (RED) {
         });
         async function getMyIntents() {
             try {
-                const intents = await (0, device_1.getDeviceIntentsByToken)(selectedDevice.accessToken);
+                const intents = await (0, device_1.getDeviceIntentsByToken)(selectedDevice.accessToken, node.context());
                 node.context().set("intents", intents || []);
                 node.status({
                     fill: "green",

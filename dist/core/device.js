@@ -6,10 +6,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendTelemetryByHttp = sendTelemetryByHttp;
 exports.getDeviceIntentsByToken = getDeviceIntentsByToken;
 const axios_1 = __importDefault(require("axios"));
+const global_context_helper_1 = require("../ultils/global-context-helper");
 const const_1 = require("../const");
-async function sendTelemetryByHttp(token, telemetryData) {
+async function sendTelemetryByHttp(token, telemetryData, context) {
     try {
-        const response = await axios_1.default.post(`${const_1.httpServerUrl}/api/v1/${token}/telemetry`, telemetryData, { headers: { "Content-Type": "application/json" } });
+        // Use GlobalContextHelper to get server URL like viis-schedule-executor
+        const globalHelper = context ? new global_context_helper_1.GlobalContextHelper(context) : null;
+        const serverUrl = globalHelper
+            ? globalHelper.getEnvVar('VIIS_BACKEND', const_1.DEFAULT_HTTP_SERVER_URL)
+            : (process.env.VIIS_BACKEND || const_1.DEFAULT_HTTP_SERVER_URL);
+        const response = await axios_1.default.post(`${serverUrl}/api/v1/${token}/telemetry`, telemetryData, { headers: { "Content-Type": "application/json" } });
         return true;
     }
     catch (error) {
@@ -22,9 +28,15 @@ async function sendTelemetryByHttp(token, telemetryData) {
         return false;
     }
 }
-async function getDeviceIntentsByToken(token) {
+async function getDeviceIntentsByToken(token, context) {
     try {
-        const response = await axios_1.default.get(`${const_1.httpServerUrl}/api/v2/device-intent/by-device-token/${token}`, {
+        // Use GlobalContextHelper to get server URL like viis-schedule-executor
+        const globalHelper = context ? new global_context_helper_1.GlobalContextHelper(context) : null;
+        const serverUrl = globalHelper
+            ? globalHelper.getEnvVar('VIIS_BACKEND', const_1.DEFAULT_HTTP_SERVER_URL)
+            : (process.env.VIIS_BACKEND || const_1.DEFAULT_HTTP_SERVER_URL);
+        console.log(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`);
+        const response = await axios_1.default.get(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`, {
             headers: { "Content-Type": "application/json" },
             timeout: 10000 // 10 second timeout
         });

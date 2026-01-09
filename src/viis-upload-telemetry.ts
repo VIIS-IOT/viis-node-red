@@ -82,7 +82,8 @@ module.exports = function (RED: NodeAPI) {
       } else if (config.protocol === "HTTP") {
         const status = await sendTelemetryByHttp(
           configNode.device.accessToken,
-          msg.payload
+          msg.payload,
+          node.context()
         );
         if (status) {
           node.send({

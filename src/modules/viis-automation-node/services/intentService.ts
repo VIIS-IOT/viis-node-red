@@ -35,7 +35,10 @@ export class IntentService {
         try {
             this.logger.log(`Fetching intents for device: ${this.credentials.id}`);
 
-            const intents = await getDeviceIntentsByToken(this.credentials.accessToken);
+            const intents = await getDeviceIntentsByToken(
+                this.credentials.accessToken,
+                this.node.context()
+            );
 
             this.logger.log(`Fetched ${intents ? intents.length : 0} intents from server`);
 

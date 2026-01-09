@@ -23,7 +23,7 @@ class IntentService {
     async fetchIntentsFromServer() {
         try {
             this.logger.log(`Fetching intents for device: ${this.credentials.id}`);
-            const intents = await (0, device_1.getDeviceIntentsByToken)(this.credentials.accessToken);
+            const intents = await (0, device_1.getDeviceIntentsByToken)(this.credentials.accessToken, this.node.context());
             this.logger.log(`Fetched ${intents ? intents.length : 0} intents from server`);
             return intents || [];
         }

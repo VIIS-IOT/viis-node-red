@@ -94,7 +94,8 @@ module.exports = function (RED: NodeAPI) {
     async function getMyIntents() {
       try {
         const intents = await getDeviceIntentsByToken(
-          selectedDevice.accessToken
+          selectedDevice.accessToken,
+          node.context()
         );
         node.context().set("intents", intents || []);
 

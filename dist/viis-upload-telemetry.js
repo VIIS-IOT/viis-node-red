@@ -66,7 +66,7 @@ module.exports = function (RED) {
                 }
             }
             else if (config.protocol === "HTTP") {
-                const status = await (0, device_1.sendTelemetryByHttp)(configNode.device.accessToken, msg.payload);
+                const status = await (0, device_1.sendTelemetryByHttp)(configNode.device.accessToken, msg.payload, node.context());
                 if (status) {
                     node.send({
                         payload: {
