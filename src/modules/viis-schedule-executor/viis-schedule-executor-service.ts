@@ -32,9 +32,11 @@ export class ScheduleService {
     private node: Node; // Thêm biến để giữ node từ Node-RED
     private globalHelper: GlobalContextHelper; // Thêm GlobalContextHelper
     private debugEnable: boolean; // Thêm biến debugEnable
-    constructor(node?: Node, debugEnable: boolean = false) { // Add debugEnable parameter
+    private verifyAfterWrite: boolean; // Enable/disable write verification
+    constructor(node?: Node, verifyAfterWrite: boolean = true) { // Add verifyAfterWrite parameter, default true
         this.node = node;
-        this.debugEnable = debugEnable; // Store debugEnable
+        this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
+        this.debugEnable = false; // debugEnable is controlled by node config
         this.globalHelper = node ? new GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -622,8 +624,20 @@ export class ScheduleService {
 
     /**
      * Xác thực việc ghi modbus
+     * @param modbusClient - Modbus client instance
+     * @param commands - Array of Modbus commands to verify
+     * @returns Promise<boolean> - true if verification passed or disabled, false if verification failed
      */
     async verifyModbusWrite(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<boolean> {
+        // If verification is disabled, return true immediately
+        if (!this.verifyAfterWrite) {
+            this.debugLog(`Verification disabled - skipping readback verification for ${commands.length} commands`);
+            if (this.node) {
+                this.node.warn(`⏭️  VERIFICATION SKIPPED: ${commands.length} commands (verifyAfterWrite = false)`);
+            }
+            return true;
+        }
+
         for (const cmd of commands) {
             try {
                 let readResult: { data: any[] };
@@ -1406,8 +1420,8 @@ export class ScheduleService {
             // Note: 0 and false are valid values for control commands
             if (value === "" || value === null || value === undefined) {
                 console.warn(`Skipping RPC control command for ${key}: value is empty/null/undefined`);
-                return { 
-                    success: false, 
+                return {
+                    success: false,
                     action: 'config',
                     result: { key, error: 'Empty or null value not allowed' }
                 };

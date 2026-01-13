@@ -67,6 +67,7 @@ module.exports = function (RED) {
         }
         node.name = config.name;
         const debugEnable = config.debugEnable; // Read debugEnable from config
+        const verifyAfterWrite = config.verifyAfterWrite !== false; // Default to true if not specified
         const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
         // Multi-board state variables
         let currentBoardId = config.boardId;
@@ -133,7 +134,7 @@ module.exports = function (RED) {
         };
         let scheduleService;
         try {
-            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node);
+            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node, verifyAfterWrite);
             debugLog("ScheduleService initialized successfully");
         }
         catch (error) {

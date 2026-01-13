@@ -57,9 +57,10 @@ const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
 // require('dotenv').config();
 let ScheduleService = class ScheduleService {
-    constructor(node, debugEnable = false) {
+    constructor(node, verifyAfterWrite = true) {
         this.node = node;
-        this.debugEnable = debugEnable; // Store debugEnable
+        this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
+        this.debugEnable = false; // debugEnable is controlled by node config
         this.globalHelper = node ? new global_context_helper_1.GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -610,8 +611,19 @@ let ScheduleService = class ScheduleService {
     }
     /**
      * Xác thực việc ghi modbus
+     * @param modbusClient - Modbus client instance
+     * @param commands - Array of Modbus commands to verify
+     * @returns Promise<boolean> - true if verification passed or disabled, false if verification failed
      */
     async verifyModbusWrite(modbusClient, commands) {
+        // If verification is disabled, return true immediately
+        if (!this.verifyAfterWrite) {
+            this.debugLog(`Verification disabled - skipping readback verification for ${commands.length} commands`);
+            if (this.node) {
+                this.node.warn(`⏭️  VERIFICATION SKIPPED: ${commands.length} commands (verifyAfterWrite = false)`);
+            }
+            return true;
+        }
         for (const cmd of commands) {
             try {
                 let readResult;

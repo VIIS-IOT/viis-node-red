@@ -1,0 +1,296 @@
+"use strict";
+/**
+ * Unit tests for verifyAfterWrite toggle feature
+ * Tests the ability to enable/disable write verification for schedules
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+const viis_schedule_executor_service_1 = require("../viis-schedule-executor-service");
+// Mock Node-RED node
+const mockNode = {
+    warn: jest.fn(),
+    error: jest.fn(),
+    log: jest.fn(),
+    context: jest.fn(() => ({
+        global: {
+            get: jest.fn((key) => {
+                if (key === 'scaleConfigs')
+                    return [];
+                if (key === 'activeModbusCommands')
+                    return {};
+                if (key === 'manualModbusOverrides')
+                    return {};
+                return null;
+            }),
+            set: jest.fn()
+        },
+        flow: {
+            get: jest.fn(),
+            set: jest.fn()
+        }
+    }))
+};
+// Mock Modbus client
+const mockModbusClient = {
+    readCoils: jest.fn(),
+    readHoldingRegisters: jest.fn(),
+    writeCoil: jest.fn(),
+    writeRegister: jest.fn()
+};
+describe('ScheduleService - Verify After Write Toggle', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+    describe('Constructor and Initialization', () => {
+        test('should default verifyAfterWrite to true when not specified', () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode);
+            expect(service.verifyAfterWrite).toBe(true);
+        });
+        test('should accept verifyAfterWrite = true', () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            expect(service.verifyAfterWrite).toBe(true);
+        });
+        test('should accept verifyAfterWrite = false', () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            expect(service.verifyAfterWrite).toBe(false);
+        });
+    });
+    describe('verifyModbusWrite - When Verification Enabled', () => {
+        let service;
+        beforeEach(() => {
+            service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true); // Enable verification
+        });
+        test('should verify coil write and return true when values match', async () => {
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }
+            ];
+            mockModbusClient.readCoils.mockResolvedValue({
+                data: [true]
+            });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).toHaveBeenCalledWith(10, 1);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('✅ VERIFICATION SUCCESS'));
+        });
+        test('should verify holding register write and return true when values match', async () => {
+            const commands = [
+                { key: 'setpoint', value: 100, fc: 6, unitid: 1, address: 20, quantity: 1 }
+            ];
+            mockModbusClient.readHoldingRegisters.mockResolvedValue({
+                data: [100]
+            });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledWith(20, 1);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('✅ VERIFICATION SUCCESS'));
+        });
+        test('should return false when coil verification fails (value mismatch)', async () => {
+            const commands = [
+                { key: 'valve', value: true, fc: 5, unitid: 1, address: 15, quantity: 1 }
+            ];
+            mockModbusClient.readCoils.mockResolvedValue({
+                data: [false] // Different from expected value
+            });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(false);
+            expect(mockModbusClient.readCoils).toHaveBeenCalledWith(15, 1);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION FAILED'));
+        });
+        test('should return false when holding register verification fails (value mismatch)', async () => {
+            const commands = [
+                { key: 'flow_rate', value: 250, fc: 6, unitid: 1, address: 25, quantity: 1 }
+            ];
+            mockModbusClient.readHoldingRegisters.mockResolvedValue({
+                data: [200] // Different from expected value
+            });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(false);
+            expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledWith(25, 1);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION FAILED'));
+        });
+        test('should verify multiple commands correctly', async () => {
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
+                { key: 'setpoint', value: 100, fc: 6, unitid: 1, address: 20, quantity: 1 },
+                { key: 'valve', value: false, fc: 5, unitid: 1, address: 11, quantity: 1 }
+            ];
+            mockModbusClient.readCoils
+                .mockResolvedValueOnce({ data: [true] })
+                .mockResolvedValueOnce({ data: [false] });
+            mockModbusClient.readHoldingRegisters
+                .mockResolvedValueOnce({ data: [100] });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).toHaveBeenCalledTimes(2);
+            expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledTimes(1);
+        });
+        test('should return false if any command verification fails', async () => {
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
+                { key: 'setpoint', value: 100, fc: 6, unitid: 1, address: 20, quantity: 1 }
+            ];
+            mockModbusClient.readCoils.mockResolvedValue({ data: [true] });
+            mockModbusClient.readHoldingRegisters.mockResolvedValue({ data: [99] }); // Mismatch
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(false);
+        });
+        test('should return false on read error during verification', async () => {
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }
+            ];
+            mockModbusClient.readCoils.mockRejectedValue(new Error('Connection timeout'));
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(false);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION ERROR'));
+        });
+    });
+    describe('verifyModbusWrite - When Verification Disabled', () => {
+        let service;
+        beforeEach(() => {
+            service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false); // Disable verification
+        });
+        test('should return true immediately without reading when verification disabled', async () => {
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }
+            ];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).not.toHaveBeenCalled();
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('⏭️  VERIFICATION SKIPPED'));
+        });
+        test('should skip verification for multiple commands', async () => {
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
+                { key: 'pump2', value: false, fc: 5, unitid: 1, address: 11, quantity: 1 },
+                { key: 'setpoint', value: 100, fc: 6, unitid: 1, address: 20, quantity: 1 }
+            ];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).not.toHaveBeenCalled();
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('VERIFICATION SKIPPED: 3 commands'));
+        });
+        test('should return true even if actual values would differ', async () => {
+            // This tests the scenario where write/read values differ normally
+            const commands = [
+                { key: 'special_register', value: 1000, fc: 6, unitid: 1, address: 50, quantity: 1 }
+            ];
+            // Even though Modbus would return a different value, we don't check it
+            mockModbusClient.readHoldingRegisters.mockResolvedValue({
+                data: [999] // Different value, but we don't care when verification is disabled
+            });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+        });
+        test('should skip verification for empty command array', async () => {
+            const commands = [];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).not.toHaveBeenCalled();
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+        });
+    });
+    describe('Edge Cases and Boundary Conditions', () => {
+        test('should handle verification enabled with empty command array', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const commands = [];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).not.toHaveBeenCalled();
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+        });
+        test('should handle verification disabled with empty command array', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const commands = [];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+        });
+        test('should handle unknown function codes gracefully when verification enabled', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const commands = [
+                { key: 'unknown', value: 123, fc: 99, unitid: 1, address: 30, quantity: 1 } // Unknown FC
+            ];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true); // Should skip unknown FC and return true
+            expect(mockModbusClient.readCoils).not.toHaveBeenCalled();
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+        });
+        test('should handle mixed valid and unknown function codes when verification enabled', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const commands = [
+                { key: 'pump', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
+                { key: 'unknown', value: 123, fc: 99, unitid: 1, address: 30, quantity: 1 }
+            ];
+            mockModbusClient.readCoils.mockResolvedValue({ data: [true] });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readCoils).toHaveBeenCalledTimes(1);
+        });
+    });
+    describe('Integration Scenario Tests', () => {
+        test('should work correctly in write-read mismatch scenario (verification disabled)', async () => {
+            // Scenario: Some PLCs scale values differently on read than write
+            // Example: Writing 1000 but reading back 100 (scaled by 10)
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const commands = [
+                { key: 'scaled_value', value: 1000, fc: 6, unitid: 1, address: 40, quantity: 1 }
+            ];
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(true);
+            expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
+        });
+        test('should fail correctly in write-read mismatch scenario (verification enabled)', async () => {
+            // Same scenario but with verification enabled - should fail
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const commands = [
+                { key: 'scaled_value', value: 1000, fc: 6, unitid: 1, address: 40, quantity: 1 }
+            ];
+            mockModbusClient.readHoldingRegisters.mockResolvedValue({
+                data: [100] // PLC returns scaled value
+            });
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(false);
+            expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalled();
+        });
+        test('should handle transient read errors when verification enabled', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const commands = [
+                { key: 'pump', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }
+            ];
+            mockModbusClient.readCoils.mockRejectedValue(new Error('Modbus exception: Illegal data address'));
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(result).toBe(false);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION ERROR'));
+        });
+    });
+    describe('Performance and Behavior Tests', () => {
+        test('verification disabled should be significantly faster (no read operations)', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const commands = [
+                { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
+                { key: 'pump2', value: true, fc: 5, unitid: 1, address: 11, quantity: 1 },
+                { key: 'pump3', value: true, fc: 5, unitid: 1, address: 12, quantity: 1 }
+            ];
+            const startTime = Date.now();
+            const result = await service.verifyModbusWrite(mockModbusClient, commands);
+            const duration = Date.now() - startTime;
+            expect(result).toBe(true);
+            expect(duration).toBeLessThan(10); // Should complete almost instantly
+            expect(mockModbusClient.readCoils).not.toHaveBeenCalled();
+        });
+        test('should log appropriate message count when verification skipped', async () => {
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const commands = Array.from({ length: 10 }, (_, i) => ({
+                key: `pump${i}`,
+                value: true,
+                fc: 5,
+                unitid: 1,
+                address: i,
+                quantity: 1
+            }));
+            await service.verifyModbusWrite(mockModbusClient, commands);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('VERIFICATION SKIPPED: 10 commands'));
+        });
+    });
+});

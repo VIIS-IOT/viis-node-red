@@ -26,6 +26,7 @@ export interface ScheduleExecutorNodeDef extends NodeDef {
     description: string;
     debugEnable: boolean; // Add debugEnable property
     cleanupInterval: number; // Cleanup interval in minutes for stale status history
+    verifyAfterWrite: boolean; // Enable/disable write verification
     boardMode?: 'auto' | 'single' | 'multi';
     boardId?: string;
 }

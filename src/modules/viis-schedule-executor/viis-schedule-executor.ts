@@ -76,6 +76,7 @@ module.exports = function (RED: NodeAPI) {
 
         node.name = config.name;
         const debugEnable = config.debugEnable; // Read debugEnable from config
+        const verifyAfterWrite = config.verifyAfterWrite !== false; // Default to true if not specified
         const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
 
         // Multi-board state variables
@@ -160,7 +161,7 @@ module.exports = function (RED: NodeAPI) {
 
         let scheduleService: ScheduleService;
         try {
-            scheduleService = new ScheduleService(node);
+            scheduleService = new ScheduleService(node, verifyAfterWrite);
             debugLog("ScheduleService initialized successfully");
         } catch (error) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
@@ -254,7 +255,7 @@ module.exports = function (RED: NodeAPI) {
         // Get Modbus client
         let modbusClient: ModbusClientCore;
         let modbusUnitId: number;
-        
+
         // Async initialization - defer Modbus client setup
         const modbusClientPromise = (async () => {
             if (isMultiBoardMode) {
@@ -269,7 +270,7 @@ module.exports = function (RED: NodeAPI) {
                 return { client, unitId: configData.config.unitId };
             }
         })();
-        
+
         // Initialize synchronously - actual connection happens in background
         modbusClientPromise.then(({ client, unitId }) => {
             modbusClient = client;
@@ -288,7 +289,7 @@ module.exports = function (RED: NodeAPI) {
                         modbusUnitId = unitId;
                     });
                 }
-                
+
                 // Initialize MQTT clients
                 const thingsboardClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
                 const emqxClient: MqttClientCore = await ClientRegistry.getLocalMqttClient(emqxConfig, node);
