@@ -185,9 +185,10 @@ module.exports = function (RED: NodeAPI) {
                     };
 
                 // Define MQTT topics
+                // Always use wildcard for RPC requests to receive all RPC commands
                 const subscribeTopic = config.mqttBroker === "thingsboard"
-                    ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
-                    : `v1/devices/me/rpc/request/${deviceId}`;
+                    ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC  // "v1/devices/me/rpc/request/+"
+                    : MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC; // Also use wildcard for local MQTT
                 const publishTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
                     : `v1/devices/me/telemetry/${deviceId}`;
