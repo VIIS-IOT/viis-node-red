@@ -101,7 +101,8 @@ module.exports = function (RED: NodeAPI) {
                     clientId: `node-red-automation-${Math.random().toString(16).substring(2, 10)}`,
                     username: credentials.accessToken, // Use device access token
                     password: "",
-                    qos: MQTT_CONFIG.THINGSBOARD.QOS
+                    qos: MQTT_CONFIG.THINGSBOARD.QOS,
+                    healthCheckInterval: 0 // Disable health check to prevent false positive reconnects
                 };
 
                 // Define MQTT topic for intent updates (use wildcard for subscription)

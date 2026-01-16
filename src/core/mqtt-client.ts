@@ -425,8 +425,10 @@ export class MqttClientCore extends EventEmitter {
             JSON.stringify(healthData),
             { qos: 0, retain: false }
         ).catch((error: Error) => {
+            // Don't trigger reconnection on health check failure
+            // Health check failures can be false positives and cause unnecessary reconnects
             this.node.warn(`Health check failed: ${error.message}`);
-            this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
+            // Removed: this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
         });
     }
 
@@ -559,7 +561,7 @@ export class MqttClientCore extends EventEmitter {
                     // Format message for logging
                     const messageStr = Buffer.isBuffer(message) ? message.toString('utf8') : message;
                     const truncatedMsg = messageStr.length > 200 ? messageStr.substring(0, 200) + '...' : messageStr;
-                    
+
                     // Try to parse as JSON for better readability
                     let displayMsg = truncatedMsg;
                     try {
@@ -571,7 +573,7 @@ export class MqttClientCore extends EventEmitter {
                     } catch {
                         // Not JSON, use as is
                     }
-                    
+
                     // this.node.log(`Published to topic: ${topic} | Message: ${displayMsg}`);
                     resolve();
                 }
@@ -584,13 +586,21 @@ export class MqttClientCore extends EventEmitter {
     // Resubscribe tất cả các topic khi reconnect
     private resubscribeTopics(): void {
         if (!this.client) return;
+
+        // Only log resubscribe if there are topics to resubscribe
+        const topicsCount = this.subscribedTopics.size;
+        if (topicsCount === 0) return;
+
+        // Use a single log message for all resubscriptions to reduce spam
+        const topics = Array.from(this.subscribedTopics);
+        this.node.log(`Resubscribing to ${topicsCount} topic(s): ${topics.join(', ')}`);
+
         this.subscribedTopics.forEach((topic) => {
             this.client.subscribe(topic, { qos: this.config.qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to resubscribe to ${topic}: ${err.message}`);
-                } else {
-                    this.node.log(`Resubscribed to topic: ${topic}`);
                 }
+                // Remove individual success log to reduce spam
             });
         });
     }

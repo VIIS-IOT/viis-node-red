@@ -304,8 +304,10 @@ class MqttClientCore extends events_1.EventEmitter {
             memory: process.memoryUsage().heapUsed
         };
         this.publishMessage("v1/devices/me/telemetry", JSON.stringify(healthData), { qos: 0, retain: false }).catch((error) => {
+            // Don't trigger reconnection on health check failure
+            // Health check failures can be false positives and cause unnecessary reconnects
             this.node.warn(`Health check failed: ${error.message}`);
-            this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
+            // Removed: this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
         });
     }
     // Alias for publish method to maintain consistency
@@ -453,14 +455,19 @@ class MqttClientCore extends events_1.EventEmitter {
     resubscribeTopics() {
         if (!this.client)
             return;
+        // Only log resubscribe if there are topics to resubscribe
+        const topicsCount = this.subscribedTopics.size;
+        if (topicsCount === 0)
+            return;
+        // Use a single log message for all resubscriptions to reduce spam
+        const topics = Array.from(this.subscribedTopics);
+        this.node.log(`Resubscribing to ${topicsCount} topic(s): ${topics.join(', ')}`);
         this.subscribedTopics.forEach((topic) => {
             this.client.subscribe(topic, { qos: this.config.qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to resubscribe to ${topic}: ${err.message}`);
                 }
-                else {
-                    this.node.log(`Resubscribed to topic: ${topic}`);
-                }
+                // Remove individual success log to reduce spam
             });
         });
     }
