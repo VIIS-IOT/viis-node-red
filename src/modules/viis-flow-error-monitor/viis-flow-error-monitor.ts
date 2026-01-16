@@ -105,19 +105,16 @@ module.exports = function (RED: NodeAPI) {
                         }
                     };
 
+                    node.warn(`[DEBUG] Sending test notification: ${JSON.stringify(testError)}`);
+
                     try {
                         await errorNotificationService.createFromBusinessLogic(testError);
                         node.warn('✅ Test notification sent successfully');
                         node.status({ fill: 'green', shape: 'dot', text: 'Test notification sent' });
-                    } catch (dbError: any) {
-                        // If DB not ready, still show success in UI but log warning
-                        if (dbError.message === 'Notification repository not initialized' ||
-                            dbError.message === 'Database not initialized') {
-                            node.warn('⚠️ Test notification: DB not ready, but notification API call would be triggered');
-                            node.status({ fill: 'yellow', shape: 'dot', text: 'Test sent (DB pending)' });
-                        } else {
-                            throw dbError; // Re-throw unexpected errors
-                        }
+                    } catch (err: any) {
+                        node.error(`Test notification failed: ${err.message}`);
+                        node.status({ fill: 'red', shape: 'ring', text: 'Test failed' });
+                        throw err; // Re-throw all errors for visibility
                     }
 
                     setTimeout(() => {
@@ -429,7 +426,7 @@ module.exports = function (RED: NodeAPI) {
                                 channel,
                                 volumeData[channel] || 0,
                                 setFlowData[channel],
-                                elapsedRunTime
+                                elapsedRunTime  // Use original logic: global elapsedRunTime
                             );
                         }
                     }

@@ -74,21 +74,16 @@ module.exports = function (RED) {
                             ts: now.format('YYYY-MM-DD HH:mm:ss')
                         }
                     };
+                    node.warn(`[DEBUG] Sending test notification: ${JSON.stringify(testError)}`);
                     try {
                         await errorNotificationService.createFromBusinessLogic(testError);
                         node.warn('✅ Test notification sent successfully');
                         node.status({ fill: 'green', shape: 'dot', text: 'Test notification sent' });
                     }
-                    catch (dbError) {
-                        // If DB not ready, still show success in UI but log warning
-                        if (dbError.message === 'Notification repository not initialized' ||
-                            dbError.message === 'Database not initialized') {
-                            node.warn('⚠️ Test notification: DB not ready, but notification API call would be triggered');
-                            node.status({ fill: 'yellow', shape: 'dot', text: 'Test sent (DB pending)' });
-                        }
-                        else {
-                            throw dbError; // Re-throw unexpected errors
-                        }
+                    catch (err) {
+                        node.error(`Test notification failed: ${err.message}`);
+                        node.status({ fill: 'red', shape: 'ring', text: 'Test failed' });
+                        throw err; // Re-throw all errors for visibility
                     }
                     setTimeout(() => {
                         node.status({ fill: 'grey', shape: 'ring', text: 'Ready' });
@@ -331,7 +326,8 @@ module.exports = function (RED) {
                     }
                     for (const channel in volumeData) {
                         if (setFlowData[channel] > 0 && timeValveData[channel] > 0) {
-                            await checkInitialFlow(channel, volumeData[channel] || 0, setFlowData[channel], elapsedRunTime);
+                            await checkInitialFlow(channel, volumeData[channel] || 0, setFlowData[channel], elapsedRunTime // Use original logic: global elapsedRunTime
+                            );
                         }
                     }
                     node.context().set('elapsedRunTime', elapsedRunTime);
