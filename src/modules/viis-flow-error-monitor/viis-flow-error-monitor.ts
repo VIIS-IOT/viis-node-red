@@ -79,18 +79,18 @@ module.exports = function (RED: NodeAPI) {
                     const deviceLabel = globalContext.get('device_label') || globalHelper.getEnvVar('DEVICE_ID', 'unknown');
                     const deviceId = globalHelper.getEnvVar('DEVICE_ID', 'unknown');
 
-                    // Create test message that looks like production F5 error
+                    // Create test message that looks like production F4 error
                     const testChannel = 'A1';
-                    const testActualFlow = 6.5;
+                    const testActualFlow = 8.5;
                     const testExpectedFlow = 10.0;
-                    const testElapsedTime = 1.2;
-                    const testMessage = `[TEST] Phát hiện lọt khí hoặc hết phân tại kênh ${testChannel}, hệ thống sẽ tự động dừng bơm để bảo vệ thiết bị. Lưu lượng thực tế: ${testActualFlow.toFixed(2)} lít, Mong đợi: ${testExpectedFlow.toFixed(2)} lít, Thời gian: ${testElapsedTime.toFixed(2)} phút`;
+                    const testElapsedTime = 5.2;
+                    const testMessage = `[TEST] Lưu lượng kênh ${testChannel} không đạt chuẩn sau khi dừng, cần kiểm tra hệ thống tưới. Thực tế: ${testActualFlow.toFixed(2)} lít, Mong đợi: ${testExpectedFlow.toFixed(2)} lít, Thời gian: ${testElapsedTime.toFixed(2)} phút`;
 
                     const testError: BusinessLogicError = {
-                        err_code: 'F5',
+                        err_code: 'F4',
                         message: testMessage,
-                        severity: 'low',
-                        type: 'info',
+                        severity: 'high',
+                        type: 'error',
                         entity: deviceId,
                         entity_label: deviceLabel,
                         metadata: {
@@ -100,7 +100,7 @@ module.exports = function (RED: NodeAPI) {
                             actualVolume: testActualFlow,
                             expectedVolume: testExpectedFlow,
                             elapsedMinutes: testElapsedTime,
-                            threshold: 0.8,
+                            tolerance: 0.03,
                             ts: now.format('YYYY-MM-DD HH:mm:ss')
                         }
                     };
