@@ -1,4 +1,4 @@
-# VIIS Modbus Getter Node
+# VIIS Modbus Flex Node
 
 A custom Node-RED node for reading data from Modbus devices using shared connection resources. This node provides a simple interface similar to the standard modbus-flex-getter but uses the VIIS shared modbus client for efficient resource management.
 
@@ -95,7 +95,7 @@ msg.payload = {
 };
 return msg;
 
-// VIIS Modbus Getter node processes the request
+// VIIS Modbus Flex node processes the request
 
 // Debug node shows result
 // Success: { success: true, data: [...], ... }

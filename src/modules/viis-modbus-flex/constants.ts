@@ -1,5 +1,5 @@
 /**
- * Constants for VIIS Modbus Getter Node
+ * Constants for VIIS Modbus Flex Node
  */
 
 // Modbus Function Codes

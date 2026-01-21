@@ -4,7 +4,7 @@
         "type": "tab",
         "label": "Modbus Connection Sharing Demo",
         "disabled": false,
-        "info": "Demo flow để test connection sharing giữa nhiều VIIS Modbus Getter nodes"
+        "info": "Demo flow để test connection sharing giữa nhiều VIIS Modbus Flex nodes"
     },
     {
         "id": "modbus-getter-1",
@@ -152,7 +152,7 @@
         "type": "comment",
         "z": "demo-flow",
         "name": "Connection Sharing Demo",
-        "info": "Flow này demo việc chia sẻ modbus connection giữa 3 VIIS Modbus Getter nodes.\n\nKiểm tra debug logs để thấy:\n- Reference count tăng khi deploy nodes\n- Chỉ 1 connection được tạo\n- Reference count giảm khi xóa nodes\n- Connection cleanup khi xóa hết nodes",
+        "info": "Flow này demo việc chia sẻ modbus connection giữa 3 VIIS Modbus Flex nodes.\n\nKiểm tra debug logs để thấy:\n- Reference count tăng khi deploy nodes\n- Chỉ 1 connection được tạo\n- Reference count giảm khi xóa nodes\n- Connection cleanup khi xóa hết nodes",
         "x": 150,
         "y": 50,
         "wires": []

@@ -1,7 +1,7 @@
 /**
- * Test example for VIIS Modbus Getter Node
+ * Test example for VIIS Modbus Flex Node
  *
- * This file demonstrates how to use the VIIS Modbus Getter node
+ * This file demonstrates how to use the VIIS Modbus Flex node
  * in a Node-RED flow to read data from Modbus devices.
  */
 

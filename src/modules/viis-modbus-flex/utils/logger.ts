@@ -1,7 +1,7 @@
 import { Node } from "node-red";
 
 /**
- * Logger utility for VIIS Modbus Getter Node
+ * Logger utility for VIIS Modbus Flex Node
  */
 export class Logger {
     private node: Node;

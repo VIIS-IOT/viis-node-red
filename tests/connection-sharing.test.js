@@ -8,7 +8,7 @@ const viisModbusGetterNode = require("../src/modules/viis-modbus-flex/viis-modbu
 
 helper.init(require.resolve('node-red'));
 
-describe('VIIS Modbus Getter Connection Sharing', function () {
+describe('VIIS Modbus Flex Connection Sharing', function () {
     beforeEach(function (done) {
         helper.startServer(done);
     });
@@ -152,7 +152,7 @@ describe('VIIS Modbus Getter Connection Sharing', function () {
  */
 function manualConnectionTest() {
     console.log("=== Manual Connection Sharing Test ===");
-    console.log("1. Deploy 2-3 VIIS Modbus Getter nodes trong Node-RED");
+    console.log("1. Deploy 2-3 VIIS Modbus Flex nodes trong Node-RED");
     console.log("2. Kiểm tra debug logs cho:");
     console.log("   - [MODBUS-INIT] messages");
     console.log("   - Reference count tăng lên");

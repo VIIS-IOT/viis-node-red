@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Constants for VIIS Modbus Getter Node
+ * Constants for VIIS Modbus Flex Node
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VALIDATION_LIMITS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.ENV_KEYS = exports.DEFAULT_CONFIG = exports.MODBUS_FUNCTION_CODES = void 0;

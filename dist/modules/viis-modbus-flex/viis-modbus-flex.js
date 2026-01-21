@@ -9,7 +9,7 @@ const modbusGetterService_1 = require("./services/modbusGetterService");
 const logger_1 = require("./utils/logger");
 const constants_1 = require("./constants");
 /**
- * VIIS Modbus Getter Node
+ * VIIS Modbus Flex Node
  * A custom Node-RED node for reading data from Modbus devices using shared connection resources
  */
 module.exports = function (RED) {
@@ -25,7 +25,7 @@ module.exports = function (RED) {
         try {
             // Initialize logger with enableLogging flag from config
             logger = new logger_1.Logger(node, node.id, config.enableLogging);
-            logger.log("Initializing VIIS Modbus Getter Node...");
+            logger.log("Initializing VIIS Modbus Flex Node...");
             // Set initial status
             node.status({ fill: "yellow", shape: "ring", text: constants_1.STATUS_MESSAGES.INITIALIZING });
             // Initialize GlobalContextHelper for environment variables
@@ -279,7 +279,7 @@ module.exports = function (RED) {
                             }
                         }
                     });
-                    logger.log("VIIS Modbus Getter Node initialized successfully");
+                    logger.log("VIIS Modbus Flex Node initialized successfully");
                 }
                 catch (initError) {
                     const errorMessage = initError instanceof Error ? initError.message : 'Unknown async initialization error';
@@ -302,7 +302,7 @@ module.exports = function (RED) {
         // Cleanup when node is closed
         node.on("close", (done) => {
             try {
-                logger.log("Closing VIIS Modbus Getter Node...");
+                logger.log("Closing VIIS Modbus Flex Node...");
                 // Stop config check interval
                 if (configCheckInterval) {
                     clearInterval(configCheckInterval);
@@ -320,7 +320,7 @@ module.exports = function (RED) {
                 }
                 // Clear service reference
                 modbusGetterService = null;
-                logger.log("VIIS Modbus Getter Node closed successfully");
+                logger.log("VIIS Modbus Flex Node closed successfully");
                 if (done) {
                     done();
                 }

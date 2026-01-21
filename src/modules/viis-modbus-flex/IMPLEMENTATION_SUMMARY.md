@@ -1,8 +1,8 @@
-# VIIS Modbus Getter Node - Implementation Summary
+# VIIS Modbus Flex Node - Implementation Summary
 
 ## Overview
 
-The VIIS Modbus Getter Node is a custom Node-RED node that provides a simple interface for reading data from Modbus devices. It uses the shared modbus client from the VIIS system for efficient resource management, similar to the standard modbus-flex-getter but with better integration into the VIIS ecosystem.
+The VIIS Modbus Flex Node is a custom Node-RED node that provides a simple interface for reading data from Modbus devices. It uses the shared modbus client from the VIIS system for efficient resource management, similar to the standard modbus-flex-getter but with better integration into the VIIS ecosystem.
 
 ## Architecture
 

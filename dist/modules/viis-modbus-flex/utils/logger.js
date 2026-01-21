@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Logger = void 0;
 /**
- * Logger utility for VIIS Modbus Getter Node
+ * Logger utility for VIIS Modbus Flex Node
  */
 class Logger {
     constructor(node, nodeId, enableLogging = false) {

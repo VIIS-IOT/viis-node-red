@@ -7,7 +7,7 @@ import { Logger } from "./utils/logger";
 import { DEFAULT_CONFIG, ENV_KEYS, STATUS_MESSAGES } from "./constants";
 
 /**
- * VIIS Modbus Getter Node
+ * VIIS Modbus Flex Node
  * A custom Node-RED node for reading data from Modbus devices using shared connection resources
  */
 module.exports = function (RED: NodeAPI) {
@@ -24,7 +24,7 @@ module.exports = function (RED: NodeAPI) {
         try {
             // Initialize logger with enableLogging flag from config
             logger = new Logger(node, node.id, config.enableLogging);
-            logger.log("Initializing VIIS Modbus Getter Node...");
+            logger.log("Initializing VIIS Modbus Flex Node...");
 
             // Set initial status
             node.status({ fill: "yellow", shape: "ring", text: STATUS_MESSAGES.INITIALIZING });
@@ -316,7 +316,7 @@ module.exports = function (RED: NodeAPI) {
                 }
             });
 
-            logger.log("VIIS Modbus Getter Node initialized successfully");
+            logger.log("VIIS Modbus Flex Node initialized successfully");
 
                 } catch (initError) {
                     const errorMessage = initError instanceof Error ? initError.message : 'Unknown async initialization error';
@@ -341,7 +341,7 @@ module.exports = function (RED: NodeAPI) {
         // Cleanup when node is closed
         node.on("close", (done: any) => {
             try {
-                logger.log("Closing VIIS Modbus Getter Node...");
+                logger.log("Closing VIIS Modbus Flex Node...");
 
                 // Stop config check interval
                 if (configCheckInterval) {
@@ -362,7 +362,7 @@ module.exports = function (RED: NodeAPI) {
                 // Clear service reference
                 modbusGetterService = null;
 
-                logger.log("VIIS Modbus Getter Node closed successfully");
+                logger.log("VIIS Modbus Flex Node closed successfully");
 
                 if (done) {
                     done();
