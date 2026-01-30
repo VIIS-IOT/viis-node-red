@@ -18,6 +18,23 @@ class ClientRegistry {
             release();
         }
     }
+    /**
+     * Board-specific mutex lock to prevent race conditions
+     * when multiple nodes request the same board simultaneously
+     */
+    static async withBoardLock(boardId, fn) {
+        let release;
+        const next = new Promise(r => { release = r; });
+        const current = this.boardLocks.get(boardId) || Promise.resolve();
+        this.boardLocks.set(boardId, next);
+        await current;
+        try {
+            return await fn();
+        }
+        finally {
+            release();
+        }
+    }
     // Start automatic recovery mechanism
     static startRecoveryMechanism() {
         if (this.recoveryTimer)
@@ -190,11 +207,11 @@ class ClientRegistry {
         // Handle different input types
         if (typeof config === 'string') {
             // Board ID provided - multi-board mode
-            return this.getModbusBoardClient(config, node);
+            return await this.getModbusBoardClient(config, node);
         }
         else if (typeof config === 'object' && 'boardId' in config && config.boardId) {
             // Object with boardId - multi-board mode
-            return this.getModbusBoardClient(config.boardId, node);
+            return await this.getModbusBoardClient(config.boardId, node);
         }
         else if (typeof config === 'object' && 'config' in config && config.config) {
             // Object with config - single mode
@@ -207,41 +224,54 @@ class ClientRegistry {
     }
     /**
      * Get client for specific board in multi-board mode
+     * Uses mutex lock to prevent race conditions when multiple nodes
+     * request the same serial port (RTU) simultaneously
      */
-    static getModbusBoardClient(boardId, node) {
+    static async getModbusBoardClient(boardId, node) {
         var _a;
         // Use default board if not specified
         const targetBoardId = boardId || this.defaultBoardId;
         if (!targetBoardId) {
             throw new Error("[MODBUS-MULTI] No board ID specified and no default board configured");
         }
-        // Initialize board users tracking if needed
-        if (!this.clientUsers.modbusBoards.has(targetBoardId)) {
-            this.clientUsers.modbusBoards.set(targetBoardId, new Set());
-        }
-        // Check if board exists in pool
-        if (!this.modbusBoardPool.has(targetBoardId)) {
-            const boardConfig = this.modbusBoardConfigs.get(targetBoardId);
-            if (!boardConfig) {
-                throw new Error(`[MODBUS-MULTI] Board config not found for ID: ${targetBoardId}`);
+        // Use board-specific lock to prevent race conditions
+        // This is critical for RTU connections where only one process can lock the serial port
+        await this.withBoardLock(targetBoardId, async () => {
+            // Initialize board users tracking if needed
+            if (!this.clientUsers.modbusBoards.has(targetBoardId)) {
+                this.clientUsers.modbusBoards.set(targetBoardId, new Set());
             }
-            try {
-                // Create new connection for this board
-                const client = new modbus_client_1.ModbusClientCore(boardConfig, node);
-                this.modbusBoardPool.set(targetBoardId, client);
-                // Track connections
-                if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
-                    this.activeConnections.modbusBoards.set(targetBoardId, 0);
+            // Check if board exists in pool (inside lock to prevent race condition)
+            if (!this.modbusBoardPool.has(targetBoardId)) {
+                const boardConfig = this.modbusBoardConfigs.get(targetBoardId);
+                if (!boardConfig) {
+                    throw new Error(`[MODBUS-MULTI] Board config not found for ID: ${targetBoardId}`);
                 }
-                this.activeConnections.modbusBoards.set(targetBoardId, (this.activeConnections.modbusBoards.get(targetBoardId) || 0) + 1);
-                node.warn(`[MODBUS-MULTI] Created connection for board: ${targetBoardId} (${boardConfig.host}:${boardConfig.tcpPort})`);
+                try {
+                    // Log connection type for debugging
+                    if (boardConfig.type === 'RTU') {
+                        node.warn(`[MODBUS-MULTI] Creating RTU connection for board: ${targetBoardId} (${boardConfig.serialPort}@${boardConfig.baudRate})`);
+                    }
+                    else {
+                        node.warn(`[MODBUS-MULTI] Creating TCP connection for board: ${targetBoardId} (${boardConfig.host}:${boardConfig.tcpPort})`);
+                    }
+                    // Create new connection for this board
+                    const client = new modbus_client_1.ModbusClientCore(boardConfig, node);
+                    this.modbusBoardPool.set(targetBoardId, client);
+                    // Track connections
+                    if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
+                        this.activeConnections.modbusBoards.set(targetBoardId, 0);
+                    }
+                    this.activeConnections.modbusBoards.set(targetBoardId, (this.activeConnections.modbusBoards.get(targetBoardId) || 0) + 1);
+                    node.warn(`[MODBUS-MULTI] Successfully created connection for board: ${targetBoardId}`);
+                }
+                catch (error) {
+                    node.error(`[MODBUS-MULTI] Failed to create connection for board ${targetBoardId}: ${error.message}`);
+                    throw error;
+                }
             }
-            catch (error) {
-                node.error(`[MODBUS-MULTI] Failed to create connection for board ${targetBoardId}: ${error.message}`);
-                throw error;
-            }
-        }
-        // Update reference counting
+        });
+        // Update reference counting (outside lock - these are thread-safe operations)
         if (!this.boardReferenceCount.has(targetBoardId)) {
             this.boardReferenceCount.set(targetBoardId, 0);
         }
@@ -609,6 +639,8 @@ ClientRegistry.locks = {
     modbus: Promise.resolve(),
     mysql: Promise.resolve()
 };
+// Board-specific locks to prevent race conditions when multiple nodes request same board
+ClientRegistry.boardLocks = new Map();
 // Track which nodes are using which clients for debugging
 ClientRegistry.clientUsers = {
     modbus: new Set(),
