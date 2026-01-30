@@ -342,8 +342,6 @@ module.exports = function (RED: NodeAPI) {
                             message,
                             subscribeTopic,
                             async (payload: any) => {
-                                // Log incoming RPC request
-                                node.warn(`[RPC] Received: ${JSON.stringify(payload)}`);
                                 await rpcHandler.handleRpcRequest(payload);
                             }
                         );

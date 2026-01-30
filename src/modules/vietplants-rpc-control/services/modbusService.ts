@@ -269,9 +269,6 @@ export class ModbusService implements IModbusService {
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
             writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
 
-            // Debug: Log the type of writeValue
-            this.node.warn(`[RPC] WRITE-DEBUG ${key}: value=${writeValue} typeof=${typeof writeValue}`);
-
             // Apply scaling for numeric values - also handle string numbers
             if (typeof writeValue === "string" && !isNaN(Number(writeValue))) {
                 writeValue = Number(writeValue);
@@ -633,9 +630,6 @@ export class ModbusService implements IModbusService {
         try {
             let writeValue = value;
 
-            // Debug log
-            this.node.warn(`[RPC] WRITE-BOARD ${boardId} ${key}: value=${writeValue} typeof=${typeof writeValue}`);
-
             // Apply scaling for numeric values
             if (typeof writeValue === "string" && !isNaN(Number(writeValue))) {
                 writeValue = Number(writeValue);
@@ -664,7 +658,7 @@ export class ModbusService implements IModbusService {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
             }
 
-            this.logger.log(`[BOARD-WRITE] Successfully wrote ${key}=${writeValue} to ${boardId} at address ${mapping.address}`);
+            this.logger.debug(`[BOARD-WRITE] Wrote ${key}=${writeValue} to ${boardId}`);
         } catch (error) {
             const errorMsg = `Failed to write ${key} to ${boardId}: ${(error as Error).message}`;
             this.logger.error(errorMsg);
@@ -706,7 +700,7 @@ export class ModbusService implements IModbusService {
                 readValue = this.scalingUtils.scaleValue(key, readValue, "read");
             }
 
-            this.logger.log(`[BOARD-READ] Read ${key}=${readValue} from ${boardId} at address ${mapping.address}`);
+            this.logger.debug(`[BOARD-READ] Read ${key}=${readValue} from ${boardId}`);
             return readValue;
         } catch (error) {
             const errorMsg = `Failed to read ${key} from ${boardId}: ${(error as Error).message}`;

@@ -43,25 +43,21 @@ class MqttService {
      * Publish result immediately without debouncing
      */
     async publishResultImmediate(key, value) {
-        this.logger.warn(`[MQTT-RESULT] Publishing result: ${key}=${value} (type: ${typeof value})`);
         const mqttPayload = {
             ts: Date.now(),
             [key]: value,
         };
-        this.logger.warn(`[MQTT-RESULT] Payload before JSON.stringify: ${JSON.stringify(mqttPayload)}`);
         try {
             const payloadString = JSON.stringify(mqttPayload);
-            this.logger.warn(`[MQTT-RESULT] Payload string: ${payloadString}`);
             await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload: mqttPayload });
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.PUBLISHED(key) });
-            this.logger.warn(`Published immediately: ${key}=${value} (type: ${typeof value})`);
+            this.logger.debug(`Published: ${key}=${value}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish ${key}: ${error.message}`;
             this.logger.error(errorMessage);
             this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
             // Don't throw - let local services continue even if MQTT fails
         }
     }
@@ -69,7 +65,6 @@ class MqttService {
      * Publish configuration update result
      */
     async publishConfigUpdate(key, value, note) {
-        this.logger.warn(`[MQTT-CONFIG] Publishing config update: ${key}=${value} (type: ${typeof value})`);
         const mqttPayload = {
             ts: Date.now(),
             [key]: value,
@@ -77,20 +72,17 @@ class MqttService {
         if (note) {
             mqttPayload.note = note;
         }
-        this.logger.warn(`[MQTT-CONFIG] Payload before JSON.stringify: ${JSON.stringify(mqttPayload)}`);
         try {
             const payloadString = JSON.stringify(mqttPayload);
-            this.logger.warn(`[MQTT-CONFIG] Payload string: ${payloadString}`);
             await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload: mqttPayload });
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.CONFIG_UPDATED(key) });
-            this.logger.warn(`Published config update: ${key}=${value} (type: ${typeof value})${note ? ` (${note})` : ''}`);
+            this.logger.debug(`Config update: ${key}=${value}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish config update for ${key}: ${error.message}`;
             this.logger.error(errorMessage);
             this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
             // Don't throw - let local services continue even if MQTT fails
         }
     }
@@ -107,13 +99,12 @@ class MqttService {
             this.node.send({ payload: mqttPayload });
             const keys = Object.keys(values).join(', ');
             this.node.status({ fill: "green", shape: "dot", text: `Published: ${keys}` });
-            this.logger.warn(`Published multiple values: ${JSON.stringify(values)}${note ? ` (${note})` : ''}`);
+            this.logger.debug(`Published multiple values: ${keys}`);
         }
         catch (error) {
             const errorMessage = `Failed to publish multiple values: ${error.message}`;
             this.logger.error(errorMessage);
             this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
             // Don't throw - let local services continue even if MQTT fails
         }
     }
@@ -126,13 +117,12 @@ class MqttService {
             await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload });
             this.node.status({ fill: "green", shape: "dot", text: "Custom payload published" });
-            this.logger.warn(`Published custom payload: ${payloadString}`);
+            this.logger.debug(`Published custom payload`);
         }
         catch (error) {
             const errorMessage = `Failed to publish custom payload: ${error.message}`;
             this.logger.error(errorMessage);
             this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
             // Don't throw - let local services continue even if MQTT fails
         }
     }
@@ -142,10 +132,8 @@ class MqttService {
     clearAllTimeouts() {
         this.publishTimeouts.forEach((timeout, key) => {
             clearTimeout(timeout);
-            this.logger.debug(`Cleared pending timeout for ${key}`);
         });
         this.publishTimeouts.clear();
-        this.logger.warn("Cleared all pending publish timeouts");
     }
     /**
      * Get the number of pending publishes
@@ -184,10 +172,8 @@ class MqttService {
     async flushPendingPublishes() {
         const pendingKeys = Array.from(this.publishTimeouts.keys());
         if (pendingKeys.length === 0) {
-            this.logger.debug("No pending publishes to flush");
             return;
         }
-        this.logger.warn(`Flushing ${pendingKeys.length} pending publishes`);
         // Clear all timeouts and trigger immediate publishes
         for (const key of pendingKeys) {
             const timeout = this.publishTimeouts.get(key);
@@ -215,7 +201,6 @@ class MqttService {
      * Publish error status
      */
     async publishError(errorMessage) {
-        this.logger.warn(`[MQTT-ERROR] Publishing error status: ${errorMessage}`);
         const mqttPayload = {
             ts: Date.now(),
             error: errorMessage,
@@ -225,7 +210,6 @@ class MqttService {
             const payloadString = JSON.stringify(mqttPayload);
             await this.mqttClient.publish(this.publishTopic, payloadString);
             this.node.send({ payload: mqttPayload });
-            this.logger.warn(`Published error status: ${errorMessage}`);
         }
         catch (error) {
             // Don't throw error here to prevent cascading failures

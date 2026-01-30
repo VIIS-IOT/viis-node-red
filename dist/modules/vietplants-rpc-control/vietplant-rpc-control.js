@@ -294,8 +294,6 @@ module.exports = function (RED) {
                 mqttClient.on("mqtt-message", ({ message }) => {
                     try {
                         messageHandler.processMqttMessage(message, subscribeTopic, async (payload) => {
-                            // Log incoming RPC request
-                            node.warn(`[RPC] Received: ${JSON.stringify(payload)}`);
                             await rpcHandler.handleRpcRequest(payload);
                         });
                     }

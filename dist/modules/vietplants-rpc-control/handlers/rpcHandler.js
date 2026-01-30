@@ -25,12 +25,12 @@ class RpcHandler {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
-                    this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
+                    this.logger.debug(`Processing RPC request (attempt ${attempt}/${maxRetries})`);
                     await this.handleSetStateRequest(rpcBody.params);
                     return; // Success
                 }
                 else {
-                    this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
+                    this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
                     return; // No need to retry for unsupported methods
                 }
             }
@@ -38,7 +38,7 @@ class RpcHandler {
                 lastError = error;
                 // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
-                    this.logger.warn(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
+                    this.logger.debug(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying`);
                     await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
                     continue;
                 }
@@ -128,7 +128,7 @@ class RpcHandler {
                 if (attempt < maxRetries) {
                     // Check if MQTT is connected
                     if (!this.mqttService.isConnected()) {
-                        this.logger.warn("MQTT disconnected, waiting for reconnection...");
+                        this.logger.debug("MQTT disconnected, waiting for reconnection...");
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
                     else {
@@ -147,7 +147,7 @@ class RpcHandler {
             // Filter out parameters with "undefined" values
             const filteredParams = this.filterUndefinedParams(params);
             if (Object.keys(filteredParams).length === 0) {
-                this.logger.warn("All parameters were filtered out due to undefined values");
+                this.logger.debug("All parameters were filtered out due to undefined values");
                 this.node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
                 return;
             }
@@ -185,7 +185,7 @@ class RpcHandler {
             filteredParams[key] = value;
         }
         if (filteredKeys.length > 0) {
-            this.logger.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+            this.logger.debug(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
         }
         return filteredParams;
     }
@@ -212,7 +212,7 @@ class RpcHandler {
                 configParams.push([key, rawValue]);
             }
         }
-        this.logger.log(`Processing parameters - Holding: ${holdingParams.length}, Coils: ${coilParams.length}, Config: ${configParams.length}`);
+        this.logger.debug(`Processing parameters - Holding: ${holdingParams.length}, Coils: ${coilParams.length}, Config: ${configParams.length}`);
         // Process in order: holding registers first, then coils, then config-only
         for (const [key, rawValue] of holdingParams) {
             await this.processParameter(key, rawValue);
@@ -223,7 +223,7 @@ class RpcHandler {
         }
         // Add 1 second delay between processing holding registers and coils
         if (holdingParams.length > 0 && coilParams.length > 0) {
-            this.logger.log('Adding 1 second delay between holding registers and coils processing');
+            this.logger.debug('Adding delay between holding registers and coils');
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
         for (const [key, rawValue] of coilParams) {
@@ -281,7 +281,7 @@ class RpcHandler {
             // Skip if value is falsy (empty string, null, undefined, 0, false)
             // Note: 0 and false are valid values, so only skip empty strings and null/undefined
             if (rawValue === "" || rawValue === null || rawValue === undefined) {
-                this.logger.warn(`Skipping config write for ${key}: value is empty/null/undefined`);
+                this.logger.debug(`Skipping config write for ${key}: value is empty/null/undefined`);
                 this.node.status({ fill: "yellow", shape: "ring", text: `Skipped: ${key} (empty value)` });
                 return;
             }
@@ -305,15 +305,15 @@ class RpcHandler {
      */
     validateRpcMessage(rpcBody) {
         if (!rpcBody || typeof rpcBody !== 'object') {
-            this.logger.warn("Invalid RPC body: not an object");
+            this.logger.debug("Invalid RPC body: not an object");
             return false;
         }
         if (!rpcBody.method) {
-            this.logger.warn("Invalid RPC body: missing method");
+            this.logger.debug("Invalid RPC body: missing method");
             return false;
         }
         if (rpcBody.method === "set_state" && !rpcBody.params) {
-            this.logger.warn("Invalid RPC body: set_state method requires params");
+            this.logger.debug("Invalid RPC body: set_state method requires params");
             return false;
         }
         return true;
@@ -340,7 +340,7 @@ class RpcHandler {
                 this.logger.error(`Failed to publish result for ${key} (attempt ${attempt}/${maxRetries}): ${error.message}`);
                 if (attempt < maxRetries) {
                     if (!this.mqttService.isConnected()) {
-                        this.logger.warn("MQTT disconnected, waiting for reconnection...");
+                        this.logger.debug("MQTT disconnected, waiting for reconnection...");
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
                     else {
@@ -358,13 +358,12 @@ class RpcHandler {
         if (!Array.isArray(rpcBodies)) {
             throw new Error("Batch RPC requests must be an array");
         }
-        this.logger.log(`Processing batch of ${rpcBodies.length} RPC requests`);
+        this.logger.debug(`Processing batch of ${rpcBodies.length} RPC requests`);
         const results = [];
         for (let i = 0; i < rpcBodies.length; i++) {
             try {
                 await this.handleRpcRequest(rpcBodies[i]);
                 results.push({ success: true });
-                this.logger.debug(`Batch request ${i + 1}/${rpcBodies.length} completed successfully`);
             }
             catch (error) {
                 const errorMessage = `Batch request ${i + 1}/${rpcBodies.length} failed: ${error.message}`;
@@ -373,7 +372,7 @@ class RpcHandler {
             }
         }
         const successCount = results.filter(r => r.success).length;
-        this.logger.log(`Batch processing completed: ${successCount}/${rpcBodies.length} successful`);
+        this.logger.debug(`Batch processing completed: ${successCount}/${rpcBodies.length} successful`);
         if (successCount < rpcBodies.length) {
             const failedCount = rpcBodies.length - successCount;
             throw new Error(`Batch processing partially failed: ${failedCount} requests failed`);
@@ -396,10 +395,10 @@ class RpcHandler {
                 if (this.isConnectionError(errorMessage)) {
                     this.logger.error(`[RPC-HANDLER] Modbus connection lost: ${errorMessage}`);
                     if (attempt < maxRetries) {
-                        this.logger.warn(`[RPC-HANDLER] Attempting reconnection (${attempt}/${maxRetries})...`);
+                        this.logger.debug(`[RPC-HANDLER] Attempting reconnection (${attempt}/${maxRetries})...`);
                         try {
                             await this.modbusService.checkConnection();
-                            this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying operation...`);
+                            this.logger.debug(`[RPC-HANDLER] Reconnection successful, retrying operation...`);
                             // Continue to next iteration to retry the operation
                         }
                         catch (reconnectError) {
@@ -437,10 +436,10 @@ class RpcHandler {
                 if (this.isConnectionError(errorMessage)) {
                     this.logger.error(`[RPC-HANDLER] Modbus connection lost during read: ${errorMessage}`);
                     if (attempt < maxRetries) {
-                        this.logger.warn(`[RPC-HANDLER] Attempting reconnection for read (${attempt}/${maxRetries})...`);
+                        this.logger.debug(`[RPC-HANDLER] Attempting reconnection for read (${attempt}/${maxRetries})...`);
                         try {
                             await this.modbusService.checkConnection();
-                            this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying read operation...`);
+                            this.logger.debug(`[RPC-HANDLER] Reconnection successful, retrying read operation...`);
                         }
                         catch (reconnectError) {
                             this.logger.error(`[RPC-HANDLER] Reconnection attempt failed: ${reconnectError.message}`);
@@ -512,50 +511,38 @@ class RpcHandler {
             this.logger.error(`Failed to extract pump number from key: ${key}`);
             throw new Error(`Invalid pump coil key: ${key}`);
         }
-        this.logger.log(`[PUMP-ACTIVATION] Starting activation sequence for pump ${pumpNumber}`);
+        this.logger.debug(`[PUMP-ACTIVATION] Starting activation for pump ${pumpNumber}`);
         try {
             // Step 1: Reset total volume on board2
             const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
-            this.logger.log(`[PUMP-ACTIVATION] Step 1: Resetting total volume (${resetKey}) on board2`);
             const board2Client = await this.modbusService.getBoard2Client();
             if (!board2Client) {
-                this.logger.error(`[PUMP-ACTIVATION] Board2 client not available`);
                 throw new Error("Board2 Modbus client not available");
             }
             // Get reset coil mapping from board2
             const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, 'board2');
             if (!resetMapping) {
-                this.logger.error(`[PUMP-ACTIVATION] Reset coil mapping not found for ${resetKey}`);
                 throw new Error(`Reset coil mapping not found: ${resetKey}`);
             }
             // Write reset coil to 1 (true)
             await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, 'board2');
-            this.logger.log(`[PUMP-ACTIVATION] Reset coil written successfully`);
             // Step 2: Verify reset write
             const resetValue = await this.modbusService.readFromModbusBoard(resetKey, resetMapping, 'board2');
-            this.logger.log(`[PUMP-ACTIVATION] Step 2: Verified reset value: ${resetValue}`);
             // Small delay to ensure reset is processed
             await new Promise(resolve => setTimeout(resolve, 200));
             // Step 3: Turn on pump on board1
-            this.logger.log(`[PUMP-ACTIVATION] Step 3: Turning on pump (${key}) on board1`);
             await this.writeToModbusWithRetry(key, mapping, value);
             const pumpValue = await this.readFromModbusWithRetry(key, mapping);
-            this.logger.log(`[PUMP-ACTIVATION] Pump activated successfully: ${pumpValue}`);
             // Step 4: Update pump status on board2
             const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
-            this.logger.log(`[PUMP-ACTIVATION] Step 4: Updating pump status (${statusKey}) on board2`);
             const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, 'board2');
             if (statusMapping) {
                 await this.modbusService.writeToModbusBoard(statusKey, statusMapping, 1, 'board2');
-                this.logger.log(`[PUMP-ACTIVATION] Pump status updated successfully`);
-            }
-            else {
-                this.logger.warn(`[PUMP-ACTIVATION] Pump status mapping not found for ${statusKey}`);
             }
             // Publish the result
             await this.publishResultWithRetry(key, pumpValue);
             this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON (reset done)` });
-            this.logger.log(`[PUMP-ACTIVATION] Activation sequence completed for pump ${pumpNumber}`);
+            this.logger.debug(`[PUMP-ACTIVATION] Completed for pump ${pumpNumber}`);
         }
         catch (error) {
             this.logger.error(`[PUMP-ACTIVATION] Failed to activate pump ${pumpNumber}: ${error.message}`);
