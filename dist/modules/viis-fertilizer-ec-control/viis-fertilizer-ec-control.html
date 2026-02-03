@@ -1,0 +1,266 @@
+<!--
+  viis-fertilizer-ec-control
+
+  Node-RED custom node for intelligent EC-based fertilizer control.
+  Provides lookup table interpolation, real-time EC monitoring, and adaptive valve control.
+-->
+
+<script type="text/javascript">
+    RED.nodes.registerType('viis-fertilizer-ec-control', {
+        category: 'VIIS',
+        color: '#87A96B',
+        defaults: {
+            name: { value: '' },
+            boardId: { value: '' },
+            cycleEc: { value: 170, validate: RED.validators.number() },
+            rampUpSeconds: { value: 20, validate: RED.validators.number() },
+            adjustmentStep: { value: 50, validate: RED.validators.number() },
+            adjustmentThreshold: { value: 0.1, validate: RED.validators.number() },
+            maxValveTime: { value: 10000, validate: RED.validators.number() },
+            debugEnable: { value: false }
+        },
+        inputs: 1,
+        outputs: 3,
+        outputLabels: ['Modbus Commands', 'Status/Telemetry', 'Errors'],
+        icon: 'font-awesome/fa-tint',
+        label: function () {
+            return this.name || 'fertilizer-ec-control';
+        },
+        paletteLabel: 'Fertilizer EC',
+        labelStyle: function () {
+            return this.name ? 'node_label_italic' : '';
+        },
+        oneditprepare: function () {
+            // Populate board ID dropdown from global context
+            var boardSelect = $('#node-input-boardId');
+
+            // Add option for dynamic/default
+            boardSelect.append('<option value="">-- Default Board --</option>');
+
+            // Try to get boards from flow context (if available)
+            // This will be populated at runtime
+            boardSelect.append('<option value="board1">board1</option>');
+            boardSelect.append('<option value="board2">board2</option>');
+            boardSelect.append('<option value="board3">board3</option>');
+
+            // Set current value
+            if (this.boardId) {
+                boardSelect.val(this.boardId);
+            }
+
+            // Add help text toggle
+            $('.viis-help-toggle').on('click', function() {
+                $(this).next('.viis-help-content').toggle();
+            });
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-fertilizer-ec-control">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boardId"><i class="fa fa-microchip"></i> Board ID</label>
+        <select id="node-input-boardId" style="width: 70%;">
+        </select>
+    </div>
+
+    <fieldset>
+        <legend><i class="fa fa-cogs"></i> EC Control Parameters</legend>
+
+        <div class="form-row">
+            <label for="node-input-cycleEc"><i class="fa fa-clock-o"></i> Cycle EC</label>
+            <input type="number" id="node-input-cycleEc" placeholder="170" style="width: 70px;">
+            <span class="viis-unit">cycles (×0.6s = ~102s)</span>
+        </div>
+
+        <div class="form-row">
+            <label for="node-input-rampUpSeconds"><i class="fa fa-arrow-up"></i> Ramp-up Time</label>
+            <input type="number" id="node-input-rampUpSeconds" placeholder="20" style="width: 70px;">
+            <span class="viis-unit">seconds</span>
+        </div>
+
+        <div class="form-row">
+            <label for="node-input-adjustmentStep"><i class="fa fa-sliders"></i> Adjustment Step</label>
+            <input type="number" id="node-input-adjustmentStep" placeholder="50" style="width: 70px;">
+            <span class="viis-unit">ms (±50ms per adjustment)</span>
+        </div>
+
+        <div class="form-row">
+            <label for="node-input-adjustmentThreshold"><i class="fa fa-bullseye"></i> Threshold</label>
+            <input type="number" id="node-input-adjustmentThreshold" placeholder="0.1" step="0.01" style="width: 70px;">
+            <span class="viis-unit">EC deviation before adjustment</span>
+        </div>
+
+        <div class="form-row">
+            <label for="node-input-maxValveTime"><i class="fa fa-clock-o"></i> Max Valve Time</label>
+            <input type="number" id="node-input-maxValveTime" placeholder="10000" style="width: 70px;">
+            <span class="viis-unit">ms</span>
+        </div>
+    </fieldset>
+
+    <div class="form-row">
+        <label for="node-input-debugEnable" style="width: auto;">
+            <input type="checkbox" id="node-input-debugEnable" style="display: inline-block; width: auto; vertical-align: top;">
+            <i class="fa fa-bug"></i> Enable Debug Logging
+        </label>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-fertilizer-ec-control">
+    <p>Intelligent EC-based fertilizer control with lookup table interpolation and real-time adjustment.</p>
+
+    <h3>Overview</h3>
+    <p>This node manages the fertigation process using EC (Electrical Conductivity) control. It uses a learning algorithm to determine optimal valve opening times based on historical data stored in a local lookup table.</p>
+
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>action <span class="property-type">string</span></dt>
+        <dd>Required. One of: <code>start</code>, <code>stop</code>, <code>getValveTimes</code>, <code>status</code>, <code>sync</code></dd>
+
+        <dt>ec_setpoint <span class="property-type">number</span></dt>
+        <dd>Required for <code>start</code> and <code>getValveTimes</code>. Target EC value (e.g., 1.8)</dd>
+
+        <dt>schedule_name <span class="property-type">string</span></dt>
+        <dd>Optional. Name of the schedule that triggered this irrigation (for tracking)</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <ol class="node-ports">
+        <li>Modbus Commands
+            <dl class="message-properties">
+                <dt>valve_times <span class="property-type">object</span></dt>
+                <dd>The calculated valve times (time_on_valve_01..05)</dd>
+                <dt>modbus_writes <span class="property-type">array</span></dt>
+                <dd>Array of Modbus write commands ready to be sent</dd>
+            </dl>
+        </li>
+        <li>Status/Telemetry
+            <dl class="message-properties">
+                <dt>payload.data <span class="property-type">object</span></dt>
+                <dd>Status, telemetry, or adjustment information</dd>
+            </dl>
+        </li>
+        <li>Errors
+            <dl class="message-properties">
+                <dt>payload.error <span class="property-type">string</span></dt>
+                <dd>Error message if operation failed</dd>
+            </dl>
+        </li>
+    </ol>
+
+    <h3>Actions</h3>
+    <h4><code>start</code></h4>
+    <p>Starts irrigation with EC control. Looks up valve times from local database, writes to Modbus, and begins monitoring.</p>
+    <pre>msg.action = "start";
+msg.ec_setpoint = 1.8;
+msg.schedule_name = "Morning Schedule";</pre>
+
+    <h4><code>stop</code></h4>
+    <p>Stops current irrigation, calculates averages, updates lookup table, and syncs to backend.</p>
+    <pre>msg.action = "stop";</pre>
+
+    <h4><code>getValveTimes</code></h4>
+    <p>Returns interpolated valve times without starting irrigation.</p>
+    <pre>msg.action = "getValveTimes";
+msg.ec_setpoint = 2.0;</pre>
+
+    <h4><code>status</code></h4>
+    <p>Returns current state, running stats, and configuration.</p>
+    <pre>msg.action = "status";</pre>
+
+    <h4><code>sync</code></h4>
+    <p>Syncs any pending (unsynced) irrigation runs to the backend API.</p>
+    <pre>msg.action = "sync";</pre>
+
+    <h3>States</h3>
+    <ul>
+        <li><strong>IDLE</strong> - Ready to start new irrigation</li>
+        <li><strong>STARTING</strong> - Fetching valve times and writing to Modbus</li>
+        <li><strong>RAMPING_UP</strong> - Waiting for EC to stabilize (20s default)</li>
+        <li><strong>RUNNING</strong> - Active irrigation with real-time adjustment</li>
+        <li><strong>STOPPING</strong> - Completing run, updating lookup table</li>
+        <li><strong>ERROR</strong> - Error occurred, requires restart</li>
+    </ul>
+
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Board ID</dt>
+        <dd>Modbus board to use. Leave empty for default board from MODBUS_DEFAULT_BOARD.</dd>
+
+        <dt>Cycle EC</dt>
+        <dd>Number of EC control cycles. Each cycle is 0.6 seconds. Default: 170 (~102 seconds)</dd>
+
+        <dt>Ramp-up Time</dt>
+        <dd>Seconds to wait before EC readings are considered stable. Default: 20 seconds</dd>
+
+        <dt>Adjustment Step</dt>
+        <dd>Milliseconds to adjust valve times when EC deviates. Default: ±50ms</dd>
+
+        <dt>Threshold</dt>
+        <dd>EC deviation threshold before adjustment is triggered. Default: 0.1</dd>
+
+        <dt>Max Valve Time</dt>
+        <dd>Maximum allowed valve opening time in milliseconds. Default: 10000ms</dd>
+    </dl>
+
+    <h3>Modbus Registers</h3>
+    <table>
+        <tr><th>Register</th><th>Address</th><th>Description</th></tr>
+        <tr><td>control_mode</td><td>0</td><td>0=Manual, 1=Flow, 2=EC</td></tr>
+        <tr><td>set_ec</td><td>16</td><td>EC setpoint (×10)</td></tr>
+        <tr><td>cycle_ec</td><td>21</td><td>Cycle count (×0.6s)</td></tr>
+        <tr><td>time_on_valve_01-05</td><td>23-27</td><td>Valve times (ms)</td></tr>
+        <tr><td>current_ec</td><td>44</td><td>Current EC (×10)</td></tr>
+        <tr><td>current_flow_1-5</td><td>30-34</td><td>Flow readings</td></tr>
+    </table>
+
+    <h3>Database Tables</h3>
+    <p>This node uses two MySQL tables via TypeORM:</p>
+    <ul>
+        <li><code>tabiot_fertilizer_lookup_point</code> - EC to valve time mappings</li>
+        <li><code>tabiot_fertilizer_irrigation_run</code> - Irrigation run history</li>
+    </ul>
+
+    <h3>References</h3>
+    <ul>
+        <li><a href="https://iot.viis.tech/api-docs">VIIS Backend API</a></li>
+        <li><a href="../docs/FERTILIZER_MODULE_IMPLEMENTATION_PLAN.md">Implementation Plan</a></li>
+    </ul>
+</script>
+
+<style>
+    .viis-unit {
+        font-size: 11px;
+        color: #888;
+        margin-left: 5px;
+    }
+
+    fieldset {
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 4px;
+    }
+
+    fieldset legend {
+        font-weight: bold;
+        padding: 0 5px;
+    }
+
+    .viis-help-toggle {
+        cursor: pointer;
+        color: #0066cc;
+    }
+
+    .viis-help-content {
+        display: none;
+        padding: 5px;
+        background: #f9f9f9;
+        border-radius: 4px;
+        margin-top: 5px;
+    }
+</style>

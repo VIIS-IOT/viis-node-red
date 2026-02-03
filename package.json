@@ -86,7 +86,8 @@
       "vietplants-rpc-control": "dist/modules/vietplants-rpc-control/vietplant-rpc-control.js",
       "viis-flow-calibration": "dist/modules/viis-flow-calibration/viis-flow-calibration.js",
       "viis-flow-error-monitor": "dist/modules/viis-flow-error-monitor/viis-flow-error-monitor.js",
-      "viis-ec-error-monitor": "dist/modules/viis-ec-error-monitor/viis-ec-error-monitor.js"
+      "viis-ec-error-monitor": "dist/modules/viis-ec-error-monitor/viis-ec-error-monitor.js",
+      "viis-fertilizer-ec-control": "dist/modules/viis-fertilizer-ec-control/viis-fertilizer-ec-control.js"
     }
   },
   "dependencies": {
