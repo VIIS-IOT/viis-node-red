@@ -66,7 +66,7 @@ export class IrrigationRunService {
 
         const run = this.repository.create({
             device_id: this.deviceId,
-            schedule_name: params.scheduleName,
+            schedule_name: params.scheduleName || null, // NULL if no schedule (manual/auto trigger)
             ec_setpoint: params.ecSetpoint,
             time_on_valve_01: params.valveTimes.time_on_valve_01,
             time_on_valve_02: params.valveTimes.time_on_valve_02,
