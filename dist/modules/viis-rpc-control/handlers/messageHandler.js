@@ -99,9 +99,9 @@ class MessageHandler {
         // Schedule cleanup after TTL
         setTimeout(() => {
             this.processedMessages.delete(messageId);
-            this.logger.warn(`Cleaned up processed message: ${messageId}`);
+            // this.logger.warn(`Cleaned up processed message: ${messageId}`);
         }, constants_1.DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
-        this.logger.warn(`Marked message as processed: ${messageId}`);
+        // this.logger.warn(`Marked message as processed: ${messageId}`);
     }
     /**
      * Clear all processed messages (useful for cleanup)
@@ -139,16 +139,16 @@ class MessageHandler {
         const messageId = this.generateMessageId(payload);
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
-            this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
+            // this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
             return null;
         }
         else {
-            this.logger.warn(`New message detected: ${messageId}`);
+            // this.logger.warn(`New message detected: ${messageId}`);
         }
         // Mark as processed
         this.markMessageProcessed(messageId);
         // Log processing
-        this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
+        // this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
         // Process the message
         try {
             return processor(payload);
@@ -179,31 +179,31 @@ class MessageHandler {
      * Extract payload from different message formats
      */
     extractPayload(message) {
-        this.logger.warn(`[EXTRACT] Extracting payload from message: ${JSON.stringify(message)}`);
+        // this.logger.warn(`[EXTRACT] Extracting payload from message: ${JSON.stringify(message)}`);
         if (!this.validateMessageStructure(message)) {
-            this.logger.warn(`[EXTRACT] Invalid message structure`);
+            // this.logger.warn(`[EXTRACT] Invalid message structure`);
             throw new Error("Invalid message structure");
         }
         // Handle different message formats
         if (message.payload !== undefined) {
-            this.logger.warn(`[EXTRACT] Found payload field: ${JSON.stringify(message.payload)}`);
+            // this.logger.warn(`[EXTRACT] Found payload field: ${JSON.stringify(message.payload)}`);
             return message.payload;
         }
         if (message.message !== undefined) {
-            this.logger.warn(`[EXTRACT] Found message field: ${message.message}`);
+            // this.logger.warn(`[EXTRACT] Found message field: ${message.message}`);
             try {
                 const parsed = JSON.parse(message.message.toString());
-                this.logger.warn(`[EXTRACT] Successfully parsed message: ${JSON.stringify(parsed)}`);
+                // this.logger.warn(`[EXTRACT] Successfully parsed message: ${JSON.stringify(parsed)}`);
                 return parsed;
             }
             catch (error) {
-                this.logger.warn(`[EXTRACT] Failed to parse message content: ${error.message}`);
-                this.logger.warn(`[EXTRACT] Returning raw message string: ${message.message.toString()}`);
+                // this.logger.warn(`[EXTRACT] Failed to parse message content: ${(error as Error).message}`);
+                // this.logger.warn(`[EXTRACT] Returning raw message string: ${message.message.toString()}`);
                 return message.message.toString();
             }
         }
         // Return the message itself if no specific payload field
-        this.logger.warn(`[EXTRACT] No payload/message field found, returning entire message`);
+        // this.logger.warn(`[EXTRACT] No payload/message field found, returning entire message`);
         return message;
     }
     /**
@@ -211,28 +211,28 @@ class MessageHandler {
      */
     processMqttMessage(message, expectedTopicPrefix, processor) {
         try {
-            this.logger.warn(`[MSG-HANDLER] Processing MQTT message`);
-            this.logger.warn(`[MSG-HANDLER] Message topic: ${message.topic}`);
-            this.logger.warn(`[MSG-HANDLER] Expected topic prefix: ${expectedTopicPrefix}`);
-            this.logger.warn(`[MSG-HANDLER] Full message: ${JSON.stringify(message)}`);
+            // this.logger.warn(`[MSG-HANDLER] Processing MQTT message`);
+            // this.logger.warn(`[MSG-HANDLER] Message topic: ${message.topic}`);
+            // this.logger.warn(`[MSG-HANDLER] Expected topic prefix: ${expectedTopicPrefix}`);
+            // this.logger.warn(`[MSG-HANDLER] Full message: ${JSON.stringify(message)}`);
             // Validate topic
             const cleanExpectedPrefix = expectedTopicPrefix.replace("+", "");
-            this.logger.warn(`[MSG-HANDLER] Clean expected prefix: ${cleanExpectedPrefix}`);
+            // this.logger.warn(`[MSG-HANDLER] Clean expected prefix: ${cleanExpectedPrefix}`);
             if (!message.topic) {
-                this.logger.warn(`[MSG-HANDLER] Message has no topic - rejecting`);
+                // this.logger.warn(`[MSG-HANDLER] Message has no topic - rejecting`);
                 return null;
             }
             if (!message.topic.startsWith(cleanExpectedPrefix)) {
-                this.logger.warn(`[MSG-HANDLER] Topic mismatch - rejecting. Topic: ${message.topic}, Expected prefix: ${cleanExpectedPrefix}`);
+                // this.logger.warn(`[MSG-HANDLER] Topic mismatch - rejecting. Topic: ${message.topic}, Expected prefix: ${cleanExpectedPrefix}`);
                 return null;
             }
-            this.logger.warn(`[MSG-HANDLER] Topic validation passed`);
+            // this.logger.warn(`[MSG-HANDLER] Topic validation passed`);
             // Extract and validate payload
             const payload = this.extractPayload(message);
-            this.logger.warn(`[MSG-HANDLER] Extracted payload: ${JSON.stringify(payload)}`);
+            // this.logger.warn(`[MSG-HANDLER] Extracted payload: ${JSON.stringify(payload)}`);
             // Process with deduplication
             const result = this.processMessage(payload, processor);
-            this.logger.warn(`[MSG-HANDLER] Process message result: ${result}`);
+            // this.logger.warn(`[MSG-HANDLER] Process message result: ${result}`);
             return result;
         }
         catch (error) {

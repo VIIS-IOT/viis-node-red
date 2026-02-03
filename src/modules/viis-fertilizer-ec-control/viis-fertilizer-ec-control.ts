@@ -44,11 +44,14 @@ import {
     BackendSyncService,
 } from './services';
 import {
-    MODBUS_REGISTERS,
+    MODBUS_REGISTER_KEYS,
+    MODBUS_COIL_KEYS,
     CONTROL_MODES,
     EC_CONTROL_DEFAULTS,
     ERROR_CODES,
 } from './constants';
+import { ModbusRegisterHelper } from './utils/ModbusRegisterHelper';
+
 
 module.exports = function (RED: NodeAPI) {
 
@@ -81,6 +84,9 @@ module.exports = function (RED: NodeAPI) {
         let currentBoardId: string | undefined = config.boardId;
         let isMultiBoardMode: boolean = false;
         let currentModbusConfig: ModbusConfig | null = null;
+
+        // Modbus register helper for dynamic address lookup
+        const modbusHelper = new ModbusRegisterHelper(node, nodeContext, currentBoardId || 'board1');
 
         // Services
         let lookupService: LookupTableService;
@@ -198,12 +204,19 @@ module.exports = function (RED: NodeAPI) {
             try {
                 const client = await getModbusClient();
 
-                // Write time_on_valve_01-05 to registers 23-27
-                await client.writeRegister(MODBUS_REGISTERS.TIME_ON_VALVE_01, valveTimes.time_on_valve_01);
-                await client.writeRegister(MODBUS_REGISTERS.TIME_ON_VALVE_02, valveTimes.time_on_valve_02);
-                await client.writeRegister(MODBUS_REGISTERS.TIME_ON_VALVE_03, valveTimes.time_on_valve_03);
-                await client.writeRegister(MODBUS_REGISTERS.TIME_ON_VALVE_04, valveTimes.time_on_valve_04);
-                await client.writeRegister(MODBUS_REGISTERS.TIME_ON_VALVE_05, valveTimes.time_on_valve_05);
+                // Get addresses from global context
+                const addr01 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01)!;
+                const addr02 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_02)!;
+                const addr03 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03)!;
+                const addr04 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_04)!;
+                const addr05 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_05)!;
+
+                // Write time_on_valve_01-05
+                await client.writeRegister(addr01, valveTimes.time_on_valve_01);
+                await client.writeRegister(addr02, valveTimes.time_on_valve_02);
+                await client.writeRegister(addr03, valveTimes.time_on_valve_03);
+                await client.writeRegister(addr04, valveTimes.time_on_valve_04);
+                await client.writeRegister(addr05, valveTimes.time_on_valve_05);
 
                 debugLog(`Wrote valve times: ${JSON.stringify(valveTimes)}`);
                 return true;
@@ -218,13 +231,21 @@ module.exports = function (RED: NodeAPI) {
             try {
                 const client = await getModbusClient();
 
+                // Get addresses from global context
+                const addrEc = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CURRENT_EC)!;
+                const addrFlow1 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CURRENT_FLOW_1)!;
+                const addrFlow2 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CURRENT_FLOW_2)!;
+                const addrFlow3 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CURRENT_FLOW_3)!;
+                const addrFlow4 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CURRENT_FLOW_4)!;
+                const addrFlow5 = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CURRENT_FLOW_5)!;
+
                 // Read EC and flow registers
-                const ecRaw = await client.readHoldingRegisters(MODBUS_REGISTERS.CURRENT_EC, 1);
-                const flow1Raw = await client.readHoldingRegisters(MODBUS_REGISTERS.CURRENT_FLOW_1, 1);
-                const flow2Raw = await client.readHoldingRegisters(MODBUS_REGISTERS.CURRENT_FLOW_2, 1);
-                const flow3Raw = await client.readHoldingRegisters(MODBUS_REGISTERS.CURRENT_FLOW_3, 1);
-                const flow4Raw = await client.readHoldingRegisters(MODBUS_REGISTERS.CURRENT_FLOW_4, 1);
-                const flow5Raw = await client.readHoldingRegisters(MODBUS_REGISTERS.CURRENT_FLOW_5, 1);
+                const ecRaw = await client.readHoldingRegisters(addrEc, 1);
+                const flow1Raw = await client.readHoldingRegisters(addrFlow1, 1);
+                const flow2Raw = await client.readHoldingRegisters(addrFlow2, 1);
+                const flow3Raw = await client.readHoldingRegisters(addrFlow3, 1);
+                const flow4Raw = await client.readHoldingRegisters(addrFlow4, 1);
+                const flow5Raw = await client.readHoldingRegisters(addrFlow5, 1);
 
                 return {
                     current_ec: (Number(ecRaw?.data?.[0] ?? 0)) / 10, // Convert from x10
@@ -245,14 +266,19 @@ module.exports = function (RED: NodeAPI) {
             try {
                 const client = await getModbusClient();
 
+                // Get addresses from global context
+                const addrControlMode = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CONTROL_MODE)!;
+                const addrSetEc = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.SET_EC)!;
+                const addrCycleEc = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CYCLE_EC)!;
+
                 // Set control_mode = 2 (EC mode)
-                await client.writeRegister(MODBUS_REGISTERS.CONTROL_MODE, CONTROL_MODES.EC);
+                await client.writeRegister(addrControlMode, CONTROL_MODES.EC);
 
                 // Set EC setpoint (x10)
-                await client.writeRegister(MODBUS_REGISTERS.SET_EC, Math.round(ecSetpoint * 10));
+                await client.writeRegister(addrSetEc, Math.round(ecSetpoint * 10));
 
                 // Set cycle_ec
-                await client.writeRegister(MODBUS_REGISTERS.CYCLE_EC, cycleEc);
+                await client.writeRegister(addrCycleEc, cycleEc);
 
                 debugLog(`Set EC control mode: setpoint=${ecSetpoint}, cycle=${cycleEc}`);
                 return true;
@@ -400,7 +426,8 @@ module.exports = function (RED: NodeAPI) {
 
                 // Set control mode back to manual
                 const client = await getModbusClient();
-                await client.writeRegister(MODBUS_REGISTERS.CONTROL_MODE, CONTROL_MODES.MANUAL);
+                const addrControlMode = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CONTROL_MODE)!;
+                await client.writeRegister(addrControlMode, CONTROL_MODES.MANUAL);
 
             } catch (error) {
                 node.error(`Error during stop: ${(error as Error).message}`);
@@ -501,14 +528,14 @@ module.exports = function (RED: NodeAPI) {
         // Generate Modbus write commands
         function getModbusWrites(valveTimes: ValveTimes, ecSetpoint: number): ModbusWrite[] {
             return [
-                { register: 'control_mode', value: CONTROL_MODES.EC, address: MODBUS_REGISTERS.CONTROL_MODE },
-                { register: 'set_ec', value: Math.round(ecSetpoint * 10), address: MODBUS_REGISTERS.SET_EC },
-                { register: 'cycle_ec', value: cycleEc, address: MODBUS_REGISTERS.CYCLE_EC },
-                { register: 'time_on_valve_01', value: valveTimes.time_on_valve_01, address: MODBUS_REGISTERS.TIME_ON_VALVE_01 },
-                { register: 'time_on_valve_02', value: valveTimes.time_on_valve_02, address: MODBUS_REGISTERS.TIME_ON_VALVE_02 },
-                { register: 'time_on_valve_03', value: valveTimes.time_on_valve_03, address: MODBUS_REGISTERS.TIME_ON_VALVE_03 },
-                { register: 'time_on_valve_04', value: valveTimes.time_on_valve_04, address: MODBUS_REGISTERS.TIME_ON_VALVE_04 },
-                { register: 'time_on_valve_05', value: valveTimes.time_on_valve_05, address: MODBUS_REGISTERS.TIME_ON_VALVE_05 },
+                { register: 'control_mode', value: CONTROL_MODES.EC, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CONTROL_MODE)! },
+                { register: 'set_ec', value: Math.round(ecSetpoint * 10), address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.SET_EC)! },
+                { register: 'cycle_ec', value: cycleEc, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CYCLE_EC)! },
+                { register: 'time_on_valve_01', value: valveTimes.time_on_valve_01, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01)! },
+                { register: 'time_on_valve_02', value: valveTimes.time_on_valve_02, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_02)! },
+                { register: 'time_on_valve_03', value: valveTimes.time_on_valve_03, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03)! },
+                { register: 'time_on_valve_04', value: valveTimes.time_on_valve_04, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_04)! },
+                { register: 'time_on_valve_05', value: valveTimes.time_on_valve_05, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_05)! },
             ];
         }
 

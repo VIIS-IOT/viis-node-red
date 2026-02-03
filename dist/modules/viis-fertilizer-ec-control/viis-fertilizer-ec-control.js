@@ -30,6 +30,7 @@ const client_registry_1 = __importDefault(require("../../core/client-registry"))
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const services_1 = require("./services");
 const constants_1 = require("./constants");
+const ModbusRegisterHelper_1 = require("./utils/ModbusRegisterHelper");
 module.exports = function (RED) {
     function ViisFertilizerEcControlNode(config) {
         var _a, _b, _c, _d, _e, _f;
@@ -57,6 +58,8 @@ module.exports = function (RED) {
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
         let currentModbusConfig = null;
+        // Modbus register helper for dynamic address lookup
+        const modbusHelper = new ModbusRegisterHelper_1.ModbusRegisterHelper(node, nodeContext, currentBoardId || 'board1');
         // Services
         let lookupService;
         let contextService;
@@ -158,12 +161,18 @@ module.exports = function (RED) {
         async function writeValveTimes(valveTimes) {
             try {
                 const client = await getModbusClient();
-                // Write time_on_valve_01-05 to registers 23-27
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_01, valveTimes.time_on_valve_01);
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_02, valveTimes.time_on_valve_02);
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_03, valveTimes.time_on_valve_03);
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_04, valveTimes.time_on_valve_04);
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_05, valveTimes.time_on_valve_05);
+                // Get addresses from global context
+                const addr01 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01);
+                const addr02 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_02);
+                const addr03 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03);
+                const addr04 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_04);
+                const addr05 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_05);
+                // Write time_on_valve_01-05
+                await client.writeRegister(addr01, valveTimes.time_on_valve_01);
+                await client.writeRegister(addr02, valveTimes.time_on_valve_02);
+                await client.writeRegister(addr03, valveTimes.time_on_valve_03);
+                await client.writeRegister(addr04, valveTimes.time_on_valve_04);
+                await client.writeRegister(addr05, valveTimes.time_on_valve_05);
                 debugLog(`Wrote valve times: ${JSON.stringify(valveTimes)}`);
                 return true;
             }
@@ -177,13 +186,20 @@ module.exports = function (RED) {
             var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
             try {
                 const client = await getModbusClient();
+                // Get addresses from global context
+                const addrEc = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_EC);
+                const addrFlow1 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_1);
+                const addrFlow2 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_2);
+                const addrFlow3 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_3);
+                const addrFlow4 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_4);
+                const addrFlow5 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_5);
                 // Read EC and flow registers
-                const ecRaw = await client.readHoldingRegisters(constants_1.MODBUS_REGISTERS.CURRENT_EC, 1);
-                const flow1Raw = await client.readHoldingRegisters(constants_1.MODBUS_REGISTERS.CURRENT_FLOW_1, 1);
-                const flow2Raw = await client.readHoldingRegisters(constants_1.MODBUS_REGISTERS.CURRENT_FLOW_2, 1);
-                const flow3Raw = await client.readHoldingRegisters(constants_1.MODBUS_REGISTERS.CURRENT_FLOW_3, 1);
-                const flow4Raw = await client.readHoldingRegisters(constants_1.MODBUS_REGISTERS.CURRENT_FLOW_4, 1);
-                const flow5Raw = await client.readHoldingRegisters(constants_1.MODBUS_REGISTERS.CURRENT_FLOW_5, 1);
+                const ecRaw = await client.readHoldingRegisters(addrEc, 1);
+                const flow1Raw = await client.readHoldingRegisters(addrFlow1, 1);
+                const flow2Raw = await client.readHoldingRegisters(addrFlow2, 1);
+                const flow3Raw = await client.readHoldingRegisters(addrFlow3, 1);
+                const flow4Raw = await client.readHoldingRegisters(addrFlow4, 1);
+                const flow5Raw = await client.readHoldingRegisters(addrFlow5, 1);
                 return {
                     current_ec: (Number((_b = (_a = ecRaw === null || ecRaw === void 0 ? void 0 : ecRaw.data) === null || _a === void 0 ? void 0 : _a[0]) !== null && _b !== void 0 ? _b : 0)) / 10, // Convert from x10
                     current_flow_1: Number((_d = (_c = flow1Raw === null || flow1Raw === void 0 ? void 0 : flow1Raw.data) === null || _c === void 0 ? void 0 : _c[0]) !== null && _d !== void 0 ? _d : 0),
@@ -202,12 +218,16 @@ module.exports = function (RED) {
         async function setEcControlMode(ecSetpoint) {
             try {
                 const client = await getModbusClient();
+                // Get addresses from global context
+                const addrControlMode = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CONTROL_MODE);
+                const addrSetEc = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.SET_EC);
+                const addrCycleEc = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CYCLE_EC);
                 // Set control_mode = 2 (EC mode)
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.CONTROL_MODE, constants_1.CONTROL_MODES.EC);
+                await client.writeRegister(addrControlMode, constants_1.CONTROL_MODES.EC);
                 // Set EC setpoint (x10)
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.SET_EC, Math.round(ecSetpoint * 10));
+                await client.writeRegister(addrSetEc, Math.round(ecSetpoint * 10));
                 // Set cycle_ec
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.CYCLE_EC, cycleEc);
+                await client.writeRegister(addrCycleEc, cycleEc);
                 debugLog(`Set EC control mode: setpoint=${ecSetpoint}, cycle=${cycleEc}`);
                 return true;
             }
@@ -332,7 +352,8 @@ module.exports = function (RED) {
                 }
                 // Set control mode back to manual
                 const client = await getModbusClient();
-                await client.writeRegister(constants_1.MODBUS_REGISTERS.CONTROL_MODE, constants_1.CONTROL_MODES.MANUAL);
+                const addrControlMode = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CONTROL_MODE);
+                await client.writeRegister(addrControlMode, constants_1.CONTROL_MODES.MANUAL);
             }
             catch (error) {
                 node.error(`Error during stop: ${error.message}`);
@@ -417,14 +438,14 @@ module.exports = function (RED) {
         // Generate Modbus write commands
         function getModbusWrites(valveTimes, ecSetpoint) {
             return [
-                { register: 'control_mode', value: constants_1.CONTROL_MODES.EC, address: constants_1.MODBUS_REGISTERS.CONTROL_MODE },
-                { register: 'set_ec', value: Math.round(ecSetpoint * 10), address: constants_1.MODBUS_REGISTERS.SET_EC },
-                { register: 'cycle_ec', value: cycleEc, address: constants_1.MODBUS_REGISTERS.CYCLE_EC },
-                { register: 'time_on_valve_01', value: valveTimes.time_on_valve_01, address: constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_01 },
-                { register: 'time_on_valve_02', value: valveTimes.time_on_valve_02, address: constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_02 },
-                { register: 'time_on_valve_03', value: valveTimes.time_on_valve_03, address: constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_03 },
-                { register: 'time_on_valve_04', value: valveTimes.time_on_valve_04, address: constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_04 },
-                { register: 'time_on_valve_05', value: valveTimes.time_on_valve_05, address: constants_1.MODBUS_REGISTERS.TIME_ON_VALVE_05 },
+                { register: 'control_mode', value: constants_1.CONTROL_MODES.EC, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CONTROL_MODE) },
+                { register: 'set_ec', value: Math.round(ecSetpoint * 10), address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.SET_EC) },
+                { register: 'cycle_ec', value: cycleEc, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CYCLE_EC) },
+                { register: 'time_on_valve_01', value: valveTimes.time_on_valve_01, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01) },
+                { register: 'time_on_valve_02', value: valveTimes.time_on_valve_02, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_02) },
+                { register: 'time_on_valve_03', value: valveTimes.time_on_valve_03, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03) },
+                { register: 'time_on_valve_04', value: valveTimes.time_on_valve_04, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_04) },
+                { register: 'time_on_valve_05', value: valveTimes.time_on_valve_05, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_05) },
             ];
         }
         // Send output message

@@ -228,7 +228,7 @@ class ModbusService {
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
             writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
             // Debug: Log the type of writeValue
-            this.node.warn(`[RPC] WRITE-DEBUG ${key}: value=${writeValue} typeof=${typeof writeValue}`);
+            // this.node.warn(`[RPC] WRITE-DEBUG ${key}: value=${writeValue} typeof=${typeof writeValue}`);
             // Apply scaling for numeric values - also handle string numbers
             if (typeof writeValue === "string" && !isNaN(Number(writeValue))) {
                 writeValue = Number(writeValue);
@@ -238,7 +238,7 @@ class ModbusService {
             }
             // Log: Original command vs Scaled command
             const fcName = mapping.fc === 6 ? 'WRITE_REGISTER' : mapping.fc === 5 ? 'WRITE_COIL' : `FC${mapping.fc}`;
-            this.node.warn(`[RPC] WRITE ${key}: original=${originalValue} → scaled=${writeValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
+            // this.node.warn(`[RPC] WRITE ${key}: original=${originalValue} → scaled=${writeValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
             const modbusClient = await this.getModbusClient(mapping.boardId);
             // Check if Modbus client is connected
@@ -302,7 +302,7 @@ class ModbusService {
             }
             // Log: Response from Modbus
             const fcName = readFc === 1 ? 'READ_COILS' : readFc === 3 ? 'READ_HOLDING' : readFc === 4 ? 'READ_INPUT' : `FC${readFc}`;
-            this.node.warn(`[RPC] READ ${key}: raw=${rawValue} → scaled=${readValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
+            // this.node.warn(`[RPC] READ ${key}: raw=${rawValue} → scaled=${readValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
             return readValue;
         }
         catch (error) {
