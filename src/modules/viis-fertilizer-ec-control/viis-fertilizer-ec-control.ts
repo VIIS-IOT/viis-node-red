@@ -3,10 +3,15 @@
  *
  * Node-RED custom node for intelligent EC-based fertilizer control.
  *
+ * Control Strategy:
+ * - Feedforward: Lookup table predicts valve times before start
+ * - Open-loop: PLC pulses valves per cycle_EC (e.g., 10 = 6s cycle)
+ * - Learning: Post-run EC averaging updates lookup table for next run
+ *
  * Features:
- * - Lookup table interpolation for valve time calculation
- * - Real-time context window (20s) for EC averaging
- * - Adaptive ±50ms adjustment based on EC deviation
+ * - Lookup table interpolation for valve time prediction
+ * - Real-time context window (20s ramp-up, then averaging)
+ * - Post-run adaptive learning (weighted average)
  * - Local MySQL storage for offline operation
  * - Backend API sync for machine learning
  *
@@ -17,7 +22,7 @@
  *   msg.readings: Optional sensor readings for context window
  *
  * Outputs:
- *   Output 1: Modbus write commands (valve times)
+ *   Output 1: Modbus write commands (initial valve times only)
  *   Output 2: Status/telemetry
  *   Output 3: Errors
  */
@@ -73,7 +78,6 @@ module.exports = function (RED: NodeAPI) {
         }
 
         // Configuration from node settings or environment
-        const cycleEc = config.cycleEc ?? globalHelper.getNumericEnvVar('FERTILIZER_CYCLE_EC', EC_CONTROL_DEFAULTS.CYCLE_EC);
         const rampUpSeconds = config.rampUpSeconds ?? globalHelper.getNumericEnvVar('FERTILIZER_RAMP_UP_SECONDS', EC_CONTROL_DEFAULTS.RAMP_UP_SECONDS);
         const adjustmentStep = config.adjustmentStep ?? globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_STEP', EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP);
         const adjustmentThreshold = config.adjustmentThreshold ?? globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_THRESHOLD', EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD);
@@ -269,7 +273,6 @@ module.exports = function (RED: NodeAPI) {
                 // Get addresses from global context
                 const addrControlMode = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CONTROL_MODE)!;
                 const addrSetEc = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.SET_EC)!;
-                const addrCycleEc = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CYCLE_EC)!;
 
                 // Set control_mode = 2 (EC mode)
                 await client.writeRegister(addrControlMode, CONTROL_MODES.EC);
@@ -277,10 +280,7 @@ module.exports = function (RED: NodeAPI) {
                 // Set EC setpoint (x10)
                 await client.writeRegister(addrSetEc, Math.round(ecSetpoint * 10));
 
-                // Set cycle_ec
-                await client.writeRegister(addrCycleEc, cycleEc);
-
-                debugLog(`Set EC control mode: setpoint=${ecSetpoint}, cycle=${cycleEc}`);
+                debugLog(`Set EC control mode: setpoint=${ecSetpoint}`);
                 return true;
             } catch (error) {
                 node.error(`Failed to set EC control mode: ${(error as Error).message}`);
@@ -424,10 +424,7 @@ module.exports = function (RED: NodeAPI) {
                     }
                 }
 
-                // Set control mode back to manual
-                const client = await getModbusClient();
-                const addrControlMode = modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CONTROL_MODE)!;
-                await client.writeRegister(addrControlMode, CONTROL_MODES.MANUAL);
+                // No need to reset control_mode - let RPC control or user manage PLC state
 
             } catch (error) {
                 node.error(`Error during stop: ${(error as Error).message}`);
@@ -475,28 +472,14 @@ module.exports = function (RED: NodeAPI) {
                     node.status({ fill: 'green', shape: 'dot', text: `Running EC=${controlContext.targetEc}` });
                 }
 
-                // If running, check for adjustment
+                // If running, monitor EC deviation for telemetry (no real-time adjustment)
+                // PLC handles open-loop control via cycle_EC - no Modbus writes during run
                 if (controlContext.state === 'RUNNING' && added) {
-                    const adjustment = contextService.calculateAdjustment(
-                        controlContext.targetEc,
-                        controlContext.currentValveTimes
-                    );
+                    const deviation = contextService.getEcDeviation(controlContext.targetEc);
 
-                    if (adjustment.adjusted) {
-                        controlContext.currentValveTimes = adjustment.valveTimes;
-                        await writeValveTimes(adjustment.valveTimes);
-
-                        sendOutput(2, {
-                            topic: 'fertilizer/adjusted',
-                            payload: {
-                                action: 'adjusted',
-                                success: true,
-                                data: {
-                                    deviation: adjustment.deviation,
-                                    newValveTimes: adjustment.valveTimes,
-                                },
-                            },
-                        });
+                    // Log significant deviations for monitoring
+                    if (Math.abs(deviation.deviation) > adjustmentThreshold) {
+                        debugLog(`EC deviation: ${deviation.deviation.toFixed(3)} mS/cm (target: ${controlContext.targetEc}, actual: ${deviation.avgEc.toFixed(2)})`);
                     }
                 }
 
@@ -530,7 +513,6 @@ module.exports = function (RED: NodeAPI) {
             return [
                 { register: 'control_mode', value: CONTROL_MODES.EC, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CONTROL_MODE)! },
                 { register: 'set_ec', value: Math.round(ecSetpoint * 10), address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.SET_EC)! },
-                { register: 'cycle_ec', value: cycleEc, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.CYCLE_EC)! },
                 { register: 'time_on_valve_01', value: valveTimes.time_on_valve_01, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01)! },
                 { register: 'time_on_valve_02', value: valveTimes.time_on_valve_02, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_02)! },
                 { register: 'time_on_valve_03', value: valveTimes.time_on_valve_03, address: modbusHelper.getHoldingAddress(MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03)! },

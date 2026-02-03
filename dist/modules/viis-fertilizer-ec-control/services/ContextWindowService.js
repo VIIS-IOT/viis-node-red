@@ -98,47 +98,22 @@ class ContextWindowService {
         };
     }
     /**
-     * Calculate valve time adjustment based on EC deviation
-     * Returns new valve times (or original if no adjustment needed)
+     * Calculate EC deviation from target (for telemetry/monitoring only)
+     * Does NOT adjust valve times - system uses feedforward + open-loop control
      */
-    calculateAdjustment(targetEc, currentValveTimes) {
+    getEcDeviation(targetEc) {
         const avgEc = this.getAverageEc();
         if (avgEc === 0 || this.ecBuffer.length < 5) {
             // Not enough samples yet
             return {
-                adjusted: false,
-                valveTimes: currentValveTimes,
                 deviation: 0,
+                avgEc: 0,
             };
         }
         const deviation = avgEc - targetEc;
-        // Check if deviation exceeds threshold
-        if (Math.abs(deviation) <= this.adjustmentThreshold) {
-            return {
-                adjusted: false,
-                valveTimes: currentValveTimes,
-                deviation,
-            };
-        }
-        // Calculate adjustment
-        // If EC too high (positive deviation), reduce valve times
-        // If EC too low (negative deviation), increase valve times
-        const adjustment = deviation > 0
-            ? -this.adjustmentStep
-            : this.adjustmentStep;
-        // Apply adjustment to all non-zero valve times
-        const newValveTimes = {
-            time_on_valve_01: this.clampValveTime(currentValveTimes.time_on_valve_01, adjustment),
-            time_on_valve_02: this.clampValveTime(currentValveTimes.time_on_valve_02, adjustment),
-            time_on_valve_03: this.clampValveTime(currentValveTimes.time_on_valve_03, adjustment),
-            time_on_valve_04: this.clampValveTime(currentValveTimes.time_on_valve_04, adjustment),
-            time_on_valve_05: this.clampValveTime(currentValveTimes.time_on_valve_05, adjustment),
-        };
-        this.log(`EC deviation: ${deviation.toFixed(3)} mS/cm. Adjusting valve times by ${adjustment}ms`);
         return {
-            adjusted: true,
-            valveTimes: newValveTimes,
             deviation,
+            avgEc,
         };
     }
     /**

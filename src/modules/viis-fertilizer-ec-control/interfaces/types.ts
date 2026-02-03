@@ -115,7 +115,6 @@ export type EcControlState =
     | 'STARTING'
     | 'RAMPING_UP'
     | 'RUNNING'
-    | 'ADJUSTING'
     | 'STOPPING'
     | 'COMPLETED'
     | 'ERROR';
