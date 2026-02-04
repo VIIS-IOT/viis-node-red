@@ -357,6 +357,21 @@ module.exports = function (RED: NodeAPI) {
             }
         }
 
+        // Get current EC setpoint from Modbus holding registers via global context
+        // This prioritizes live config data over input message
+        function getEcSetpointFromRegisters(): number | null {
+            try {
+                const holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                if (!holdingData || !holdingData.set_ec) {
+                    return null;
+                }
+                return Number(holdingData.set_ec);
+            } catch (error) {
+                debugLog(`Failed to read set_ec from registers: ${(error as Error).message}`);
+                return null;
+            }
+        }
+
         // Set control mode to EC
         async function setEcControlMode(ecSetpoint: number): Promise<boolean> {
             try {
@@ -652,11 +667,20 @@ module.exports = function (RED: NodeAPI) {
 
             switch (action) {
                 case 'start':
-                    const ecSetpoint = input.ec_setpoint ?? msg.payload?.ec_setpoint;
+                    // Priority 1: Read from current Modbus holding registers (live config)
+                    let ecSetpoint = getEcSetpointFromRegisters();
+
+                    // Priority 2: Use input message if register read failed
+                    if (ecSetpoint === null) {
+                        ecSetpoint = input.ec_setpoint ?? msg.payload?.ec_setpoint;
+                    }
+
                     if (typeof ecSetpoint !== 'number' || ecSetpoint <= 0) {
-                        node.error('Invalid ec_setpoint');
+                        node.error(`Invalid ec_setpoint: from registers=${getEcSetpointFromRegisters()}, from input=${input.ec_setpoint ?? msg.payload?.ec_setpoint}`);
                         return;
                     }
+
+                    debugLog(`Starting irrigation with EC setpoint: ${ecSetpoint} (source: ${getEcSetpointFromRegisters() !== null ? 'registers' : 'input'})`);
                     await startIrrigation(ecSetpoint, input.schedule_name);
                     break;
 

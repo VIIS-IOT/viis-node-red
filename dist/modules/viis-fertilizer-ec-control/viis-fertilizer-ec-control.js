@@ -296,6 +296,21 @@ module.exports = function (RED) {
                 return null;
             }
         }
+        // Get current EC setpoint from Modbus holding registers via global context
+        // This prioritizes live config data over input message
+        function getEcSetpointFromRegisters() {
+            try {
+                const holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                if (!holdingData || !holdingData.set_ec) {
+                    return null;
+                }
+                return Number(holdingData.set_ec);
+            }
+            catch (error) {
+                debugLog(`Failed to read set_ec from registers: ${error.message}`);
+                return null;
+            }
+        }
         // Set control mode to EC
         async function setEcControlMode(ecSetpoint) {
             try {
@@ -541,7 +556,7 @@ module.exports = function (RED) {
         }
         // Handle input messages
         node.on('input', async (msg) => {
-            var _a, _b, _c, _d, _e, _f;
+            var _a, _b, _c, _d, _e, _f, _g, _h;
             if (!servicesInitialized) {
                 node.warn('Services not initialized yet');
                 return;
@@ -550,18 +565,24 @@ module.exports = function (RED) {
             const action = input.action || ((_a = msg.payload) === null || _a === void 0 ? void 0 : _a.action);
             switch (action) {
                 case 'start':
-                    const ecSetpoint = (_b = input.ec_setpoint) !== null && _b !== void 0 ? _b : (_c = msg.payload) === null || _c === void 0 ? void 0 : _c.ec_setpoint;
+                    // Priority 1: Read from current Modbus holding registers (live config)
+                    let ecSetpoint = getEcSetpointFromRegisters();
+                    // Priority 2: Use input message if register read failed
+                    if (ecSetpoint === null) {
+                        ecSetpoint = (_b = input.ec_setpoint) !== null && _b !== void 0 ? _b : (_c = msg.payload) === null || _c === void 0 ? void 0 : _c.ec_setpoint;
+                    }
                     if (typeof ecSetpoint !== 'number' || ecSetpoint <= 0) {
-                        node.error('Invalid ec_setpoint');
+                        node.error(`Invalid ec_setpoint: from registers=${getEcSetpointFromRegisters()}, from input=${(_d = input.ec_setpoint) !== null && _d !== void 0 ? _d : (_e = msg.payload) === null || _e === void 0 ? void 0 : _e.ec_setpoint}`);
                         return;
                     }
+                    debugLog(`Starting irrigation with EC setpoint: ${ecSetpoint} (source: ${getEcSetpointFromRegisters() !== null ? 'registers' : 'input'})`);
                     await startIrrigation(ecSetpoint, input.schedule_name);
                     break;
                 case 'stop':
                     await stopIrrigation('user');
                     break;
                 case 'getValveTimes':
-                    const targetEc = (_d = input.ec_setpoint) !== null && _d !== void 0 ? _d : (_e = msg.payload) === null || _e === void 0 ? void 0 : _e.ec_setpoint;
+                    const targetEc = (_f = input.ec_setpoint) !== null && _f !== void 0 ? _f : (_g = msg.payload) === null || _g === void 0 ? void 0 : _g.ec_setpoint;
                     if (typeof targetEc !== 'number') {
                         node.error('Invalid ec_setpoint for getValveTimes');
                         return;
@@ -588,7 +609,7 @@ module.exports = function (RED) {
                                 state: controlContext.state,
                                 targetEc: controlContext.targetEc,
                                 currentValveTimes: controlContext.currentValveTimes,
-                                runId: (_f = controlContext.currentRun) === null || _f === void 0 ? void 0 : _f.id,
+                                runId: (_h = controlContext.currentRun) === null || _h === void 0 ? void 0 : _h.id,
                                 stats,
                             },
                         },

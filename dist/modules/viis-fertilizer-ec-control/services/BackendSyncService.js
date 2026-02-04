@@ -81,45 +81,6 @@ class BackendSyncService {
         }
     }
     /**
-     * Read lookup table from ThingsBoard shared attributes
-     */
-    async readFromThingsBoard() {
-        var _a;
-        const tbDeviceId = this.globalHelper.getEnvVar('DEVICE_ID', '');
-        const tbHost = this.globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
-        const accessToken = this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
-        if (!tbDeviceId || !accessToken) {
-            this.warn('ThingsBoard credentials not configured');
-            return [];
-        }
-        try {
-            // Use HTTP API to read shared attributes
-            const tbUrl = `http://${tbHost}:8080/api/plugins/telemetry/DEVICE/${tbDeviceId}/values/attributes?scope=SHARED_SCOPE`;
-            const response = await axios_1.default.get(tbUrl, {
-                timeout: 10000,
-                headers: {
-                    'X-Authorization': `Bearer ${accessToken}`,
-                },
-            });
-            // Find fertilizer_lookup_table attribute
-            const lookupAttr = (_a = response.data) === null || _a === void 0 ? void 0 : _a.find((attr) => attr.key === 'fertilizer_lookup_table');
-            if (lookupAttr === null || lookupAttr === void 0 ? void 0 : lookupAttr.value) {
-                const parsed = typeof lookupAttr.value === 'string'
-                    ? JSON.parse(lookupAttr.value)
-                    : lookupAttr.value;
-                if (Array.isArray(parsed)) {
-                    this.log(`Read ${parsed.length} lookup points from ThingsBoard`);
-                    return parsed.map(this.tbToLookupPoint);
-                }
-            }
-            return [];
-        }
-        catch (error) {
-            this.error(`Failed to read from ThingsBoard: ${error.message}`);
-            return [];
-        }
-    }
-    /**
      * Sync multiple unsent runs to backend
      * Returns array of successfully synced run IDs
      */

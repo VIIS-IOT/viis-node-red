@@ -41,7 +41,7 @@ export class ModbusService implements IModbusService {
         // Log Modbus client state during initialization
         this.logger.log(`ModbusService initialized`);
     }
-    
+
     /**
      * Get the appropriate Modbus client for a given boardId
      * In multi-board mode, gets client from ClientRegistry
@@ -58,7 +58,7 @@ export class ModbusService implements IModbusService {
                 return this.defaultModbusClient;
             }
         }
-        
+
         // Single-board mode: Use default client
         return this.defaultModbusClient;
     }
@@ -74,12 +74,12 @@ export class ModbusService implements IModbusService {
             let allCoils = {};
             let allHolding = {};
             let allInput = {};
-            
+
             if (boardsConfigStr) {
                 // Multi-board mode: Load per-board mappings
                 try {
                     let boards;
-                    
+
                     // Handle both already-parsed array and JSON string
                     if (Array.isArray(boardsConfigStr)) {
                         boards = boardsConfigStr;
@@ -89,21 +89,21 @@ export class ModbusService implements IModbusService {
                         this.logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfigStr}`);
                         boards = null;
                     }
-                    
+
                     if (Array.isArray(boards) && boards.length > 0) {
                         this.logger.log(`Multi-board mode detected with ${boards.length} boards`);
-                        
+
                         // Load mappings for each board
                         boards.forEach((board: any) => {
                             const boardId = board.id.toUpperCase();
-                            
+
                             // Load board-specific mappings
                             const boardCoils = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_COILS`, {});
                             const boardHolding = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_HOLDING_REGISTERS`, {});
                             const boardInput = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_INPUT_REGISTERS`, {});
-                            
+
                             this.logger.debug(`Board ${board.id}: ${Object.keys(boardCoils).length} coils, ${Object.keys(boardHolding).length} holding, ${Object.keys(boardInput).length} input`);
-                            
+
                             // Merge all mappings (will be used for findModbusMapping)
                             allCoils = { ...allCoils, ...boardCoils };
                             allHolding = { ...allHolding, ...boardHolding };
@@ -114,12 +114,12 @@ export class ModbusService implements IModbusService {
                     this.logger.error(`Failed to parse MODBUS_BOARDS: ${e}`);
                 }
             }
-            
+
             // Single-board mode OR fallback: Load common mappings
             const commonCoils = this.globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_COILS, {});
             const commonHolding = this.globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_HOLDING_REGISTERS, {});
             const commonInput = this.globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_INPUT_REGISTERS, {});
-            
+
             // Merge: Common mappings + per-board mappings (per-board takes priority)
             return {
                 deviceId: this.globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, DEFAULTS.DEVICE_ID),
@@ -144,14 +144,14 @@ export class ModbusService implements IModbusService {
      */
     private findBoardIdForKey(key: string): string | null {
         const boardsConfigStr = this.globalHelper.getEnvVar('MODBUS_BOARDS', null);
-        
+
         if (!boardsConfigStr) {
             return null; // Single-board mode
         }
-        
+
         try {
             let boards;
-            
+
             // Handle both already-parsed array and JSON string
             if (Array.isArray(boardsConfigStr)) {
                 boards = boardsConfigStr;
@@ -160,34 +160,34 @@ export class ModbusService implements IModbusService {
             } else {
                 return null;
             }
-            
+
             if (!Array.isArray(boards) || boards.length === 0) {
                 return null;
             }
-            
+
             // Search each board's mappings
             for (const board of boards) {
                 const boardId = board.id.toUpperCase();
-                
+
                 // Check coils
                 const boardCoils = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_COILS`, {});
                 if (boardCoils[key] !== undefined) {
                     return board.id; // Return original case boardId
                 }
-                
+
                 // Check holding registers
                 const boardHolding = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_HOLDING_REGISTERS`, {});
                 if (boardHolding[key] !== undefined) {
                     return board.id;
                 }
-                
+
                 // Check input registers
                 const boardInput = this.globalHelper.getJsonEnvVar(`MODBUS_${boardId}_INPUT_REGISTERS`, {});
                 if (boardInput[key] !== undefined) {
                     return board.id;
                 }
             }
-            
+
             return null;
         } catch (e) {
             return null;
@@ -265,6 +265,7 @@ export class ModbusService implements IModbusService {
         try {
             const originalValue = value;
             let writeValue = value;
+            let cacheValue = value; // Track value for cache (unscaled)
 
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
             writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
@@ -286,7 +287,7 @@ export class ModbusService implements IModbusService {
 
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
             const modbusClient = await this.getModbusClient(mapping.boardId);
-            
+
             // Check if Modbus client is connected
             if (!modbusClient) {
                 throw new Error("Modbus client is not initialized");
@@ -299,8 +300,12 @@ export class ModbusService implements IModbusService {
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
                 await modbusClient.writeRegister(mapping.address, writeValue as number);
+                // Update global context cache with ORIGINAL (unscaled) value
+                this.updateGlobalContextCache(key, cacheValue as number, mapping.fc);
             } else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
                 await modbusClient.writeCoil(mapping.address, writeValue as boolean);
+                // Update global context cache with the coil value
+                this.updateGlobalContextCache(key, cacheValue as boolean, mapping.fc);
             } else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
             }
@@ -310,12 +315,12 @@ export class ModbusService implements IModbusService {
 
         } catch (error) {
             const errorMsg = (error as Error).message;
-            
+
             // Check if this is a connection error and provide more context
             if (this.isConnectionError(errorMsg)) {
                 throw new Error(`Connection lost during write for ${key}: ${errorMsg}`);
             }
-            
+
             throw new Error(ERROR_MESSAGES.MODBUS_WRITE_FAILED(key) + `: ${errorMsg}`);
         }
     }
@@ -328,7 +333,7 @@ export class ModbusService implements IModbusService {
         try {
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
             const modbusClient = await this.getModbusClient(mapping.boardId);
-            
+
             const readFc = this.getReadFunctionCode(mapping.fc);
             let result: ModbusData;
 
@@ -381,6 +386,35 @@ export class ModbusService implements IModbusService {
                 return MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS;
             default:
                 return writeFc;
+        }
+    }
+
+    /**
+     * Update global context cache after successful Modbus write
+     * Keeps holdingRegisterData and coilRegisterData in sync with actual device state
+     */
+    private updateGlobalContextCache(key: string, value: number | boolean, fc: number): void {
+        try {
+            const globalContext = this.node.context().global;
+
+            if (fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {
+                // Update holding register cache
+                const holdingData = globalContext.get('holdingRegisterData') || {};
+                holdingData[key] = value;
+                holdingData.ts = Date.now(); // Update timestamp
+                globalContext.set('holdingRegisterData', holdingData);
+                this.logger.debug(`Updated global cache - holdingRegisterData.${key} = ${value}`);
+            } else if (fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
+                // Update coil register cache
+                const coilData = globalContext.get('coilRegisterData') || {};
+                coilData[key] = value;
+                coilData.ts = Date.now(); // Update timestamp
+                globalContext.set('coilRegisterData', coilData);
+                this.logger.debug(`Updated global cache - coilRegisterData.${key} = ${value}`);
+            }
+        } catch (error) {
+            this.logger.warn(`Failed to update global context cache: ${(error as Error).message}`);
+            // Don't throw - cache update is non-critical, write already succeeded
         }
     }
 
@@ -500,8 +534,8 @@ export class ModbusService implements IModbusService {
             "timeout",
             "TIMEOUT"
         ];
-        
-        return connectionErrorPatterns.some(pattern => 
+
+        return connectionErrorPatterns.some(pattern =>
             errorMessage.toLowerCase().includes(pattern.toLowerCase())
         );
     }
@@ -520,11 +554,11 @@ export class ModbusService implements IModbusService {
         if (!HOLDING_SETML_BOM_OFFSETS.ENABLED) {
             return null;
         }
-        
+
         if (key in HOLDING_SETML_BOM_OFFSETS.OFFSETS) {
             return HOLDING_SETML_BOM_OFFSETS.OFFSETS[key as keyof typeof HOLDING_SETML_BOM_OFFSETS.OFFSETS];
         }
-        
+
         return null;
     }
 
@@ -543,7 +577,7 @@ export class ModbusService implements IModbusService {
         try {
             // Use default client for connection check
             const modbusClient = this.defaultModbusClient;
-            
+
             if (!modbusClient) {
                 throw new Error("Modbus client is not initialized");
             }
@@ -551,11 +585,11 @@ export class ModbusService implements IModbusService {
             // Check if client reports as connected
             if (!modbusClient.isConnectedCheck()) {
                 this.logger.log("Modbus client disconnected, attempting to reconnect...");
-                
+
                 try {
                     await modbusClient.reconnect();
                     this.logger.log("Modbus reconnection successful");
-                    
+
                     // Wait a moment for connection to stabilize
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     return;
@@ -567,7 +601,7 @@ export class ModbusService implements IModbusService {
             // Try a simple read operation to verify connection (skip for now to avoid additional errors)
             // The connection check via isConnectedCheck() should be sufficient
             this.logger.debug("[MODBUS-SERVICE] Modbus connection verified successfully");
-            
+
         } catch (error) {
             const errorMsg = `Modbus connection check failed: ${(error as Error).message}`;
             this.logger.error(errorMsg);

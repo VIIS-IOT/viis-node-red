@@ -211,12 +211,12 @@ exports.ENV_KEYS = {
 // Backend API Endpoints
 // ========================================
 exports.API_ENDPOINTS = {
-    // NOTE: Backend uses /api/ NOT /api/v2/
-    IRRIGATION_FINISHED: '/api/fertilizer/irrigation-finished',
-    GET_LOOKUP_TABLE: '/api/fertilizer/:deviceId/lookup-table',
-    UPDATE_LOOKUP_POINT: '/api/fertilizer/:deviceId/lookup-table-point',
-    GET_HISTORY: '/api/fertilizer/:deviceId/history',
-    SYNC: '/api/fertilizer/:deviceId/sync',
+    // NOTE: Backend uses /api/v2/ NOT /api/
+    IRRIGATION_FINISHED: '/api/v2/fertilizer/irrigation-finished',
+    GET_LOOKUP_TABLE: '/api/v2/fertilizer/:deviceId/lookup-table',
+    UPDATE_LOOKUP_POINT: '/api/v2/fertilizer/:deviceId/lookup-table-point',
+    GET_HISTORY: '/api/v2/fertilizer/:deviceId/history',
+    SYNC: '/api/v2/fertilizer/:deviceId/sync',
 };
 // ========================================
 // ThingsBoard Attribute Keys

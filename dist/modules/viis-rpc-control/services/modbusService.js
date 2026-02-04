@@ -225,6 +225,7 @@ class ModbusService {
         try {
             const originalValue = value;
             let writeValue = value;
+            let cacheValue = value; // Track value for cache (unscaled)
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
             writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
             // Debug: Log the type of writeValue
@@ -251,9 +252,13 @@ class ModbusService {
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
                 await modbusClient.writeRegister(mapping.address, writeValue);
+                // Update global context cache with ORIGINAL (unscaled) value
+                this.updateGlobalContextCache(key, cacheValue, mapping.fc);
             }
             else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
                 await modbusClient.writeCoil(mapping.address, writeValue);
+                // Update global context cache with the coil value
+                this.updateGlobalContextCache(key, cacheValue, mapping.fc);
             }
             else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
@@ -324,6 +329,35 @@ class ModbusService {
                 return constants_1.MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS;
             default:
                 return writeFc;
+        }
+    }
+    /**
+     * Update global context cache after successful Modbus write
+     * Keeps holdingRegisterData and coilRegisterData in sync with actual device state
+     */
+    updateGlobalContextCache(key, value, fc) {
+        try {
+            const globalContext = this.node.context().global;
+            if (fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {
+                // Update holding register cache
+                const holdingData = globalContext.get('holdingRegisterData') || {};
+                holdingData[key] = value;
+                holdingData.ts = Date.now(); // Update timestamp
+                globalContext.set('holdingRegisterData', holdingData);
+                this.logger.debug(`Updated global cache - holdingRegisterData.${key} = ${value}`);
+            }
+            else if (fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
+                // Update coil register cache
+                const coilData = globalContext.get('coilRegisterData') || {};
+                coilData[key] = value;
+                coilData.ts = Date.now(); // Update timestamp
+                globalContext.set('coilRegisterData', coilData);
+                this.logger.debug(`Updated global cache - coilRegisterData.${key} = ${value}`);
+            }
+        }
+        catch (error) {
+            this.logger.warn(`Failed to update global context cache: ${error.message}`);
+            // Don't throw - cache update is non-critical, write already succeeded
         }
     }
     /**
