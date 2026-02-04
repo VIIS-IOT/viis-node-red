@@ -142,22 +142,46 @@ export const EC_CONTROL_DEFAULTS = {
     RAMP_UP_SECONDS: 20,
 
     /** Adjustment step when EC deviates from target (ms) */
-    ADJUSTMENT_STEP: 50,
+    ADJUSTMENT_STEP: 500,
 
     /** EC deviation threshold to trigger adjustment (mS/cm) */
     ADJUSTMENT_THRESHOLD: 0.05,
 
     /** Maximum valve ON time per cycle (ms) */
-    MAX_VALVE_TIME: 5000,
+    MAX_VALVE_TIME: 10000,
 
     /** Minimum valve ON time per cycle (ms) */
     MIN_VALVE_TIME: 0,
 
-    /** Polling interval for EC/flow readings (ms) */
+    /** Polling interval for EC/flow readings (ms) - TCP connections */
     POLLING_INTERVAL: 1000,
+
+    /** Polling interval for RTU connections (ms) - slower to avoid bus contention */
+    POLLING_INTERVAL_RTU: 2000,
+
+    /** Delay between consecutive Modbus writes for RTU (ms) */
+    RTU_INTER_WRITE_DELAY: 100,
+
+    /** Delay after completing all writes for RTU (ms) */
+    RTU_WRITE_SETTLE_DELAY: 50,
 
     /** Context window size for EC averaging (samples) */
     CONTEXT_WINDOW_SIZE: 20,
+
+    /** EC sensor scaling factor (raw value × 10) */
+    EC_SCALE_FACTOR: 10,
+
+    /** pH sensor scaling factor (raw value × 10) */
+    PH_SCALE_FACTOR: 10,
+
+    /** Maximum age of global context data before considered stale (ms) */
+    GLOBAL_DATA_MAX_AGE: 10000,
+
+    /** Global context key for holding register data (from polling flow) */
+    GLOBAL_HOLDING_DATA_KEY: 'holdingRegisterData',
+
+    /** Global context key for coil data (from polling flow) */
+    GLOBAL_COIL_DATA_KEY: 'coilRegisterData',
 } as const;
 
 // ========================================
