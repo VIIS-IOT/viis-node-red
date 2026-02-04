@@ -126,30 +126,46 @@ exports.EC_CONTROL_DEFAULTS = {
     /** Ramp-up period to skip for EC averaging (seconds) */
     RAMP_UP_SECONDS: 20,
     /** Adjustment step when EC deviates from target (ms) */
-    ADJUSTMENT_STEP: 50,
+    ADJUSTMENT_STEP: 500,
     /** EC deviation threshold to trigger adjustment (mS/cm) */
     ADJUSTMENT_THRESHOLD: 0.05,
     /** Maximum valve ON time per cycle (ms) */
-    MAX_VALVE_TIME: 5000,
+    MAX_VALVE_TIME: 10000,
     /** Minimum valve ON time per cycle (ms) */
     MIN_VALVE_TIME: 0,
-    /** Polling interval for EC/flow readings (ms) */
+    /** Polling interval for EC/flow readings (ms) - TCP connections */
     POLLING_INTERVAL: 1000,
+    /** Polling interval for RTU connections (ms) - slower to avoid bus contention */
+    POLLING_INTERVAL_RTU: 2000,
+    /** Delay between consecutive Modbus writes for RTU (ms) */
+    RTU_INTER_WRITE_DELAY: 100,
+    /** Delay after completing all writes for RTU (ms) */
+    RTU_WRITE_SETTLE_DELAY: 50,
     /** Context window size for EC averaging (samples) */
     CONTEXT_WINDOW_SIZE: 20,
+    /** EC sensor scaling factor (raw value × 10) */
+    EC_SCALE_FACTOR: 10,
+    /** pH sensor scaling factor (raw value × 10) */
+    PH_SCALE_FACTOR: 10,
+    /** Maximum age of global context data before considered stale (ms) */
+    GLOBAL_DATA_MAX_AGE: 10000,
+    /** Global context key for holding register data (from polling flow) */
+    GLOBAL_HOLDING_DATA_KEY: 'holdingRegisterData',
+    /** Global context key for coil data (from polling flow) */
+    GLOBAL_COIL_DATA_KEY: 'coilRegisterData',
 };
 // ========================================
 // Telemetry Key Mapping (Edge → Server)
 // ========================================
 exports.TELEMETRY_KEY_MAP = {
     // EC sensor
-    current_ec: 'EC',
+    current_ec: 'current_ec',
     // Flow sensors
-    current_flow_1: 'crt_flow_01',
-    current_flow_2: 'crt_flow_02',
-    current_flow_3: 'crt_flow_03',
-    current_flow_4: 'crt_flow_04',
-    current_flow_5: 'crt_flow_05',
+    current_flow_1: 'current_flow_01',
+    current_flow_2: 'current_flow_02',
+    current_flow_3: 'current_flow_03',
+    current_flow_4: 'current_flow_04',
+    current_flow_5: 'current_flow_05',
 };
 // ========================================
 // Irrigation Run Status
@@ -195,11 +211,12 @@ exports.ENV_KEYS = {
 // Backend API Endpoints
 // ========================================
 exports.API_ENDPOINTS = {
-    IRRIGATION_FINISHED: '/api/v2/fertilizer/irrigation-finished',
-    GET_LOOKUP_TABLE: '/api/v2/fertilizer/:deviceId/lookup-table',
-    UPDATE_LOOKUP_POINT: '/api/v2/fertilizer/:deviceId/lookup-table-point',
-    GET_HISTORY: '/api/v2/fertilizer/:deviceId/history',
-    SYNC: '/api/v2/fertilizer/:deviceId/sync',
+    // NOTE: Backend uses /api/ NOT /api/v2/
+    IRRIGATION_FINISHED: '/api/fertilizer/irrigation-finished',
+    GET_LOOKUP_TABLE: '/api/fertilizer/:deviceId/lookup-table',
+    UPDATE_LOOKUP_POINT: '/api/fertilizer/:deviceId/lookup-table-point',
+    GET_HISTORY: '/api/fertilizer/:deviceId/history',
+    SYNC: '/api/fertilizer/:deviceId/sync',
 };
 // ========================================
 // ThingsBoard Attribute Keys

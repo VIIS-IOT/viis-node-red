@@ -504,6 +504,21 @@ module.exports = function (RED: NodeAPI) {
                                 const synced = await syncService.reportIrrigationFinished(updatedRun);
                                 if (synced) {
                                     await runService.markAsSynced(controlContext.currentRun.id);
+
+                                    // ✅ NEW: Fetch updated lookup table from backend
+                                    // Backend has learned from this irrigation + aggregated data from other devices
+                                    try {
+                                        const updatedLookupTable = await syncService.fetchLookupTable();
+                                        if (updatedLookupTable && updatedLookupTable.length > 0) {
+                                            // Merge with local lookup table
+                                            for (const point of updatedLookupTable) {
+                                                await lookupService.updateOrCreateFromServer(point);
+                                            }
+                                            node.log(`✅ Synced ${updatedLookupTable.length} lookup points from backend`);
+                                        }
+                                    } catch (syncTableError) {
+                                        node.warn(`⚠️ Failed to sync lookup table (will use local): ${(syncTableError as Error).message}`);
+                                    }
                                 }
                             }
                         } catch (syncError) {

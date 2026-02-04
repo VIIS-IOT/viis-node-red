@@ -190,14 +190,14 @@ export const EC_CONTROL_DEFAULTS = {
 
 export const TELEMETRY_KEY_MAP = {
     // EC sensor
-    current_ec: 'EC',
+    current_ec: 'current_ec',
 
     // Flow sensors
-    current_flow_1: 'crt_flow_01',
-    current_flow_2: 'crt_flow_02',
-    current_flow_3: 'crt_flow_03',
-    current_flow_4: 'crt_flow_04',
-    current_flow_5: 'crt_flow_05',
+    current_flow_1: 'current_flow_01',
+    current_flow_2: 'current_flow_02',
+    current_flow_3: 'current_flow_03',
+    current_flow_4: 'current_flow_04',
+    current_flow_5: 'current_flow_05',
 } as const;
 
 // ========================================
@@ -253,12 +253,12 @@ export const ENV_KEYS = {
 // ========================================
 
 export const API_ENDPOINTS = {
-    // NOTE: Backend uses /api/v2/ NOT /api/
-    IRRIGATION_FINISHED: '/api/v2/fertilizer/irrigation-finished',
-    GET_LOOKUP_TABLE: '/api/v2/fertilizer/:deviceId/lookup-table',
-    UPDATE_LOOKUP_POINT: '/api/v2/fertilizer/:deviceId/lookup-table-point',
-    GET_HISTORY: '/api/v2/fertilizer/:deviceId/history',
-    SYNC: '/api/v2/fertilizer/:deviceId/sync',
+    // NOTE: Backend uses /api/ NOT /api/v2/
+    IRRIGATION_FINISHED: '/api/fertilizer/irrigation-finished',
+    GET_LOOKUP_TABLE: '/api/fertilizer/:deviceId/lookup-table',
+    UPDATE_LOOKUP_POINT: '/api/fertilizer/:deviceId/lookup-table-point',
+    GET_HISTORY: '/api/fertilizer/:deviceId/history',
+    SYNC: '/api/fertilizer/:deviceId/sync',
 } as const;
 
 // ========================================

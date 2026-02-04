@@ -322,21 +322,41 @@ await lookupTableService.updateWithRunData(
 controlContext.state = 'IDLE';
 ```
 
-**Step 5: Backend Sync (Async, Non-Blocking)**
+**Step 5: Backend Sync + Lookup Table Update (Async, Non-Blocking)**
 ```typescript
-// After updating local lookup table, try to sync to cloud backend
+// After updating local lookup table, sync to cloud backend
 try {
   // Get updated run record from database
   const updatedRun = await runService.getRunById(currentRun.id);
 
   if (updatedRun) {
-    // POST to backend: /api/fertilizer/irrigation-finished
+    // 1. POST to backend: /api/fertilizer/irrigation-finished
+    // Backend receives: device_id, start_time, end_time, ec_setpoint
     const synced = await syncService.reportIrrigationFinished(updatedRun);
 
     if (synced) {
       // Mark run as synced in local database
       await runService.markAsSynced(currentRun.id);
-      node.log('✅ Synced to backend successfully');
+
+      // ✅ 2. NEW: Fetch updated lookup table from backend
+      // Backend has:
+      //   - Learned from this irrigation (weighted average + adaptive adjustment)
+      //   - Aggregated data from other devices (if multi-device farm)
+      //   - Applied linear interpolation for missing EC points
+      try {
+        const updatedLookupTable = await syncService.fetchLookupTable();
+        if (updatedLookupTable && updatedLookupTable.length > 0) {
+          // Merge with local lookup table
+          for (const point of updatedLookupTable) {
+            await lookupService.updateOrCreateFromServer(point);
+          }
+          node.log(`✅ Synced ${updatedLookupTable.length} lookup points from backend`);
+        }
+      } catch (syncTableError) {
+        // Lookup table sync failure is NOT critical
+        // Gateway continues using local lookup table
+        node.warn(`⚠️ Failed to sync lookup table: ${syncTableError.message}`);
+      }
     }
   }
 } catch (syncError) {
@@ -348,6 +368,42 @@ try {
 
 // Irrigation completes normally regardless of sync status
 ```
+
+**Lookup Table Sync Flow:**
+```
+┌─ Irrigation completes
+│
+├─ Gateway local update (weighted average)
+│  └─ DB: lookup_table updated
+│
+├─ POST /api/fertilizer/irrigation-finished
+│  └─ Server: learns + optimizes
+│     ├─ Weighted average update
+│     ├─ Adaptive adjustment (±50ms based on deviation)
+│     ├─ Linear interpolation for intermediate EC points
+│     └─ Aggregates from multiple devices (if fleet deployment)
+│
+├─ Gateway GET /api/fertilizer/:deviceId/lookup-table
+│  └─ Fetch server's optimized lookup table
+│
+├─ Merge server data with local
+│  ├─ Prefer server's learned valve times
+│  ├─ Keep local sample_count if higher
+│  └─ Mark as synced_at = now
+│
+└─ Next irrigation uses improved lookup table
+   └─ Better predictions due to Backend's learning algorithm
+```
+
+**Why 2-stage learning?**
+
+| Stage | Component | Algorithm |
+|-------|-----------|-----------|
+| **Stage 1 (Local - Offline)** | Gateway | Weighted average of local runs |
+| **Stage 2 (Global - Learning)** | Backend | Adaptive adjustment + interpolation + multi-device aggregation |
+
+Gateway learns quickly from its own data. Backend learns deeply from fleet patterns.
+
 
 **Code Evidence** (viis-fertilizer-ec-control.ts, line 500-510):
 ```typescript
@@ -1068,115 +1124,205 @@ async updateWithRunData(
 
 ### 9.1 Architecture Overview
 
-**Design Pattern**: **Local-First with Async Cloud Sync**
+**Design Pattern**: **Local-First with Async Cloud Sync + Learning Feedback Loop**
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Edge Device (Offline-Capable)                              │
-│                                                              │
-│  ┌────────────────┐         ┌────────────────┐              │
-│  │ Fertilizer EC  │────────►│  Local MySQL   │              │
-│  │ Control Node   │         │  Database      │              │
-│  └────────┬───────┘         └────────┬───────┘              │
-│           │                          │                      │
-│           │ Async sync (non-blocking)│                      │
-│           └──────────┬───────────────┘                      │
-│                      │                                      │
-└──────────────────────┼──────────────────────────────────────┘
-                       │
-                       │ HTTPS POST (retry on fail)
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Cloud Backend (iot.viis.tech)                              │
-│                                                              │
-│  ┌─────────────────────────────────────────────┐            │
-│  │ API: /api/fertilizer/irrigation-finished    │            │
-│  └──────────────────────┬──────────────────────┘            │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────┐            │
-│  │  Learning Algorithm Engine                  │            │
-│  │  • Aggregate data from multiple devices     │            │
-│  │  • Optimize lookup table parameters         │            │
-│  │  • Generate recommendations                 │            │
-│  └──────────────────────┬──────────────────────┘            │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────┐            │
-│  │  Optional: Push Updated Lookup Table        │            │
-│  │  Back to Edge Devices                       │            │
-│  └─────────────────────────────────────────────┘            │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│  Edge Device (Offline-Capable, Real-Time Learning)               │
+│                                                                   │
+│  ┌────────────────┐         ┌────────────────┐                   │
+│  │ Fertilizer EC  │────────►│  Local MySQL   │                   │
+│  │ Control Node   │         │  Database      │ (Weighted avg)    │
+│  └────────┬───────┘         └────────┬───────┘                   │
+│           │                          │                           │
+│           │ (1) POST /irrigation-    │ (3) GET /lookup-table     │
+│           │     finished (async)     │ (updated from server)     │
+│           └─────────┬────────────────┼─────────────────────┐    │
+│                     │                │                     │    │
+└─────────────────────┼────────────────┼─────────────────────┼────┘
+                      │                │                     │
+                      │                │                     │
+                      ▼                ▼                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Cloud Backend (iot.viis.tech) - Global Learning               │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ (1) Receive POST /api/fertilizer/irrigation-finished    │  │
+│  │     device_id, start_time, end_time, ec_setpoint        │  │
+│  └──────────────────────┬─────────────────────────────────┘  │
+│                         │                                     │
+│                         ▼                                     │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ (2) Learning Algorithm (FertilizerMachineService)       │  │
+│  │     ├─ Fetch telemetry from ThingsBoard (skip 20s)     │  │
+│  │     ├─ Weighted average update                          │  │
+│  │     ├─ Adaptive adjustment (±50ms based on EC delta)    │  │
+│  │     ├─ Linear interpolation for intermediate EC points  │  │
+│  │     └─ Aggregate multi-device data (fleet learning)     │  │
+│  └──────────────────────┬─────────────────────────────────┘  │
+│                         │                                     │
+│                         ▼                                     │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Updated lookup_table in PostgreSQL                       │  │
+│  │ (Optimized valve times + achieved EC/flow averages)     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                         │                                     │
+└─────────────────────────┼─────────────────────────────────────┘
+                          │
+                          │ Gateway polls periodically
+                          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  (3) Edge Device receives updated lookup table                 │
+│      ├─ Merge server-learned valve times (prefer server)       │
+│      ├─ Update local lookup table (TabiotFertilizerLookupPoint)│
+│      └─ next_irrigation uses improved predictions              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 9.2 Sync Trigger & Timing
+### 9.2 Two-Stage Learning System
+
+| Learning Stage | Component | Algorithm | Data Source |
+|----------------|-----------|-----------|-------------|
+| **Stage 1: Local** | Gateway (Node-RED) | Weighted average | Current device only |
+| **Stage 2: Global** | Backend Server | Adaptive + interpolation + aggregation | All devices in fleet |
+
+**Benefits**:
+- 🟢 Fast: Gateway learns from own data immediately (offline-capable)
+- 🔵 Deep: Backend learns from fleet patterns (multi-device optimization)
+- 🟣 Convergence: Combined learning improves predictions exponentially
+
+### 9.3 Sync Trigger & Timing
 
 **When**: After each irrigation run completes successfully
 
-**Where**: In `stopIrrigation()` function (line 500-510)
+**Where**: In `stopIrrigation()` function (line 500-530)
 
 **Sequence**:
 ```
-1. Complete irrigation run in local DB      ✅ CRITICAL
-2. Update lookup table in local DB          ✅ CRITICAL
-3. Try sync to backend                      ⚠️ OPTIONAL
-   ├─ Success → Mark run as synced
-   └─ Failure → Log error, continue normally
+1. Complete irrigation run in local DB      ✅ CRITICAL (persist first)
+2. Update lookup table in local DB          ✅ CRITICAL (weighted average)
+3. Try sync to backend (POST)               ⚠️ OPTIONAL (non-blocking)
+   ├─ Success → Fetch updated lookup table (GET)
+   │  ├─ Merge server-learned data
+   │  └─ next_irrigation benefits from global learning
+   └─ Failure → Use local lookup table, retry on next run
 4. Reset state to IDLE                      ✅ ALWAYS
 ```
 
-### 9.3 Sync Implementation (BackendSyncService)
+### 9.4 Backend Learning Algorithm (FertilizerMachineService)
 
-**File**: `services/BackendSyncService.ts`
+**Source**: Backend repository `src/modules/fertilizer-machine/FertilizerMachineService.ts`
 
-**Method**: `reportIrrigationFinished(run: IrrigationRun)`
-
+#### Stage 1: Weighted Average Update
 ```typescript
-async reportIrrigationFinished(run: IrrigationRun): Promise<boolean> {
-    if (!run.end_time) {
-        this.error('Cannot report incomplete run');
-        return false;
-    }
+// Line 183-193
+if (currentPoint) {
+  const n = currentPoint.sample_count;
 
-    const payload: IrrigationFinishedPayload = {
-        device_id: this.deviceId,
-        start_time: run.start_time.toISOString(),
-        end_time: run.end_time.toISOString(),
-        ec_setpoint: run.ec_setpoint,
-    };
+  // Weighted average: new_avg = (old_avg * n + new_value) / (n + 1)
+  currentPoint.actual_ec_avg = (currentPoint.actual_ec_avg * n + achievedEC) / (n + 1);
+  currentPoint.actual_flow_01 = (currentPoint.actual_flow_01 * n + flow_01) / (n + 1);
+  // ... flow_02-05
 
-    try {
-        const response = await this.httpClient.post(
-            '/api/fertilizer/irrigation-finished',
-            payload
-        );
-
-        if (response.data?.success) {
-            this.log(`Reported irrigation run #${run.id} to backend`);
-            return true;
-        } else {
-            this.warn(`Backend returned unsuccessful response`);
-            return false;
-        }
-    } catch (error) {
-        this.error(`Failed to report irrigation: ${error.message}`);
-        return false;
-    }
+  currentPoint.sample_count = n + 1;
 }
 ```
 
-### 9.4 Request/Response Format
+#### Stage 2: Adaptive Adjustment (±50ms)
+```typescript
+// Line 196-212
+const threshold = 0.05;     // 0.05 mS/cm
+const adjustmentStep = 50;  // 50ms
+const delta = achievedEC - ecSetpoint;
 
-**API Endpoint**: `POST https://iot.viis.tech/api/fertilizer/irrigation-finished`
+if (Math.abs(delta) > threshold) {
+  const multiplier = delta > 0 ? -1 : 1;  // High EC → decrease, Low EC → increase
 
-> **Note**: API uses `/api/` prefix, NOT `/api/v2/`
+  currentPoint.time_on_valve_01 += adjustmentStep * multiplier;
+  // ... valve_02-05
 
-**Request Headers**:
+  Logger.info(`Adjusted valve times: ${adjustmentStep * multiplier}ms (EC delta: ${delta})`);
+}
 ```
-Content-Type: application/json
+
+**Example:**
+```
+Target EC: 1.80 mS/cm
+Achieved EC: 1.75 mS/cm (too low, delta = -0.05)
+Action: Increase valve times by 50ms
+Result: Next run will dose more fertilizer
 ```
 
-**Request Body**:
+#### Stage 3: Linear Interpolation
+```typescript
+// Line 73-125
+// For each interpolated point between actual points:
+const ratio = (targetEC - lower.ec_setpoint) / (upper.ec_setpoint - lower.ec_setpoint);
+interpolatedPoint.time_on_valve_01 = Math.round(
+  lower.time_on_valve_01 + ratio * (upper.time_on_valve_01 - lower.time_on_valve_01)
+);
+```
+
+### 9.5 Lookup Table Fetch & Merge (NEW)
+
+**Method**: `BackendSyncService.fetchLookupTable()`
+
+```typescript
+async fetchLookupTable(): Promise<LookupPoint[]> {
+  const endpoint = API_ENDPOINTS.GET_LOOKUP_TABLE.replace(':deviceId', this.deviceId);
+
+  try {
+    const response = await this.httpClient.get(endpoint);
+
+    if (Array.isArray(response.data)) {
+      this.log(`Fetched ${response.data.length} lookup points from backend`);
+      return response.data;
+    }
+
+    return [];
+  } catch (error) {
+    this.error(`Failed to fetch lookup table: ${error.message}`);
+    return [];
+  }
+}
+```
+
+**Merge Strategy**: `LookupTableService.updateOrCreateFromServer()`
+
+```typescript
+async updateOrCreateFromServer(serverPoint: LookupPoint): Promise<void> {
+  // 1. If point exists locally: MERGE (prefer server's learned valve times)
+  if (existingPoint) {
+    existingPoint.time_on_valve_01 = serverPoint.time_on_valve_01;  // ← Use server's optimized value
+    existingPoint.actual_ec_avg = serverPoint.actual_ec_avg;
+    // ... etc for all columns
+
+    existingPoint.last_server_sync = new Date();
+    await this.repository.save(existingPoint);
+  }
+
+  // 2. If point is NEW from server: CREATE it locally
+  else {
+    const newPoint = this.repository.create({
+      ...serverPoint,
+      device_id: this.deviceId,
+      last_server_sync: new Date(),
+    });
+    await this.repository.save(newPoint);
+  }
+}
+```
+
+### 9.6 Request/Response Format
+
+**API Endpoints**:
+
+| Endpoint | Method | Purpose | Called After |
+|----------|--------|---------|--------------|
+| `/api/fertilizer/irrigation-finished` | POST | Report completion to Backend | Every irrigation completes |
+| `/api/fertilizer/:deviceId/lookup-table` | GET | Fetch optimized lookup table | After successful POST |
+
+**Payload - POST /irrigation-finished**:
 ```json
 {
   "device_id": "device1",
@@ -1186,12 +1332,52 @@ Content-Type: application/json
 }
 ```
 
-**Success Response** (200 OK):
+**Response - GET /lookup-table** (200 OK):
 ```json
-{
-  "success": true,
-  "message": "Irrigation data received",
-  "run_id": "backend_run_12345"
+[
+  {
+    "device_id": "device1",
+    "ec_setpoint": 1.5,
+    "time_on_valve_01": 2000,
+    "time_on_valve_02": 1500,
+    "time_on_valve_03": 1800,
+    "time_on_valve_04": 1600,
+    "time_on_valve_05": 1700,
+    "actual_ec_avg": 1.48,
+    "actual_flow_01": 520.5,
+    "actual_flow_02": 480.3,
+    "actual_flow_03": 510.2,
+    "actual_flow_04": 490.1,
+    "actual_flow_05": 505.0,
+    "sample_count": 12,
+    "data_type": "Actual",
+    "last_updated": "2026-02-04T10:45:00.000Z"
+  },
+  {
+    "ec_setpoint": 1.8,
+    "time_on_valve_01": 2250,
+    ...
+  },
+  {
+    "ec_setpoint": 1.65,
+    "time_on_valve_01": 2100,
+    "data_type": "Interpolated"  // ← Generated by Backend
+    ...
+  }
+]
+```
+
+### 9.7 Offline Operation
+
+| Scenario | Action | Result |
+|----------|--------|--------|
+| Backend unreachable | Use local lookup table | ✅ Continues normally, learns locally |
+| POST fails | Retry on next run via `syncPendingRuns()` | ✅ Data not lost |
+| GET fails after POST | Keep local version | ⚠️ Misses 1 optimization cycle |
+| Network recovers | Auto-retry pending syncs | ✅ Eventual consistency |
+
+---
+
 }
 ```
 

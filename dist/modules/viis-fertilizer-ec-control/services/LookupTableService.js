@@ -341,6 +341,80 @@ class LookupTableService {
     // ========================================
     // Logging Helpers
     // ========================================
+    /**
+     * Update or create lookup point from backend
+     * Backend has aggregated data from multiple devices + learning algorithm applied
+     */
+    async updateOrCreateFromServer(serverPoint) {
+        if (!this.repository) {
+            throw new Error('LookupTableService not initialized');
+        }
+        const existingPoint = await this.repository.findOne({
+            where: {
+                device_id: this.deviceId,
+                ec_setpoint: serverPoint.ec_setpoint,
+            },
+        });
+        if (existingPoint) {
+            // Update existing: merge server data with local (prefer server's learned values)
+            existingPoint.time_on_valve_01 = serverPoint.time_on_valve_01;
+            existingPoint.time_on_valve_02 = serverPoint.time_on_valve_02;
+            existingPoint.time_on_valve_03 = serverPoint.time_on_valve_03;
+            existingPoint.time_on_valve_04 = serverPoint.time_on_valve_04;
+            existingPoint.time_on_valve_05 = serverPoint.time_on_valve_05;
+            // Update achieved values from server
+            if (serverPoint.actual_ec_avg !== undefined) {
+                existingPoint.actual_ec_avg = serverPoint.actual_ec_avg;
+            }
+            if (serverPoint.actual_flow_01 !== undefined) {
+                existingPoint.actual_flow_01 = serverPoint.actual_flow_01;
+            }
+            if (serverPoint.actual_flow_02 !== undefined) {
+                existingPoint.actual_flow_02 = serverPoint.actual_flow_02;
+            }
+            if (serverPoint.actual_flow_03 !== undefined) {
+                existingPoint.actual_flow_03 = serverPoint.actual_flow_03;
+            }
+            if (serverPoint.actual_flow_04 !== undefined) {
+                existingPoint.actual_flow_04 = serverPoint.actual_flow_04;
+            }
+            if (serverPoint.actual_flow_05 !== undefined) {
+                existingPoint.actual_flow_05 = serverPoint.actual_flow_05;
+            }
+            // Keep local sample count if higher (indicates local learning)
+            if (serverPoint.sample_count !== undefined && serverPoint.sample_count > (existingPoint.sample_count || 0)) {
+                existingPoint.sample_count = serverPoint.sample_count;
+            }
+            existingPoint.data_type = serverPoint.data_type || 'Actual';
+            existingPoint.last_server_sync = new Date();
+            existingPoint.last_updated = new Date();
+            await this.repository.save(existingPoint);
+            this.log(`Updated lookup point EC=${serverPoint.ec_setpoint} from server`);
+        }
+        else {
+            // Create new point from server
+            const newPoint = this.repository.create({
+                device_id: this.deviceId,
+                ec_setpoint: serverPoint.ec_setpoint,
+                time_on_valve_01: serverPoint.time_on_valve_01,
+                time_on_valve_02: serverPoint.time_on_valve_02,
+                time_on_valve_03: serverPoint.time_on_valve_03,
+                time_on_valve_04: serverPoint.time_on_valve_04,
+                time_on_valve_05: serverPoint.time_on_valve_05,
+                actual_ec_avg: serverPoint.actual_ec_avg,
+                actual_flow_01: serverPoint.actual_flow_01,
+                actual_flow_02: serverPoint.actual_flow_02,
+                actual_flow_03: serverPoint.actual_flow_03,
+                actual_flow_04: serverPoint.actual_flow_04,
+                actual_flow_05: serverPoint.actual_flow_05,
+                sample_count: serverPoint.sample_count || 0,
+                data_type: serverPoint.data_type || 'Actual',
+                last_server_sync: new Date(),
+            });
+            await this.repository.save(newPoint);
+            this.log(`Created new lookup point EC=${serverPoint.ec_setpoint} from server`);
+        }
+    }
     log(message) {
         this.node.log(`[LookupTable] ${message}`);
     }

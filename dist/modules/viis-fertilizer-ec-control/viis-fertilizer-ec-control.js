@@ -58,6 +58,9 @@ module.exports = function (RED) {
         const adjustmentThreshold = (_c = config.adjustmentThreshold) !== null && _c !== void 0 ? _c : globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_THRESHOLD', constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD);
         const maxValveTime = (_d = config.maxValveTime) !== null && _d !== void 0 ? _d : globalHelper.getNumericEnvVar('FERTILIZER_MAX_VALVE_TIME', constants_1.EC_CONTROL_DEFAULTS.MAX_VALVE_TIME);
         const debugEnable = (_e = config.debugEnable) !== null && _e !== void 0 ? _e : false;
+        // RTU-specific delays
+        const rtuInterWriteDelay = globalHelper.getNumericEnvVar('FERTILIZER_RTU_INTER_WRITE_DELAY', constants_1.EC_CONTROL_DEFAULTS.RTU_INTER_WRITE_DELAY);
+        const rtuWriteSettleDelay = globalHelper.getNumericEnvVar('FERTILIZER_RTU_WRITE_SETTLE_DELAY', constants_1.EC_CONTROL_DEFAULTS.RTU_WRITE_SETTLE_DELAY);
         // Multi-board Modbus config
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
@@ -79,6 +82,7 @@ module.exports = function (RED) {
         };
         let pollingInterval = null;
         let servicesInitialized = false;
+        let isPolling = false; // Race condition guard
         // Debug logging helper
         const debugLog = (message) => {
             if (debugEnable) {
@@ -161,9 +165,65 @@ module.exports = function (RED) {
                 return await client_registry_1.default.getModbusClient(config, node);
             }
         }
+        // Check if using RTU connection
+        function isRtuMode() {
+            if ((currentModbusConfig === null || currentModbusConfig === void 0 ? void 0 : currentModbusConfig.type) === 'RTU')
+                return true;
+            if (isMultiBoardMode && currentBoardId) {
+                const boards = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+                if (boards) {
+                    try {
+                        const boardsArray = Array.isArray(boards) ? boards : JSON.parse(boards);
+                        const board = boardsArray.find((b) => b.id === currentBoardId);
+                        return (board === null || board === void 0 ? void 0 : board.type) === 'RTU';
+                    }
+                    catch (e) {
+                        return false;
+                    }
+                }
+            }
+            return false;
+        }
+        // Get appropriate polling interval based on connection type
+        function getPollingInterval() {
+            const isRtu = isRtuMode();
+            const defaultInterval = isRtu ? constants_1.EC_CONTROL_DEFAULTS.POLLING_INTERVAL_RTU : constants_1.EC_CONTROL_DEFAULTS.POLLING_INTERVAL;
+            const envInterval = globalHelper.getNumericEnvVar('FERTILIZER_POLLING_INTERVAL', defaultInterval);
+            if (isRtu && envInterval < 1500) {
+                node.warn(`RTU polling interval ${envInterval}ms is too aggressive. Using minimum 1500ms to prevent bus overload.`);
+                return 1500;
+            }
+            return envInterval;
+        }
+        // RTU-safe delay helper
+        async function rtuDelay(ms) {
+            if (!isRtuMode())
+                return; // No delay for TCP
+            await new Promise(resolve => setTimeout(resolve, ms));
+        }
+        // Validate valve times are within safe boundaries
+        function validateValveTimes(valveTimes) {
+            const errors = [];
+            const entries = Object.entries(valveTimes);
+            for (const [key, value] of entries) {
+                if (value < 0) {
+                    errors.push(`${key} is negative: ${value}`);
+                }
+                else if (value > maxValveTime) {
+                    errors.push(`${key} exceeds max (${maxValveTime}ms): ${value}`);
+                }
+            }
+            return { valid: errors.length === 0, errors };
+        }
         // Write valve times to Modbus
         async function writeValveTimes(valveTimes) {
             try {
+                // Validate before writing
+                const validation = validateValveTimes(valveTimes);
+                if (!validation.valid) {
+                    node.error(`Valve time validation failed: ${validation.errors.join(', ')}`);
+                    return false;
+                }
                 const client = await getModbusClient();
                 // Get addresses from global context
                 const addr01 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01);
@@ -171,13 +231,18 @@ module.exports = function (RED) {
                 const addr03 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03);
                 const addr04 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_04);
                 const addr05 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_05);
-                // Write time_on_valve_01-05
+                // Write time_on_valve_01-05 with RTU-safe delays
                 await client.writeRegister(addr01, valveTimes.time_on_valve_01);
+                await rtuDelay(rtuInterWriteDelay);
                 await client.writeRegister(addr02, valveTimes.time_on_valve_02);
+                await rtuDelay(rtuInterWriteDelay);
                 await client.writeRegister(addr03, valveTimes.time_on_valve_03);
+                await rtuDelay(rtuInterWriteDelay);
                 await client.writeRegister(addr04, valveTimes.time_on_valve_04);
+                await rtuDelay(rtuInterWriteDelay);
                 await client.writeRegister(addr05, valveTimes.time_on_valve_05);
-                debugLog(`Wrote valve times: ${JSON.stringify(valveTimes)}`);
+                await rtuDelay(rtuWriteSettleDelay); // Final settle delay
+                debugLog(`Wrote valve times: ${JSON.stringify(valveTimes)} ${isRtuMode() ? '(RTU mode with delays)' : ''}`);
                 return true;
             }
             catch (error) {
@@ -185,36 +250,49 @@ module.exports = function (RED) {
                 return false;
             }
         }
-        // Read sensor values from Modbus
+        // Read sensor values from global context (populated by polling flow)
+        // This avoids RTU bus contention by reusing existing polling data
         async function readSensors() {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
             try {
-                const client = await getModbusClient();
-                // Get addresses from global context
-                const addrEc = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_EC);
-                const addrFlow1 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_1);
-                const addrFlow2 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_2);
-                const addrFlow3 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_3);
-                const addrFlow4 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_4);
-                const addrFlow5 = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CURRENT_FLOW_5);
-                // Read EC and flow registers
-                const ecRaw = await client.readHoldingRegisters(addrEc, 1);
-                const flow1Raw = await client.readHoldingRegisters(addrFlow1, 1);
-                const flow2Raw = await client.readHoldingRegisters(addrFlow2, 1);
-                const flow3Raw = await client.readHoldingRegisters(addrFlow3, 1);
-                const flow4Raw = await client.readHoldingRegisters(addrFlow4, 1);
-                const flow5Raw = await client.readHoldingRegisters(addrFlow5, 1);
-                return {
-                    current_ec: (Number((_b = (_a = ecRaw === null || ecRaw === void 0 ? void 0 : ecRaw.data) === null || _a === void 0 ? void 0 : _a[0]) !== null && _b !== void 0 ? _b : 0)) / 10, // Convert from x10
-                    current_flow_1: Number((_d = (_c = flow1Raw === null || flow1Raw === void 0 ? void 0 : flow1Raw.data) === null || _c === void 0 ? void 0 : _c[0]) !== null && _d !== void 0 ? _d : 0),
-                    current_flow_2: Number((_f = (_e = flow2Raw === null || flow2Raw === void 0 ? void 0 : flow2Raw.data) === null || _e === void 0 ? void 0 : _e[0]) !== null && _f !== void 0 ? _f : 0),
-                    current_flow_3: Number((_h = (_g = flow3Raw === null || flow3Raw === void 0 ? void 0 : flow3Raw.data) === null || _g === void 0 ? void 0 : _g[0]) !== null && _h !== void 0 ? _h : 0),
-                    current_flow_4: Number((_k = (_j = flow4Raw === null || flow4Raw === void 0 ? void 0 : flow4Raw.data) === null || _j === void 0 ? void 0 : _j[0]) !== null && _k !== void 0 ? _k : 0),
-                    current_flow_5: Number((_m = (_l = flow5Raw === null || flow5Raw === void 0 ? void 0 : flow5Raw.data) === null || _l === void 0 ? void 0 : _l[0]) !== null && _m !== void 0 ? _m : 0),
+                // Read from global context instead of direct Modbus polling
+                const holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                if (!holdingData) {
+                    debugLog('No holding register data in global context. Waiting for polling flow...');
+                    return null;
+                }
+                // Check data freshness
+                const dataAge = Date.now() - (holdingData.ts || 0);
+                const maxAge = globalHelper.getNumericEnvVar('FERTILIZER_GLOBAL_DATA_MAX_AGE', constants_1.EC_CONTROL_DEFAULTS.GLOBAL_DATA_MAX_AGE);
+                if (dataAge > maxAge) {
+                    node.warn(`Global context data is stale (${dataAge}ms old, max ${maxAge}ms). Polling flow may be stopped.`);
+                    return null;
+                }
+                // Map keys from global context (already scaled by polling flow)
+                // Note: Polling flow scales current_ec by /1000, we need to check
+                const currentEc = holdingData.current_ec;
+                const currentFlow1 = (_b = (_a = holdingData.current_flow_1) !== null && _a !== void 0 ? _a : holdingData.current_flow_1) !== null && _b !== void 0 ? _b : 0;
+                const currentFlow2 = (_d = (_c = holdingData.current_flow_2) !== null && _c !== void 0 ? _c : holdingData.current_flow_2) !== null && _d !== void 0 ? _d : 0;
+                const currentFlow3 = (_f = (_e = holdingData.current_flow_3) !== null && _e !== void 0 ? _e : holdingData.current_flow_3) !== null && _f !== void 0 ? _f : 0;
+                const currentFlow4 = (_h = (_g = holdingData.current_flow_4) !== null && _g !== void 0 ? _g : holdingData.current_flow_4) !== null && _h !== void 0 ? _h : 0;
+                const currentFlow5 = (_k = (_j = holdingData.current_flow_5) !== null && _j !== void 0 ? _j : holdingData.current_flow_5) !== null && _k !== void 0 ? _k : 0;
+                if (currentEc === undefined) {
+                    debugLog('current_ec not found in global context data');
+                    return null;
+                }
+                const readings = {
+                    current_ec: Number(currentEc),
+                    current_flow_1: Number(currentFlow1),
+                    current_flow_2: Number(currentFlow2),
+                    current_flow_3: Number(currentFlow3),
+                    current_flow_4: Number(currentFlow4),
+                    current_flow_5: Number(currentFlow5),
                 };
+                debugLog(`Read from global context (age: ${dataAge}ms): EC=${readings.current_ec}`);
+                return readings;
             }
             catch (error) {
-                node.error(`Failed to read sensors: ${error.message}`);
+                node.error(`Failed to read sensors from global context: ${error.message}`);
                 return null;
             }
         }
@@ -227,8 +305,10 @@ module.exports = function (RED) {
                 const addrSetEc = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.SET_EC);
                 // Set control_mode = 2 (EC mode)
                 await client.writeRegister(addrControlMode, constants_1.CONTROL_MODES.EC);
-                // Set EC setpoint (x10)
-                await client.writeRegister(addrSetEc, Math.round(ecSetpoint * 10));
+                await rtuDelay(rtuInterWriteDelay);
+                // Set EC setpoint (scale by factor)
+                await client.writeRegister(addrSetEc, Math.round(ecSetpoint * constants_1.EC_CONTROL_DEFAULTS.EC_SCALE_FACTOR));
+                await rtuDelay(rtuWriteSettleDelay);
                 debugLog(`Set EC control mode: setpoint=${ecSetpoint}`);
                 return true;
             }
@@ -337,6 +417,21 @@ module.exports = function (RED) {
                                 const synced = await syncService.reportIrrigationFinished(updatedRun);
                                 if (synced) {
                                     await runService.markAsSynced(controlContext.currentRun.id);
+                                    // ✅ NEW: Fetch updated lookup table from backend
+                                    // Backend has learned from this irrigation + aggregated data from other devices
+                                    try {
+                                        const updatedLookupTable = await syncService.fetchLookupTable();
+                                        if (updatedLookupTable && updatedLookupTable.length > 0) {
+                                            // Merge with local lookup table
+                                            for (const point of updatedLookupTable) {
+                                                await lookupService.updateOrCreateFromServer(point);
+                                            }
+                                            node.log(`✅ Synced ${updatedLookupTable.length} lookup points from backend`);
+                                        }
+                                    }
+                                    catch (syncTableError) {
+                                        node.warn(`⚠️ Failed to sync lookup table (will use local): ${syncTableError.message}`);
+                                    }
                                 }
                             }
                         }
@@ -375,10 +470,12 @@ module.exports = function (RED) {
         }
         // Polling for sensor readings during run
         function startPolling() {
-            if (pollingInterval)
+            if (pollingInterval || isPolling)
                 return;
+            isPolling = true;
             pollingInterval = setInterval(async () => {
-                if (controlContext.state !== 'RAMPING_UP' && controlContext.state !== 'RUNNING') {
+                // Double-check state and polling flag to prevent race condition
+                if (!isPolling || (controlContext.state !== 'RAMPING_UP' && controlContext.state !== 'RUNNING')) {
                     stopPolling();
                     return;
                 }
@@ -415,9 +512,10 @@ module.exports = function (RED) {
                         },
                     },
                 });
-            }, constants_1.EC_CONTROL_DEFAULTS.POLLING_INTERVAL);
+            }, getPollingInterval());
         }
         function stopPolling() {
+            isPolling = false; // Set flag first
             if (pollingInterval) {
                 clearInterval(pollingInterval);
                 pollingInterval = null;
@@ -427,7 +525,7 @@ module.exports = function (RED) {
         function getModbusWrites(valveTimes, ecSetpoint) {
             return [
                 { register: 'control_mode', value: constants_1.CONTROL_MODES.EC, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.CONTROL_MODE) },
-                { register: 'set_ec', value: Math.round(ecSetpoint * 10), address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.SET_EC) },
+                { register: 'set_ec', value: Math.round(ecSetpoint * constants_1.EC_CONTROL_DEFAULTS.EC_SCALE_FACTOR), address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.SET_EC) },
                 { register: 'time_on_valve_01', value: valveTimes.time_on_valve_01, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_01) },
                 { register: 'time_on_valve_02', value: valveTimes.time_on_valve_02, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_02) },
                 { register: 'time_on_valve_03', value: valveTimes.time_on_valve_03, address: modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.TIME_ON_VALVE_03) },
