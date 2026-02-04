@@ -7,6 +7,45 @@
 
 ---
 
+## ⚠️ CRITICAL DESIGN PRINCIPLE
+
+**This system does NOT use real-time closed-loop control.**
+
+**Control Strategy**: **Feedforward + Open-Loop + Post-Run Learning**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  START (Feedforward)                                        │
+│  • Lookup table: predict valve times from history          │
+│  • Write valve times ONCE to Modbus                        │
+│  • PLC takes control autonomously                          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  RUNNING (Open-Loop)                                        │
+│  • PLC pulses valves per cycle_EC (e.g., 6s cycle)         │
+│  • Node-RED ONLY reads sensors (NO Modbus writes)          │
+│  • Context window collects EC data for analysis            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STOP (Post-Run Learning)                                   │
+│  • Calculate avg EC achieved vs target                     │
+│  • Update lookup table with results                        │
+│  • Next run will have better prediction                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why No Real-Time Adjustment?**
+1. ❌ RTU bus saturation (115200 baud)
+2. ❌ Breaks PLC cyclic timing
+3. ❌ EC sensor lag causes oscillation
+4. ✅ Feedforward + learning converges in 2-3 runs
+
+---
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -26,24 +65,37 @@
 ## 1. Overview
 
 ### Purpose
-Automatic fertilizer dosing control system based on EC (Electrical Conductivity) feedback with adaptive learning capabilities. The node controls fertilizer injection valves to maintain target EC levels in irrigation water.
+Automatic fertilizer dosing control system using **feedforward prediction with post-run adaptive learning**. Valve times are predicted from historical data, executed **open-loop by PLC** during irrigation, then lookup table is updated after completion for future runs.
 
 ### Key Features
-- **EC-based closed-loop control** with real-time feedback
-- **Adaptive learning algorithm** using feedforward + open-loop + learning strategy
+- **Feedforward control** - predicts valve times from lookup table
+- **Open-loop execution** - PLC handles cyclic valve pulsing autonomously (no real-time adjustment)
+- **Post-run learning** - updates lookup table after each run based on achieved EC
 - **Multi-valve support** (up to 5 fertilizer channels)
-- **Lookup table** for historical valve time patterns
-- **Context window** for noise-resistant EC averaging
-- **Global context integration** - reads sensor data from centralized polling flow
-- **RTU-optimized** - safe inter-write delays for Modbus RTU at 115200 baud
+- **Lookup table interpolation** for historical valve time patterns
+- **Context window averaging** - noise-resistant EC measurement (used for post-run analysis)
+- **Global context integration** - reads sensor data from centralized polling flow (no RTU bus contention)
+- **RTU-optimized** - safe inter-write delays for Modbus RTU at 115200 baud (only during START command)
 
 ### Control Strategy
 ```
-Target EC = 1.8 mS/cm
+Run #1: Target EC = 1.8 mS/cm
 │
-├─ Feedforward (lookup table): Retrieve historical valve times for target EC
-├─ Open-loop: Apply valve times from lookup table
-└─ Learning: Measure actual EC → Adjust valve times → Update lookup table
+├─ START: Feedforward (lookup table)
+│   └─ Retrieve historical valve times for 1.8 EC → Write ONCE to PLC
+│
+├─ RUNNING: Open-loop execution (PLC autonomous)
+│   ├─ PLC pulses valves per cycle_EC (e.g., 6s cycle)
+│   └─ Node-RED ONLY reads sensors (no Modbus writes)
+│
+└─ STOP: Post-run learning
+    ├─ Calculate avg EC achieved (e.g., 1.65 mS/cm)
+    └─ Update lookup table: {ec_setpoint: 1.8, achieved: 1.65, valve_times: [...]}
+
+Run #2: Same target EC = 1.8 mS/cm
+│
+└─ START: Improved prediction from updated lookup table
+    └─ Interpolated valve times now closer to target
 ```
 
 ---
@@ -63,8 +115,9 @@ Target EC = 1.8 mS/cm
 │  │                     │        │  ├─ LookupTableSvc  │     │
 │  │  States:            │        │  ├─ ContextWindowSvc│     │
 │  │  - IDLE             │        │  ├─ IrrigationRunSvc│     │
-│  │  - MONITORING       │        │  └─ BackendSyncSvc  │     │
-│  │  - ADJUSTING        │        │                     │     │
+│  │  - RAMPING_UP       │        │  └─ BackendSyncSvc  │     │
+│  │  - RUNNING          │        │                     │     │
+│  │  - STOPPING         │        │                     │     │
 │  │  - ERROR            │        └─────────────────────┘     │
 │  └─────────────────────┘                                    │
 │           │                                                  │
@@ -76,9 +129,11 @@ Target EC = 1.8 mS/cm
 │           │                                                  │
 │           ▼                                                  │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │           Modbus Writer (RTU-safe delays)           │    │
-│  │  - 100ms inter-write delay                          │    │
-│  │  - Valve time validation                            │    │
+│  │    Modbus Writer (RTU-safe delays, WRITE ONCE)     │    │
+│  │  - Used ONLY at START command                      │    │
+│  │  - 100ms inter-write delay for RTU                 │    │
+│  │  - Valve time validation before write              │    │
+│  │  - NO writes during RUNNING state                  │    │
 │  └─────────────────────────────────────────────────────┘    │
 │           │                                                  │
 │           ▼                                                  │
@@ -179,7 +234,7 @@ contextWindowService = new ContextWindowService(CONTEXT_WINDOW_SIZE);
 irrigationRunService = new IrrigationRunService(dataSource);
 ```
 
-**Step 2: Start Monitoring (FSM: IDLE → MONITORING)**
+**Step 2: Start Irrigation (FSM: IDLE → RAMPING_UP)**
 ```typescript
 // User triggers START via msg.payload.command = 'start'
 msg = {
@@ -192,26 +247,29 @@ msg = {
 
 // 1. Validate state transition
 // 2. Lookup historical valve times from database
-// 3. Write valve times to Modbus (with RTU delays)
-// 4. Start polling interval (1s TCP / 2s RTU)
+// 3. Write valve times to Modbus (with RTU delays) - ⚠️ ONLY ONCE
+// 4. Start polling interval (1s TCP / 2s RTU) - READ ONLY
+
+// ⚠️ CRITICAL: Valve times written ONCE at start
+// PLC then controls valves autonomously via cycle_EC
 ```
 
-**Step 3: Monitoring Loop (every 1-2 seconds)**
+**Step 3: Monitoring Loop (every 1-2 seconds) - READ ONLY**
 ```typescript
 // Read from global context (NOT direct Modbus)
 const holdingData = global.get('holdingRegisterData');
 const boardData = holdingData[boardId];
 
-// Validate data freshness (< 10s old)
-if (Date.now() - boardData.timestamp > 10000) {
+// Validate data freshness (< 30s old)
+if (Date.now() - boardData.timestamp > 30000) {
   node.error('Stale global context data');
   return;
 }
 
-// Extract sensor values
-const currentEC = boardData.current_ec / 10;  // 18 → 1.8 mS/cm
+// Extract sensor values (already scaled by polling flow)
+const currentEC = boardData.current_ec;
 const currentFlow1 = boardData.current_flow_1;
-const targetEC = boardData.set_ec / 10;
+const targetEC = boardData.set_ec;
 
 // Add to context window (20 samples)
 contextWindowService.addSample(currentEC);
@@ -219,58 +277,66 @@ contextWindowService.addSample(currentEC);
 // Calculate average EC (skip first 20s ramp-up)
 if (elapsedTime > RAMP_UP_SECONDS) {
   const avgEC = contextWindowService.getAverage();
+  const deviation = targetEC - avgEC;
 
-  // Compare with target
-  if (Math.abs(avgEC - targetEC) > ADJUSTMENT_THRESHOLD) {
-    // FSM: MONITORING → ADJUSTING
-    adjustValveTimes(avgEC, targetEC);
+  // Log deviation for monitoring (NO Modbus writes)
+  if (Math.abs(deviation) > ADJUSTMENT_THRESHOLD) {
+    node.log(`EC deviation: ${deviation.toFixed(3)} mS/cm`);
   }
+
+  // ⚠️ CRITICAL: NO valve time adjustments during run
+  // PLC handles open-loop control via cycle_EC
+  // Adjustments will be applied to NEXT run via lookup table update
 }
 ```
 
-**Step 4: Adjustment Logic (FSM: ADJUSTING)**
+**Step 4: Post-Run Update (FSM: STOPPING → IDLE)**
 ```typescript
-// Calculate EC deviation
-const deviation = targetEC - avgEC;  // e.g., 1.8 - 1.75 = +0.05
+// User triggers STOP or irrigation completes
+// Get final statistics from context window
+const stats = contextWindowService.getStats();
+const avgEC = stats.avgEc;  // e.g., 1.75 mS/cm (target was 1.8)
 
-// Determine adjustment direction
-const adjustment = deviation > 0 ? ADJUSTMENT_STEP : -ADJUSTMENT_STEP;
-// +0.05 > 0 → increase valve times by +500ms
-
-// Apply to all valves proportionally
-for (let i = 1; i <= valveCount; i++) {
-  valveTimes[i] = currentValveTimes[i] + adjustment;
-
-  // Validate boundaries
-  valveTimes[i] = Math.max(MIN_VALVE_TIME,
-                           Math.min(MAX_VALVE_TIME, valveTimes[i]));
-}
-
-// Write to Modbus (RTU-safe)
-await writeValveTimes(valveTimes);
-
-// Update lookup table
-await lookupTableService.upsert({
-  deviceId: config.deviceId,
-  targetEC: targetEC,
-  avgEC: avgEC,
-  valveTimes: valveTimes
+// Complete irrigation run in database
+await irrigationRunService.completeRun({
+  runId: currentRun.id,
+  ecAchievedAvg: avgEC,
+  flowAverages: stats.flowAverages
 });
 
-// FSM: ADJUSTING → MONITORING
+// ⚠️ CRITICAL: Update lookup table for FUTURE runs
+// This is where learning happens - NOT during active irrigation
+await lookupTableService.updateWithRunData(
+  targetEC,        // What we wanted: 1.8 mS/cm
+  avgEC,           // What we achieved: 1.75 mS/cm
+  currentValveTimes, // What valve times we used
+  stats.flowAverages
+);
+
+// Next time user starts irrigation with same target EC:
+// → Lookup table will interpolate better valve times
+// → Prediction will be: "To get 1.8, need slightly MORE than last time"
+
+// FSM: STOPPING → IDLE
+controlContext.state = 'IDLE';
 ```
 
-**Step 5: Stop Irrigation**
+**Step 5: Backend Sync (Optional)**
 ```typescript
-// User triggers STOP
-msg = { payload: { command: 'stop' } }
-
-// 1. Clear polling interval
-// 2. Reset context window
-// 3. Calculate total volume/stats
-// 4. Save irrigation run to database
-// 5. Sync to backend (optional)
-// 6. FSM: MONITORING → IDLE
+// After updating lookup table, optionally sync to cloud
+try {
+  await backendSyncService.syncRun({
+    deviceId: config.deviceId,
+    runId: currentRun.id,
+    ecSetpoint: targetEC,
+    ecAchieved: avgEC,
+    valveTimes: currentValveTimes,
+    totalVolume: stats.totalVolume
+  });
+} catch (error) {
+  // Non-critical - will retry later
+  node.warn(`Backend sync failed: ${error.message}`);
+}
 ```
 
 ---
@@ -285,37 +351,47 @@ msg = { payload: { command: 'stop' } }
 └────────────────────────────────────────────────────────────┘
 
           ┌──────┐
-   ┌─────►│ IDLE │◄────┐
-   │      └───┬──┘     │
-   │          │        │
-   │ STOP     │ START  │ ERROR / STOP
-   │          ▼        │
-   │   ┌──────────────┐│
-   └───┤  MONITORING  ├┘
+   ┌─────►│ IDLE │◄─────┐
+   │      └───┬──┘      │
+   │          │         │
+   │ STOP     │ START   │ ERROR / STOP
+   │          ▼         │
+   │   ┌──────────────┐ │
+   │   │ RAMPING_UP   │ │
+   │   │ (skip 20s)   │ │
+   │   └──────┬───────┘ │
+   │          │         │
+   │ Ramp-up  │         │
+   │ complete │         │
+   │          ▼         │
+   │   ┌──────────────┐ │
+   └───┤   RUNNING    ├─┘
+       │ (open-loop)  │
        └──────┬───────┘
-              │ ▲
-   DEVIATION  │ │ ADJUSTED
-   DETECTED   ▼ │
-       ┌──────────────┐
-       │  ADJUSTING   │
-       └──────────────┘
               │
               │ CRITICAL ERROR
               ▼
        ┌──────────────┐
        │    ERROR     │
-       └──────────────┘
+       └──────┬───────┘
+              │
+              │ Manual reset
+              ▼
+          ┌──────┐
+          │ IDLE │
+          └──────┘
 ```
 
 ### 4.2 State Transitions
 
 | Current State | Trigger | Next State | Actions |
 |---------------|---------|------------|---------|
-| IDLE | `msg.command = 'start'` | MONITORING | Load lookup table → Write valve times → Start polling |
-| MONITORING | EC deviation > threshold | ADJUSTING | Calculate adjustment → Write new valve times |
-| ADJUSTING | Valve times written | MONITORING | Update lookup table → Continue monitoring |
-| MONITORING | `msg.command = 'stop'` | IDLE | Stop polling → Save run data → Reset context |
+| IDLE | `msg.command = 'start'` | RAMPING_UP | Lookup table → Write valve times **ONCE** → Start polling |
+| RAMPING_UP | 20s elapsed | RUNNING | Skip ramp-up period → Begin EC averaging |
+| RUNNING | `msg.command = 'stop'` | STOPPING | Stop polling → Calculate avg EC → Update lookup table |
+| STOPPING | Cleanup complete | IDLE | Reset context window → Save irrigation run |
 | ANY | Critical error | ERROR | Log error → Send notification → Require manual reset |
+| ERROR | Manual reset | IDLE | Clear error state |
 
 ### 4.3 State Guards
 
@@ -323,54 +399,83 @@ msg = { payload: { command: 'stop' } }
 // Validate state transition before executing
 function validateTransition(from: State, to: State, trigger: string): boolean {
   const validTransitions = {
-    'IDLE': ['MONITORING'],
-    'MONITORING': ['ADJUSTING', 'IDLE', 'ERROR'],
-    'ADJUSTING': ['MONITORING', 'ERROR'],
+    'IDLE': ['RAMPING_UP'],
+    'RAMPING_UP': ['RUNNING', 'ERROR'],
+    'RUNNING': ['STOPPING', 'ERROR'],
+    'STOPPING': ['IDLE'],
     'ERROR': ['IDLE']  // Manual reset only
   };
 
   return validTransitions[from].includes(to);
 }
+
+// ⚠️ NOTE: No ADJUSTING or MONITORING states
+// System uses feedforward + open-loop + post-run learning
+// NOT closed-loop real-time control
 ```
 
 ---
 
 ## 5. Core Algorithms
 
-### 5.1 Feedforward + Learning Strategy
+### 5.1 Feedforward + Open-Loop + Post-Run Learning Strategy
 
-**Problem**: Pure feedback control is slow to respond and oscillates.
+**Problem**:
+- Pure feedback control on RTU bus causes contention and breaks PLC timing
+- Real-time adjustments conflict with PLC's autonomous cyclic control
 
-**Solution**: Hybrid approach using historical data + real-time adjustment.
+**Solution**:
+- **Feedforward prediction** from lookup table at START
+- **Open-loop execution** by PLC during irrigation (no Node-RED interference)
+- **Post-run learning** updates lookup table for next time
 
 ```typescript
-// Phase 1: Feedforward (lookup historical data)
+// ========== PHASE 1: START (Feedforward) ==========
 const lookupEntry = await lookupTableService.findClosestMatch(targetEC);
-const initialValveTimes = lookupEntry?.valveTimes || DEFAULT_VALVE_TIMES;
+const predictedValveTimes = lookupEntry?.valveTimes || DEFAULT_VALVE_TIMES;
 
-// Phase 2: Open-loop (apply initial guess)
-await writeValveTimes(initialValveTimes);
+// Write valve times ONCE to PLC
+await writeValveTimes(predictedValveTimes);
 
-// Phase 3: Feedback (measure & adjust)
-while (monitoring) {
+// Write control mode to enable PLC autonomous control
+await writeControlMode(CONTROL_MODES.EC);
+
+// ========== PHASE 2: RUNNING (Open-Loop) ==========
+// PLC handles cyclic valve pulsing autonomously
+// Example: cycle_EC = 10 (6 second cycle)
+//   → PLC opens valve for time_on_valve_01 ms every 6 seconds
+//   → Node-RED does NOT interfere
+
+while (running) {
+  // Read sensors from global context (NO Modbus writes)
+  const readings = await readSensors();
+
+  // Add to context window for post-run analysis
+  contextWindowService.addSample(readings.current_ec);
+
+  // ⚠️ NO valve time adjustments here
+  // Log deviations for monitoring only
   const avgEC = contextWindowService.getAverage();
-  const error = targetEC - avgEC;
+  const deviation = targetEC - avgEC;
 
-  if (Math.abs(error) > ADJUSTMENT_THRESHOLD) {
-    // Proportional adjustment
-    const adjustment = error * ADJUSTMENT_GAIN;
-    newValveTimes = currentValveTimes + adjustment;
-
-    await writeValveTimes(newValveTimes);
+  if (Math.abs(deviation) > ADJUSTMENT_THRESHOLD) {
+    debugLog(`EC deviation: ${deviation.toFixed(3)} mS/cm (no action taken)`);
   }
 }
 
-// Phase 4: Learning (update lookup table)
-await lookupTableService.upsert({
-  targetEC: targetEC,
-  avgEC: avgEC,
-  valveTimes: finalValveTimes
-});
+// ========== PHASE 3: STOP (Post-Run Learning) ==========
+const stats = contextWindowService.getStats();
+
+// Update lookup table with actual results
+await lookupTableService.updateWithRunData(
+  targetEC,           // What we wanted: 1.8 mS/cm
+  stats.avgEc,        // What we got: 1.75 mS/cm
+  predictedValveTimes, // What valve times we used: [3000, 2500, ...]
+  stats.flowAverages
+);
+
+// Next run with same target EC will use interpolated valve times
+// based on this run's results → better prediction
 ```
 
 ### 5.2 Context Window Averaging
@@ -408,19 +513,38 @@ Raw EC readings: [1.72, 1.85, 1.74, 1.88, 1.76, ...]
                           Average = 1.79 mS/cm
 ```
 
-### 5.3 Proportional Adjustment
+### 5.3 Why No Real-Time Adjustment?
 
+**Design Decision**: Originally considered proportional adjustment during irrigation, but **rejected** for these reasons:
+
+1. **RTU Bus Contention**:
+   - Multiple Modbus writes during run would saturate 115200 baud RTU bus
+   - Conflicts with polling flow's scheduled reads
+   - Risk of timeout errors and communication failures
+
+2. **PLC Timing Interference**:
+   - PLC relies on stable `time_on_valve_XX` registers for cyclic control
+   - Changing these mid-run breaks PLC's internal state machine
+   - Could cause valve actuation glitches
+
+3. **EC Sensor Lag**:
+   - EC sensor has ~10-20s response lag after valve adjustment
+   - Real-time feedback would oscillate due to lag
+   - Context window averaging (20s+) is incompatible with real-time control
+
+4. **Better Alternative**:
+   - Feedforward from lookup table gives good initial guess (± 0.1 mS/cm typical)
+   - Post-run learning continuously improves predictions
+   - Convergence after 2-3 runs for stable target EC
+
+**Code Evidence** (line 571-574):
 ```typescript
-// Deviation-based adjustment
-const deviation = targetEC - avgEC;  // e.g., 1.8 - 1.75 = +0.05
-
-// Apply proportional adjustment
-const adjustment = deviation > ADJUSTMENT_THRESHOLD
-  ? +ADJUSTMENT_STEP   // +500ms
-  : -ADJUSTMENT_STEP;  // -500ms
-
-// Update all valves equally
-valveTimes = valveTimes.map(t => t + adjustment);
+// If running, monitor EC deviation for telemetry (no real-time adjustment)
+// PLC handles open-loop control via cycle_EC - no Modbus writes during run
+if (controlContext.state === 'RUNNING' && added) {
+    const deviation = contextService.getEcDeviation(controlContext.targetEc);
+    // Log only - no writeValveTimes() calls
+}
 ```
 
 ---
@@ -978,10 +1102,45 @@ describe('Global Context Data Reading', () => {
 ---
 
 **For Tech Lead Review**:
-- [ ] Architecture diagram accurate?
-- [ ] Data flow explanation clear?
-- [ ] RTU timing strategy acceptable?
-- [ ] Global context integration sound?
-- [ ] Database schema appropriate?
-- [ ] Error handling comprehensive?
-- [ ] Test coverage sufficient (87%)?
+
+### Critical Verification Points
+
+- [ ] **Control Strategy**: Confirms system uses **feedforward + open-loop + post-run learning**, NOT closed-loop real-time control?
+- [ ] **Modbus Writes**: Valve times written ONCE at START, ZERO writes during RUNNING state?
+- [ ] **State Machine**: States are IDLE, RAMPING_UP, RUNNING, STOPPING, ERROR (no ADJUSTING or MONITORING)?
+- [ ] **RTU Bus Safety**: Only polling flow reads Modbus during irrigation (no bus contention)?
+- [ ] **Learning Mechanism**: Lookup table updated AFTER run completion, not during run?
+- [ ] **PLC Autonomy**: PLC handles cyclic valve pulsing independently via `cycle_EC` register?
+
+### Technical Review
+
+- [ ] Architecture diagram accurate (states, service layer, data flow)?
+- [ ] Data flow explanation clear (polling flow → global context → fertilizer node)?
+- [ ] RTU timing strategy acceptable (100ms inter-write delay, only at START)?
+- [ ] Global context integration sound (10s staleness check, no duplicate polling)?
+- [ ] Database schema appropriate (LookupTable, IrrigationRun entities)?
+- [ ] Error handling comprehensive (transient vs critical, retry logic)?
+- [ ] Test coverage sufficient (27 tests, 87% coverage)?
+
+### Code Evidence Verification
+
+**Expected behaviors**:
+1. `writeValveTimes()` called ONLY in `startIrrigation()` (line ~410)
+2. `startPolling()` function has ZERO `writeValveTimes()` calls (line ~550-600)
+3. Comment at line 571: "no real-time adjustment - PLC handles open-loop control"
+4. `stopIrrigation()` calls `updateWithRunData()` for post-run learning (line ~483)
+
+**If any of above is missing → CODE DOES NOT MATCH SPEC**
+
+---
+
+### Implementation Alignment
+
+| Spec Requirement | Implementation Status | Evidence |
+|------------------|----------------------|----------|
+| "Chỉ cần điều khiển đúng chu kì thời gian mở và thời gian tắt" | ✅ PLC autonomous control | `cycle_EC` register written at START |
+| "Sau mỗi lần tưới, các giá trị lịch sử sẽ được ghi nhận" | ✅ Post-run learning | `updateWithRunData()` in stopIrrigation() |
+| "Đối với các giá trị set lần sau thì có thể nội suy ra" | ✅ Lookup table interpolation | `findClosestMatch()` + interpolation logic |
+| "Giá trị trung bình được tính từ giây thứ 20" | ✅ Ramp-up skip | `RAMP_UP_SECONDS = 20` + RAMPING_UP state |
+| NO real-time adjustment during irrigation | ✅ Zero Modbus writes in RUNNING | Code comment line 571-574 |
+
