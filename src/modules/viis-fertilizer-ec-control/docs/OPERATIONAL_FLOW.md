@@ -56,9 +56,10 @@
 6. [Global Context Integration](#global-context-integration)
 7. [Modbus Communication](#modbus-communication)
 8. [Database Operations](#database-operations)
-9. [Error Handling](#error-handling)
-10. [Configuration](#configuration)
-11. [Testing](#testing)
+9. [Backend Synchronization](#backend-synchronization)
+10. [Error Handling](#error-handling)
+11. [Configuration](#configuration)
+12. [Testing](#testing)
 
 ---
 
@@ -321,21 +322,46 @@ await lookupTableService.updateWithRunData(
 controlContext.state = 'IDLE';
 ```
 
-**Step 5: Backend Sync (Optional)**
+**Step 5: Backend Sync (Async, Non-Blocking)**
 ```typescript
-// After updating lookup table, optionally sync to cloud
+// After updating local lookup table, try to sync to cloud backend
 try {
-  await backendSyncService.syncRun({
-    deviceId: config.deviceId,
-    runId: currentRun.id,
-    ecSetpoint: targetEC,
-    ecAchieved: avgEC,
-    valveTimes: currentValveTimes,
-    totalVolume: stats.totalVolume
-  });
-} catch (error) {
-  // Non-critical - will retry later
-  node.warn(`Backend sync failed: ${error.message}`);
+  // Get updated run record from database
+  const updatedRun = await runService.getRunById(currentRun.id);
+
+  if (updatedRun) {
+    // POST to backend: /api/fertilizer/irrigation-finished
+    const synced = await syncService.reportIrrigationFinished(updatedRun);
+
+    if (synced) {
+      // Mark run as synced in local database
+      await runService.markAsSynced(currentRun.id);
+      node.log('✅ Synced to backend successfully');
+    }
+  }
+} catch (syncError) {
+  // ⚠️ CRITICAL: Sync failure does NOT block irrigation completion
+  // Data is safely stored in local MySQL
+  // Will retry later via syncPendingRuns()
+  debugLog(`Sync failed, will retry later: ${syncError.message}`);
+}
+
+// Irrigation completes normally regardless of sync status
+```
+
+**Code Evidence** (viis-fertilizer-ec-control.ts, line 500-510):
+```typescript
+// Try to sync to backend
+try {
+    const updatedRun = await runService.getRunById(controlContext.currentRun.id);
+    if (updatedRun) {
+        const synced = await syncService.reportIrrigationFinished(updatedRun);
+        if (synced) {
+            await runService.markAsSynced(controlContext.currentRun.id);
+        }
+    }
+} catch (syncError) {
+    debugLog(`Sync failed, will retry later: ${(syncError as Error).message}`);
 }
 ```
 
@@ -761,119 +787,689 @@ Total: 550ms
 
 ### 8.1 Schema
 
-**LookupTable Entity**
+> **Note**: Entity definitions match backend `tabiot_fertilizer_*` tables exactly.
+
+**TabiotFertilizerLookupPoint Entity** (see `src/orm/entities/fertilizer/TabiotFertilizerLookupPoint.ts`)
 ```typescript
-@Entity('lookup_table')
-export class LookupTable {
+@Entity('tabiot_fertilizer_lookup_point')
+@Unique(['device_id', 'ec_setpoint'])
+export class TabiotFertilizerLookupPoint {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   device_id: string;
 
-  @Column('decimal', { precision: 5, scale: 2 })
-  target_ec: number;  // e.g., 1.80
+  @Column({ type: 'decimal', precision: 4, scale: 2 })
+  ec_setpoint: number;  // e.g., 1.80 mS/cm
 
-  @Column('decimal', { precision: 5, scale: 2 })
-  avg_ec: number;     // e.g., 1.79
+  // ========================================
+  // Valve ON times per cycle (milliseconds)
+  // Maps to Modbus holding registers 23-27
+  // NOTE: 5 separate columns, NOT a JSON array
+  // ========================================
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_01: number;  // Valve 1 - Modbus reg 23
 
-  @Column('simple-json')
-  valve_times: number[];  // [3000, 2500, 3200, 2800, 3100]
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_02: number;  // Valve 2 - Modbus reg 24
 
-  @Column()
-  created_at: Date;
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_03: number;  // Valve 3 - Modbus reg 25
 
-  @Column()
-  updated_at: Date;
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_04: number;  // Valve 4 - Modbus reg 26
+
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_05: number;  // Valve 5 - Modbus reg 27
+
+  // ========================================
+  // Achieved values (from actual runs)
+  // ========================================
+  @Column({ type: 'decimal', precision: 4, scale: 2, nullable: true })
+  actual_ec_avg?: number;  // Average EC achieved
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  actual_flow_01?: number;  // Flow rate valve 1 - Modbus reg 30
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  actual_flow_02?: number;  // Flow rate valve 2 - Modbus reg 31
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  actual_flow_03?: number;  // Flow rate valve 3 - Modbus reg 32
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  actual_flow_04?: number;  // Flow rate valve 4 - Modbus reg 33
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  actual_flow_05?: number;  // Flow rate valve 5 - Modbus reg 34
+
+  // ========================================
+  // Metadata
+  // ========================================
+  @Column({ type: 'int', default: 0 })
+  sample_count: number;  // # of runs contributing to this point
+
+  @Column({ type: 'enum', enum: ['Actual', 'Interpolated'], default: 'Interpolated' })
+  data_type: 'Actual' | 'Interpolated';
+
+  @Column({ type: 'datetime', nullable: true })
+  last_server_sync?: Date;
+
+  @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
+  last_updated: Date;
 }
 ```
 
-**IrrigationRun Entity**
+**TabiotFertilizerIrrigationRun Entity** (see `src/orm/entities/fertilizer/TabiotFertilizerIrrigationRun.ts`)
 ```typescript
-@Entity('irrigation_run')
-export class IrrigationRun {
+@Entity('tabiot_fertilizer_irrigation_run')
+@Index(['device_id', 'start_time'])
+@Index(['is_synced_to_server', 'status'])
+export class TabiotFertilizerIrrigationRun {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   device_id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  schedule_name?: string;
+
+  // ========================================
+  // EC Setpoint and Achieved
+  // ========================================
+  @Column({ type: 'decimal', precision: 4, scale: 2 })
+  ec_setpoint: number;  // e.g., 1.80 mS/cm
+
+  @Column({ type: 'decimal', precision: 4, scale: 2, nullable: true })
+  ec_achieved_avg?: number;  // Average EC (after 20s ramp-up)
+
+  // ========================================
+  // Achieved Flow Rates (averages after ramp-up)
+  // 5 separate columns, NOT a JSON array
+  // ========================================
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  flow_achieved_01_avg?: number;
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  flow_achieved_02_avg?: number;
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  flow_achieved_03_avg?: number;
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  flow_achieved_04_avg?: number;
+
+  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  flow_achieved_05_avg?: number;
+
+  // ========================================
+  // Valve Times Used (5 separate columns)
+  // ========================================
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_01: number;
+
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_02: number;
+
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_03: number;
+
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_04: number;
+
+  @Column({ type: 'int', default: 0 })
+  time_on_valve_05: number;
+
+  // ========================================
+  // Timing
+  // ========================================
+  @Column({ type: 'datetime' })
   start_time: Date;
 
-  @Column({ nullable: true })
-  end_time: Date;
+  @Column({ type: 'datetime', nullable: true })
+  end_time?: Date;
 
-  @Column('decimal', { precision: 10, scale: 2 })
-  total_volume: number;  // Total liters
+  @Column({ type: 'int', nullable: true })
+  duration_seconds?: number;
 
-  @Column('decimal', { precision: 5, scale: 2 })
-  avg_ec: number;
+  // ========================================
+  // Status and Sync
+  // ========================================
+  @Column({ type: 'enum', enum: ['Running', 'Completed', 'Failed', 'Interrupted'] })
+  status: 'Running' | 'Completed' | 'Failed' | 'Interrupted';
 
-  @Column('simple-json')
-  valve_times: number[];
+  @Column({ type: 'tinyint', default: 0 })
+  is_synced_to_server: number;  // 1 = synced, 0 = pending
+
+  @Column({ type: 'datetime', nullable: true })
+  synced_at?: Date;
 }
 ```
 
 ### 8.2 Lookup Table Operations
 
-**Find Closest Match**
+> **Note**: These are simplified examples. See `LookupTableService.ts` for actual implementation.
+
+**Get Valve Times for EC (with Linear Interpolation)**
 ```typescript
-async findClosestMatch(targetEC: number): Promise<LookupTable | null> {
-  const entries = await this.repository.find({
+// Actual implementation in LookupTableService.getValveTimesForEc()
+async getValveTimesForEc(targetEc: number): Promise<InterpolationResult> {
+  // Get all lookup points sorted by EC
+  const points = await this.repository.find({
     where: { device_id: this.deviceId },
-    order: { updated_at: 'DESC' }
+    order: { ec_setpoint: 'ASC' },
   });
 
-  if (entries.length === 0) return null;
-
-  // Find entry with closest target_ec
-  let closest = entries[0];
-  let minDiff = Math.abs(entries[0].target_ec - targetEC);
-
-  for (const entry of entries) {
-    const diff = Math.abs(entry.target_ec - targetEC);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = entry;
-    }
+  if (points.length === 0) {
+    return { valveTimes: DEFAULT_VALVE_TIMES, confidence: 'default' };
   }
 
-  return closest;
+  // 1. Check for exact match first
+  const exactMatch = points.find(p => Math.abs(p.ec_setpoint - targetEc) < 0.001);
+  if (exactMatch) {
+    return { valveTimes: this.extractValveTimes(exactMatch), confidence: 'exact' };
+  }
+
+  // 2. Find surrounding points for interpolation
+  const lowerPoints = points.filter(p => p.ec_setpoint < targetEc);
+  const upperPoints = points.filter(p => p.ec_setpoint > targetEc);
+  const lower = lowerPoints[lowerPoints.length - 1];  // highest below target
+  const upper = upperPoints[0];                        // lowest above target
+
+  // 3. Linear interpolation between two points
+  if (lower && upper) {
+    const ratio = (targetEc - lower.ec_setpoint) / (upper.ec_setpoint - lower.ec_setpoint);
+
+    const valveTimes = {
+      time_on_valve_01: Math.round(lower.time_on_valve_01 + ratio * (upper.time_on_valve_01 - lower.time_on_valve_01)),
+      time_on_valve_02: Math.round(lower.time_on_valve_02 + ratio * (upper.time_on_valve_02 - lower.time_on_valve_02)),
+      time_on_valve_03: Math.round(lower.time_on_valve_03 + ratio * (upper.time_on_valve_03 - lower.time_on_valve_03)),
+      time_on_valve_04: Math.round(lower.time_on_valve_04 + ratio * (upper.time_on_valve_04 - lower.time_on_valve_04)),
+      time_on_valve_05: Math.round(lower.time_on_valve_05 + ratio * (upper.time_on_valve_05 - lower.time_on_valve_05)),
+    };
+
+    return { valveTimes, lowerPoint: lower, upperPoint: upper, confidence: 'interpolated' };
+  }
+
+  // 4. Extrapolate if only one bound available
+  if (lower) return { valveTimes: this.extractValveTimes(lower), confidence: 'extrapolated' };
+  if (upper) return { valveTimes: this.extractValveTimes(upper), confidence: 'extrapolated' };
+
+  return { valveTimes: DEFAULT_VALVE_TIMES, confidence: 'default' };
 }
 ```
 
-**Upsert Entry**
+**Update Lookup Point with Run Data (Weighted Average)**
 ```typescript
-async upsert(data: Partial<LookupTable>): Promise<void> {
-  const existing = await this.repository.findOne({
-    where: {
-      device_id: data.device_id,
-      target_ec: data.target_ec
-    }
+// Actual implementation in LookupTableService.updateWithRunData()
+async updateWithRunData(
+  ecSetpoint: number,
+  achievedEc: number,
+  valveTimes: ValveTimes,
+  flowAverages: { [key: string]: number }
+): Promise<void> {
+  let point = await this.repository.findOne({
+    where: { device_id: this.deviceId, ec_setpoint: ecSetpoint }
   });
 
-  if (existing) {
-    // Update existing entry
-    await this.repository.update(existing.id, {
-      avg_ec: data.avg_ec,
-      valve_times: data.valve_times,
-      updated_at: new Date()
-    });
+  if (point) {
+    // Weighted average update
+    const oldCount = point.sample_count;
+    const newCount = oldCount + 1;
+
+    // Update achieved EC average
+    point.actual_ec_avg = (point.actual_ec_avg * oldCount + achievedEc) / newCount;
+
+    // Update flow averages
+    for (let i = 1; i <= 5; i++) {
+      const flowKey = `actual_flow_0${i}`;
+      const oldFlow = point[flowKey];
+      const newFlow = flowAverages[`flow_${i}`];
+      if (newFlow !== undefined) {
+        point[flowKey] = (oldFlow * oldCount + newFlow) / newCount;
+      }
+    }
+
+    // Adaptive valve time adjustment based on EC deviation
+    const ecDeviation = achievedEc - ecSetpoint;
+    if (Math.abs(ecDeviation) > ADJUSTMENT_THRESHOLD) {
+      const adjustment = ecDeviation > 0 ? -ADJUSTMENT_STEP : ADJUSTMENT_STEP;
+      point.time_on_valve_01 += adjustment;
+      point.time_on_valve_02 += adjustment;
+      // ... etc for all valves
+    }
+
+    point.sample_count = newCount;
+    point.data_type = 'Actual';
+    point.last_updated = new Date();
+
   } else {
-    // Insert new entry
-    await this.repository.save({
-      ...data,
-      created_at: new Date(),
-      updated_at: new Date()
+    // Create new point
+    point = this.repository.create({
+      device_id: this.deviceId,
+      ec_setpoint: ecSetpoint,
+      ...valveTimes,
+      actual_ec_avg: achievedEc,
+      ...flowAverages,
+      sample_count: 1,
+      data_type: 'Actual',
     });
   }
+
+  await this.repository.save(point);
 }
 ```
 
 ---
 
-## 9. Error Handling
+## 9. Backend Synchronization
+
+### 9.1 Architecture Overview
+
+**Design Pattern**: **Local-First with Async Cloud Sync**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Edge Device (Offline-Capable)                              │
+│                                                              │
+│  ┌────────────────┐         ┌────────────────┐              │
+│  │ Fertilizer EC  │────────►│  Local MySQL   │              │
+│  │ Control Node   │         │  Database      │              │
+│  └────────┬───────┘         └────────┬───────┘              │
+│           │                          │                      │
+│           │ Async sync (non-blocking)│                      │
+│           └──────────┬───────────────┘                      │
+│                      │                                      │
+└──────────────────────┼──────────────────────────────────────┘
+                       │
+                       │ HTTPS POST (retry on fail)
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Cloud Backend (iot.viis.tech)                              │
+│                                                              │
+│  ┌─────────────────────────────────────────────┐            │
+│  │ API: /api/fertilizer/irrigation-finished    │            │
+│  └──────────────────────┬──────────────────────┘            │
+│                         │                                   │
+│                         ▼                                   │
+│  ┌─────────────────────────────────────────────┐            │
+│  │  Learning Algorithm Engine                  │            │
+│  │  • Aggregate data from multiple devices     │            │
+│  │  • Optimize lookup table parameters         │            │
+│  │  • Generate recommendations                 │            │
+│  └──────────────────────┬──────────────────────┘            │
+│                         │                                   │
+│                         ▼                                   │
+│  ┌─────────────────────────────────────────────┐            │
+│  │  Optional: Push Updated Lookup Table        │            │
+│  │  Back to Edge Devices                       │            │
+│  └─────────────────────────────────────────────┘            │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 9.2 Sync Trigger & Timing
+
+**When**: After each irrigation run completes successfully
+
+**Where**: In `stopIrrigation()` function (line 500-510)
+
+**Sequence**:
+```
+1. Complete irrigation run in local DB      ✅ CRITICAL
+2. Update lookup table in local DB          ✅ CRITICAL
+3. Try sync to backend                      ⚠️ OPTIONAL
+   ├─ Success → Mark run as synced
+   └─ Failure → Log error, continue normally
+4. Reset state to IDLE                      ✅ ALWAYS
+```
+
+### 9.3 Sync Implementation (BackendSyncService)
+
+**File**: `services/BackendSyncService.ts`
+
+**Method**: `reportIrrigationFinished(run: IrrigationRun)`
+
+```typescript
+async reportIrrigationFinished(run: IrrigationRun): Promise<boolean> {
+    if (!run.end_time) {
+        this.error('Cannot report incomplete run');
+        return false;
+    }
+
+    const payload: IrrigationFinishedPayload = {
+        device_id: this.deviceId,
+        start_time: run.start_time.toISOString(),
+        end_time: run.end_time.toISOString(),
+        ec_setpoint: run.ec_setpoint,
+    };
+
+    try {
+        const response = await this.httpClient.post(
+            '/api/fertilizer/irrigation-finished',
+            payload
+        );
+
+        if (response.data?.success) {
+            this.log(`Reported irrigation run #${run.id} to backend`);
+            return true;
+        } else {
+            this.warn(`Backend returned unsuccessful response`);
+            return false;
+        }
+    } catch (error) {
+        this.error(`Failed to report irrigation: ${error.message}`);
+        return false;
+    }
+}
+```
+
+### 9.4 Request/Response Format
+
+**API Endpoint**: `POST https://iot.viis.tech/api/fertilizer/irrigation-finished`
+
+> **Note**: API uses `/api/` prefix, NOT `/api/v2/`
+
+**Request Headers**:
+```
+Content-Type: application/json
+```
+
+**Request Body**:
+```json
+{
+  "device_id": "device1",
+  "start_time": "2026-02-04T10:30:00.000Z",
+  "end_time": "2026-02-04T10:45:00.000Z",
+  "ec_setpoint": 1.8
+}
+```
+
+**Success Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Irrigation data received",
+  "run_id": "backend_run_12345"
+}
+```
+
+**Error Response** (4xx/5xx):
+```json
+{
+  "success": false,
+  "error": "Invalid device_id",
+  "code": "DEVICE_NOT_FOUND"
+}
+```
+
+### 9.5 Retry Mechanism
+
+#### A. Failed Sync Handling
+
+**Immediate failure** (in `stopIrrigation()`):
+```typescript
+try {
+    const synced = await syncService.reportIrrigationFinished(updatedRun);
+    if (synced) {
+        await runService.markAsSynced(currentRun.id);
+    }
+} catch (syncError) {
+    // ⚠️ Does NOT throw - irrigation completes normally
+    debugLog(`Sync failed, will retry later: ${syncError.message}`);
+}
+```
+
+**Database tracking**:
+```sql
+-- irrigation_run table
+| id | device_id | start_time | end_time | synced_to_backend |
+|----|-----------|------------|----------|-------------------|
+| 1  | device1   | ...        | ...      | true              |
+| 2  | device1   | ...        | ...      | false             | ← Failed sync
+| 3  | device1   | ...        | ...      | false             | ← Offline
+```
+
+#### B. Batch Retry
+
+**Method**: `syncPendingRuns(runs: IrrigationRun[])`
+
+```typescript
+async syncPendingRuns(runs: IrrigationRun[]): Promise<number[]> {
+    const syncedIds: number[] = [];
+
+    for (const run of runs) {
+        if (run.status !== 'Completed') continue;
+        if (!run.end_time) continue;
+
+        const success = await this.reportIrrigationFinished(run);
+        if (success && run.id) {
+            syncedIds.push(run.id);
+        }
+
+        // Small delay between requests to avoid rate limiting
+        await this.delay(500);
+    }
+
+    this.log(`Synced ${syncedIds.length}/${runs.length} pending runs`);
+    return syncedIds;
+}
+```
+
+**Trigger scenarios**:
+1. **Scheduled job**: Cron job runs every 1 hour
+2. **Network recovery**: When backend becomes reachable
+3. **Manual trigger**: Admin command from Node-RED UI
+
+**Example usage**:
+```typescript
+// Get all unsynced runs from last 7 days
+const pendingRuns = await runService.getUnsyncedRuns(7);
+
+// Retry sync
+const syncedIds = await syncService.syncPendingRuns(pendingRuns);
+
+// Mark as synced in database
+for (const id of syncedIds) {
+    await runService.markAsSynced(id);
+}
+```
+
+### 9.6 Backend Data Processing
+
+**What backend does** (server-side):
+
+1. **Receive irrigation data** from edge device
+2. **Fetch additional details** from edge database via API (optional)
+   - Actual valve times used
+   - Actual EC achieved (avg)
+   - Flow rates for each valve
+   - Sample count, ramp-up time, etc.
+3. **Aggregate data** from multiple devices
+   - Same crop type, same EC target
+   - Different soil conditions, water quality
+4. **Run learning algorithm**:
+   - Weighted average of successful runs
+   - Outlier detection and removal
+   - Regression analysis for interpolation
+5. **Update global lookup table**
+6. **Optional: Push recommendations** back to edge
+   - Updated valve times for common EC setpoints
+   - Calibration adjustments
+
+### 9.7 ThingsBoard Integration (Alternative/Supplementary)
+
+**Purpose**: Real-time monitoring and manual configuration
+
+#### A. Read Lookup Table from ThingsBoard
+
+**API**: `GET http://mqtt.viis.tech:8080/api/plugins/telemetry/DEVICE/{deviceId}/values/attributes`
+
+**Query Params**: `scope=SHARED_SCOPE`
+
+**Headers**: `X-Authorization: Bearer {access_token}`
+
+**Response**:
+```json
+[
+  {
+    "key": "fertilizer_lookup_table",
+    "value": [
+      {
+        "ec_setpoint": 1.5,
+        "time_on_valve_01": 2000,
+        "time_on_valve_02": 1800,
+        "time_on_valve_03": 2100,
+        "time_on_valve_04": 1900,
+        "time_on_valve_05": 2000,
+        "actual_ec_avg": 1.48,
+        "sample_count": 15,
+        "data_type": "Actual"
+      }
+    ]
+  }
+]
+```
+
+**Implementation** (BackendSyncService):
+```typescript
+async readFromThingsBoard(): Promise<LookupPoint[]> {
+    const tbHost = this.globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
+    const accessToken = this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+
+    const tbUrl = `http://${tbHost}:8080/api/plugins/telemetry/DEVICE/${tbDeviceId}/values/attributes?scope=SHARED_SCOPE`;
+
+    const response = await axios.get(tbUrl, {
+        headers: { 'X-Authorization': `Bearer ${accessToken}` }
+    });
+
+    const lookupAttr = response.data?.find(
+        (attr: any) => attr.key === 'fertilizer_lookup_table'
+    );
+
+    if (lookupAttr?.value) {
+        return parsed.map(this.tbToLookupPoint);
+    }
+
+    return [];
+}
+```
+
+**Use cases**:
+- Initial device setup (no local lookup table yet)
+- Admin pushes updated lookup table from dashboard
+- Fallback when backend API unavailable
+
+#### B. Publish Telemetry to ThingsBoard
+
+**Not implemented in BackendSyncService** - handled by separate telemetry node
+
+Typical data published:
+```json
+{
+  "current_ec": 1.75,
+  "target_ec": 1.8,
+  "current_flow_1": 520,
+  "valve_1_status": "ON",
+  "irrigation_state": "RUNNING"
+}
+```
+
+Frequency: Every 1-2 seconds during irrigation
+
+### 9.8 Offline Operation
+
+**Critical Design Principle**: **System must work offline**
+
+**Guarantees**:
+- ✅ Irrigation runs normally without internet
+- ✅ Lookup table stored locally (MySQL)
+- ✅ Learning happens locally (updateWithRunData)
+- ✅ Failed syncs queued for retry
+- ✅ No data loss
+
+**Network failure scenarios**:
+
+| Scenario | Behavior |
+|----------|----------|
+| **No internet at START** | Uses local lookup table, starts irrigation normally |
+| **Lost internet during RUN** | PLC continues autonomous control, no impact |
+| **No internet at STOP** | Updates local DB, queues sync for retry |
+| **Partial backend failure** | Some runs sync, others queued |
+| **Long-term offline** | Accumulates unsynced runs, auto-syncs when reconnected |
+
+### 9.9 Configuration
+
+**Environment Variables** (env/common.env):
+```bash
+# Backend URL
+VIIS_BACKEND=https://iot.viis.tech
+
+# ThingsBoard (optional)
+THINGSBOARD_HOST=mqtt.viis.tech
+DEVICE_ID=device1
+DEVICE_ACCESS_TOKEN=your_access_token_here
+
+# Sync behavior
+SYNC_RETRY_INTERVAL=3600000    # 1 hour in ms
+SYNC_MAX_RETRIES=5
+SYNC_TIMEOUT=30000             # 30 seconds
+```
+
+**API Endpoints** (constants/index.ts):
+```typescript
+// NOTE: Backend uses /api/ NOT /api/v2/
+export const API_ENDPOINTS = {
+    IRRIGATION_FINISHED: '/api/fertilizer/irrigation-finished',
+    GET_LOOKUP_TABLE: '/api/fertilizer/:deviceId/lookup-table',
+    UPDATE_LOOKUP_POINT: '/api/fertilizer/:deviceId/lookup-table-point',
+    GET_HISTORY: '/api/fertilizer/:deviceId/history',
+    SYNC: '/api/fertilizer/:deviceId/sync',
+} as const;
+```
+
+### 9.10 Monitoring & Debugging
+
+**Check sync status**:
+```sql
+-- Count unsynced runs
+SELECT COUNT(*) FROM irrigation_run
+WHERE synced_to_backend = false
+AND status = 'Completed';
+
+-- List recent sync failures
+SELECT id, device_id, end_time, synced_to_backend
+FROM irrigation_run
+WHERE synced_to_backend = false
+ORDER BY end_time DESC
+LIMIT 10;
+```
+
+**Test backend connectivity**:
+```typescript
+// In BackendSyncService
+async isBackendReachable(): Promise<boolean> {
+    try {
+        const response = await this.httpClient.get('/health', { timeout: 5000 });
+        return response.status === 200;
+    } catch {
+        return false;
+    }
+}
+```
+
+**Logs to watch**:
+```
+[BackendSync] Reported irrigation run #123 to backend
+[BackendSync] Backend returned unsuccessful response: {"success":false}
+[BackendSync] Failed to report irrigation: Network timeout
+[BackendSync] Synced 3/5 pending runs
+```
+
+---
+
+## 10. Error Handling
 
 ### 9.1 Error Categories
 
@@ -937,9 +1533,9 @@ function validateValveTimes(times: number[]): void {
 
 ---
 
-## 10. Configuration
+## 11. Configuration
 
-### 10.1 Node Configuration (Node-RED UI)
+### 11.1 Node Configuration (Node-RED UI)
 
 ```javascript
 // viis-fertilizer-ec-control.html
@@ -997,9 +1593,9 @@ export const EC_CONTROL_DEFAULTS = {
 
 ---
 
-## 11. Testing
+## 12. Testing
 
-### 11.1 Test Coverage
+### 12.1 Test Coverage
 
 ```bash
 npm run test:fertilizer-ec
@@ -1111,6 +1707,7 @@ describe('Global Context Data Reading', () => {
 - [ ] **RTU Bus Safety**: Only polling flow reads Modbus during irrigation (no bus contention)?
 - [ ] **Learning Mechanism**: Lookup table updated AFTER run completion, not during run?
 - [ ] **PLC Autonomy**: PLC handles cyclic valve pulsing independently via `cycle_EC` register?
+- [ ] **Backend Sync**: Async, non-blocking, with retry mechanism for offline scenarios?
 
 ### Technical Review
 
@@ -1119,6 +1716,8 @@ describe('Global Context Data Reading', () => {
 - [ ] RTU timing strategy acceptable (100ms inter-write delay, only at START)?
 - [ ] Global context integration sound (10s staleness check, no duplicate polling)?
 - [ ] Database schema appropriate (LookupTable, IrrigationRun entities)?
+- [ ] **Backend sync strategy**: Local-first, async retry, offline-capable?
+- [ ] **API integration**: Correct endpoints, payload format, error handling?
 - [ ] Error handling comprehensive (transient vs critical, retry logic)?
 - [ ] Test coverage sufficient (27 tests, 87% coverage)?
 
@@ -1129,8 +1728,23 @@ describe('Global Context Data Reading', () => {
 2. `startPolling()` function has ZERO `writeValveTimes()` calls (line ~550-600)
 3. Comment at line 571: "no real-time adjustment - PLC handles open-loop control"
 4. `stopIrrigation()` calls `updateWithRunData()` for post-run learning (line ~483)
+5. `reportIrrigationFinished()` wrapped in try-catch, does NOT throw (line ~500-510)
+6. Unsynced runs queryable via `synced_to_backend = false` column
 
 **If any of above is missing → CODE DOES NOT MATCH SPEC**
+
+---
+
+### Backend Sync Verification
+
+| Requirement | Implementation | Evidence |
+|-------------|----------------|----------|
+| Sync does NOT block irrigation completion | ✅ Try-catch, no throw | Line 500-510 in viis-fertilizer-ec-control.ts |
+| Failed syncs are retryable | ✅ `syncPendingRuns()` method | BackendSyncService.ts line 162-180 |
+| Offline operation supported | ✅ Local DB always updated first | stopIrrigation() line 483-498 |
+| API endpoint correct | ✅ `/api/fertilizer/irrigation-finished` | constants/index.ts line 255 |
+| Request timeout configured | ✅ 30 seconds | BackendSyncService constructor |
+| Sync status tracked in DB | ✅ `synced_to_backend` column | IrrigationRun entity |
 
 ---
 

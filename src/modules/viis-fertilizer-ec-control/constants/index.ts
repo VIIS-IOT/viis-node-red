@@ -253,6 +253,7 @@ export const ENV_KEYS = {
 // ========================================
 
 export const API_ENDPOINTS = {
+    // NOTE: Backend uses /api/v2/ NOT /api/
     IRRIGATION_FINISHED: '/api/v2/fertilizer/irrigation-finished',
     GET_LOOKUP_TABLE: '/api/v2/fertilizer/:deviceId/lookup-table',
     UPDATE_LOOKUP_POINT: '/api/v2/fertilizer/:deviceId/lookup-table-point',
