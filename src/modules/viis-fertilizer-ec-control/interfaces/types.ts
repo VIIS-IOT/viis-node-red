@@ -193,6 +193,11 @@ export interface IrrigationFinishedPayload {
     start_time: string; // ISO 8601
     end_time: string;   // ISO 8601
     ec_setpoint: number;
+    time_on_valve_01: number;
+    time_on_valve_02: number;
+    time_on_valve_03: number;
+    time_on_valve_04: number;
+    time_on_valve_05: number;
 }
 
 /**

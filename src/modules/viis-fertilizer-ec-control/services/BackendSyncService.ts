@@ -57,6 +57,11 @@ export class BackendSyncService {
             start_time: run.start_time.toISOString(),
             end_time: run.end_time.toISOString(),
             ec_setpoint: run.ec_setpoint,
+            time_on_valve_01: run.time_on_valve_01,
+            time_on_valve_02: run.time_on_valve_02,
+            time_on_valve_03: run.time_on_valve_03,
+            time_on_valve_04: run.time_on_valve_04,
+            time_on_valve_05: run.time_on_valve_05,
         };
 
         try {
