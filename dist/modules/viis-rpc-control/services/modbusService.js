@@ -225,7 +225,6 @@ class ModbusService {
         try {
             const originalValue = value;
             let writeValue = value;
-            let cacheValue = value; // Track value for cache (unscaled)
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
             writeValue = this.applyHoldingSetmlBomOffset(key, writeValue);
             // Debug: Log the type of writeValue
@@ -252,13 +251,13 @@ class ModbusService {
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
                 await modbusClient.writeRegister(mapping.address, writeValue);
-                // Update global context cache with ORIGINAL (unscaled) value
-                this.updateGlobalContextCache(key, cacheValue, mapping.fc);
+                // Update global context cache with SCALED (raw Modbus) value to keep in sync with actual device state
+                this.updateGlobalContextCache(key, writeValue, mapping.fc);
             }
             else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
                 await modbusClient.writeCoil(mapping.address, writeValue);
                 // Update global context cache with the coil value
-                this.updateGlobalContextCache(key, cacheValue, mapping.fc);
+                this.updateGlobalContextCache(key, writeValue, mapping.fc);
             }
             else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
