@@ -131,6 +131,7 @@ export interface IModbusService {
     checkConnection(): Promise<void>;
     getModbusHoldingRegisters(): Record<string, number>;
     getModbusCoils(): Record<string, number>;
+    updateGlobalContextCacheAfterVerification(key: string, value: number | boolean, fc: number): void;
     // HOLDING_SETML_BOM offset feature methods
     isHoldingSetmlBomOffsetEnabled(): boolean;
     getHoldingSetmlBomOffset(key: string): number | null;

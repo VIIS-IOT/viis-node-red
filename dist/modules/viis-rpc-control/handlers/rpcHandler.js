@@ -260,6 +260,9 @@ class RpcHandler {
             await this.writeToModbusWithRetry(key, mapping, value);
             // Read back the value to confirm
             const readValue = await this.readFromModbusWithRetry(key, mapping);
+            // Update global context cache ONLY after successful write AND read-back verification
+            // This ensures cache only reflects actual device state
+            this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
             // Publish the result with retry
             await this.publishResultWithRetry(key, readValue);
             this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });

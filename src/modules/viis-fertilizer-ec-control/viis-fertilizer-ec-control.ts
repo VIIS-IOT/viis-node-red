@@ -310,34 +310,47 @@ module.exports = function (RED: NodeAPI) {
         async function readSensors(): Promise<SensorReadings | null> {
             try {
                 // Read from global context instead of direct Modbus polling
-                const holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                let holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+
+                // Handle multi-board structure: {board1: {...}, board2: {...}}
+                if (holdingData && currentBoardId && holdingData[currentBoardId]) {
+                    holdingData = holdingData[currentBoardId];
+                }
 
                 if (!holdingData) {
                     debugLog('No holding register data in global context. Waiting for polling flow...');
                     return null;
                 }
 
-                // Check data freshness
-                const dataAge = Date.now() - (holdingData.ts || 0);
+                // Check data freshness (support both 'ts' and 'timestamp' fields)
+                const timestamp = holdingData.ts || holdingData.timestamp || 0;
+                const dataAge = Date.now() - timestamp;
                 const maxAge = globalHelper.getNumericEnvVar('FERTILIZER_GLOBAL_DATA_MAX_AGE', EC_CONTROL_DEFAULTS.GLOBAL_DATA_MAX_AGE);
 
-                if (dataAge > maxAge) {
+                if (timestamp === 0) {
+                    debugLog('Global context data has no timestamp. Using anyway...');
+                } else if (dataAge > maxAge) {
                     node.warn(`Global context data is stale (${dataAge}ms old, max ${maxAge}ms). Polling flow may be stopped.`);
                     return null;
                 }
 
                 // Map keys from global context (already scaled by polling flow)
-                // Note: Polling flow scales current_ec by /1000, we need to check
+                // Note: Polling flow may scale current_ec by /1000 or /10 depending on config
                 const currentEc = holdingData.current_ec;
-                const currentFlow1 = holdingData.current_flow_1 ?? holdingData.current_flow_1 ?? 0;
-                const currentFlow2 = holdingData.current_flow_2 ?? holdingData.current_flow_2 ?? 0;
-                const currentFlow3 = holdingData.current_flow_3 ?? holdingData.current_flow_3 ?? 0;
-                const currentFlow4 = holdingData.current_flow_4 ?? holdingData.current_flow_4 ?? 0;
-                const currentFlow5 = holdingData.current_flow_5 ?? holdingData.current_flow_5 ?? 0;
+                const currentFlow1 = holdingData.current_flow_1 ?? 0;
+                const currentFlow2 = holdingData.current_flow_2 ?? 0;
+                const currentFlow3 = holdingData.current_flow_3 ?? 0;
+                const currentFlow4 = holdingData.current_flow_4 ?? 0;
+                const currentFlow5 = holdingData.current_flow_5 ?? 0;
 
-                if (currentEc === undefined) {
+                if (currentEc === undefined || currentEc === null) {
                     debugLog('current_ec not found in global context data');
                     return null;
+                }
+
+                // Warn if EC is 0 (sensor might be disconnected)
+                if (currentEc === 0) {
+                    node.warn('⚠️ current_ec = 0. Check sensor connection or wait for first reading.');
                 }
 
                 const readings: SensorReadings = {
@@ -349,7 +362,7 @@ module.exports = function (RED: NodeAPI) {
                     current_flow_5: Number(currentFlow5),
                 };
 
-                debugLog(`Read from global context (age: ${dataAge}ms): EC=${readings.current_ec}`);
+                debugLog(`Read from global context (age: ${timestamp ? dataAge + 'ms' : 'no timestamp'}): EC=${readings.current_ec}`);
                 return readings;
             } catch (error) {
                 node.error(`Failed to read sensors from global context: ${(error as Error).message}`);
@@ -361,7 +374,13 @@ module.exports = function (RED: NodeAPI) {
         // This prioritizes live config data over input message
         function getEcSetpointFromRegisters(): number | null {
             try {
-                const holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                let holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                
+                // Handle multi-board structure
+                if (holdingData && currentBoardId && holdingData[currentBoardId]) {
+                    holdingData = holdingData[currentBoardId];
+                }
+                
                 if (!holdingData || !holdingData.set_ec) {
                     return null;
                 }

@@ -299,12 +299,10 @@ export class ModbusService implements IModbusService {
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
                 await modbusClient.writeRegister(mapping.address, writeValue as number);
-                // Update global context cache with SCALED (raw Modbus) value to keep in sync with actual device state
-                this.updateGlobalContextCache(key, writeValue as number, mapping.fc);
+                // Note: Cache update removed from here - will be updated after read-back verification
             } else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
                 await modbusClient.writeCoil(mapping.address, writeValue as boolean);
-                // Update global context cache with the coil value
-                this.updateGlobalContextCache(key, writeValue as boolean, mapping.fc);
+                // Note: Cache update removed from here - will be updated after read-back verification
             } else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
             }
@@ -389,10 +387,11 @@ export class ModbusService implements IModbusService {
     }
 
     /**
-     * Update global context cache after successful Modbus write
+     * Update global context cache after successful Modbus write AND read-back verification
+     * This public method should be called ONLY after confirming the write succeeded
      * Keeps holdingRegisterData and coilRegisterData in sync with actual device state
      */
-    private updateGlobalContextCache(key: string, value: number | boolean, fc: number): void {
+    updateGlobalContextCacheAfterVerification(key: string, value: number | boolean, fc: number): void {
         try {
             const globalContext = this.node.context().global;
 

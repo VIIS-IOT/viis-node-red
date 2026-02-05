@@ -253,32 +253,44 @@ module.exports = function (RED) {
         // Read sensor values from global context (populated by polling flow)
         // This avoids RTU bus contention by reusing existing polling data
         async function readSensors() {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+            var _a, _b, _c, _d, _e;
             try {
                 // Read from global context instead of direct Modbus polling
-                const holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                let holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                // Handle multi-board structure: {board1: {...}, board2: {...}}
+                if (holdingData && currentBoardId && holdingData[currentBoardId]) {
+                    holdingData = holdingData[currentBoardId];
+                }
                 if (!holdingData) {
                     debugLog('No holding register data in global context. Waiting for polling flow...');
                     return null;
                 }
-                // Check data freshness
-                const dataAge = Date.now() - (holdingData.ts || 0);
+                // Check data freshness (support both 'ts' and 'timestamp' fields)
+                const timestamp = holdingData.ts || holdingData.timestamp || 0;
+                const dataAge = Date.now() - timestamp;
                 const maxAge = globalHelper.getNumericEnvVar('FERTILIZER_GLOBAL_DATA_MAX_AGE', constants_1.EC_CONTROL_DEFAULTS.GLOBAL_DATA_MAX_AGE);
-                if (dataAge > maxAge) {
+                if (timestamp === 0) {
+                    debugLog('Global context data has no timestamp. Using anyway...');
+                }
+                else if (dataAge > maxAge) {
                     node.warn(`Global context data is stale (${dataAge}ms old, max ${maxAge}ms). Polling flow may be stopped.`);
                     return null;
                 }
                 // Map keys from global context (already scaled by polling flow)
-                // Note: Polling flow scales current_ec by /1000, we need to check
+                // Note: Polling flow may scale current_ec by /1000 or /10 depending on config
                 const currentEc = holdingData.current_ec;
-                const currentFlow1 = (_b = (_a = holdingData.current_flow_1) !== null && _a !== void 0 ? _a : holdingData.current_flow_1) !== null && _b !== void 0 ? _b : 0;
-                const currentFlow2 = (_d = (_c = holdingData.current_flow_2) !== null && _c !== void 0 ? _c : holdingData.current_flow_2) !== null && _d !== void 0 ? _d : 0;
-                const currentFlow3 = (_f = (_e = holdingData.current_flow_3) !== null && _e !== void 0 ? _e : holdingData.current_flow_3) !== null && _f !== void 0 ? _f : 0;
-                const currentFlow4 = (_h = (_g = holdingData.current_flow_4) !== null && _g !== void 0 ? _g : holdingData.current_flow_4) !== null && _h !== void 0 ? _h : 0;
-                const currentFlow5 = (_k = (_j = holdingData.current_flow_5) !== null && _j !== void 0 ? _j : holdingData.current_flow_5) !== null && _k !== void 0 ? _k : 0;
-                if (currentEc === undefined) {
+                const currentFlow1 = (_a = holdingData.current_flow_1) !== null && _a !== void 0 ? _a : 0;
+                const currentFlow2 = (_b = holdingData.current_flow_2) !== null && _b !== void 0 ? _b : 0;
+                const currentFlow3 = (_c = holdingData.current_flow_3) !== null && _c !== void 0 ? _c : 0;
+                const currentFlow4 = (_d = holdingData.current_flow_4) !== null && _d !== void 0 ? _d : 0;
+                const currentFlow5 = (_e = holdingData.current_flow_5) !== null && _e !== void 0 ? _e : 0;
+                if (currentEc === undefined || currentEc === null) {
                     debugLog('current_ec not found in global context data');
                     return null;
+                }
+                // Warn if EC is 0 (sensor might be disconnected)
+                if (currentEc === 0) {
+                    node.warn('⚠️ current_ec = 0. Check sensor connection or wait for first reading.');
                 }
                 const readings = {
                     current_ec: Number(currentEc),
@@ -288,7 +300,7 @@ module.exports = function (RED) {
                     current_flow_4: Number(currentFlow4),
                     current_flow_5: Number(currentFlow5),
                 };
-                debugLog(`Read from global context (age: ${dataAge}ms): EC=${readings.current_ec}`);
+                debugLog(`Read from global context (age: ${timestamp ? dataAge + 'ms' : 'no timestamp'}): EC=${readings.current_ec}`);
                 return readings;
             }
             catch (error) {
@@ -300,7 +312,11 @@ module.exports = function (RED) {
         // This prioritizes live config data over input message
         function getEcSetpointFromRegisters() {
             try {
-                const holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                let holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                // Handle multi-board structure
+                if (holdingData && currentBoardId && holdingData[currentBoardId]) {
+                    holdingData = holdingData[currentBoardId];
+                }
                 if (!holdingData || !holdingData.set_ec) {
                     return null;
                 }
