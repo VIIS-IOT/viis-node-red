@@ -77,11 +77,11 @@ module.exports = function (RED: NodeAPI) {
             return;
         }
 
-        // Configuration from node settings or environment
-        const rampUpSeconds = config.rampUpSeconds ?? globalHelper.getNumericEnvVar('FERTILIZER_RAMP_UP_SECONDS', EC_CONTROL_DEFAULTS.RAMP_UP_SECONDS);
-        const adjustmentStep = config.adjustmentStep ?? globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_STEP', EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP);
-        const adjustmentThreshold = config.adjustmentThreshold ?? globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_THRESHOLD', EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD);
-        const maxValveTime = config.maxValveTime ?? globalHelper.getNumericEnvVar('FERTILIZER_MAX_VALVE_TIME', EC_CONTROL_DEFAULTS.MAX_VALVE_TIME);
+        // Configuration from environment only - all EC params from global context
+        const rampUpSeconds = globalHelper.getNumericEnvVar('FERTILIZER_RAMP_UP_SECONDS', EC_CONTROL_DEFAULTS.RAMP_UP_SECONDS);
+        const adjustmentStep = globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_STEP', EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP);
+        const adjustmentThreshold = globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_THRESHOLD', EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD);
+        const maxValveTime = globalHelper.getNumericEnvVar('FERTILIZER_MAX_VALVE_TIME', EC_CONTROL_DEFAULTS.MAX_VALVE_TIME);
         const debugEnable = config.debugEnable ?? false;
 
         // RTU-specific delays
@@ -121,6 +121,9 @@ module.exports = function (RED: NodeAPI) {
                 node.warn(`[DEBUG] ${message}`);
             }
         };
+
+        // Note: All EC control parameters read from global.holdingRegisterData
+        debugLog('EC Control: All parameters read from global.holdingRegisterData (cycle_ec, set_ec, time_on_valve_XX)');
 
         // Initialize services
         async function initializeServices(): Promise<boolean> {

@@ -12,11 +12,6 @@
         defaults: {
             name: { value: '' },
             boardId: { value: '' },
-            cycleEc: { value: 170, validate: RED.validators.number() },
-            rampUpSeconds: { value: 20, validate: RED.validators.number() },
-            adjustmentStep: { value: 50, validate: RED.validators.number() },
-            adjustmentThreshold: { value: 0.1, validate: RED.validators.number() },
-            maxValveTime: { value: 10000, validate: RED.validators.number() },
             debugEnable: { value: false }
         },
         inputs: 1,
@@ -68,39 +63,9 @@
         </select>
     </div>
 
-    <fieldset>
-        <legend><i class="fa fa-cogs"></i> EC Control Parameters</legend>
-
-        <div class="form-row">
-            <label for="node-input-cycleEc"><i class="fa fa-clock-o"></i> Cycle EC</label>
-            <input type="number" id="node-input-cycleEc" placeholder="170" style="width: 70px;">
-            <span class="viis-unit">cycles (×0.6s = ~102s)</span>
-        </div>
-
-        <div class="form-row">
-            <label for="node-input-rampUpSeconds"><i class="fa fa-arrow-up"></i> Ramp-up Time</label>
-            <input type="number" id="node-input-rampUpSeconds" placeholder="20" style="width: 70px;">
-            <span class="viis-unit">seconds</span>
-        </div>
-
-        <div class="form-row">
-            <label for="node-input-adjustmentStep"><i class="fa fa-sliders"></i> Adjustment Step</label>
-            <input type="number" id="node-input-adjustmentStep" placeholder="50" style="width: 70px;">
-            <span class="viis-unit">ms (±50ms per adjustment)</span>
-        </div>
-
-        <div class="form-row">
-            <label for="node-input-adjustmentThreshold"><i class="fa fa-bullseye"></i> Threshold</label>
-            <input type="number" id="node-input-adjustmentThreshold" placeholder="0.1" step="0.01" style="width: 70px;">
-            <span class="viis-unit">EC deviation before adjustment</span>
-        </div>
-
-        <div class="form-row">
-            <label for="node-input-maxValveTime"><i class="fa fa-clock-o"></i> Max Valve Time</label>
-            <input type="number" id="node-input-maxValveTime" placeholder="10000" style="width: 70px;">
-            <span class="viis-unit">ms</span>
-        </div>
-    </fieldset>
+    <div class="form-tip" style="margin: 10px 0; padding: 8px; background: #f0f9ff; border-left: 4px solid #0ea5e9; font-size: 12px;">
+        <i class="fa fa-info-circle"></i> <strong>Note:</strong> All EC control parameters (cycle_ec, set_ec, time_on_valve_XX) are read from global context <code>holdingRegisterData</code>.
+    </div>
 
     <div class="form-row">
         <label for="node-input-debugEnable" style="width: auto;">
@@ -191,20 +156,21 @@ msg.ec_setpoint = 2.0;</pre>
         <dt>Board ID</dt>
         <dd>Modbus board to use. Leave empty for default board from MODBUS_DEFAULT_BOARD.</dd>
 
-        <dt>Cycle EC</dt>
-        <dd>Number of EC control cycles. Each cycle is 0.6 seconds. Default: 170 (~102 seconds)</dd>
+        <dt>Debug Enable</dt>
+        <dd>Enable detailed debug logging for troubleshooting.</dd>
+    </dl>
 
-        <dt>Ramp-up Time</dt>
-        <dd>Seconds to wait before EC readings are considered stable. Default: 20 seconds</dd>
+    <h3>EC Control Parameters (from Global Context)</h3>
+    <p>All EC control parameters are read from <code>global.holdingRegisterData</code>:</p>
+    <dl class="message-properties">
+        <dt>cycle_ec</dt>
+        <dd>Number of EC control cycles. Each cycle is 0.6 seconds (e.g., 170 = ~102 seconds)</dd>
 
-        <dt>Adjustment Step</dt>
-        <dd>Milliseconds to adjust valve times when EC deviates. Default: ±50ms</dd>
+        <dt>set_ec</dt>
+        <dd>Target EC setpoint value (×10, e.g., 18 = 1.8 EC)</dd>
 
-        <dt>Threshold</dt>
-        <dd>EC deviation threshold before adjustment is triggered. Default: 0.1</dd>
-
-        <dt>Max Valve Time</dt>
-        <dd>Maximum allowed valve opening time in milliseconds. Default: 10000ms</dd>
+        <dt>time_on_valve_01-05</dt>
+        <dd>Valve opening times in milliseconds (set by lookup table)</dd>
     </dl>
 
     <h3>Modbus Registers</h3>

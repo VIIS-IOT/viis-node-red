@@ -38,7 +38,7 @@ const constants_1 = require("./constants");
 const ModbusRegisterHelper_1 = require("./utils/ModbusRegisterHelper");
 module.exports = function (RED) {
     function ViisFertilizerEcControlNode(config) {
-        var _a, _b, _c, _d, _e;
+        var _a;
         RED.nodes.createNode(this, config);
         const node = this;
         const nodeContext = this.context();
@@ -52,12 +52,12 @@ module.exports = function (RED) {
             node.status({ fill: 'red', shape: 'ring', text: 'No DEVICE_ID' });
             return;
         }
-        // Configuration from node settings or environment
-        const rampUpSeconds = (_a = config.rampUpSeconds) !== null && _a !== void 0 ? _a : globalHelper.getNumericEnvVar('FERTILIZER_RAMP_UP_SECONDS', constants_1.EC_CONTROL_DEFAULTS.RAMP_UP_SECONDS);
-        const adjustmentStep = (_b = config.adjustmentStep) !== null && _b !== void 0 ? _b : globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_STEP', constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP);
-        const adjustmentThreshold = (_c = config.adjustmentThreshold) !== null && _c !== void 0 ? _c : globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_THRESHOLD', constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD);
-        const maxValveTime = (_d = config.maxValveTime) !== null && _d !== void 0 ? _d : globalHelper.getNumericEnvVar('FERTILIZER_MAX_VALVE_TIME', constants_1.EC_CONTROL_DEFAULTS.MAX_VALVE_TIME);
-        const debugEnable = (_e = config.debugEnable) !== null && _e !== void 0 ? _e : false;
+        // Configuration from environment only - all EC params from global context
+        const rampUpSeconds = globalHelper.getNumericEnvVar('FERTILIZER_RAMP_UP_SECONDS', constants_1.EC_CONTROL_DEFAULTS.RAMP_UP_SECONDS);
+        const adjustmentStep = globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_STEP', constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP);
+        const adjustmentThreshold = globalHelper.getNumericEnvVar('FERTILIZER_ADJUSTMENT_THRESHOLD', constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD);
+        const maxValveTime = globalHelper.getNumericEnvVar('FERTILIZER_MAX_VALVE_TIME', constants_1.EC_CONTROL_DEFAULTS.MAX_VALVE_TIME);
+        const debugEnable = (_a = config.debugEnable) !== null && _a !== void 0 ? _a : false;
         // RTU-specific delays
         const rtuInterWriteDelay = globalHelper.getNumericEnvVar('FERTILIZER_RTU_INTER_WRITE_DELAY', constants_1.EC_CONTROL_DEFAULTS.RTU_INTER_WRITE_DELAY);
         const rtuWriteSettleDelay = globalHelper.getNumericEnvVar('FERTILIZER_RTU_WRITE_SETTLE_DELAY', constants_1.EC_CONTROL_DEFAULTS.RTU_WRITE_SETTLE_DELAY);
@@ -89,6 +89,8 @@ module.exports = function (RED) {
                 node.warn(`[DEBUG] ${message}`);
             }
         };
+        // Note: All EC control parameters read from global.holdingRegisterData
+        debugLog('EC Control: All parameters read from global.holdingRegisterData (cycle_ec, set_ec, time_on_valve_XX)');
         // Initialize services
         async function initializeServices() {
             try {

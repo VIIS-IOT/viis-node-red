@@ -7,21 +7,6 @@ export interface ViisFertilizerEcControlNodeDef extends NodeDef {
     /** Board ID for multi-board Modbus support */
     boardId?: string;
 
-    /** EC cycle period (default: 10 = 6 second cycle) */
-    cycleEc: number;
-
-    /** Ramp-up period to skip for EC averaging (seconds) */
-    rampUpSeconds: number;
-
-    /** Adjustment step when EC deviates (ms) */
-    adjustmentStep: number;
-
-    /** EC deviation threshold to trigger adjustment */
-    adjustmentThreshold: number;
-
-    /** Maximum valve ON time per cycle (ms) */
-    maxValveTime: number;
-
     /** Enable debug logging */
     debugEnable: boolean;
 }
