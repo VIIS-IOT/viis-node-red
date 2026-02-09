@@ -178,6 +178,12 @@ export interface IrrigationFinishedPayload {
     start_time: string; // ISO 8601
     end_time: string;   // ISO 8601
     ec_setpoint: number;
+    ec_achieved_avg?: number;
+    flow_achieved_01_avg?: number;
+    flow_achieved_02_avg?: number;
+    flow_achieved_03_avg?: number;
+    flow_achieved_04_avg?: number;
+    flow_achieved_05_avg?: number;
     time_on_valve_01: number;
     time_on_valve_02: number;
     time_on_valve_03: number;

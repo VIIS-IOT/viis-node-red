@@ -94,9 +94,11 @@ module.exports = function (RED) {
         // Initialize services
         async function initializeServices() {
             try {
+                debugLog('Starting service initialization...');
                 // Initialize lookup table service
                 lookupService = new services_1.LookupTableService(node, deviceId);
                 await lookupService.initialize(nodeContext);
+                debugLog('✓ Lookup table service initialized');
                 // Initialize context window service
                 contextService = new services_1.ContextWindowService(node, {
                     windowSize: constants_1.EC_CONTROL_DEFAULTS.CONTEXT_WINDOW_SIZE,
@@ -104,13 +106,17 @@ module.exports = function (RED) {
                     adjustmentStep,
                     maxValveTime,
                 });
+                debugLog('✓ Context window service initialized');
                 // Initialize irrigation run service
                 runService = new services_1.IrrigationRunService(node, deviceId);
                 await runService.initialize(nodeContext);
+                debugLog('✓ Irrigation run service initialized');
                 // Initialize backend sync service
                 syncService = new services_1.BackendSyncService(node, deviceId, globalHelper);
+                debugLog('✓ Backend sync service initialized');
                 // Clean up any stale runs from power outage
                 await runService.cleanupStaleRuns();
+                debugLog('✓ Cleaned up stale runs');
                 servicesInitialized = true;
                 debugLog('All services initialized successfully');
                 node.status({ fill: 'green', shape: 'dot', text: 'Ready' });
@@ -119,6 +125,7 @@ module.exports = function (RED) {
             catch (error) {
                 node.error(`Failed to initialize services: ${error.message}`);
                 node.status({ fill: 'red', shape: 'ring', text: 'Init failed' });
+                servicesInitialized = false;
                 return false;
             }
         }
@@ -322,10 +329,45 @@ module.exports = function (RED) {
                 if (!holdingData || !holdingData.set_ec) {
                     return null;
                 }
+                // Global context already contains scaled value (polling node divided by 1000)
                 return Number(holdingData.set_ec);
             }
             catch (error) {
                 debugLog(`Failed to read set_ec from registers: ${error.message}`);
+                return null;
+            }
+        }
+        // Get valve times from Modbus holding registers via global context
+        // Used when lookup table has no data (manual user set via RPC)
+        function getValveTimesFromRegisters(defaults) {
+            try {
+                let holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                // Handle multi-board structure
+                if (holdingData && currentBoardId && holdingData[currentBoardId]) {
+                    holdingData = holdingData[currentBoardId];
+                }
+                if (!holdingData) {
+                    return null;
+                }
+                const v01 = holdingData.time_on_valve_01;
+                const v02 = holdingData.time_on_valve_02;
+                const v03 = holdingData.time_on_valve_03;
+                const v04 = holdingData.time_on_valve_04;
+                const v05 = holdingData.time_on_valve_05;
+                const hasAny = [v01, v02, v03, v04, v05].some(v => typeof v === 'number');
+                if (!hasAny) {
+                    return null;
+                }
+                return {
+                    time_on_valve_01: typeof v01 === 'number' ? Number(v01) : defaults.time_on_valve_01,
+                    time_on_valve_02: typeof v02 === 'number' ? Number(v02) : defaults.time_on_valve_02,
+                    time_on_valve_03: typeof v03 === 'number' ? Number(v03) : defaults.time_on_valve_03,
+                    time_on_valve_04: typeof v04 === 'number' ? Number(v04) : defaults.time_on_valve_04,
+                    time_on_valve_05: typeof v05 === 'number' ? Number(v05) : defaults.time_on_valve_05,
+                };
+            }
+            catch (error) {
+                debugLog(`Failed to read time_on_valve_XX from registers: ${error.message}`);
                 return null;
             }
         }
@@ -362,10 +404,19 @@ module.exports = function (RED) {
             try {
                 // Get valve times from lookup table
                 const interpolation = await lookupService.getValveTimesForEc(ecSetpoint);
-                controlContext.currentValveTimes = interpolation.valveTimes;
-                debugLog(`Interpolation result: ${interpolation.confidence}, valves: ${JSON.stringify(interpolation.valveTimes)}`);
+                let selectedValveTimes = interpolation.valveTimes;
+                // If lookup table is empty, allow manual user-set valve times from registers
+                if (interpolation.confidence === 'default') {
+                    const manualValveTimes = getValveTimesFromRegisters(interpolation.valveTimes);
+                    if (manualValveTimes) {
+                        selectedValveTimes = manualValveTimes;
+                        debugLog(`Lookup empty. Using valve times from registers: ${JSON.stringify(manualValveTimes)}`);
+                    }
+                }
+                controlContext.currentValveTimes = selectedValveTimes;
+                debugLog(`Interpolation result: ${interpolation.confidence}, valves: ${JSON.stringify(selectedValveTimes)}`);
                 // Write valve times to Modbus
-                const writeSuccess = await writeValveTimes(interpolation.valveTimes);
+                const writeSuccess = await writeValveTimes(selectedValveTimes);
                 if (!writeSuccess) {
                     throw new Error('Failed to write valve times');
                 }
@@ -377,7 +428,7 @@ module.exports = function (RED) {
                 // Start irrigation run tracking
                 const run = await runService.startRun({
                     ecSetpoint,
-                    valveTimes: interpolation.valveTimes,
+                    valveTimes: selectedValveTimes,
                     scheduleName,
                 });
                 controlContext.currentRun = run;
@@ -387,7 +438,7 @@ module.exports = function (RED) {
                 startPolling();
                 controlContext.state = 'RAMPING_UP';
                 node.status({ fill: 'blue', shape: 'dot', text: `Ramp-up EC=${ecSetpoint}` });
-                // Send output
+                // Send output (Modbus writes already completed internally)
                 sendOutput(1, {
                     topic: 'fertilizer/started',
                     payload: {
@@ -400,8 +451,6 @@ module.exports = function (RED) {
                             confidence: interpolation.confidence,
                         },
                     },
-                    valve_times: interpolation.valveTimes,
-                    modbus_writes: getModbusWrites(interpolation.valveTimes, ecSetpoint),
                 });
             }
             catch (error) {
@@ -576,11 +625,53 @@ module.exports = function (RED) {
         node.on('input', async (msg) => {
             var _a, _b, _c, _d, _e, _f, _g, _h;
             if (!servicesInitialized) {
-                node.warn('Services not initialized yet');
+                debugLog('Services not initialized yet, skipping input');
                 return;
             }
             const input = msg;
             const action = input.action || ((_a = msg.payload) === null || _a === void 0 ? void 0 : _a.action);
+            // Auto-check mode: Interval inject without action triggers status monitoring
+            if (!action || action === 'check') {
+                try {
+                    // Read power and iri_time from Modbus registers
+                    const client = await getModbusClient();
+                    const powerAddr = modbusHelper.getCoilAddress(constants_1.MODBUS_COIL_KEYS.POWER);
+                    const iriTimeAddr = modbusHelper.getHoldingAddress(constants_1.MODBUS_REGISTER_KEYS.IRI_TIME);
+                    if (powerAddr === undefined || iriTimeAddr === undefined) {
+                        debugLog('Power or IRI_TIME register not configured');
+                        return;
+                    }
+                    const [powerValue, iriTimeValue] = await Promise.all([
+                        client.readCoils(powerAddr, 1),
+                        client.readHoldingRegisters(iriTimeAddr, 1)
+                    ]);
+                    const isPowerOn = Boolean(powerValue.data[0]);
+                    const iriTime = Number(iriTimeValue.data[0]);
+                    const currentState = controlContext.state;
+                    debugLog(`Auto-check: power=${isPowerOn}, iri_time=${iriTime}, state=${currentState}`);
+                    // Auto-start if power ON, iri_time > 0, and currently IDLE
+                    if (isPowerOn && iriTime > 0 && currentState === 'IDLE') {
+                        const ecSetpoint = getEcSetpointFromRegisters();
+                        if (ecSetpoint && ecSetpoint > 0) {
+                            debugLog(`Auto-starting: power ON, iri_time=${iriTime}, ec=${ecSetpoint}`);
+                            await startIrrigation(ecSetpoint, undefined); // No schedule name for auto-start
+                        }
+                        else {
+                            debugLog('Auto-start skipped: invalid EC setpoint');
+                        }
+                    }
+                    // Auto-stop if power OFF or iri_time=0, and currently running
+                    else if ((!isPowerOn || iriTime === 0) && currentState !== 'IDLE') {
+                        debugLog(`Auto-stopping: power=${isPowerOn}, iri_time=${iriTime}`);
+                        await stopIrrigation('complete');
+                    }
+                    return; // Exit after auto-check
+                }
+                catch (error) {
+                    node.error(`Auto-check failed: ${error.message}`);
+                    return;
+                }
+            }
             switch (action) {
                 case 'start':
                     // Priority 1: Read from current Modbus holding registers (live config)

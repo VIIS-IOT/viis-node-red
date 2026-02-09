@@ -165,20 +165,17 @@ class LookupTableService {
                     }
                 }
             }
-            // Update valve times with adaptive adjustment
-            const ecDeviation = achievedEc - ecSetpoint;
-            if (Math.abs(ecDeviation) > constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD) {
-                // If EC too high, reduce valve times; if too low, increase
-                const adjustment = ecDeviation > 0
-                    ? -constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP
-                    : constants_1.EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP;
-                point.time_on_valve_01 = Math.max(0, point.time_on_valve_01 + adjustment);
-                point.time_on_valve_02 = Math.max(0, point.time_on_valve_02 + adjustment);
-                point.time_on_valve_03 = Math.max(0, point.time_on_valve_03 + adjustment);
-                point.time_on_valve_04 = Math.max(0, point.time_on_valve_04 + adjustment);
-                point.time_on_valve_05 = Math.max(0, point.time_on_valve_05 + adjustment);
-                this.log(`Adjusted valve times by ${adjustment}ms (EC deviation: ${ecDeviation.toFixed(3)})`);
+            // Update valve times with weighted average from actual runs
+            // Store the valve times that were ACTUALLY USED, not adjusted values
+            for (let i = 1; i <= 5; i++) {
+                const valveKey = `time_on_valve_0${i}`;
+                const inputKey = `time_on_valve_0${i}`;
+                const oldTime = point[valveKey];
+                const newTime = valveTimes[inputKey];
+                // Weighted average: old valve times from previous runs + new valve times
+                point[valveKey] = Math.round((oldTime * oldCount + newTime) / newCount);
             }
+            this.log(`Updated valve times with weighted average (sample_count=${newCount})`);
             point.sample_count = newCount;
             point.data_type = constants_1.LOOKUP_DATA_TYPE.ACTUAL;
             point.last_updated = new Date();

@@ -207,22 +207,19 @@ export class LookupTableService {
                 }
             }
 
-            // Update valve times with adaptive adjustment
-            const ecDeviation = achievedEc - ecSetpoint;
-            if (Math.abs(ecDeviation) > EC_CONTROL_DEFAULTS.ADJUSTMENT_THRESHOLD) {
-                // If EC too high, reduce valve times; if too low, increase
-                const adjustment = ecDeviation > 0
-                    ? -EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP
-                    : EC_CONTROL_DEFAULTS.ADJUSTMENT_STEP;
+            // Update valve times with weighted average from actual runs
+            // Store the valve times that were ACTUALLY USED, not adjusted values
+            for (let i = 1; i <= 5; i++) {
+                const valveKey = `time_on_valve_0${i}` as keyof TabiotFertilizerLookupPoint;
+                const inputKey = `time_on_valve_0${i}` as keyof ValveTimes;
+                const oldTime = point[valveKey] as number;
+                const newTime = valveTimes[inputKey];
 
-                point.time_on_valve_01 = Math.max(0, point.time_on_valve_01 + adjustment);
-                point.time_on_valve_02 = Math.max(0, point.time_on_valve_02 + adjustment);
-                point.time_on_valve_03 = Math.max(0, point.time_on_valve_03 + adjustment);
-                point.time_on_valve_04 = Math.max(0, point.time_on_valve_04 + adjustment);
-                point.time_on_valve_05 = Math.max(0, point.time_on_valve_05 + adjustment);
-
-                this.log(`Adjusted valve times by ${adjustment}ms (EC deviation: ${ecDeviation.toFixed(3)})`);
+                // Weighted average: old valve times from previous runs + new valve times
+                (point as any)[valveKey] = Math.round((oldTime * oldCount + newTime) / newCount);
             }
+
+            this.log(`Updated valve times with weighted average (sample_count=${newCount})`);
 
             point.sample_count = newCount;
             point.data_type = LOOKUP_DATA_TYPE.ACTUAL as 'Actual';

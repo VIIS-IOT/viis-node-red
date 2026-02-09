@@ -61,10 +61,10 @@ export const MODBUS_REGISTER_KEYS = {
 
     IRI_TIME_REMAIN: 'iri_time_remain',
     TOTAL_IRI_FLOW: 'total_iri_flow',
-    CURRENT_EC: 'current_ec',            // EC × 10
-    CURRENT_PH: 'current_ph',            // pH × 10
+    CURRENT_EC: 'current_ec',            // Already scaled by polling node (÷1000)
+    CURRENT_PH: 'current_ph',            // Already scaled by polling node (÷100)
     CURRENT_TEMP: 'current_temp',
-    PUMP_PRESSURE: 'pump_pressure',
+    PUMP_PRESSURE: 'pump_pressure',      // Already scaled by polling node (÷10)
 
     // Calibration factors
     VOLUME_FACTOR_01: 'volume_factor_01',
@@ -168,11 +168,11 @@ export const EC_CONTROL_DEFAULTS = {
     /** Context window size for EC averaging (samples) */
     CONTEXT_WINDOW_SIZE: 20,
 
-    /** EC sensor scaling factor (raw value × 10) */
-    EC_SCALE_FACTOR: 10,
+    /** EC sensor scaling factor (PLC stores value × 1000) */
+    EC_SCALE_FACTOR: 1000,
 
-    /** pH sensor scaling factor (raw value × 10) */
-    PH_SCALE_FACTOR: 10,
+    /** pH sensor scaling factor (PLC stores value × 100) */
+    PH_SCALE_FACTOR: 100,
 
     /** Maximum age of global context data before considered stale (ms) */
     GLOBAL_DATA_MAX_AGE: 10000,
