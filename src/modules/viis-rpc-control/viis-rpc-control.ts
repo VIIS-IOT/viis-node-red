@@ -332,16 +332,29 @@ module.exports = function (RED: NodeAPI) {
                     // Attempt to reconnect and resubscribe after a delay
                     setTimeout(async () => {
                         try {
+                            // Helper to cancel the 30s interval-based retry if we succeed here first
+                            const cancelIntervalRetry = () => {
+                                const retryInterval = node.context().get('subscriptionRetryInterval') as NodeJS.Timeout | undefined;
+                                if (retryInterval) {
+                                    clearInterval(retryInterval);
+                                    node.context().set('subscriptionRetryInterval', null);
+                                }
+                            };
+
                             if (mqttClient.isConnected()) {
                                 await mqttClient.subscribe(subscribeTopic);
                                 logger.log(`Resubscribed to topic after connection recovery: ${subscribeTopic}`);
                                 node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                                // Prevent the 30s interval from attempting a second subscription
+                                cancelIntervalRetry();
                             } else {
                                 logger.warn("MQTT still disconnected, will retry on connection event");
                                 mqttClient.once("mqtt-status", async ({ status }: any) => {
                                     if (status === "connected") {
                                         await mqttClient.subscribe(subscribeTopic);
                                         node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                                        // Prevent the 30s interval from attempting a second subscription
+                                        cancelIntervalRetry();
                                     } else if (status === 'disconnected') {
                                         node.status({ fill: "yellow", shape: "ring", text: "Disconnected - recovering" });
                                         // Trigger immediate recovery attempt
@@ -517,7 +530,7 @@ module.exports = function (RED: NodeAPI) {
                             }
 
                             node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.PROCESSING_RPC_INPUT });
-                            rpcHandler.handleRpcRequest(rpcBody);
+                            await rpcHandler.handleRpcRequest(rpcBody);
                         } catch (error) {
                             logger.error(ERROR_MESSAGES.RPC_INPUT_FAILED + `: ${(error as Error).message}`);
                             node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.RPC_INPUT_ERROR });

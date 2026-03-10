@@ -253,23 +253,36 @@ class RpcHandler {
      * Handle parameter that has Modbus mapping
      */
     async handleModbusMappedParameter(key, rawValue, mapping) {
+        // Validate and convert value
+        const value = this.validationService.validateAndConvertValue(key, rawValue);
+        // Write to Modbus with connection error handling.
+        // If this throws, the outer handleRpcRequest retry loop may re-attempt — which is safe
+        // because the write did not actually succeed yet.
         try {
-            // Validate and convert value
-            const value = this.validationService.validateAndConvertValue(key, rawValue);
-            // Write to Modbus with connection error handling
             await this.writeToModbusWithRetry(key, mapping, value);
-            // Read back the value to confirm
+        }
+        catch (error) {
+            this.logger.error(`Failed to write ${key}: ${error.message}`);
+            throw error; // Propagate: write failed, retry is safe
+        }
+        // Read-back to confirm.
+        // CRITICAL: handled in its own try-catch so that a read failure after a SUCCESSFUL write
+        // does NOT propagate a retryable error back to handleRpcRequest. If it did, the outer
+        // retry loop would execute the write AGAIN — causing double-writes on relays/coils.
+        try {
             const readValue = await this.readFromModbusWithRetry(key, mapping);
-            // Update global context cache ONLY after successful write AND read-back verification
-            // This ensures cache only reflects actual device state
+            // Update global context cache only after successful read-back verification
             this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
-            // Publish the result with retry
+            // Publish the confirmed read-back value
             await this.publishResultWithRetry(key, readValue);
             this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });
         }
-        catch (error) {
-            this.logger.error(`Failed to process ${key}: ${error.message}`);
-            throw error;
+        catch (readError) {
+            // Write succeeded but read-back failed. Publish the written value as fallback and
+            // return without throwing — the outer retry must NOT re-write.
+            this.logger.warn(`[RPC-HANDLER] Write succeeded but read-back failed for ${key}: ${readError.message}. Publishing written value as fallback.`);
+            await this.publishResultWithRetry(key, value);
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
         }
     }
     /**
@@ -397,7 +410,8 @@ class RpcHandler {
                     if (attempt < maxRetries) {
                         this.logger.warn(`[RPC-HANDLER] Attempting reconnection (${attempt}/${maxRetries})...`);
                         try {
-                            await this.modbusService.checkConnection();
+                            // Pass boardId so the correct board client is reconnected in multi-board mode
+                            await this.modbusService.checkConnection(mapping.boardId);
                             this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying operation...`);
                             // Continue to next iteration to retry the operation
                         }
@@ -438,7 +452,8 @@ class RpcHandler {
                     if (attempt < maxRetries) {
                         this.logger.warn(`[RPC-HANDLER] Attempting reconnection for read (${attempt}/${maxRetries})...`);
                         try {
-                            await this.modbusService.checkConnection();
+                            // Pass boardId so the correct board client is reconnected in multi-board mode
+                            await this.modbusService.checkConnection(mapping.boardId);
                             this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying read operation...`);
                         }
                         catch (reconnectError) {

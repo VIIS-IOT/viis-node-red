@@ -568,13 +568,16 @@ export class ModbusService implements IModbusService {
     }
 
     /**
-     * Check Modbus connection and attempt to reconnect if needed
-     * Checks default client (for single-board) or all board clients (for multi-board)
+     * Check Modbus connection and attempt to reconnect if needed.
+     * In multi-board mode, pass boardId to reconnect the correct board's client.
+     * Falls back to defaultModbusClient when boardId is not provided.
      */
-    async checkConnection(): Promise<void> {
+    async checkConnection(boardId?: string): Promise<void> {
         try {
-            // Use default client for connection check
-            const modbusClient = this.defaultModbusClient;
+            // Use board-specific client in multi-board mode, otherwise fall back to default
+            const modbusClient = boardId
+                ? await this.getModbusClient(boardId)
+                : this.defaultModbusClient;
 
             if (!modbusClient) {
                 throw new Error("Modbus client is not initialized");

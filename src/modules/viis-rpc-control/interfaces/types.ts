@@ -128,7 +128,7 @@ export interface IModbusService {
     findModbusMapping(key: string): ModbusMappingResult | null;
     writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void>;
     readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean>;
-    checkConnection(): Promise<void>;
+    checkConnection(boardId?: string): Promise<void>;
     getModbusHoldingRegisters(): Record<string, number>;
     getModbusCoils(): Record<string, number>;
     updateGlobalContextCacheAfterVerification(key: string, value: number | boolean, fc: number): void;
