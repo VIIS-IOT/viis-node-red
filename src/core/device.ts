@@ -9,11 +9,11 @@ export async function sendTelemetryByHttp(
   context?: any
 ): Promise<boolean> {
   try {
-    // Use GlobalContextHelper to get server URL like viis-schedule-executor
+    // Use GlobalContextHelper to get server URL (hot-reload support)
     const globalHelper = context ? new GlobalContextHelper(context) : null;
     const serverUrl = globalHelper
       ? globalHelper.getEnvVar('VIIS_BACKEND', DEFAULT_HTTP_SERVER_URL)
-      : (process.env.VIIS_BACKEND || DEFAULT_HTTP_SERVER_URL);
+      : DEFAULT_HTTP_SERVER_URL;
 
     const response = await axios.post(
       `${serverUrl}/api/v1/${token}/telemetry`,
@@ -36,11 +36,11 @@ export async function getDeviceIntentsByToken(
   context?: any
 ): Promise<DeviceIntent[]> {
   try {
-    // Use GlobalContextHelper to get server URL like viis-schedule-executor
+    // Use GlobalContextHelper to get server URL (hot-reload support)
     const globalHelper = context ? new GlobalContextHelper(context) : null;
     const serverUrl = globalHelper
       ? globalHelper.getEnvVar('VIIS_BACKEND', DEFAULT_HTTP_SERVER_URL)
-      : (process.env.VIIS_BACKEND || DEFAULT_HTTP_SERVER_URL);
+      : DEFAULT_HTTP_SERVER_URL;
     console.log(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`)
     const response = await axios.get(
       `${serverUrl}/api/v2/device-intent/by-device-token/${token}`,

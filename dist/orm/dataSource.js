@@ -92,8 +92,8 @@ class DataSourceManager {
     }
     static getConfig(nodeContext) {
         const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
-        const get = (key, fallback) => { var _a, _b; return (_b = (_a = helper === null || helper === void 0 ? void 0 : helper.getEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : process.env[key]) !== null && _b !== void 0 ? _b : fallback; };
-        const getNum = (key, fallback) => { var _a, _b; return (_a = helper === null || helper === void 0 ? void 0 : helper.getNumericEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : parseInt((_b = process.env[key]) !== null && _b !== void 0 ? _b : String(fallback)); };
+        const get = (key, fallback) => { var _a; return (_a = helper === null || helper === void 0 ? void 0 : helper.getEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : fallback; };
+        const getNum = (key, fallback) => { var _a; return (_a = helper === null || helper === void 0 ? void 0 : helper.getNumericEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : fallback; };
         // Container uses DATABASE_*, host/migrations use DB_*
         return helper ? {
             host: get('DATABASE_HOST', 'viis-local-mysql'),

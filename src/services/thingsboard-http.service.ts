@@ -31,14 +31,15 @@ export class ThingsboardHttpService {
 
     constructor(nodeContext?: NodeContext) {
         this.nodeContext = nodeContext;
-        
-        // Use GlobalContextHelper if nodeContext is available
+
+        // Use GlobalContextHelper if nodeContext is available (hot-reload support)
         const helper = nodeContext ? new GlobalContextHelper(nodeContext) : null;
-        
+
         // Read VIIS_BACKEND from global context (hot-reload support)
-        this.baseUrl = helper 
+        // No nodeContext: use default only (no process.env fallback)
+        this.baseUrl = helper
             ? helper.getEnvVar('VIIS_BACKEND', 'https://iot.viis.tech')
-            : (process.env.VIIS_BACKEND || 'https://iot.viis.tech');
+            : 'https://iot.viis.tech';
         
         // Create axios instance with ThingsBoard-specific configuration
         this.axiosInstance = axios.create({

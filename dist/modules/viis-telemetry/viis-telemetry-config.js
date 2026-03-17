@@ -96,12 +96,12 @@ class ViisTelemetryConfigManager {
                 modbusHoldingRegisters: this.globalHelper.getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {}),
             };
         }
-        // Fallback to process.env if no global helper (single-board only)
+        // No global helper: return defaults only (no process.env fallback)
         return {
-            deviceId: process.env.DEVICE_ID || 'unknown',
-            modbusCoils: this.parseJsonWithDefault(process.env.MODBUS_COILS, {}),
-            modbusInputRegisters: this.parseJsonWithDefault(process.env.MODBUS_INPUT_REGISTERS, {}),
-            modbusHoldingRegisters: this.parseJsonWithDefault(process.env.MODBUS_HOLDING_REGISTERS, {}),
+            deviceId: 'unknown',
+            modbusCoils: {},
+            modbusInputRegisters: {},
+            modbusHoldingRegisters: {},
         };
     }
     /**

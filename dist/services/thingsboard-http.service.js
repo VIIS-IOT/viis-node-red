@@ -13,12 +13,13 @@ const global_context_helper_1 = require("../ultils/global-context-helper");
 class ThingsboardHttpService {
     constructor(nodeContext) {
         this.nodeContext = nodeContext;
-        // Use GlobalContextHelper if nodeContext is available
+        // Use GlobalContextHelper if nodeContext is available (hot-reload support)
         const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
         // Read VIIS_BACKEND from global context (hot-reload support)
+        // No nodeContext: use default only (no process.env fallback)
         this.baseUrl = helper
             ? helper.getEnvVar('VIIS_BACKEND', 'https://iot.viis.tech')
-            : (process.env.VIIS_BACKEND || 'https://iot.viis.tech');
+            : 'https://iot.viis.tech';
         // Create axios instance with ThingsBoard-specific configuration
         this.axiosInstance = axios_1.default.create({
             timeout: 60000, // INCREASED: 60 seconds timeout (from 30s) to handle slow networks

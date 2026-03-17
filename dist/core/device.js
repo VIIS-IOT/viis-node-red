@@ -10,11 +10,11 @@ const global_context_helper_1 = require("../ultils/global-context-helper");
 const const_1 = require("../const");
 async function sendTelemetryByHttp(token, telemetryData, context) {
     try {
-        // Use GlobalContextHelper to get server URL like viis-schedule-executor
+        // Use GlobalContextHelper to get server URL (hot-reload support)
         const globalHelper = context ? new global_context_helper_1.GlobalContextHelper(context) : null;
         const serverUrl = globalHelper
             ? globalHelper.getEnvVar('VIIS_BACKEND', const_1.DEFAULT_HTTP_SERVER_URL)
-            : (process.env.VIIS_BACKEND || const_1.DEFAULT_HTTP_SERVER_URL);
+            : const_1.DEFAULT_HTTP_SERVER_URL;
         const response = await axios_1.default.post(`${serverUrl}/api/v1/${token}/telemetry`, telemetryData, { headers: { "Content-Type": "application/json" } });
         return true;
     }
@@ -30,11 +30,11 @@ async function sendTelemetryByHttp(token, telemetryData, context) {
 }
 async function getDeviceIntentsByToken(token, context) {
     try {
-        // Use GlobalContextHelper to get server URL like viis-schedule-executor
+        // Use GlobalContextHelper to get server URL (hot-reload support)
         const globalHelper = context ? new global_context_helper_1.GlobalContextHelper(context) : null;
         const serverUrl = globalHelper
             ? globalHelper.getEnvVar('VIIS_BACKEND', const_1.DEFAULT_HTTP_SERVER_URL)
-            : (process.env.VIIS_BACKEND || const_1.DEFAULT_HTTP_SERVER_URL);
+            : const_1.DEFAULT_HTTP_SERVER_URL;
         console.log(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`);
         const response = await axios_1.default.get(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`, {
             headers: { "Content-Type": "application/json" },

@@ -71,12 +71,12 @@ export class DataSourceManager {
 
     private static getConfig(nodeContext?: NodeContext) {
         const helper = nodeContext ? new GlobalContextHelper(nodeContext) : null;
-        
-        const get = (key: string, fallback: string) => 
-            helper?.getEnvVar(key, fallback) ?? process.env[key] ?? fallback;
-        
-        const getNum = (key: string, fallback: number) => 
-            helper?.getNumericEnvVar(key, fallback) ?? parseInt(process.env[key] ?? String(fallback));
+
+        const get = (key: string, fallback: string) =>
+            helper?.getEnvVar(key, fallback) ?? fallback;
+
+        const getNum = (key: string, fallback: number) =>
+            helper?.getNumericEnvVar(key, fallback) ?? fallback;
 
         // Container uses DATABASE_*, host/migrations use DB_*
         return helper ? {

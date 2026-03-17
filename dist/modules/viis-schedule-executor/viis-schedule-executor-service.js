@@ -106,13 +106,13 @@ let ScheduleService = class ScheduleService {
         // Try to load legacy single-board coils first
         const legacyCoils = this.globalHelper
             ? this.globalHelper.getJsonEnvVar("MODBUS_COILS", {})
-            : JSON.parse(process.env.MODBUS_COILS || "{}");
+            : {};
         if (Object.keys(legacyCoils).length > 0) {
             this.debugLog(`Loaded ${Object.keys(legacyCoils).length} legacy coil mappings`);
             allCoils = Object.assign(Object.assign({}, allCoils), legacyCoils);
         }
         // Check if we're in multi-board mode
-        const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : process.env.MODBUS_BOARDS;
+        const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : null;
         if (boardsConfigStr) {
             try {
                 let boards;
@@ -158,13 +158,13 @@ let ScheduleService = class ScheduleService {
         // Try to load legacy single-board holding registers first
         const legacyHolding = this.globalHelper
             ? this.globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {})
-            : JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
+            : {};
         if (Object.keys(legacyHolding).length > 0) {
             this.debugLog(`Loaded ${Object.keys(legacyHolding).length} legacy holding register mappings`);
             allHolding = Object.assign(Object.assign({}, allHolding), legacyHolding);
         }
         // Check if we're in multi-board mode
-        const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : process.env.MODBUS_BOARDS;
+        const boardsConfigStr = this.globalHelper ? this.globalHelper.getEnvVar('MODBUS_BOARDS', null) : null;
         if (boardsConfigStr) {
             try {
                 let boards;
@@ -218,7 +218,7 @@ let ScheduleService = class ScheduleService {
                 this.debugLog("AppDataSource initialized successfully");
             }
             // Lấy device_id từ global variable
-            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : (process.env.DEVICE_ID || "");
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : "";
             if (!deviceId) {
                 console.warn("No DEVICE_ID found in global variable, returning empty schedules");
                 return [];
@@ -711,7 +711,7 @@ let ScheduleService = class ScheduleService {
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
             // Publish to EMQX local
-            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published MQTT notification to EMQX local for ${schedule.name}`);
@@ -779,7 +779,7 @@ let ScheduleService = class ScheduleService {
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published audit log to ThingsBoard for schedule ${schedule.name} (${action})`);
             // Publish to EMQX local
-            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published audit log to EMQX local for schedule ${schedule.name} (${action})`);
@@ -1414,7 +1414,7 @@ let ScheduleService = class ScheduleService {
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
             // Publish to EMQX local
-            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published config update to EMQX local: ${configParam.key}=${configParam.value}`);
@@ -1528,7 +1528,7 @@ let ScheduleService = class ScheduleService {
         }
         // Publish to EMQX with retry
         try {
-            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await this.executeWithExponentialBackoff(() => emqxClient.publish(emqxTopic, payloadString), maxRetries, baseDelay, 30000, useExponentialBackoff);
             emqxSuccess = true;
@@ -1590,7 +1590,7 @@ let ScheduleService = class ScheduleService {
         }
         // Try EMQX
         try {
-            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : (process.env.DEVICE_ID || "unknown");
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await this.executeWithExponentialBackoff(() => emqxClient.publish(emqxTopic, payloadString), maxRetries, baseDelay);
             success = true;
@@ -1642,16 +1642,16 @@ let ScheduleService = class ScheduleService {
     async sendNotificationToBackend(schedule, action, success = true, options) {
         var _a, _b;
         const { maxRetries = 3, baseDelay = 1000, timeout = 10000 } = options || {};
-        // Get backend URL and device access token from environment
+        // Get backend URL and device access token from global context
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
-            : (process.env.VIIS_BACKEND || '');
+            : '';
         const deviceAccessToken = this.globalHelper
             ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '')
-            : (process.env.DEVICE_ACCESS_TOKEN || '');
+            : '';
         const deviceId = this.globalHelper
             ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown')
-            : (process.env.DEVICE_ID || 'unknown');
+            : 'unknown';
         if (!backendUrl || !deviceAccessToken) {
             if (this.node) {
                 this.node.warn('⚠️ HTTP NOTIFICATION SKIPPED: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
