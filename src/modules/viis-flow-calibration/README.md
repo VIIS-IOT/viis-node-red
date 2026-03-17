@@ -33,24 +33,81 @@ npm run build
 
 ## Calibration Algorithm
 
-### Board1 (Pump Control)
+### Overview
+
+This node implements **simultaneous calibration** for both pump control (Board1) and flow sensor (Board2) with a **single user input**.
+
+### Workflow
 
 ```
-runTime = setMl / currentCalib
-newCalib = actualMl / runTime
+┌─────────────────────────────────────────────────────────────────┐
+│  1. User triggers calibration (UI or global flag)              │
+│     - Sets CALCULATE_CALIB_BOM_{i} = true                      │
+│     - Sets CALIB_ACTUAL_ML_BOM_{i} = measured volume           │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  2. Node reads current state from global context               │
+│     - setMl from HOLDING_SETML_BOM_{i} (Board1)                │
+│     - currentCalib from HOLDING_CALIB_BOM_{i} (Board1)         │
+│     - currentKFactor from HOLDING_K_FACTOR_BOM_{i} (Board2)    │
+│     - reportedVolume from INPUT_TOTAL_FLOW_BOM_{i} (Board2)    │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  3. Calculate calibration values                                │
+│     Board1: runTime = setMl / (currentCalib/100)               │
+│             newCalib = (actualMl / runTime) × 100              │
+│                                                                │
+│     Board2: K_new = K_old × (reportedVolume / actualMl)        │
+│             Q_new = (actualMl / runTime) × 100                 │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  4. Write to Modbus registers                                   │
+│     Board1: HOLDING_CALIB_BOM_{i} ← newCalibValue              │
+│     Board2: HOLDING_K_FACTOR_BOM_{i} ← newKFactor              │
+│             HOLDING_FLOWRATE_BOM_{i} ← newFlowrate             │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  5. Reset calibration flags                                     │
+│     - Set CALCULATE_CALIB_BOM_{i} = false                      │
+│     - Publish to MQTT for cloud sync                           │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Board2 (Flow Sensor)
+### Board1 (Pump Control) - Port 502
 
+| Register | Address | Formula |
+|----------|---------|---------|
+| `HOLDING_SETML_BOM_{i}` | i | Target volume (mL) |
+| `HOLDING_CALIB_BOM_{i}` | 16 + i | Calibration value (×100) |
+
+**Calculation:**
+```
+runTime = setMl / (currentCalib / 100)     // seconds
+newCalibValue = (actualMl / runTime) × 100  // scaled by 100
+```
+
+### Board2 (Flow Sensor) - Port 503
+
+| Register | Address | Formula |
+|----------|---------|---------|
+| `HOLDING_K_FACTOR_BOM_{i}` | i - 1 | K-Factor (pulses/L) |
+| `HOLDING_FLOWRATE_BOM_{i}` | 19 + i | Expected flowrate (mL/s × 100) |
+| `INPUT_TOTAL_FLOW_BOM_{i}` | 19 + i | Reported volume (mL) |
+
+**Calculation:**
 ```
 K_new = K_old × (V_reported / V_real)
-Q_new = V_real / runTime
+Q_new = (V_real / runTime) × 100  // scaled by 100
 ```
 
 Where:
-- `V_real` = User measured volume (actualMl)
-- `V_reported` = Sensor reported volume
-- `K_old` = Current K-Factor
+- `V_real` = User measured volume (`actualMl`)
+- `V_reported` = Sensor reported volume (`INPUT_TOTAL_FLOW_BOM_{i}`)
+- `K_old` = Current K-Factor from holding register
 - `Q_new` = New expected pump flowrate
 
 ## Global Context Keys
@@ -141,20 +198,25 @@ Where:
 
 ## Modbus Register Mapping
 
-### Board1 (Pump Control - Port 502)
+### Board1 (Pump Control - Port 502, Unit ID 1)
 
-| Register | Address Formula | Description |
-|----------|-----------------|-------------|
-| `HOLDING_SETML_BOM_{i}` | i | Target volume in mL |
-| `HOLDING_CALIB_BOM_{i}` | 16 + i | Calibration value (×100) |
+| Register Type | Address Formula | Key Pattern | Description |
+|----------|-----------------|-------------|-------------|
+| Holding | `i` | `HOLDING_SETML_BOM_{i}` | Target volume (mL) |
+| Holding | `16 + i` | `HOLDING_CALIB_BOM_{i}` | Calibration value (×100) |
 
-### Board2 (Flow Sensor - Port 503)
+### Board2 (Flow Sensor - Port 503, Unit ID 1)
 
-| Register | Address Formula | Description |
-|----------|-----------------|-------------|
-| `HOLDING_K_FACTOR_BOM_{i}` | i - 1 | K-Factor (0-15) |
-| `HOLDING_FLOWRATE_BOM_{i}` | 19 + i | Expected flowrate (×100) |
-| `INPUT_TOTAL_FLOW_BOM_{i}` | 19 + i | Reported total volume |
+| Register Type | Address Formula | Key Pattern | Description |
+|----------|-----------------|-------------|-------------|
+| Holding | `i - 1` | `HOLDING_K_FACTOR_BOM_{i}` | K-Factor (pulses/L) |
+| Holding | `19 + i` | `HOLDING_FLOWRATE_BOM_{i}` | Expected flowrate (mL/s × 100) |
+| Input | `i - 1` | `INPUT_CURRENT_FLOW_BOM_{i}` | Current flow rate (mL/s) |
+| Input | `19 + i` | `INPUT_TOTAL_FLOW_BOM_{i}` | Total volume (mL) |
+| Coil | `160 + i` | `PUMP_STATUS_BOM_{i}` | Pump running status |
+| Coil | `200 + i` | `RESET_TOTAL_VOLUME_BOM_{i}` | Reset volume counter |
+
+**Note:** `i` is pump index (1-16)
 
 ## Usage Example
 
@@ -180,12 +242,97 @@ npm test -- --testPathPattern="calibrationService"
 
 ## Integration with Existing Flow
 
-This node is designed to work alongside the existing pump calibration flow:
+### Migration from Legacy Flow
 
-1. User inputs actual measured volume
-2. Set `CALIB_ACTUAL_ML_BOM_{i}` and `CALCULATE_CALIB_BOM_{i}` in global context
-3. Both the existing pump calibration flow (board1) and this node (board1 + board2) will process
-4. Calibration flags are reset after processing
+**Legacy Flow (Old):**
+- Used function node "Pump Calibration Calculator"
+- Only calibrated Board1 (pump control)
+- Required separate flow for Board2 calibration
+
+**New Flow (Recommended):**
+- Use `viis-flow-calibration` custom node
+- Calibrates **both Board1 and Board2 simultaneously**
+- Single user input triggers both calibrations
+
+### Migration Steps
+
+1. **Remove old function nodes:**
+   - Delete "Pump Calibration Calculator" function node
+   - Delete associated modbus-flex-write nodes for Board1 only
+
+2. **Add viis-flow-calibration node:**
+   - Drag from node palette (under "viis-iot" category)
+   - Configure:
+     - `checkInterval`: 2000 (default)
+     - `enableLogging`: false (or true for debugging)
+     - `calibrateBoard1`: true
+     - `calibrateBoard2`: true
+
+3. **Connect input trigger:**
+   - Use inject node or UI button to set global flags
+
+4. **Connect output (optional):**
+   - Debug node to monitor calibration results
+   - MQTT node for cloud telemetry
+
+### Example Flow Configuration
+
+```json
+[
+    {
+        "id": "calib-trigger",
+        "type": "inject",
+        "name": "Trigger Calibration",
+        "payload": "",
+        "payloadType": "date",
+        "x": 150,
+        "y": 100,
+        "wires": [["flow-calibration-node"]]
+    },
+    {
+        "id": "flow-calibration-node",
+        "type": "viis-flow-calibration",
+        "name": "Flow & Pump Calibration",
+        "checkInterval": 2000,
+        "enableLogging": false,
+        "calibrateBoard1": true,
+        "calibrateBoard2": true,
+        "x": 400,
+        "y": 100,
+        "wires": [["debug-output"]]
+    },
+    {
+        "id": "debug-output",
+        "type": "debug",
+        "name": "Calibration Result",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "complete": "payload",
+        "x": 650,
+        "y": 100,
+        "wires": []
+    }
+]
+```
+
+### User Input Workflow (Single Action)
+
+```javascript
+// Frontend/UI sets these values when user clicks "Calibrate":
+global.set("configKeyValues", {
+    "CALCULATE_CALIB_BOM_1": true,      // Trigger flag
+    "CALIB_ACTUAL_ML_BOM_1": 950        // User measured volume
+});
+
+// Node automatically:
+// 1. Detects the trigger flag
+// 2. Reads setMl from Board1 (HOLDING_SETML_BOM_1)
+// 3. Reads reportedVolume from Board2 (INPUT_TOTAL_FLOW_BOM_1)
+// 4. Calculates calibration for BOTH boards
+// 5. Writes new values to BOTH boards
+// 6. Resets the trigger flag
+```
 
 ## License
 
