@@ -27,6 +27,7 @@ module.exports = function (RED) {
         let modbusClientBoard1 = null;
         let modbusClientBoard2 = null;
         let globalHelper;
+        let board2Coils = {};
         // Statistics
         const stats = {
             lastCheck: null,
@@ -100,15 +101,32 @@ module.exports = function (RED) {
          * Check global context for calibration flags
          */
         async function checkCalibrationFlags() {
+            var _a, _b, _c, _d;
             if (!calibrationService)
                 return;
             stats.lastCheck = Date.now();
             // Get global config values
             const configKeyValues = globalHelper.getGlobalConfigKeyValues();
-            const holdingRegisterData = globalHelper.getGlobalHoldingRegisterData();
-            const board1Registers = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD1_HOLDING_REGISTERS) || {};
-            const board2Registers = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_HOLDING_REGISTERS) || {};
-            const board2InputRegisters = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_INPUT_REGISTERS) || {};
+            // FIX: Merge Board1 and Board2 holding register data
+            // Global context stores them separately: holding_register_data_1, holding_register_data_2
+            const holdingRegisterData1 = globalHelper.getGlobalVar('holding_register_data_1') || {};
+            const holdingRegisterData2 = globalHelper.getGlobalVar('holding_register_data_2') || {};
+            const holdingRegisterData = Object.assign(Object.assign({}, holdingRegisterData1), holdingRegisterData2);
+            // FIX: Merge Board1 and Board2 input register data
+            const inputRegisterData1 = globalHelper.getGlobalVar('input_register_data_1') || {};
+            const inputRegisterData2 = globalHelper.getGlobalVar('input_register_data_2') || {};
+            const inputRegisterData = Object.assign(Object.assign({}, inputRegisterData1), inputRegisterData2);
+            // Try nested structure first (modbusMappings.boardX.holdingRegisters)
+            // Fallback to flat structure (modbus_boardX_holding_registers)
+            const modbusMappings = globalHelper.getGlobalVar('modbusMappings') || {};
+            const board1Registers = ((_a = modbusMappings.board1) === null || _a === void 0 ? void 0 : _a.holdingRegisters) ||
+                globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD1_HOLDING_REGISTERS) || {};
+            const board2Registers = ((_b = modbusMappings.board2) === null || _b === void 0 ? void 0 : _b.holdingRegisters) ||
+                globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_HOLDING_REGISTERS) || {};
+            const board2InputRegisters = ((_c = modbusMappings.board2) === null || _c === void 0 ? void 0 : _c.inputRegisters) ||
+                globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_INPUT_REGISTERS) || {};
+            board2Coils = ((_d = modbusMappings.board2) === null || _d === void 0 ? void 0 : _d.coils) ||
+                globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_COILS) || {};
             const pendingCalibrations = [];
             const flagUpdates = {};
             // Check each pump (1-16)
@@ -122,7 +140,7 @@ module.exports = function (RED) {
                 log(`Calibration requested for pump ${i}`);
                 try {
                     // Gather calibration input data
-                    const input = gatherCalibrationInput(i, configKeyValues, holdingRegisterData);
+                    const input = gatherCalibrationInput(i, configKeyValues, holdingRegisterData, inputRegisterData);
                     if (!input) {
                         node.warn(`Missing data for pump ${i} calibration`);
                         stats.failedCalibrations++;
@@ -174,9 +192,34 @@ module.exports = function (RED) {
             }
         }
         /**
+         * Reset volume counter for a specific pump
+         */
+        async function resetVolumeCounter(pumpIndex) {
+            if (!modbusClientBoard2) {
+                log(`Board2 client not available, skipping volume reset for pump ${pumpIndex}`);
+                return;
+            }
+            const resetCoilKey = `RESET_TOTAL_VOLUME_BOM_${pumpIndex}`;
+            const resetCoilAddress = board2Coils[resetCoilKey];
+            if (resetCoilAddress !== undefined) {
+                log(`Resetting volume counter for pump ${pumpIndex} (coil ${resetCoilAddress})`);
+                try {
+                    await modbusClientBoard2.writeCoil(resetCoilAddress, 1);
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms for device to process
+                    log(`Volume counter reset complete for pump ${pumpIndex}`);
+                }
+                catch (error) {
+                    node.warn(`Failed to reset volume counter for pump ${pumpIndex}: ${error.message}`);
+                }
+            }
+            else {
+                node.warn(`Reset coil address not found for pump ${pumpIndex}`);
+            }
+        }
+        /**
          * Gather calibration input data from global context
          */
-        function gatherCalibrationInput(pumpIndex, configKeyValues, holdingRegisterData) {
+        function gatherCalibrationInput(pumpIndex, configKeyValues, holdingRegisterData, inputRegisterData) {
             const actualMlKey = constants_1.CONFIG_KEYS.CALIB_ACTUAL_ML(pumpIndex);
             const setMlKey = constants_1.BOARD1_KEYS.SET_ML(pumpIndex);
             const calibKey = constants_1.BOARD1_KEYS.CALIB(pumpIndex);
@@ -194,7 +237,7 @@ module.exports = function (RED) {
             const totalFlowKey = constants_1.BOARD2_KEYS.INPUT_TOTAL_FLOW(pumpIndex);
             const currentKFactor = holdingRegisterData[kFactorKey] || 450; // Default K-factor
             const currentFlowrate = holdingRegisterData[flowrateKey] || 10; // Default flowrate mL/s
-            const reportedVolume = holdingRegisterData[totalFlowKey] || setMl; // Default to setMl if not available
+            const reportedVolume = inputRegisterData[totalFlowKey] || setMl; // Read from input registers
             return {
                 pumpIndex,
                 actualMl: Number(actualMl),
@@ -256,6 +299,10 @@ module.exports = function (RED) {
                             // Manual trigger for specific pump(s)
                             await handleManualCalculation(msg.payload);
                             break;
+                        case "reset-volume":
+                            // Reset volume counter for specific pump(s)
+                            await handleResetVolume(msg.payload);
+                            break;
                         case "status":
                             // Return current status
                             send({ payload: Object.assign({}, stats) });
@@ -296,7 +343,14 @@ module.exports = function (RED) {
                 return;
             }
             // Get current calibration values from Modbus
-            const holdingRegisterData = globalHelper.getGlobalHoldingRegisterData();
+            // FIX: Merge Board1 and Board2 holding register data
+            const holdingRegisterData1 = globalHelper.getGlobalVar('holding_register_data_1') || {};
+            const holdingRegisterData2 = globalHelper.getGlobalVar('holding_register_data_2') || {};
+            const holdingRegisterData = Object.assign(Object.assign({}, holdingRegisterData1), holdingRegisterData2);
+            // FIX: Merge Board1 and Board2 input register data
+            const inputRegisterData1 = globalHelper.getGlobalVar('input_register_data_1') || {};
+            const inputRegisterData2 = globalHelper.getGlobalVar('input_register_data_2') || {};
+            const inputRegisterData = Object.assign(Object.assign({}, inputRegisterData1), inputRegisterData2);
             const board1Registers = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD1_HOLDING_REGISTERS) || {};
             const board2Registers = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_HOLDING_REGISTERS) || {};
             const calibKey = constants_1.BOARD1_KEYS.CALIB(pumpIndex);
@@ -310,7 +364,7 @@ module.exports = function (RED) {
                 currentCalibBoard1: Number(holdingRegisterData[calibKey]) || 1000,
                 currentKFactor: Number(holdingRegisterData[kFactorKey]) || 450,
                 currentFlowrate: Number(holdingRegisterData[flowrateKey]) || 10,
-                reportedVolume: Number(holdingRegisterData[totalFlowKey]) || Number(setMl),
+                reportedVolume: Number(inputRegisterData[totalFlowKey]) || Number(setMl), // Read from input registers
             };
             const result = calibrationService.calculate(input, board1Registers, board2Registers, config.calibrateBoard1 !== false, config.calibrateBoard2 !== false);
             if (result.success) {
@@ -332,6 +386,30 @@ module.exports = function (RED) {
             setTimeout(() => {
                 node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.READY });
             }, 3000);
+        }
+        /**
+         * Handle reset volume counter request
+         */
+        async function handleResetVolume(payload) {
+            const pumpIndex = (payload === null || payload === void 0 ? void 0 : payload.pumpIndex) || (payload === null || payload === void 0 ? void 0 : payload.pump);
+            if (!pumpIndex) {
+                node.warn("Reset volume requires: pumpIndex");
+                return;
+            }
+            node.status({ fill: "yellow", shape: "ring", text: "Resetting volume..." });
+            await resetVolumeCounter(pumpIndex);
+            node.send({
+                topic: "reset-volume-complete",
+                payload: {
+                    pumpIndex,
+                    success: true,
+                },
+            });
+            node.status({ fill: "green", shape: "dot", text: `Volume reset: Pump ${pumpIndex}` });
+            // Reset status after delay
+            setTimeout(() => {
+                node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.READY });
+            }, 2000);
         }
         /**
          * Setup cleanup handler

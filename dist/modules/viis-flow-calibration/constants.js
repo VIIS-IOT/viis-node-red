@@ -10,6 +10,7 @@ exports.ENV_KEYS = {
     MODBUS_BOARD1_HOLDING_REGISTERS: 'modbus_board1_holding_registers',
     MODBUS_BOARD2_HOLDING_REGISTERS: 'modbus_board2_holding_registers',
     MODBUS_BOARD2_INPUT_REGISTERS: 'modbus_board2_input_registers',
+    MODBUS_BOARD2_COILS: 'modbus_board2_coils',
     DEVICE_ID: 'DEVICE_ID',
 };
 exports.DEFAULTS = {

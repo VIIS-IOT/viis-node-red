@@ -12,6 +12,7 @@ A custom Node-RED node for calibrating flow sensors and pumps. This node monitor
 - Manual calibration trigger via input message
 - Unified trigger: Single input action calibrates both boards
 - MQTT telemetry publishing for calibration flag resets
+- Volume counter reset support
 
 ## Installation
 
@@ -30,6 +31,53 @@ npm run build
 | `enableLogging` | boolean | false | Enable detailed debug logging |
 | `calibrateBoard1` | boolean | true | Enable pump control board calibration |
 | `calibrateBoard2` | boolean | true | Enable flow sensor board calibration |
+
+## Global Context Requirements
+
+This node reads configuration from Node-RED global context. The following structure is expected:
+
+```javascript
+global.set("modbusMappings", {
+    board1: {
+        holdingRegisters: { /* Board1 holding registers */ },
+        inputRegisters: { /* Board1 input registers */ },
+        coils: { /* Board1 coils */ }
+    },
+    board2: {
+        holdingRegisters: {
+            HOLDING_K_FACTOR_BOM_1: 0,
+            HOLDING_K_FACTOR_BOM_2: 1,
+            // ... more pumps
+            HOLDING_FLOWRATE_BOM_1: 20,
+            HOLDING_FLOWRATE_BOM_2: 21,
+            // ... more pumps
+        },
+        inputRegisters: {
+            INPUT_TOTAL_FLOW_BOM_1: 20,
+            INPUT_TOTAL_FLOW_BOM_2: 21,
+            // ... more pumps
+        },
+        coils: {
+            RESET_TOTAL_VOLUME_BOM_1: 201,
+            RESET_TOTAL_VOLUME_BOM_2: 202,
+            // ... more pumps
+        }
+    }
+});
+
+global.set("configKeyValues", {
+    CALCULATE_CALIB_BOM_1: true,  // Calibration trigger
+    CALIB_ACTUAL_ML_BOM_1: 950    // User measured volume
+});
+
+global.set("holdingRegisterData", {
+    HOLDING_SETML_BOM_1: 1000,    // Target volume
+    HOLDING_CALIB_BOM_1: 1000,    // Current calibration (×100)
+    // ... more registers
+});
+```
+
+**Note**: The node supports both nested structure (`modbusMappings.boardX.holdingRegisters`) and flat structure (`modbus_boardX_holding_registers`) for backward compatibility.
 
 ## Calibration Algorithm
 
@@ -128,6 +176,30 @@ Where:
     "pumpIndex": 1,
     "actualMl": 950,
     "setMl": 1000
+  }
+}
+```
+
+### Reset Volume Counter
+
+Resets the volume counter for a specific pump on Board2. Should be called before starting calibration workflow.
+
+```json
+{
+  "topic": "reset-volume",
+  "payload": {
+    "pumpIndex": 1
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "topic": "reset-volume-complete",
+  "payload": {
+    "pumpIndex": 1,
+    "success": true
   }
 }
 ```
