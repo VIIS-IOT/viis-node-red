@@ -94,7 +94,8 @@ class DataSourceManager {
         const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
         const get = (key, fallback) => { var _a; return (_a = helper === null || helper === void 0 ? void 0 : helper.getEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : fallback; };
         const getNum = (key, fallback) => { var _a; return (_a = helper === null || helper === void 0 ? void 0 : helper.getNumericEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : fallback; };
-        // Container uses DATABASE_*, host/migrations use DB_*
+        // When nodeContext is provided, use global context (JSON configs)
+        // When nodeContext is undefined (AppDataSource), use process.env (container env vars)
         return helper ? {
             host: get('DATABASE_HOST', 'viis-local-mysql'),
             port: getNum('DATABASE_PORT', 3306),
@@ -102,11 +103,12 @@ class DataSourceManager {
             password: get('DATABASE_PASSWORD', 'admin@123'),
             database: get('DATABASE_NAME', 'viis_local'),
         } : {
-            host: get('DB_HOST', 'localhost'),
-            port: getNum('DB_PORT', 3308),
-            username: get('DB_USERNAME', 'root'),
-            password: get('DB_PASSWORD', 'admin@123'),
-            database: get('DB_DATABASE', 'viis_local'),
+            // For AppDataSource (no nodeContext), read from process.env directly
+            host: process.env.DB_HOST || 'viis-local-mysql',
+            port: parseInt(process.env.DB_PORT || '3306', 10),
+            username: process.env.DB_USERNAME || 'root',
+            password: process.env.DB_PASSWORD || 'admin@123',
+            database: process.env.DB_DATABASE || 'viis_local',
         };
     }
 }
@@ -120,6 +122,7 @@ exports.releaseDataSource = DataSourceManager.release.bind(DataSourceManager);
 exports.getDataSourceRefCount = DataSourceManager.getRefCount.bind(DataSourceManager);
 // Legacy sync export for TypeORM CLI (migrations)
 // CLI commands need a synchronously available DataSource
+// For runtime usage, use DataSourceManager.acquire() instead which reads from global context
 const cfg = DataSourceManager['getConfig'](undefined);
 exports.AppDataSource = new typeorm_1.DataSource({
     type: "mysql",

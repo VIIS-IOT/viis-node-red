@@ -41,7 +41,6 @@ let DatabaseService = class DatabaseService {
     constructor(node) {
         /** Flag indicating if database is initialized */
         this.initialized = false;
-        this.dataSource = dataSource_1.AppDataSource;
         this.node = node;
     }
     /**
@@ -53,10 +52,9 @@ let DatabaseService = class DatabaseService {
             return;
         }
         try {
-            if (!this.dataSource.isInitialized) {
-                await this.dataSource.initialize();
-                logger_1.logger.info(this.node, "TypeORM DataSource initialized");
-            }
+            // Use DataSourceManager with node context to get config from global context
+            this.dataSource = await dataSource_1.DataSourceManager.acquire(this.node.context());
+            logger_1.logger.info(this.node, "TypeORM DataSource initialized");
             this.initialized = true;
             logger_1.logger.info(this.node, "Database service initialized successfully");
         }

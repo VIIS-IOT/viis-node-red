@@ -78,7 +78,8 @@ export class DataSourceManager {
         const getNum = (key: string, fallback: number) =>
             helper?.getNumericEnvVar(key, fallback) ?? fallback;
 
-        // Container uses DATABASE_*, host/migrations use DB_*
+        // When nodeContext is provided, use global context (JSON configs)
+        // When nodeContext is undefined (AppDataSource), use process.env (container env vars)
         return helper ? {
             host: get('DATABASE_HOST', 'viis-local-mysql'),
             port: getNum('DATABASE_PORT', 3306),
@@ -86,11 +87,12 @@ export class DataSourceManager {
             password: get('DATABASE_PASSWORD', 'admin@123'),
             database: get('DATABASE_NAME', 'viis_local'),
         } : {
-            host: get('DB_HOST', 'localhost'),
-            port: getNum('DB_PORT', 3308),
-            username: get('DB_USERNAME', 'root'),
-            password: get('DB_PASSWORD', 'admin@123'),
-            database: get('DB_DATABASE', 'viis_local'),
+            // For AppDataSource (no nodeContext), read from process.env directly
+            host: process.env.DB_HOST || 'viis-local-mysql',
+            port: parseInt(process.env.DB_PORT || '3306', 10),
+            username: process.env.DB_USERNAME || 'root',
+            password: process.env.DB_PASSWORD || 'admin@123',
+            database: process.env.DB_DATABASE || 'viis_local',
         };
     }
 }
@@ -102,6 +104,7 @@ export const getDataSourceRefCount = DataSourceManager.getRefCount.bind(DataSour
 
 // Legacy sync export for TypeORM CLI (migrations)
 // CLI commands need a synchronously available DataSource
+// For runtime usage, use DataSourceManager.acquire() instead which reads from global context
 const cfg = DataSourceManager['getConfig'](undefined);
 
 export const AppDataSource = new DataSource({
