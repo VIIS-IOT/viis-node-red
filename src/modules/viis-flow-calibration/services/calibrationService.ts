@@ -90,7 +90,7 @@ export class CalibrationService {
             }
         }
 
-        // Calculate Board2: K_new = K_old × (reportedVolume / actualMl)
+        // Calculate Board2: K_new = K_old × (V_actual / V_reported)
         // Calculate Board2: Q_new = actualMl / runTime
         if (calibrateBoard2) {
             const kFactorKey = BOARD2_KEYS.K_FACTOR(pumpIndex);
@@ -99,13 +99,15 @@ export class CalibrationService {
             const flowrateAddress = board2Registers[flowrateKey];
 
             if (kFactorAddress !== undefined && flowrateAddress !== undefined) {
-                // K-Factor calculation: K_new = K_old × (V_reported / V_real)
+                // K-Factor calculation: K_new = K_old × (V_actual / V_reported)
+                // Logic: If sensor over-reports (reported > actual), K-Factor should decrease
+                //        If sensor under-reports (reported < actual), K-Factor should increase
                 let newKFactor = currentKFactor;
-                if (reportedVolume > 0 && currentKFactor > 0) {
-                    newKFactor = Math.round(currentKFactor * (reportedVolume / actualMl));
+                if (reportedVolume > 0 && actualMl > 0 && currentKFactor > 0) {
+                    newKFactor = Math.round(currentKFactor * (actualMl / reportedVolume));
                 }
 
-                // Flowrate calculation: Q_new = V_real / T_run (mL/s, scaled by 100)
+                // Flowrate calculation: Q_new = V_actual / T_run (mL/s, scaled by 100)
                 const newFlowrate = Math.round((actualMl / runTime) * DEFAULTS.SCALE_FACTOR);
 
                 result.board2 = {

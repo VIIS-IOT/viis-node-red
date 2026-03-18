@@ -148,15 +148,30 @@ newCalibValue = (actualMl / runTime) × 100  // scaled by 100
 
 **Calculation:**
 ```
-K_new = K_old × (V_reported / V_real)
-Q_new = (V_real / runTime) × 100  // scaled by 100
+K_new = K_old × (V_actual / V_reported)
+Q_new = (V_actual / runTime) × 100  // scaled by 100
 ```
 
 Where:
-- `V_real` = User measured volume (`actualMl`)
+- `V_actual` = User measured volume (`actualMl`) - **Ground truth**
 - `V_reported` = Sensor reported volume (`INPUT_TOTAL_FLOW_BOM_{i}`)
 - `K_old` = Current K-Factor from holding register
 - `Q_new` = New expected pump flowrate
+
+**Logic:**
+- If sensor **over-reports** (reported > actual) → K-Factor **decreases**
+- If sensor **under-reports** (reported < actual) → K-Factor **increases**
+
+**Example:**
+```
+K_old = 450 pulses/L
+V_actual = 950 ml (user measured)
+V_reported = 1000 ml (sensor reported - over-reported)
+
+K_new = 450 × (950 / 1000) = 427.5 pulses/L
+
+Next time: For same pulses, volume = pulses / 427.5 (lower reading, matches reality)
+```
 
 ## Global Context Keys
 

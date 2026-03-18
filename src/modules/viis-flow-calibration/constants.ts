@@ -56,6 +56,16 @@ export const BOARD2_KEYS = {
 } as const;
 
 /**
+ * Board2 Scale Factors
+ * - K_FACTOR: No scale (raw value)
+ * - FLOWRATE: Divide by 100 when reading, multiply by 100 when writing
+ */
+export const BOARD2_SCALE = {
+    K_FACTOR: 1,
+    FLOWRATE: 100,
+} as const;
+
+/**
  * Board2 Register Address Mapping (for reference)
  * 
  * Holding Registers (write):
