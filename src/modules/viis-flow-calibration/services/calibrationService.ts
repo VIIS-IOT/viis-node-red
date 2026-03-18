@@ -57,8 +57,11 @@ export class CalibrationService {
         this.log(`  currentKFactor=${currentKFactor}, reportedVolume=${reportedVolume}`);
 
         // Calculate run time: RUN_TIME = setMl / currentCalibBoard1
-        // Note: currentCalibBoard1 is stored as value * 100 in Modbus
-        const currentCalibUnscaled = currentCalibBoard1 / DEFAULTS.SCALE_FACTOR;
+        // IMPORTANT: currentCalibBoard1 is read from global context (holding_register_data_1)
+        // Node-RED "Map Holding Data" function already unscaled the value (divided by 100)
+        // So currentCalibBoard1 = 10.00 (ml/s), NOT 1000 (scaled)
+        // Example: Modbus value 1000 → Node-RED unscales to 10.00 → global stores 10.00
+        const currentCalibUnscaled = currentCalibBoard1;  // Already unscaled by Node-RED!
         const runTime = setMl / currentCalibUnscaled;
 
         this.log(`  runTime=${runTime.toFixed(4)}s`);

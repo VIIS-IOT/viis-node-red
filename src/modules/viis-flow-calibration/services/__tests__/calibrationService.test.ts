@@ -30,9 +30,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 950,           // User measured 950 mL
                 setMl: 1000,             // Target was 1000 mL
-                currentCalibBoard1: 1000, // Current calib = 10.00 (scaled by 100)
+                currentCalibBoard1: 10,  // Current calib = 10.00 ml/s (already unscaled by Node-RED)
                 currentKFactor: 450,      // Current K-factor
-                currentFlowrate: 1000,    // Current flowrate = 10 mL/s (scaled by 100)
+                currentFlowrate: 10,      // Current flowrate = 10 mL/s (already unscaled)
                 reportedVolume: 1000,     // Sensor reported 1000 mL
             };
 
@@ -59,9 +59,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 0, // Will cause division by zero
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,  // Already unscaled
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,
             };
 
@@ -78,7 +78,7 @@ describe("CalibrationService", () => {
                 setMl: 1000,
                 currentCalibBoard1: 0, // Will cause division by zero
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,
             };
 
@@ -93,9 +93,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 20, // Invalid, max is 16
                 actualMl: 950,
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,
             };
 
@@ -110,9 +110,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 950,
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,
             };
 
@@ -128,9 +128,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 950,
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,
             };
 
@@ -146,9 +146,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 950,           // User measured 950 mL
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1100,    // Sensor over-reported
             };
 
@@ -165,9 +165,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 1050,          // User measured 1050 mL
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,    // Sensor under-reported
             };
 
@@ -184,9 +184,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 1000,          // User measured 1000 mL
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,    // Sensor reported correctly
             };
 
@@ -203,9 +203,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 1,
                 actualMl: 900,
                 setMl: 1000,
-                currentCalibBoard1: 1000,
+                currentCalibBoard1: 10,
                 currentKFactor: 450,
-                currentFlowrate: 1000,
+                currentFlowrate: 10,
                 reportedVolume: 1000,
             };
 
@@ -213,9 +213,9 @@ describe("CalibrationService", () => {
                 pumpIndex: 2,
                 actualMl: 800,
                 setMl: 1000,
-                currentCalibBoard1: 1200,
+                currentCalibBoard1: 12,  // 12.00 ml/s
                 currentKFactor: 500,
-                currentFlowrate: 1200,
+                currentFlowrate: 12,
                 reportedVolume: 1000,
             };
 
