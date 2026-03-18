@@ -3,7 +3,7 @@
  * Constants for viis-flow-calibration node
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.BOARD2_ADDRESSES = exports.BOARD2_KEYS = exports.BOARD1_KEYS = exports.CONFIG_KEYS = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.DEFAULTS = exports.ENV_KEYS = void 0;
+exports.BOARD2_ADDRESSES = exports.BOARD2_SCALE = exports.BOARD2_KEYS = exports.BOARD1_KEYS = exports.CONFIG_KEYS = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.DEFAULTS = exports.ENV_KEYS = void 0;
 exports.ENV_KEYS = {
     MODBUS_BOARDS: 'MODBUS_BOARDS',
     MODBUS_DEFAULT_BOARD: 'MODBUS_DEFAULT_BOARD',
@@ -49,6 +49,15 @@ exports.BOARD2_KEYS = {
     K_FACTOR: (i) => `HOLDING_K_FACTOR_BOM_${i}`,
     FLOWRATE: (i) => `HOLDING_FLOWRATE_BOM_${i}`,
     INPUT_TOTAL_FLOW: (i) => `INPUT_TOTAL_FLOW_BOM_${i}`,
+};
+/**
+ * Board2 Scale Factors
+ * - K_FACTOR: No scale (raw value)
+ * - FLOWRATE: Divide by 100 when reading, multiply by 100 when writing
+ */
+exports.BOARD2_SCALE = {
+    K_FACTOR: 1,
+    FLOWRATE: 100,
 };
 /**
  * Board2 Register Address Mapping (for reference)

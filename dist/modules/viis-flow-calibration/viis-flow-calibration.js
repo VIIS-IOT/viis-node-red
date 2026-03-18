@@ -235,17 +235,32 @@ module.exports = function (RED) {
             const kFactorKey = constants_1.BOARD2_KEYS.K_FACTOR(pumpIndex);
             const flowrateKey = constants_1.BOARD2_KEYS.FLOWRATE(pumpIndex);
             const totalFlowKey = constants_1.BOARD2_KEYS.INPUT_TOTAL_FLOW(pumpIndex);
-            const currentKFactor = holdingRegisterData[kFactorKey] || 450; // Default K-factor
-            const currentFlowrate = holdingRegisterData[flowrateKey] || 10; // Default flowrate mL/s
-            const reportedVolume = inputRegisterData[totalFlowKey] || setMl; // Read from input registers
+            const currentKFactor = holdingRegisterData[kFactorKey];
+            const currentFlowrate = holdingRegisterData[flowrateKey];
+            const reportedVolume = inputRegisterData[totalFlowKey];
+            // Debug logging
+            log(`Board2 data for pump ${pumpIndex}:`);
+            log(`  kFactorKey=${kFactorKey}, value=${currentKFactor}, exists=${kFactorKey in holdingRegisterData}`);
+            log(`  flowrateKey=${flowrateKey}, value=${currentFlowrate}, exists=${flowrateKey in holdingRegisterData}`);
+            log(`  totalFlowKey=${totalFlowKey}, value=${reportedVolume}, exists=${totalFlowKey in inputRegisterData}`);
+            // Use defaults with warning
+            const kFactorValue = currentKFactor !== undefined && currentKFactor !== null && currentKFactor !== 0 ? currentKFactor : 450;
+            const flowrateValue = currentFlowrate !== undefined && currentFlowrate !== null && currentFlowrate !== 0 ? currentFlowrate : 10;
+            const reportedVolumeValue = reportedVolume !== undefined && reportedVolume !== null && reportedVolume !== 0 ? reportedVolume : setMl;
+            if (currentKFactor === undefined || currentKFactor === null || currentKFactor === 0) {
+                node.warn(`⚠️ K-Factor not found for pump ${pumpIndex}, using default 450`);
+            }
+            if (currentFlowrate === undefined || currentFlowrate === null || currentFlowrate === 0) {
+                node.warn(`⚠️ Flowrate not found for pump ${pumpIndex}, using default 10`);
+            }
             return {
                 pumpIndex,
                 actualMl: Number(actualMl),
                 setMl: Number(setMl),
                 currentCalibBoard1: Number(currentCalibBoard1),
-                currentKFactor: Number(currentKFactor),
-                currentFlowrate: Number(currentFlowrate),
-                reportedVolume: Number(reportedVolume),
+                currentKFactor: Number(kFactorValue),
+                currentFlowrate: Number(flowrateValue),
+                reportedVolume: Number(reportedVolumeValue),
             };
         }
         /**
