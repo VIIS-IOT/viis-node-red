@@ -28,6 +28,10 @@ module.exports = function (RED) {
         let modbusClientBoard2 = null;
         let globalHelper;
         let board2Coils = {};
+        let board2HoldingRegisters = {}; // ADDRESSES (where to write)
+        let board2InputRegisters = {}; // ADDRESSES (where to read)
+        let board2HoldingData = {}; // VALUES (actual data)
+        let board2InputData = {}; // VALUES (actual data)
         // Statistics
         const stats = {
             lastCheck: null,
@@ -121,12 +125,25 @@ module.exports = function (RED) {
             const modbusMappings = globalHelper.getGlobalVar('modbusMappings') || {};
             const board1Registers = ((_a = modbusMappings.board1) === null || _a === void 0 ? void 0 : _a.holdingRegisters) ||
                 globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD1_HOLDING_REGISTERS) || {};
-            const board2Registers = ((_b = modbusMappings.board2) === null || _b === void 0 ? void 0 : _b.holdingRegisters) ||
+            const board2HoldingRegs = ((_b = modbusMappings.board2) === null || _b === void 0 ? void 0 : _b.holdingRegisters) ||
                 globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_HOLDING_REGISTERS) || {};
-            const board2InputRegisters = ((_c = modbusMappings.board2) === null || _c === void 0 ? void 0 : _c.inputRegisters) ||
+            const board2InputRegsLocal = ((_c = modbusMappings.board2) === null || _c === void 0 ? void 0 : _c.inputRegisters) ||
                 globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_INPUT_REGISTERS) || {};
             board2Coils = ((_d = modbusMappings.board2) === null || _d === void 0 ? void 0 : _d.coils) ||
                 globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_COILS) || {};
+            // Store board2 register ADDRESSES (where to read/write)
+            board2HoldingRegisters = board2HoldingRegs;
+            board2InputRegisters = board2InputRegsLocal;
+            // CRITICAL: Load board2 register VALUES (actual data from device)
+            // This is the data read from Modbus device, stored in holding_register_data_2
+            board2HoldingData = globalHelper.getGlobalVar('holding_register_data_2') || {};
+            board2InputData = globalHelper.getGlobalVar('input_register_data_2') || {};
+            // Debug logging (first time only)
+            if (stats.totalCalibrations === 0) {
+                log(`Board2 Holding Data loaded: ${Object.keys(board2HoldingData).length} values`);
+                log(`Board2 Input Data loaded: ${Object.keys(board2InputData).length} values`);
+                log(`Sample K-Factor values: BOM_1=${board2HoldingData.HOLDING_K_FACTOR_BOM_1}, BOM_2=${board2HoldingData.HOLDING_K_FACTOR_BOM_2}`);
+            }
             const pendingCalibrations = [];
             const flagUpdates = {};
             // Check each pump (1-16)
@@ -147,7 +164,7 @@ module.exports = function (RED) {
                         continue;
                     }
                     // Calculate calibration values
-                    const result = calibrationService.calculate(input, board1Registers, board2Registers, config.calibrateBoard1 !== false, config.calibrateBoard2 !== false);
+                    const result = calibrationService.calculate(input, board1Registers, board2HoldingRegisters, config.calibrateBoard1 !== false, config.calibrateBoard2 !== false);
                     if (result.success) {
                         // Write calibration values to Modbus
                         await writeCalibrationValues(result);
@@ -213,7 +230,7 @@ module.exports = function (RED) {
                 }
             }
             else {
-                node.warn(`Reset coil address not found for pump ${pumpIndex}`);
+                node.warn(`Reset coil address not found for pump ${pumpIndex}. Available coils: ${Object.keys(board2Coils).join(', ')}`);
             }
         }
         /**
@@ -231,27 +248,29 @@ module.exports = function (RED) {
                 log(`Missing data for pump ${pumpIndex}: actualMl=${actualMl}, setMl=${setMl}, currentCalib=${currentCalibBoard1}`);
                 return null;
             }
-            // Get board2 data (may not be available)
+            // Get board2 data from global context
+            // IMPORTANT: Read VALUES from holding_register_data_2, not ADDRESSES from modbusMappings!
             const kFactorKey = constants_1.BOARD2_KEYS.K_FACTOR(pumpIndex);
             const flowrateKey = constants_1.BOARD2_KEYS.FLOWRATE(pumpIndex);
             const totalFlowKey = constants_1.BOARD2_KEYS.INPUT_TOTAL_FLOW(pumpIndex);
-            const currentKFactor = holdingRegisterData[kFactorKey];
-            const currentFlowrate = holdingRegisterData[flowrateKey];
-            const reportedVolume = inputRegisterData[totalFlowKey];
+            // ✅ CORRECT: Read actual VALUES from board2HoldingData (holding_register_data_2)
+            const currentKFactor = board2HoldingData[kFactorKey];
+            const currentFlowrate = board2HoldingData[flowrateKey];
+            const reportedVolume = board2InputData[totalFlowKey];
             // Debug logging
             log(`Board2 data for pump ${pumpIndex}:`);
-            log(`  kFactorKey=${kFactorKey}, value=${currentKFactor}, exists=${kFactorKey in holdingRegisterData}`);
-            log(`  flowrateKey=${flowrateKey}, value=${currentFlowrate}, exists=${flowrateKey in holdingRegisterData}`);
-            log(`  totalFlowKey=${totalFlowKey}, value=${reportedVolume}, exists=${totalFlowKey in inputRegisterData}`);
+            log(`  kFactorKey=${kFactorKey}, value=${currentKFactor}, exists=${kFactorKey in board2HoldingData}`);
+            log(`  flowrateKey=${flowrateKey}, value=${currentFlowrate}, exists=${flowrateKey in board2HoldingData}`);
+            log(`  totalFlowKey=${totalFlowKey}, value=${reportedVolume}, exists=${totalFlowKey in board2InputData}`);
             // Use defaults with warning
             const kFactorValue = currentKFactor !== undefined && currentKFactor !== null && currentKFactor !== 0 ? currentKFactor : 450;
             const flowrateValue = currentFlowrate !== undefined && currentFlowrate !== null && currentFlowrate !== 0 ? currentFlowrate : 10;
             const reportedVolumeValue = reportedVolume !== undefined && reportedVolume !== null && reportedVolume !== 0 ? reportedVolume : setMl;
             if (currentKFactor === undefined || currentKFactor === null || currentKFactor === 0) {
-                node.warn(`⚠️ K-Factor not found for pump ${pumpIndex}, using default 450`);
+                node.warn(`⚠️ K-Factor not found for pump ${pumpIndex} in holding_register_data_2, using default 450`);
             }
             if (currentFlowrate === undefined || currentFlowrate === null || currentFlowrate === 0) {
-                node.warn(`⚠️ Flowrate not found for pump ${pumpIndex}, using default 10`);
+                node.warn(`⚠️ Flowrate not found for pump ${pumpIndex} in holding_register_data_2, using default 10`);
             }
             return {
                 pumpIndex,
@@ -366,22 +385,22 @@ module.exports = function (RED) {
             const inputRegisterData1 = globalHelper.getGlobalVar('input_register_data_1') || {};
             const inputRegisterData2 = globalHelper.getGlobalVar('input_register_data_2') || {};
             const inputRegisterData = Object.assign(Object.assign({}, inputRegisterData1), inputRegisterData2);
+            // Use board2 register ADDRESSES from global context (modbusMappings.board2.holdingRegisters)
             const board1Registers = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD1_HOLDING_REGISTERS) || {};
-            const board2Registers = globalHelper.getGlobalVar(constants_1.ENV_KEYS.MODBUS_BOARD2_HOLDING_REGISTERS) || {};
-            const calibKey = constants_1.BOARD1_KEYS.CALIB(pumpIndex);
             const kFactorKey = constants_1.BOARD2_KEYS.K_FACTOR(pumpIndex);
             const flowrateKey = constants_1.BOARD2_KEYS.FLOWRATE(pumpIndex);
             const totalFlowKey = constants_1.BOARD2_KEYS.INPUT_TOTAL_FLOW(pumpIndex);
+            // ✅ CORRECT: Read actual VALUES from board2HoldingData/board2InputData
             const input = {
                 pumpIndex,
                 actualMl: Number(actualMl),
                 setMl: Number(setMl),
-                currentCalibBoard1: Number(holdingRegisterData[calibKey]) || 1000,
-                currentKFactor: Number(holdingRegisterData[kFactorKey]) || 450,
-                currentFlowrate: Number(holdingRegisterData[flowrateKey]) || 10,
-                reportedVolume: Number(inputRegisterData[totalFlowKey]) || Number(setMl), // Read from input registers
+                currentCalibBoard1: Number(holdingRegisterData[`HOLDING_CALIB_BOM_${pumpIndex}`]) || 1000,
+                currentKFactor: Number(board2HoldingData[kFactorKey]) || 450,
+                currentFlowrate: Number(board2HoldingData[flowrateKey]) || 10,
+                reportedVolume: Number(board2InputData[totalFlowKey]) || Number(setMl), // Read from input registers
             };
-            const result = calibrationService.calculate(input, board1Registers, board2Registers, config.calibrateBoard1 !== false, config.calibrateBoard2 !== false);
+            const result = calibrationService.calculate(input, board1Registers, board2HoldingRegisters, config.calibrateBoard1 !== false, config.calibrateBoard2 !== false);
             if (result.success) {
                 await writeCalibrationValues(result);
                 stats.totalCalibrations++;

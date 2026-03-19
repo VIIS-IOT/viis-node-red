@@ -56,31 +56,25 @@ export const BOARD2_KEYS = {
 } as const;
 
 /**
- * Board2 Scale Factors
- * - K_FACTOR: No scale (raw value)
- * - FLOWRATE: Divide by 100 when reading, multiply by 100 when writing
- */
-export const BOARD2_SCALE = {
-    K_FACTOR: 1,
-    FLOWRATE: 100,
-} as const;
-
-/**
- * Board2 Register Address Mapping (for reference)
+ * Board2 Register Address Mapping (for reference only)
  * 
+ * DEPRECATED: Do not use BOARD2_ADDRESSES directly.
+ * Board2 addresses are now read from global context (modbusMappings.board2.coils)
+ * to avoid hard-coding and support flexible configuration.
+ *
  * Holding Registers (write):
  * - K_FACTOR: addresses 0-15 (pump 1-16)
  * - FLOWRATE: addresses 20-35 (pump 1-16)
- * 
+ *
  * Input Registers (read-only):
  * - CURRENT_FLOW: addresses 0-15 (pump 1-16)
  * - TOTAL_FLOW: addresses 20-35 (pump 1-16)
- * 
+ *
  * Coils:
  * - PUMP_STATUS: 161-176 (pump 1-16)
  * - RESET_TOTAL_VOLUME: 201-216 (pump 1-16)
  */
-export const BOARD2_ADDRESSES = {
+export const BOARD2_ADDRESSES_DEPRECATED = {
     K_FACTOR_BASE: 0,           // K_FACTOR_BOM_1 = 0, K_FACTOR_BOM_2 = 1, ...
     FLOWRATE_BASE: 20,          // FLOWRATE_BOM_1 = 20, FLOWRATE_BOM_2 = 21, ...
     INPUT_CURRENT_FLOW_BASE: 0, // INPUT_CURRENT_FLOW_BOM_1 = 0, ...
