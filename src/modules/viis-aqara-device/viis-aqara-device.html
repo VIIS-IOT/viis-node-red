@@ -1,0 +1,343 @@
+<!--
+  VIIS Aqara Device Control Node - UI Definition
+  
+  This file defines the Node-RED editor interface for the Aqara device node.
+  It includes configuration forms, validation, and help text.
+-->
+
+<script type="text/javascript">
+  RED.nodes.registerType("viis-aqara-device", {
+    category: "VIIS IoT",
+    color: "#44C4A1",
+    icon: "icons/spider-web.png",
+    inputs: 1,
+    outputs: 1,
+    label: function () {
+      return this.name || "Aqara Device";
+    },
+    labelStyle: function () {
+      return this.name ? "node_label_italic" : "";
+    },
+    defaults: {
+      name: { value: "" },
+      configNode: {
+        value: "",
+        type: "viis-aqara-config",
+        required: true,
+        label: "Aqara Config"
+      },
+      deviceType: { value: "ac", required: true },
+      operationMode: { value: "auto", required: true },
+      acKeyTemplate: { value: "P0_M0_T{temp}_S2", validate: RED.validators.regex(/^P[01]_M[0-4]_T[0-9]+_S[0-3]$/) },
+      defaultTemperature: { value: 25, min: 16, max: 30, required: true },
+      defaultFanSpeed: { value: 2, min: 0, max: 3, required: true },
+      requestDelay: { value: 2000, min: 500, max: 10000, required: true },
+      enableRetry: { value: true },
+      maxRetries: { value: 3, min: 1, max: 5, required: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    inputLabels: ["Command"],
+    outputLabels: ["Result"],
+    
+    // Called when editor opens
+    oneditprepare: function () {
+      const node = this;
+      
+      // Initialize dropdowns
+      $("#node-input-deviceType").val(node.deviceType || "ac");
+      $("#node-input-operationMode").val(node.operationMode || "auto");
+      $("#node-input-requestDelay").val(node.requestDelay || 2000);
+      $("#node-input-enableRetry").prop("checked", node.enableRetry !== false);
+      $("#node-input-maxRetries").val(node.maxRetries || 3);
+      
+      // Toggle AC key template visibility
+      $("#node-input-deviceType").on("change", function() {
+        $("#acKeyTemplate-row").toggle($(this).val() === "custom");
+      }).trigger("change");
+      
+      // AC key format help
+      $("#acKeyFormatHelp").on("click", function(e) {
+        e.preventDefault();
+        RED.popover.dialog({
+          title: "AC Key Format",
+          content: `
+            <p>AC Key format: <code>P{power}_M{mode}_T{temp}_S{fan}</code></p>
+            <table class="table table-bordered">
+              <tr><th>Power</th><td>0=ON, 1=OFF</td></tr>
+              <tr><th>Mode</th><td>0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry</td></tr>
+              <tr><th>Temp</th><td>16-30°C</td></tr>
+              <tr><th>Fan</th><td>0=Auto, 1=Low, 2=Medium, 3=High</td></tr>
+            </table>
+            <p><strong>Example:</strong> <code>P0_M1_T25_S2</code> = ON, Cool, 25°C, Medium</p>
+          `,
+          modal: true,
+          resizable: true,
+          width: 500
+        });
+      });
+    },
+    
+    // Called when editor saves
+    oneditsave: function () {
+      const node = this;
+      node.defaultTemperature = Number($("#node-input-defaultTemperature").val());
+      node.defaultFanSpeed = Number($("#node-input-defaultFanSpeed").val());
+      node.requestDelay = Number($("#node-input-requestDelay").val());
+      node.enableRetry = $("#node-input-enableRetry").is(":checked");
+      node.maxRetries = Number($("#node-input-maxRetries").val());
+      return true;
+    }
+  });
+</script>
+
+<!-- Editor Form Template -->
+<script type="text/html" data-template-name="viis-aqara-device">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="e.g., Bedroom AC" style="width: 70%;" />
+    <span style="margin-left: 10px; color: #888;">(Also used as Device ID if not in msg)</span>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-configNode"><i class="fa fa-tasks"></i> Config</label>
+    <input type="text" id="node-input-configNode" />
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-deviceType"><i class="fa fa-cog"></i> Device Type</label>
+    <select id="node-input-deviceType" style="width: 70%;">
+      <option value="ac">Air Conditioner (IR)</option>
+      <option value="ir_generic">Generic IR Device</option>
+      <option value="custom">Custom Command</option>
+    </select>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-operationMode"><i class="fa fa-wrench"></i> Operation</label>
+    <select id="node-input-operationMode" style="width: 70%;">
+      <option value="auto">Auto (respect msg.payload.auto)</option>
+      <option value="manual">Manual (always execute)</option>
+    </select>
+  </div>
+  
+  <div class="form-row" id="acKeyTemplate-row" style="display: none;">
+    <label for="node-input-acKeyTemplate"><i class="fa fa-key"></i> AC Key Template</label>
+    <input type="text" id="node-input-acKeyTemplate" placeholder="P0_M0_T{temp}_S2" style="width: 70%;" />
+    <a href="#" id="acKeyFormatHelp" style="margin-left: 10px; color: #2196f3;">
+      <i class="fa fa-info-circle"></i> Format Help
+    </a>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-defaultTemperature"><i class="fa fa-thermometer-half"></i> Default Temp</label>
+    <input type="number" id="node-input-defaultTemperature" min="16" max="30" style="width: 70px;" />
+    <span style="margin-left: 10px;">°C (16-30)</span>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-defaultFanSpeed"><i class="fa fa-tachometer"></i> Default Fan</label>
+    <select id="node-input-defaultFanSpeed" style="width: 70%;">
+      <option value="0">Auto</option>
+      <option value="1">Low</option>
+      <option value="2" selected>Medium</option>
+      <option value="3">High</option>
+    </select>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-requestDelay"><i class="fa fa-clock-o"></i> Request Delay</label>
+    <input type="number" id="node-input-requestDelay" min="500" max="10000" step="100" style="width: 70px;" />
+    <span style="margin-left: 10px;">ms (min 500, recommended 2000)</span>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-enableRetry"><i class="fa fa-refresh"></i> Retry</label>
+    <label style="width: auto; margin-left: 10px;">
+      <input type="checkbox" id="node-input-enableRetry" style="width: auto;" />
+      Enable retry on failure
+    </label>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-maxRetries"><i class="fa fa-repeat"></i> Max Retries</label>
+    <input type="number" id="node-input-maxRetries" min="1" max="5" style="width: 70px;" />
+    <span style="margin-left: 10px;">attempts (1-5)</span>
+  </div>
+  
+  <div class="form-tips" style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-left: 4px solid #44C4A1;">
+    <i class="fa fa-info-circle"></i> <strong>Tips:</strong>
+    <ul style="margin: 5px 0 0 20px; padding: 0;">
+      <li>Device ID can be set in msg.deviceId or msg.payload.deviceId</li>
+      <li>Temperature and fan speed can be overridden in msg.payload</li>
+      <li>Use 2000ms delay to avoid overwhelming the Aqara API</li>
+      <li>Output includes success status and error codes</li>
+    </ul>
+  </div>
+</script>
+
+<!-- Help Content (displayed in Node-RED info panel) -->
+<script type="text/html" data-help-name="viis-aqara-device">
+  <h3>Aqara Device Control</h3>
+  
+  <p>Controls Aqara devices via the Aqara Open API, primarily for IR-based air conditioner control.</p>
+  
+  <h4>Configuration</h4>
+  <dl class="message-properties">
+    <dt>Config Node <span class="property-type">required</span></dt>
+    <dd>Aqara credentials (Appid, Keyid, AppKey, AccessToken)</dd>
+    
+    <dt>Device Type <span class="property-type">optional</span></dt>
+    <dd>Type of device: Air Conditioner, Generic IR, or Custom</dd>
+    
+    <dt>Operation Mode <span class="property-type">optional</span></dt>
+    <dd>Auto mode respects msg.payload.auto flag; Manual always executes</dd>
+    
+    <dt>Default Temperature <span class="property-type">optional</span></dt>
+    <dd>Default target temperature (16-30°C)</dd>
+    
+    <dt>Default Fan Speed <span class="property-type">optional</span></dt>
+    <dd>Default fan speed: Auto, Low, Medium, or High</dd>
+    
+    <dt>Request Delay <span class="property-type">optional</span></dt>
+    <dd>Minimum delay between API requests (recommended: 2000ms)</dd>
+  </dl>
+  
+  <h4>Input</h4>
+  <p>Expects a message with the following properties:</p>
+  <dl class="message-properties">
+    <dt>action <span class="property-type">optional</span></dt>
+    <dd>"read" or "write" (default: "write"). Use "read" to query AC state</dd>
+    
+    <dt>deviceId <span class="property-type">optional</span></dt>
+    <dd>Aqara device ID (did). Can be in msg.deviceId or msg.payload.deviceId</dd>
+    
+    <dt>payload.action <span class="property-type">optional</span></dt>
+    <dd>Alternative: "read" | "write" | "query"</dd>
+    
+    <dt class="message-property-subheading">For WRITE operations:</dt>
+    <dt>payload.power <span class="property-type">optional</span></dt>
+    <dd>true/false to turn AC on/off (default: true)</dd>
+    
+    <dt>payload.temperature <span class="property-type">optional</span></dt>
+    <dd>Target temperature in °C (default: configured value)</dd>
+    
+    <dt>payload.mode <span class="property-type">optional</span></dt>
+    <dd>0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry (default: 0)</dd>
+    
+    <dt>payload.fanSpeed <span class="property-type">optional</span></dt>
+    <dd>0=Auto, 1=Low, 2=Medium, 3=High (default: configured value)</dd>
+    
+    <dt>payload.acKey <span class="property-type">optional</span></dt>
+    <dd>Direct AC key string (overrides all other parameters)</dd>
+    
+    <dt>payload.auto <span class="property-type">optional</span></dt>
+    <dd>If false and in Auto mode, command is skipped</dd>
+  </dl>
+  
+  <h4>Output (WRITE)</h4>
+  <p>Returns a message with command result:</p>
+  <dl class="message-properties">
+    <dt>payload.success</dt>
+    <dd>true if command sent successfully, false otherwise</dd>
+    
+    <dt>payload.action</dt>
+    <dd>"write" for control operations</dd>
+    
+    <dt>payload.deviceId</dt>
+    <dd>Target device ID</dd>
+    
+    <dt>payload.acKey</dt>
+    <dd>AC key command that was sent</dd>
+    
+    <dt>payload.response</dt>
+    <dd>Response from Aqara API (if successful)</dd>
+    
+    <dt>payload.timestamp</dt>
+    <dd>Unix timestamp of command execution</dd>
+  </dl>
+  
+  <h4>Output (READ)</h4>
+  <p>Returns AC state from query.ir.acState:</p>
+  <dl class="message-properties">
+    <dt>payload.success</dt>
+    <dd>true if query successful, false otherwise</dd>
+    
+    <dt>payload.action</dt>
+    <dd>"read" for query operations</dd>
+    
+    <dt>payload.acState</dt>
+    <dd>Parsed AC state object (see below)</dd>
+    
+    <dt>payload.temperature</dt>
+    <dd>Current AC temperature in °C</dd>
+    
+    <dt>payload.mode</dt>
+    <dd>Current mode number (0-4)</dd>
+    
+    <dt>payload.modeName</dt>
+    <dd>Mode name: cooling/heating/auto/fan/dry</dd>
+    
+    <dt>payload.fanSpeed</dt>
+    <dd>Fan speed number (0-3)</dd>
+    
+    <dt>payload.fanName</dt>
+    <dd>Fan name: auto/low/medium/high</dd>
+    
+    <dt>payload.power</dt>
+    <dd>true if AC is ON, false if OFF</dd>
+    
+    <dt>payload.rawState</dt>
+    <dd>Raw AC state string (e.g., "P0_M0_T26_S0_D0")</dd>
+  </dl>
+  
+  <h4>AC State Format</h4>
+  <p>State string format: <code>Px_Mm_Ty_Ss_Dd</code></p>
+  <ul>
+    <li><strong>P (Power)</strong>: 0=ON, 1=OFF</li>
+    <li><strong>M (Mode)</strong>: 0=cooling, 1=heating, 2=auto, 3=fan, 4=dry</li>
+    <li><strong>T (Temperature)</strong>: 16-30°C</li>
+    <li><strong>S (Fan Speed)</strong>: 0=auto, 1=low, 2=medium, 3=high</li>
+    <li><strong>D (Direction)</strong>: 0=sweep, other=fixed</li>
+  </ul>
+  <p><strong>Example:</strong> <code>P0_M0_T26_S0_D0</code> = ON, Cooling, 26°C, Auto fan, Sweep</p>
+  
+  <h4>Error Codes</h4>
+  <table class="table table-bordered">
+    <tr><th>Code</th><th>Meaning</th></tr>
+    <tr><td>0</td><td>Success</td></tr>
+    <tr><td>1001</td><td>Invalid signature</td></tr>
+    <tr><td>1002</td><td>Expired timestamp</td></tr>
+    <tr><td>1003</td><td>Invalid Appid/Keyid</td></tr>
+    <tr><td>2001</td><td>Device not found</td></tr>
+    <tr><td>2002</td><td>Device offline</td></tr>
+    <tr><td>3001</td><td>Invalid IR command</td></tr>
+  </table>
+  
+  <h4>Example Flow</h4>
+  <pre>[Inject] -> [Function: Set Temp] -> [Aqara Device] -> [Debug]
+
+Function node:
+msg.payload = {
+  temperature: 24,
+  mode: 1,  // Cool mode
+  fanSpeed: 2  // Medium
+};
+msg.deviceId = "did_aqara_12345";
+return msg;</pre>
+  
+  <h4>Notes</h4>
+  <ul>
+    <li>Requires a valid Aqara Open API configuration node</li>
+    <li>Automatically handles authentication signature generation</li>
+    <li>Implements rate limiting to avoid API throttling</li>
+    <li>Supports retry with exponential backoff on network errors</li>
+    <li>AC key format: P{power}_M{mode}_T{temp}_S{fan}</li>
+  </ul>
+  
+  <h4>References</h4>
+  <ul>
+    <li><a href="https://open.aqara.com/" target="_blank">Aqara Open Platform</a></li>
+    <li><a href="https://open-sg.aqara.com/api/document" target="_blank">API Documentation</a></li>
+  </ul>
+</script>
