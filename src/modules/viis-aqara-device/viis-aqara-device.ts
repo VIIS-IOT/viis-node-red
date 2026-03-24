@@ -91,37 +91,33 @@ class AqaraService {
     });
   }
 
-  generateAuthParams(): { headers: Record<string, string>; time: number; nonce: number } {
-    const time = Date.now();
-    const nonce = time;
+  generateAuthParams(): { headers: Record<string, string>; time: string; nonce: string } {
+    const time = Date.now().toString();
+    const nonce = Math.random().toString(36).substring(2, 18);
 
-    let preSign = "";
+    let signStr: string;
     if (this.credentials.accesstoken) {
-      preSign = `Accesstoken=${this.credentials.accesstoken}&`;
+      signStr = `accesstoken=${this.credentials.accesstoken}&appid=${this.credentials.appid}&keyid=${this.credentials.keyid}&nonce=${nonce}&time=${time}${this.credentials.appkey}`;
+    } else {
+      signStr = `appid=${this.credentials.appid}&keyid=${this.credentials.keyid}&nonce=${nonce}&time=${time}${this.credentials.appkey}`;
     }
-
-    preSign +=
-      `Appid=${this.credentials.appid}&` +
-      `Keyid=${this.credentials.keyid}&` +
-      `Nonce=${nonce}&` +
-      `Time=${time}` +
-      this.credentials.appkey;
 
     const sign = crypto
       .createHash("md5")
-      .update(preSign.toLowerCase())
+      .update(signStr.toLowerCase())
       .digest("hex");
 
     const headers: Record<string, string> = {
-      Appid: this.credentials.appid,
-      Keyid: this.credentials.keyid,
-      Time: time.toString(),
-      Nonce: nonce.toString(),
-      Sign: sign,
+      'Content-Type': 'application/json',
+      'Appid': this.credentials.appid,
+      'Keyid': this.credentials.keyid,
+      'Nonce': nonce,
+      'Time': time,
+      'Sign': sign,
     };
 
     if (this.credentials.accesstoken) {
-      headers.Accesstoken = this.credentials.accesstoken;
+      headers['Accesstoken'] = this.credentials.accesstoken;
     }
 
     return { headers, time, nonce };
@@ -142,10 +138,12 @@ class AqaraService {
   async sendCommand(
     command: AqaraCommand,
     enableRetry: boolean = true,
-    maxRetries: number = 3
+    maxRetries: number = 3,
+    customUrl?: string
   ): Promise<AqaraResponse> {
     let lastError: Error | null = null;
     const attempts = enableRetry ? maxRetries : 1;
+    const url = customUrl || this.baseUrl;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
@@ -153,7 +151,7 @@ class AqaraService {
         const { headers } = this.generateAuthParams();
 
         const response = await this.httpClient.post<AqaraResponse>(
-          this.baseUrl,
+          url,
           command,
           { headers }
         );
@@ -189,7 +187,8 @@ class AqaraService {
     deviceId: string,
     acKey: string,
     enableRetry?: boolean,
-    maxRetries?: number
+    maxRetries?: number,
+    customUrl?: string
   ): Promise<AqaraResponse> {
     const command: AqaraCommand = {
       intent: "write.ir.click",
@@ -199,7 +198,22 @@ class AqaraService {
       },
     };
 
-    return this.sendCommand(command, enableRetry, maxRetries);
+    return this.sendCommand(command, enableRetry, maxRetries, customUrl);
+  }
+
+  async sendCustomCommand(
+    intent: string,
+    data: any,
+    enableRetry?: boolean,
+    maxRetries?: number,
+    customUrl?: string
+  ): Promise<AqaraResponse> {
+    const command: AqaraCommand = {
+      intent,
+      data,
+    };
+
+    return this.sendCommand(command, enableRetry, maxRetries, customUrl);
   }
 
   async readACState(
@@ -311,27 +325,54 @@ module.exports = function (RED: NodeAPI) {
 
     node.on("input", async (msg: any) => {
       try {
+        // Check for standard Aqara API format: msg.payload = { intent: "...", data: {...} }
+        if (msg.payload?.intent) {
+          const intent = msg.payload.intent;
+          const data = msg.payload.data || {};
+          const url = msg.payload.url || msg.url;
+
+          node.status({ fill: "yellow", shape: "dot", text: "Calling API..." });
+
+          const response = await aqaraService.sendCustomCommand(
+            intent,
+            data,
+            enableRetry,
+            maxRetries,
+            url
+          );
+
+          node.status({ fill: "green", shape: "dot", text: "API success" });
+
+          // Return exact Aqara response
+          node.send({
+            payload: response,
+            topic: msg.topic || "aqara/api"
+          });
+
+          return;
+        }
+
         if (operationMode === "auto" && msg.payload?.auto === false) {
           node.status({ fill: "blue", shape: "dot", text: "Manual mode" });
           return;
         }
 
         const deviceId = msg.deviceId || msg.payload?.deviceId || config.name;
-        
+
         if (!deviceId) {
           throw new Error("Device ID is required");
         }
 
         const action = msg.payload?.action || msg.action || "write";
-        
+
         if (action === "read" || action === "query") {
           node.status({ fill: "yellow", shape: "dot", text: "Reading..." });
-          
+
           const readResult = await aqaraService.readACState(deviceId, enableRetry, maxRetries);
-          
+
           if (readResult.success && readResult.state) {
             node.status({ fill: "green", shape: "dot", text: `Read: ${readResult.state.temperature}°C` });
-            
+
             node.send({
               payload: {
                 success: true,
@@ -351,7 +392,7 @@ module.exports = function (RED: NodeAPI) {
             });
           } else {
             node.status({ fill: "red", shape: "ring", text: `Read failed` });
-            
+
             node.send({
               payload: {
                 success: false,
@@ -369,7 +410,7 @@ module.exports = function (RED: NodeAPI) {
 
         // WRITE operation
         let acKey: string;
-        
+
         if (msg.payload?.acKey) {
           acKey = msg.payload.acKey;
         } else if (deviceType === "ac") {
@@ -388,7 +429,7 @@ module.exports = function (RED: NodeAPI) {
         }
 
         node.status({ fill: "yellow", shape: "dot", text: "Sending..." });
-        
+
         const response = await aqaraService.sendIrClick(deviceId, acKey, enableRetry, maxRetries);
 
         node.status({ fill: "green", shape: "dot", text: "Command sent" });
@@ -408,7 +449,7 @@ module.exports = function (RED: NodeAPI) {
       } catch (error) {
         const err = error as Error;
         node.error(`Aqara command failed: ${err.message}`, msg);
-        
+
         const errorCode = (error as AqaraApiError).code;
         node.status({ fill: "red", shape: "ring", text: `Error: ${errorCode || "Unknown"}` });
 

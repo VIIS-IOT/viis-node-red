@@ -39,31 +39,29 @@ class AqaraService {
         });
     }
     generateAuthParams() {
-        const time = Date.now();
-        const nonce = time;
-        let preSign = "";
+        const time = Date.now().toString();
+        const nonce = Math.random().toString(36).substring(2, 18);
+        let signStr;
         if (this.credentials.accesstoken) {
-            preSign = `Accesstoken=${this.credentials.accesstoken}&`;
+            signStr = `accesstoken=${this.credentials.accesstoken}&appid=${this.credentials.appid}&keyid=${this.credentials.keyid}&nonce=${nonce}&time=${time}${this.credentials.appkey}`;
         }
-        preSign +=
-            `Appid=${this.credentials.appid}&` +
-                `Keyid=${this.credentials.keyid}&` +
-                `Nonce=${nonce}&` +
-                `Time=${time}` +
-                this.credentials.appkey;
+        else {
+            signStr = `appid=${this.credentials.appid}&keyid=${this.credentials.keyid}&nonce=${nonce}&time=${time}${this.credentials.appkey}`;
+        }
         const sign = crypto_1.default
             .createHash("md5")
-            .update(preSign.toLowerCase())
+            .update(signStr.toLowerCase())
             .digest("hex");
         const headers = {
-            Appid: this.credentials.appid,
-            Keyid: this.credentials.keyid,
-            Time: time.toString(),
-            Nonce: nonce.toString(),
-            Sign: sign,
+            'Content-Type': 'application/json',
+            'Appid': this.credentials.appid,
+            'Keyid': this.credentials.keyid,
+            'Nonce': nonce,
+            'Time': time,
+            'Sign': sign,
         };
         if (this.credentials.accesstoken) {
-            headers.Accesstoken = this.credentials.accesstoken;
+            headers['Accesstoken'] = this.credentials.accesstoken;
         }
         return { headers, time, nonce };
     }
@@ -76,14 +74,15 @@ class AqaraService {
         }
         this.lastRequestTime = Date.now();
     }
-    async sendCommand(command, enableRetry = true, maxRetries = 3) {
+    async sendCommand(command, enableRetry = true, maxRetries = 3, customUrl) {
         let lastError = null;
         const attempts = enableRetry ? maxRetries : 1;
+        const url = customUrl || this.baseUrl;
         for (let attempt = 1; attempt <= attempts; attempt++) {
             try {
                 await this.enforceRateLimit();
                 const { headers } = this.generateAuthParams();
-                const response = await this.httpClient.post(this.baseUrl, command, { headers });
+                const response = await this.httpClient.post(url, command, { headers });
                 const result = response.data;
                 if (result.code !== 0) {
                     throw new AqaraApiError(result.message, result.code, result);
@@ -106,7 +105,7 @@ class AqaraService {
         }
         throw lastError || new Error("Unknown error sending Aqara command");
     }
-    async sendIrClick(deviceId, acKey, enableRetry, maxRetries) {
+    async sendIrClick(deviceId, acKey, enableRetry, maxRetries, customUrl) {
         const command = {
             intent: "write.ir.click",
             data: {
@@ -114,7 +113,14 @@ class AqaraService {
                 acKey: acKey,
             },
         };
-        return this.sendCommand(command, enableRetry, maxRetries);
+        return this.sendCommand(command, enableRetry, maxRetries, customUrl);
+    }
+    async sendCustomCommand(intent, data, enableRetry, maxRetries, customUrl) {
+        const command = {
+            intent,
+            data,
+        };
+        return this.sendCommand(command, enableRetry, maxRetries, customUrl);
     }
     async readACState(deviceId, enableRetry, maxRetries) {
         try {
@@ -204,17 +210,32 @@ module.exports = function (RED) {
         node.log("Aqara device node initialized");
         node.status({ fill: "green", shape: "dot", text: "Ready" });
         node.on("input", async (msg) => {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
             try {
-                if (operationMode === "auto" && ((_a = msg.payload) === null || _a === void 0 ? void 0 : _a.auto) === false) {
+                // Check for standard Aqara API format: msg.payload = { intent: "...", data: {...} }
+                if ((_a = msg.payload) === null || _a === void 0 ? void 0 : _a.intent) {
+                    const intent = msg.payload.intent;
+                    const data = msg.payload.data || {};
+                    const url = msg.payload.url || msg.url;
+                    node.status({ fill: "yellow", shape: "dot", text: "Calling API..." });
+                    const response = await aqaraService.sendCustomCommand(intent, data, enableRetry, maxRetries, url);
+                    node.status({ fill: "green", shape: "dot", text: "API success" });
+                    // Return exact Aqara response
+                    node.send({
+                        payload: response,
+                        topic: msg.topic || "aqara/api"
+                    });
+                    return;
+                }
+                if (operationMode === "auto" && ((_b = msg.payload) === null || _b === void 0 ? void 0 : _b.auto) === false) {
                     node.status({ fill: "blue", shape: "dot", text: "Manual mode" });
                     return;
                 }
-                const deviceId = msg.deviceId || ((_b = msg.payload) === null || _b === void 0 ? void 0 : _b.deviceId) || config.name;
+                const deviceId = msg.deviceId || ((_c = msg.payload) === null || _c === void 0 ? void 0 : _c.deviceId) || config.name;
                 if (!deviceId) {
                     throw new Error("Device ID is required");
                 }
-                const action = ((_c = msg.payload) === null || _c === void 0 ? void 0 : _c.action) || msg.action || "write";
+                const action = ((_d = msg.payload) === null || _d === void 0 ? void 0 : _d.action) || msg.action || "write";
                 if (action === "read" || action === "query") {
                     node.status({ fill: "yellow", shape: "dot", text: "Reading..." });
                     const readResult = await aqaraService.readACState(deviceId, enableRetry, maxRetries);
@@ -256,23 +277,23 @@ module.exports = function (RED) {
                 }
                 // WRITE operation
                 let acKey;
-                if ((_d = msg.payload) === null || _d === void 0 ? void 0 : _d.acKey) {
+                if ((_e = msg.payload) === null || _e === void 0 ? void 0 : _e.acKey) {
                     acKey = msg.payload.acKey;
                 }
                 else if (deviceType === "ac") {
-                    const power = (_f = (_e = msg.payload) === null || _e === void 0 ? void 0 : _e.power) !== null && _f !== void 0 ? _f : true;
-                    const mode = (_h = (_g = msg.payload) === null || _g === void 0 ? void 0 : _g.mode) !== null && _h !== void 0 ? _h : 0;
-                    const temperature = (_k = (_j = msg.payload) === null || _j === void 0 ? void 0 : _j.temperature) !== null && _k !== void 0 ? _k : defaultTemperature;
-                    const fanSpeed = (_m = (_l = msg.payload) === null || _l === void 0 ? void 0 : _l.fanSpeed) !== null && _m !== void 0 ? _m : defaultFanSpeed;
+                    const power = (_g = (_f = msg.payload) === null || _f === void 0 ? void 0 : _f.power) !== null && _g !== void 0 ? _g : true;
+                    const mode = (_j = (_h = msg.payload) === null || _h === void 0 ? void 0 : _h.mode) !== null && _j !== void 0 ? _j : 0;
+                    const temperature = (_l = (_k = msg.payload) === null || _k === void 0 ? void 0 : _k.temperature) !== null && _l !== void 0 ? _l : defaultTemperature;
+                    const fanSpeed = (_o = (_m = msg.payload) === null || _m === void 0 ? void 0 : _m.fanSpeed) !== null && _o !== void 0 ? _o : defaultFanSpeed;
                     acKey = aqaraService.generateAcKey(power, mode, temperature, fanSpeed);
                 }
                 else {
                     const acKeyTemplate = config.acKeyTemplate || "P0_M0_T{temp}_S2";
                     acKey = acKeyTemplate
-                        .replace("{power}", ((_o = msg.payload) === null || _o === void 0 ? void 0 : _o.power) ? "0" : "1")
-                        .replace("{temp}", String((_q = (_p = msg.payload) === null || _p === void 0 ? void 0 : _p.temperature) !== null && _q !== void 0 ? _q : defaultTemperature))
-                        .replace("{mode}", String((_s = (_r = msg.payload) === null || _r === void 0 ? void 0 : _r.mode) !== null && _s !== void 0 ? _s : 0))
-                        .replace("{fan}", String((_u = (_t = msg.payload) === null || _t === void 0 ? void 0 : _t.fanSpeed) !== null && _u !== void 0 ? _u : defaultFanSpeed));
+                        .replace("{power}", ((_p = msg.payload) === null || _p === void 0 ? void 0 : _p.power) ? "0" : "1")
+                        .replace("{temp}", String((_r = (_q = msg.payload) === null || _q === void 0 ? void 0 : _q.temperature) !== null && _r !== void 0 ? _r : defaultTemperature))
+                        .replace("{mode}", String((_t = (_s = msg.payload) === null || _s === void 0 ? void 0 : _s.mode) !== null && _t !== void 0 ? _t : 0))
+                        .replace("{fan}", String((_v = (_u = msg.payload) === null || _u === void 0 ? void 0 : _u.fanSpeed) !== null && _v !== void 0 ? _v : defaultFanSpeed));
                 }
                 node.status({ fill: "yellow", shape: "dot", text: "Sending..." });
                 const response = await aqaraService.sendIrClick(deviceId, acKey, enableRetry, maxRetries);

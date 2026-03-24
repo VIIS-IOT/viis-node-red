@@ -137,18 +137,33 @@ global.set("aqaraCredentials", {
 <!-- Help Content -->
 <script type="text/html" data-help-name="viis-aqara-device">
   <h3>Aqara Device Control</h3>
-  
+
   <p>Controls Aqara IR devices (air conditioners) via Aqara Open API.</p>
-  
+
   <h4>Credentials Setup</h4>
   <p>Set credentials in global context via init function:</p>
   <pre><code>global.set("aqaraCredentials", {
   appid: "your-app-id",
   keyid: "your-key-id",
-  appkey: "your-app-key"
+  appkey: "your-app-key",
+  accesstoken: "your-access-token"
 });</code></pre>
-  
-  <h4>Input (WRITE)</h4>
+
+  <h4>Mode 1: Standard Aqara API (passthrough)</h4>
+  <p>Send any Aqara API command directly. The node will handle authentication automatically:</p>
+  <pre><code>msg.payload = {
+  "intent": "query.device.info",
+  "data": {
+    "dids": ["lumi1.54ef44509e39"],
+    "positionId": "",
+    "pageNum": 1,
+    "pageSize": 50
+  }
+};
+return msg;</code></pre>
+  <p>Returns exact Aqara response: <code>{"code":0,"message":"Success","result":{...}}</code></p>
+
+  <h4>Mode 2: WRITE (IR Command)</h4>
   <dl class="message-properties">
     <dt>payload.power</dt>
     <dd>true/false to turn ON/OFF</dd>
@@ -159,16 +174,16 @@ global.set("aqaraCredentials", {
     <dt>payload.fanSpeed</dt>
     <dd>0=Auto, 1=Low, 2=Medium, 3=High</dd>
   </dl>
-  
-  <h4>Input (READ)</h4>
+
+  <h4>Mode 3: READ (AC State)</h4>
   <dl class="message-properties">
     <dt>payload.action</dt>
     <dd>"read" or "query" to read AC state</dd>
   </dl>
-  
+
   <h4>Output</h4>
-  <p>Returns success/error with AC state (READ) or command result (WRITE)</p>
-  
+  <p>Returns exact Aqara response (Mode 1) or success/error with AC state (Mode 2/3)</p>
+
   <h4>AC Key Format</h4>
   <p><code>P{power}_M{mode}_T{temp}_S{fan}</code></p>
   <ul>
