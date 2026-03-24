@@ -34,11 +34,24 @@ module.exports = function (RED) {
         // ========================================================================
         // Node State
         // ========================================================================
-        let currentBoardId = config.boardId;
+        let currentBoardId = config.boardId || "board1";
         let isMultiBoardMode = false;
         let currentModbusConfig = null;
         let modbusClient;
         let configCheckInterval = null;
+        let protectionCheckInterval = null;
+        // Debug mode
+        const enableDebug = config.enableDebug === true;
+        const checkIntervalMs = config.checkInterval || 1000; // Default 1 second
+        // Debug helper
+        const debugLog = (message) => {
+            if (enableDebug) {
+                node.warn(`[DEBUG] ${message}`);
+            }
+        };
+        node.log(`Debug mode: ${enableDebug ? 'ENABLED' : 'DISABLED'}`);
+        node.log(`Check interval: ${checkIntervalMs}ms`);
+        node.log(`Board ID: ${currentBoardId}`);
         // Modbus mappings - Follow common_pattern.md
         // Primary: Use modbus_board1_coils for multi-board setup
         // Fallback: Use modbusCoils for backward compatibility
@@ -230,10 +243,12 @@ module.exports = function (RED) {
         const checkProtection = async () => {
             const configKeyValues = configService.getConfigKeyValues();
             if (!configKeyValues || Object.keys(configKeyValues).length === 0) {
+                debugLog("No configKeyValues found");
                 node.status({ fill: "yellow", shape: "ring", text: constants_1.STATUS_MESSAGES.NO_CONFIG });
                 return;
             }
             const sensorData = configService.getSensorData();
+            debugLog(`Checking ${Object.keys(configKeyValues).length} config keys`);
             // Auto-detect all protection configs from configKeyValues
             // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
             const protectedCoils = new Set();
@@ -243,20 +258,22 @@ module.exports = function (RED) {
                     protectedCoils.add(match[1]); // coil name like "lamp_control_1"
                 }
             }
+            debugLog(`Found ${protectedCoils.size} protected coils: ${Array.from(protectedCoils).join(", ")}`);
             // Process each protected coil (use Array.from for ES5 compatibility)
             const coilsArray = Array.from(protectedCoils);
             for (let i = 0; i < coilsArray.length; i++) {
                 const coilKey = coilsArray[i];
                 const deviceLabel = coilKey.toLowerCase();
                 const coilAddress = modbusCoils[coilKey];
+                debugLog(`Processing coil: ${coilKey}, address: ${coilAddress}`);
                 // Skip if coil address not defined
                 if (coilAddress === undefined) {
-                    // Silent skip - coil not in modbus mapping
-                    // node.debug(`Coil ${coilKey} not in modbus mapping, skipping`);
+                    debugLog(`Coil ${coilKey} not in modbus mapping, skipping`);
                     continue;
                 }
                 // READ coil state directly from Modbus
                 const currentState = await readCoil(coilAddress);
+                debugLog(`Coil ${coilKey} current state: ${currentState}`);
                 // Get sensor value if applicable
                 let sensorValue;
                 if (coilKey.includes('cool') || coilKey.includes('ac')) {
@@ -269,13 +286,17 @@ module.exports = function (RED) {
                     sensorValue = sensorData['co2_sensor_1'];
                 }
                 if (sensorValue !== undefined) {
+                    debugLog(`Sensor value for ${coilKey}: ${sensorValue}`);
                     protectionManager.updateSensorValue(coilKey, sensorValue);
                 }
                 // Get protection config using the coil key as device label
                 const protectionConfig = configService.getProtectionConfigByLabel(deviceLabel);
+                debugLog(`Protection config for ${deviceLabel}: ${JSON.stringify(protectionConfig)}`);
                 const result = protectionManager.evaluateProtection(coilKey, currentState, protectionConfig);
+                debugLog(`Protection result for ${coilKey}: ${result.action} - ${result.reason}`);
                 // Handle protection actions
                 if (!result.allowed || (result.allowed && result.action !== 'allow')) {
+                    debugLog(`Action required for ${coilKey}: ${result.action}`);
                     // Create notification for significant events
                     if (result.action === 'auto_off' || result.action === 'block' ||
                         result.action === 'force_on' || result.action === 'force_off' ||
@@ -313,8 +334,9 @@ module.exports = function (RED) {
         // ========================================================================
         // Intervals
         // ========================================================================
-        // Run protection check every 1 second
-        const interval = setInterval(checkProtection, constants_1.PROTECTION_CONFIG.CHECK_INTERVAL_MS);
+        // Run protection check with configurable interval
+        protectionCheckInterval = setInterval(checkProtection, checkIntervalMs);
+        node.log(`Protection check started with interval: ${checkIntervalMs}ms`);
         // Config auto-reload every 30 seconds
         configCheckInterval = setInterval(async () => {
             try {
@@ -369,7 +391,10 @@ module.exports = function (RED) {
         // Cleanup
         // ========================================================================
         node.on("close", (done) => {
-            clearInterval(interval);
+            if (protectionCheckInterval) {
+                clearInterval(protectionCheckInterval);
+                node.log("Protection check interval stopped");
+            }
             if (configCheckInterval) {
                 clearInterval(configCheckInterval);
                 node.log("Config check interval stopped");

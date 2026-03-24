@@ -72,6 +72,28 @@ Advanced device protection node with **Min/Max/Bypass/Force** logic for IoT devi
 
 ## 🔧 Configuration
 
+### Node Configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| **Name** | String | - | Optional label for this node |
+| **Board ID** | String | "board1" | Modbus board identifier (e.g., "board1", "board2") |
+| **Check Interval (ms)** | Number | 1000 | How often to check protection rules (min: 100ms) |
+| **Enable Debug** | Boolean | false | Enable detailed debug logging with [DEBUG] prefix |
+
+### Debug Mode
+
+When **Enable Debug** is checked, the node outputs detailed logs:
+
+```
+[DEBUG] Checking 15 config keys
+[DEBUG] Found 3 protected coils: lamp_control_1, fan_intake, cool_ac1
+[DEBUG] Processing coil: lamp_control_1, address: 1
+[DEBUG] Coil lamp_control_1 current state: true
+[DEBUG] Protection config for lamp_control_1: {"bypass":false,"forceOn":false,...}
+[DEBUG] Protection result for lamp_control_1: allow - All protection checks passed
+```
+
 ### Global Context Required
 
 ```javascript

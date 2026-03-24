@@ -1,7 +1,7 @@
 /**
  * Configuration Service for VIIS Device Protection Node
  * Handles reading/writing protection configuration from global context
- * 
+ *
  * Field naming convention matches device profile:
  * - lamp_protect_bypass
  * - fan_protect_intake_bypass
@@ -76,20 +76,49 @@ export class ConfigService {
 
     /**
      * Get protection config by device label (dynamic coil names)
-     * Example: deviceLabel = "lamp_control_1" → looks for "lamp_control_1_protect_*"
+     * Resolution order:
+     * 1) Exact key: lamp_control_1_protect_*
+     * 2) Generalized prefixes: lamp_control_protect_*, lamp_protect_*
+     *
+     * Example: deviceLabel = "lamp_control_1"
+     * - exact: lamp_control_1_protect_max_time_on
+     * - fallback: lamp_control_protect_max_time_on
      */
     getProtectionConfigByLabel(deviceLabel: string): ProtectionConfig {
         const configKeyValues = this.getConfigKeyValues();
 
+        const buildLookupLabels = (label: string): string[] => {
+            const labels: string[] = [label];
+            const parts = label.split('_');
+
+            // Add generalized prefixes by removing trailing segments.
+            // Example: lamp_control_1 -> lamp_control -> lamp
+            for (let i = parts.length - 1; i >= 1; i--) {
+                labels.push(parts.slice(0, i).join('_'));
+            }
+
+            return labels;
+        };
+
+        const lookupLabels = buildLookupLabels(deviceLabel);
+
+        const resolveValue = <T>(field: string, transformer: (value: any) => T, defaultValue: T): T => {
+            for (const label of lookupLabels) {
+                const key = `${label}_protect_${field}`;
+                if (Object.prototype.hasOwnProperty.call(configKeyValues, key)) {
+                    return transformer(configKeyValues[key]);
+                }
+            }
+            return defaultValue;
+        };
+
         // Helper to get field value
         const getFieldValue = (field: string): number => {
-            const key = `${deviceLabel}_protect_${field}`;
-            return Number(configKeyValues[key] || 0);
+            return resolveValue(field, (value) => Number(value || 0), 0);
         };
 
         const getBoolField = (field: string): boolean => {
-            const key = `${deviceLabel}_protect_${field}`;
-            return Boolean(configKeyValues[key]);
+            return resolveValue(field, (value) => Boolean(value), false);
         };
 
         return {

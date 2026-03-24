@@ -1,8 +1,8 @@
 /**
  * VIIS Device Protection Node v2.0
- * 
+ *
  * Advanced protection logic with Min/Max/Bypass/Force support
- * 
+ *
  * Architecture follows viis-rpc-control pattern:
  * - ConfigService for configuration management
  * - ProtectionManager for business logic
@@ -16,19 +16,20 @@ import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ErrorNotificationService } from "../../services/error-notification.service";
 import { ProtectionManager, ProtectionResult } from "./protection-manager";
 import { ConfigService } from "./services/configService";
-import { 
-    CONTEXT_KEYS, 
-    ENV_KEYS, 
-    MODBUS_CONFIG, 
+import {
+    CONTEXT_KEYS,
+    ENV_KEYS,
+    MODBUS_CONFIG,
     PROTECTION_CONFIG,
     DEVICE_TYPES,
     ERROR_MESSAGES,
-    STATUS_MESSAGES 
+    STATUS_MESSAGES
 } from "./constants";
 
 interface ViisDeviceProtectionNodeDef extends NodeDef {
-    boardMode?: 'auto' | 'single' | 'multi';
     boardId?: string;
+    checkInterval?: number;
+    enableDebug?: boolean;
 }
 
 module.exports = function (RED: NodeAPI) {
@@ -39,7 +40,7 @@ module.exports = function (RED: NodeAPI) {
         // ========================================================================
         // Initialize Services
         // ========================================================================
-        
+
         const globalHelper = new GlobalContextHelper(node.context());
         const errorNotificationService = new ErrorNotificationService(node.context());
         const configService = new ConfigService(node);
@@ -49,11 +50,27 @@ module.exports = function (RED: NodeAPI) {
         // Node State
         // ========================================================================
 
-        let currentBoardId: string | undefined = config.boardId;
+        let currentBoardId: string | undefined = config.boardId || "board1";
         let isMultiBoardMode: boolean = false;
         let currentModbusConfig: any = null;
         let modbusClient: any;
         let configCheckInterval: NodeJS.Timeout | null = null;
+        let protectionCheckInterval: NodeJS.Timeout | null = null;
+
+        // Debug mode
+        const enableDebug = config.enableDebug === true;
+        const checkIntervalMs = config.checkInterval || 1000; // Default 1 second
+
+        // Debug helper
+        const debugLog = (message: string) => {
+            if (enableDebug) {
+                node.warn(`[DEBUG] ${message}`);
+            }
+        };
+
+        node.log(`Debug mode: ${enableDebug ? 'ENABLED' : 'DISABLED'}`);
+        node.log(`Check interval: ${checkIntervalMs}ms`);
+        node.log(`Board ID: ${currentBoardId}`);
 
         // Modbus mappings - Follow common_pattern.md
         // Primary: Use modbus_board1_coils for multi-board setup
@@ -262,23 +279,42 @@ module.exports = function (RED: NodeAPI) {
 
         const checkProtection = async () => {
             const configKeyValues = configService.getConfigKeyValues();
-            
+
             if (!configKeyValues || Object.keys(configKeyValues).length === 0) {
+                debugLog("No configKeyValues found");
                 node.status({ fill: "yellow", shape: "ring", text: STATUS_MESSAGES.NO_CONFIG });
                 return;
             }
 
             const sensorData = configService.getSensorData();
 
+            debugLog(`Checking ${Object.keys(configKeyValues).length} config keys`);
+
             // Auto-detect all protection configs from configKeyValues
             // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
             const protectedCoils = new Set<string>();
+            const coilKeys = Object.keys(modbusCoils);
             for (const key of Object.keys(configKeyValues)) {
                 const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit)$/);
                 if (match) {
-                    protectedCoils.add(match[1]); // coil name like "lamp_control_1"
+                    const baseKey = match[1];
+
+                    // Exact mapping support (e.g. lamp_control_1_protect_* -> lamp_control_1)
+                    if (modbusCoils[baseKey] !== undefined) {
+                        protectedCoils.add(baseKey);
+                    }
+
+                    // Generalized mapping support (e.g. lamp_control_protect_* -> lamp_control_1, lamp_control_2)
+                    const prefix = `${baseKey}_`;
+                    for (const coilKey of coilKeys) {
+                        if (coilKey.startsWith(prefix)) {
+                            protectedCoils.add(coilKey);
+                        }
+                    }
                 }
             }
+
+            debugLog(`Found ${protectedCoils.size} protected coils: ${Array.from(protectedCoils).join(", ")}`);
 
             // Process each protected coil (use Array.from for ES5 compatibility)
             const coilsArray = Array.from(protectedCoils);
@@ -287,15 +323,17 @@ module.exports = function (RED: NodeAPI) {
                 const deviceLabel = coilKey.toLowerCase();
                 const coilAddress = modbusCoils[coilKey];
 
+                debugLog(`Processing coil: ${coilKey}, address: ${coilAddress}`);
+
                 // Skip if coil address not defined
                 if (coilAddress === undefined) {
-                    // Silent skip - coil not in modbus mapping
-                    // node.debug(`Coil ${coilKey} not in modbus mapping, skipping`);
+                    debugLog(`Coil ${coilKey} not in modbus mapping, skipping`);
                     continue;
                 }
 
                 // READ coil state directly from Modbus
                 const currentState = await readCoil(coilAddress);
+                debugLog(`Coil ${coilKey} current state: ${currentState}`);
 
                 // Get sensor value if applicable
                 let sensorValue: number | undefined;
@@ -308,17 +346,23 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 if (sensorValue !== undefined) {
+                    debugLog(`Sensor value for ${coilKey}: ${sensorValue}`);
                     protectionManager.updateSensorValue(coilKey, sensorValue);
                 }
 
                 // Get protection config using the coil key as device label
                 const protectionConfig = configService.getProtectionConfigByLabel(deviceLabel);
+                debugLog(`Protection config for ${deviceLabel}: ${JSON.stringify(protectionConfig)}`);
+
                 const result = protectionManager.evaluateProtection(coilKey, currentState, protectionConfig);
+                debugLog(`Protection result for ${coilKey}: ${result.action} - ${result.reason}`);
 
                 // Handle protection actions
                 if (!result.allowed || (result.allowed && result.action !== 'allow')) {
+                    debugLog(`Action required for ${coilKey}: ${result.action}`);
+
                     // Create notification for significant events
-                    if (result.action === 'auto_off' || result.action === 'block' || 
+                    if (result.action === 'auto_off' || result.action === 'block' ||
                         result.action === 'force_on' || result.action === 'force_off' ||
                         result.action === 'auto_on') {
                         await createProtectionNotification(coilKey, deviceLabel, result, coilAddress);
@@ -328,21 +372,21 @@ module.exports = function (RED: NodeAPI) {
                     if (result.finalState !== currentState) {
                         if (result.action === 'auto_off' || result.action === 'force_off') {
                             await writeCoil(coilAddress, false);
-                            node.send({ 
-                                payload: { 
-                                    [coilKey]: false, 
+                            node.send({
+                                payload: {
+                                    [coilKey]: false,
                                     reason: result.reason,
-                                    action: result.action 
-                                } 
+                                    action: result.action
+                                }
                             });
                         } else if (result.action === 'auto_on' || result.action === 'force_on') {
                             await writeCoil(coilAddress, true);
-                            node.send({ 
-                                payload: { 
-                                    [coilKey]: true, 
+                            node.send({
+                                payload: {
+                                    [coilKey]: true,
                                     reason: result.reason,
-                                    action: result.action 
-                                } 
+                                    action: result.action
+                                }
                             });
                         }
                     }
@@ -358,8 +402,9 @@ module.exports = function (RED: NodeAPI) {
         // Intervals
         // ========================================================================
 
-        // Run protection check every 1 second
-        const interval = setInterval(checkProtection, PROTECTION_CONFIG.CHECK_INTERVAL_MS);
+        // Run protection check with configurable interval
+        protectionCheckInterval = setInterval(checkProtection, checkIntervalMs);
+        node.log(`Protection check started with interval: ${checkIntervalMs}ms`);
 
         // Config auto-reload every 30 seconds
         configCheckInterval = setInterval(async () => {
@@ -380,7 +425,7 @@ module.exports = function (RED: NodeAPI) {
 
                 if (hasChanged) {
                     node.warn(`Config change: ${changeDescription}`);
-                    
+
                     if (newConfig.mode === 'multi') {
                         ClientRegistry.initializeMultiBoardConfig({
                             mode: 'multi',
@@ -421,7 +466,11 @@ module.exports = function (RED: NodeAPI) {
         // ========================================================================
 
         node.on("close", (done: any) => {
-            clearInterval(interval);
+            if (protectionCheckInterval) {
+                clearInterval(protectionCheckInterval);
+                node.log("Protection check interval stopped");
+            }
+
             if (configCheckInterval) {
                 clearInterval(configCheckInterval);
                 node.log("Config check interval stopped");
