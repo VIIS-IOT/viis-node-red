@@ -1,4 +1,15 @@
 "use strict";
+/**
+ * VIIS Device Protection Node v2.0
+ *
+ * Advanced protection logic with Min/Max/Bypass/Force support
+ *
+ * Architecture follows viis-rpc-control pattern:
+ * - ConfigService for configuration management
+ * - ProtectionManager for business logic
+ * - ErrorNotificationService for alerts
+ * - Constants for centralized configuration
+ */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -6,24 +17,71 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const error_notification_service_1 = require("../../services/error-notification.service");
+const protection_manager_1 = require("./protection-manager");
+const configService_1 = require("./services/configService");
+const constants_1 = require("./constants");
 module.exports = function (RED) {
     function ViisDeviceProtectionNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
-        // Initialize GlobalContextHelper and ErrorNotificationService
+        // ========================================================================
+        // Initialize Services
+        // ========================================================================
         const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
         const errorNotificationService = new error_notification_service_1.ErrorNotificationService(node.context());
-        // Multi-board state variables
+        const configService = new configService_1.ConfigService(node);
+        const protectionManager = new protection_manager_1.ProtectionManager();
+        // ========================================================================
+        // Node State
+        // ========================================================================
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
         let currentModbusConfig = null;
-        // Helper function to read fresh config from global context
+        let modbusClient;
+        let configCheckInterval = null;
+        // Modbus mappings - Follow common_pattern.md
+        // Primary: Use modbus_board1_coils for multi-board setup
+        // Fallback: Use modbusCoils for backward compatibility
+        let modbusCoils = {};
+        let modbusHoldingRegisters = {};
+        let modbusInputRegisters = {};
+        // Try to get multi-board mappings first (common pattern)
+        const boardIdForMapping = currentBoardId || "board1";
+        modbusCoils = (node.context().global.get(`modbus_${boardIdForMapping}_coils`) || {});
+        modbusHoldingRegisters = (node.context().global.get(`modbus_${boardIdForMapping}_holding_registers`) || {});
+        modbusInputRegisters = (node.context().global.get(`modbus_${boardIdForMapping}_input_registers`) || {});
+        // Fallback to legacy modbusCoils if multi-board mapping not found
+        if (Object.keys(modbusCoils).length === 0) {
+            modbusCoils = (node.context().global.get("modbusCoils") || {});
+        }
+        if (Object.keys(modbusHoldingRegisters).length === 0) {
+            modbusHoldingRegisters = (node.context().global.get("modbusHoldingRegisters") || {});
+        }
+        if (Object.keys(modbusInputRegisters).length === 0) {
+            modbusInputRegisters = (node.context().global.get("modbusInputRegisters") || {});
+        }
+        // Final fallback to environment variables
+        if (Object.keys(modbusCoils).length === 0) {
+            modbusCoils = globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_COILS, {});
+        }
+        node.log(`Modbus coils loaded: ${Object.keys(modbusCoils).length} coils`);
+        node.log(`Coil keys: ${JSON.stringify(Object.keys(modbusCoils))}`);
+        // Debug: Log a sample coil address
+        if (modbusCoils["lamp_control_1"]) {
+            node.log(`lamp_control_1 address: ${modbusCoils["lamp_control_1"]}`);
+        }
+        else {
+            node.warn(`lamp_control_1 NOT FOUND in modbusCoils!`);
+            node.warn(`Available keys: ${JSON.stringify(Object.keys(modbusCoils))}`);
+        }
+        // ========================================================================
+        // Modbus Configuration
+        // ========================================================================
         const readModbusConfig = () => {
-            const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+            const boardsConfig = globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_BOARDS, null);
             if (boardsConfig) {
                 try {
                     let boards;
-                    // Handle both already-parsed array and JSON string
                     if (Array.isArray(boardsConfig)) {
                         boards = boardsConfig;
                     }
@@ -31,47 +89,42 @@ module.exports = function (RED) {
                         boards = JSON.parse(boardsConfig);
                     }
                     else {
-                        node.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                        node.error(`${constants_1.ERROR_MESSAGES.CONFIG_LOAD_FAILED}: Invalid MODBUS_BOARDS type`);
                         boards = null;
                     }
                     if (Array.isArray(boards) && boards.length > 0) {
                         return {
                             mode: 'multi',
                             boards: boards,
-                            defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                            defaultBoard: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_DEFAULT_BOARD, boards[0].id)
                         };
                     }
                 }
                 catch (e) {
-                    node.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                    node.error(`${constants_1.ERROR_MESSAGES.CONFIG_LOAD_FAILED}: ${e}`);
                 }
             }
             return {
                 mode: 'single',
                 config: {
-                    type: globalHelper.getEnvVar("MODBUS_TYPE", "TCP"),
-                    host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
-                    tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
-                    serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
-                    baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
-                    parity: globalHelper.getEnvVar("MODBUS_PARITY", "none"),
-                    unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
-                    timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
-                    reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+                    type: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_TYPE, constants_1.MODBUS_CONFIG.DEFAULT_TYPE),
+                    host: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_HOST, constants_1.MODBUS_CONFIG.DEFAULT_HOST),
+                    tcpPort: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_TCP_PORT, constants_1.MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                    serialPort: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_SERIAL_PORT, constants_1.MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                    baudRate: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_BAUD_RATE, constants_1.MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                    parity: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_PARITY, constants_1.MODBUS_CONFIG.DEFAULT_PARITY),
+                    unitId: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_UNIT_ID, constants_1.MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                    timeout: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_TIMEOUT, constants_1.MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                    reconnectInterval: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_RECONNECT_INTERVAL, constants_1.MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
                 }
             };
         };
-        // Environment variables for Modbus mappings
-        let modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
-        let modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-        let modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
-        // Initialize Modbus configuration
+        // Initialize Modbus
         const configData = readModbusConfig();
         currentModbusConfig = Object.assign({}, configData);
-        // Auto-detect mode
         if (configData.mode === 'multi') {
             isMultiBoardMode = true;
-            node.log(`Multi-board mode detected with ${configData.boards.length} boards`);
+            node.log(`Multi-board mode: ${configData.boards.length} boards`);
             const multiConfig = {
                 mode: 'multi',
                 defaultBoard: configData.defaultBoard,
@@ -80,226 +133,254 @@ module.exports = function (RED) {
             client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
         }
         else {
-            isMultiBoardMode = false;
             node.log(`Single-board mode`);
         }
-        // Get Modbus client - use deferred initialization
-        let modbusClient;
-        // Async initialization wrapper
+        // ========================================================================
+        // Async Initialization
+        // ========================================================================
         const initModbusClient = async () => {
-            if (isMultiBoardMode) {
-                const boardToUse = currentBoardId || configData.defaultBoard;
-                node.log(`Getting client for board: ${boardToUse}`);
-                modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+            try {
+                if (isMultiBoardMode) {
+                    const boardToUse = currentBoardId || configData.defaultBoard;
+                    modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+                }
+                else {
+                    modbusClient = await client_registry_1.default.getModbusClientV2(configData.config, node);
+                }
+                if (!modbusClient) {
+                    node.error(constants_1.ERROR_MESSAGES.CLIENT_INIT_FAILED);
+                    node.status({ fill: "red", shape: "ring", text: constants_1.STATUS_MESSAGES.MODBUS_FAILED });
+                    return false;
+                }
+                node.log("Modbus client initialized");
+                node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.RUNNING });
+                return true;
             }
-            else {
-                modbusClient = await client_registry_1.default.getModbusClientV2(configData.config, node);
-            }
-            if (!modbusClient) {
-                node.error("Failed to initialize Modbus client");
-                node.status({ fill: "red", shape: "ring", text: "Modbus client failed" });
+            catch (err) {
+                node.error(`Modbus init error: ${err.message}`);
                 return false;
             }
-            return true;
         };
-        // Initialize Modbus client in background
-        initModbusClient().then(success => {
-            if (success) {
-                node.log("Modbus client initialized successfully");
-                node.status({ fill: "green", shape: "dot", text: "Running" });
-            }
-        }).catch(err => {
-            node.error(`Failed to initialize Modbus client: ${err.message}`);
+        initModbusClient().catch(err => {
+            node.error(`Modbus init error: ${err.message}`);
         });
-        // Trạng thái theo dõi thời gian bật của các coil
-        const coilTimers = {};
-        // Hàm đọc trạng thái coil từ Modbus
-        async function readCoil(address) {
+        // ========================================================================
+        // Modbus Operations
+        // ========================================================================
+        const readCoil = async (address) => {
             if (!modbusClient) {
-                node.warn("Modbus client not ready yet");
+                node.warn("Modbus client not ready");
                 return false;
             }
             try {
                 const result = await modbusClient.readCoils(address, 1);
-                return Boolean(result.data[0]);
+                const state = Boolean(result.data[0]);
+                return state;
             }
             catch (error) {
-                const err = error;
-                node.error(`Modbus read coil error at address ${address}: ${err.message}`);
+                node.error(`Read coil error at ${address}: ${error.message}`);
                 return false;
             }
-        }
-        // Hàm ghi trạng thái coil vào Modbus
-        async function writeCoil(address, value) {
+        };
+        const writeCoil = async (address, value) => {
             if (!modbusClient) {
-                node.warn("Modbus client not ready yet");
+                node.warn("Modbus client not ready");
                 return;
             }
             try {
                 await modbusClient.writeCoil(address, value);
-                node.log(`Wrote to coil at address ${address}: ${value}`);
+                node.log(`Write coil ${address}: ${value}`);
             }
             catch (error) {
-                const err = error;
-                node.error(`Modbus write coil error at address ${address}: ${err.message}`);
+                node.error(`${constants_1.ERROR_MESSAGES.MODBUS_WRITE_FAILED(address.toString())}: ${error.message}`);
             }
-        }
-        // Hàm kiểm tra và áp dụng logic bảo vệ
-        async function checkProtection() {
-            const configKeyValues = node.context().global.get("configKeyValues") || {};
+        };
+        // ========================================================================
+        // Protection Logic
+        // ========================================================================
+        const createProtectionNotification = async (deviceKey, deviceLabel, result, coilAddress) => {
+            var _a, _b, _c, _d, _e;
+            try {
+                await errorNotificationService.createFromBusinessLogic({
+                    err_code: `PROTECTION_${deviceLabel}_${(_a = result.action) === null || _a === void 0 ? void 0 : _a.toUpperCase()}`,
+                    message: `${deviceLabel}: ${result.reason}`,
+                    severity: result.action === 'block' || result.action === 'auto_off' ? 'high' : 'medium',
+                    type: 'alert',
+                    entity: node.id,
+                    metadata: {
+                        device_key: deviceKey,
+                        device_label: deviceLabel,
+                        action: result.action,
+                        reason: result.reason,
+                        coil_address: coilAddress,
+                        elapsed_on_time: (_b = result.metadata) === null || _b === void 0 ? void 0 : _b.elapsedOnTime,
+                        elapsed_off_time: (_c = result.metadata) === null || _c === void 0 ? void 0 : _c.elapsedOffTime,
+                        violation: (_d = result.metadata) === null || _d === void 0 ? void 0 : _d.violation,
+                        sensor_value: (_e = result.metadata) === null || _e === void 0 ? void 0 : _e.sensorValue,
+                        board_id: currentBoardId || 'default',
+                        timestamp: new Date().toISOString()
+                    }
+                });
+                node.log(`Created notification for ${deviceLabel}: ${result.reason}`);
+            }
+            catch (notifError) {
+                node.error(`${constants_1.ERROR_MESSAGES.NOTIFICATION_CREATE_FAILED}: ${notifError.message}`);
+            }
+        };
+        const checkProtection = async () => {
+            const configKeyValues = configService.getConfigKeyValues();
             if (!configKeyValues || Object.keys(configKeyValues).length === 0) {
-                // node.warn("No configKeyValues found in global context");
-                node.status({ fill: "yellow", shape: "ring", text: "No configKeyValues" });
+                node.status({ fill: "yellow", shape: "ring", text: constants_1.STATUS_MESSAGES.NO_CONFIG });
                 return;
             }
-            // Lấy dữ liệu telemetry từ biến global coilRegisterData
-            const coilData = node.context().global.get("coilRegisterData") || {};
-            for (const [key, value] of Object.entries(configKeyValues)) {
-                // Chỉ xử lý các key liên quan đến giới hạn thời gian (có hậu tố _MAX_TIME)
-                if (!key.endsWith("_MAX_TIME"))
-                    continue;
-                const coilKey = key.replace("_MAX_TIME", ""); // Ví dụ: COIL_OUTPUT_WATER_IN_MAX_TIME -> COIL_OUTPUT_WATER_IN
-                const maxTime = Number(value); // Thời gian tối đa (giây)
-                if (isNaN(maxTime) || maxTime <= 0) {
-                    node.warn(`Invalid max time for ${key}: ${value}`);
-                    continue;
-                }
-                // Lấy trạng thái của coil từ dữ liệu telemetry
-                const isCoilOn = coilData[coilKey];
-                if (isCoilOn) {
-                    if (!coilTimers[coilKey]) {
-                        // Bắt đầu đếm thời gian nếu coil vừa bật
-                        coilTimers[coilKey] = {
-                            startTime: Date.now(),
-                            maxTime: maxTime * 1000, // Chuyển sang milliseconds
-                        };
-                        node.log(`Started timer for ${coilKey} with max time ${maxTime}s`);
-                    }
-                    else {
-                        // Kiểm tra thời gian đã vượt quá chưa
-                        const elapsedTime = Date.now() - coilTimers[coilKey].startTime;
-                        if (elapsedTime > coilTimers[coilKey].maxTime) {
-                            node.warn(`Coil ${coilKey} exceeded max time (${maxTime}s). Turning off.`);
-                            // Create error notification for protection timeout
-                            try {
-                                await errorNotificationService.createFromBusinessLogic({
-                                    err_code: `PROTECTION_${coilKey}_TIMEOUT`,
-                                    message: `Device protection: ${coilKey} exceeded maximum runtime of ${maxTime} seconds`,
-                                    severity: 'high',
-                                    type: 'alert',
-                                    entity: node.id,
-                                    metadata: {
-                                        coil_key: coilKey,
-                                        max_time_seconds: maxTime,
-                                        elapsed_time_ms: elapsedTime,
-                                        coil_address: modbusCoils[coilKey],
-                                        action_taken: 'coil_turned_off',
-                                        board_id: currentBoardId || 'default',
-                                        timestamp: new Date().toISOString()
-                                    }
-                                });
-                                node.log(`Created protection timeout notification for ${coilKey}`);
-                            }
-                            catch (notifError) {
-                                node.error(`Failed to create notification: ${notifError.message}`);
-                            }
-                            // Giữ lại thao tác tắt coil qua Modbus nếu cần (ví dụ khi cần gửi lệnh về PLC)
-                            await writeCoil(modbusCoils[coilKey], false);
-                            delete coilTimers[coilKey];
-                            node.send({ payload: { [coilKey]: false, reason: "Exceeded max time" } });
-                        }
-                    }
-                }
-                else {
-                    // Nếu coil đã tắt, xóa timer (nếu có)
-                    if (coilTimers[coilKey]) {
-                        delete coilTimers[coilKey];
-                        node.log(`Timer for ${coilKey} cleared`);
-                    }
+            const sensorData = configService.getSensorData();
+            // Auto-detect all protection configs from configKeyValues
+            // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
+            const protectedCoils = new Set();
+            for (const key of Object.keys(configKeyValues)) {
+                const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit)$/);
+                if (match) {
+                    protectedCoils.add(match[1]); // coil name like "lamp_control_1"
                 }
             }
-            node.status({ fill: "green", shape: "dot", text: "Running" });
-        }
-        // Chạy kiểm tra định kỳ mỗi 1 giây
-        const interval = setInterval(checkProtection, 1000);
-        // Auto-detect config changes every 30 seconds
-        const configCheckInterval = setInterval(async () => {
+            // Process each protected coil (use Array.from for ES5 compatibility)
+            const coilsArray = Array.from(protectedCoils);
+            for (let i = 0; i < coilsArray.length; i++) {
+                const coilKey = coilsArray[i];
+                const deviceLabel = coilKey.toLowerCase();
+                const coilAddress = modbusCoils[coilKey];
+                // Skip if coil address not defined
+                if (coilAddress === undefined) {
+                    // Silent skip - coil not in modbus mapping
+                    // node.debug(`Coil ${coilKey} not in modbus mapping, skipping`);
+                    continue;
+                }
+                // READ coil state directly from Modbus
+                const currentState = await readCoil(coilAddress);
+                // Get sensor value if applicable
+                let sensorValue;
+                if (coilKey.includes('cool') || coilKey.includes('ac')) {
+                    sensorValue = sensorData['cool_Aquara_temp_1'] || sensorData['cool_Aquara_temp_2'];
+                }
+                else if (coilKey.includes('humid')) {
+                    sensorValue = sensorData['humid_sensor_1'] || sensorData['humid_sensor_2'];
+                }
+                else if (coilKey.includes('co2')) {
+                    sensorValue = sensorData['co2_sensor_1'];
+                }
+                if (sensorValue !== undefined) {
+                    protectionManager.updateSensorValue(coilKey, sensorValue);
+                }
+                // Get protection config using the coil key as device label
+                const protectionConfig = configService.getProtectionConfigByLabel(deviceLabel);
+                const result = protectionManager.evaluateProtection(coilKey, currentState, protectionConfig);
+                // Handle protection actions
+                if (!result.allowed || (result.allowed && result.action !== 'allow')) {
+                    // Create notification for significant events
+                    if (result.action === 'auto_off' || result.action === 'block' ||
+                        result.action === 'force_on' || result.action === 'force_off' ||
+                        result.action === 'auto_on') {
+                        await createProtectionNotification(coilKey, deviceLabel, result, coilAddress);
+                    }
+                    // WRITE coil if state needs to change
+                    if (result.finalState !== currentState) {
+                        if (result.action === 'auto_off' || result.action === 'force_off') {
+                            await writeCoil(coilAddress, false);
+                            node.send({
+                                payload: {
+                                    [coilKey]: false,
+                                    reason: result.reason,
+                                    action: result.action
+                                }
+                            });
+                        }
+                        else if (result.action === 'auto_on' || result.action === 'force_on') {
+                            await writeCoil(coilAddress, true);
+                            node.send({
+                                payload: {
+                                    [coilKey]: true,
+                                    reason: result.reason,
+                                    action: result.action
+                                }
+                            });
+                        }
+                    }
+                    node.log(`${deviceLabel}: ${result.reason}`);
+                }
+            }
+            node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.RUNNING });
+        };
+        // ========================================================================
+        // Intervals
+        // ========================================================================
+        // Run protection check every 1 second
+        const interval = setInterval(checkProtection, constants_1.PROTECTION_CONFIG.CHECK_INTERVAL_MS);
+        // Config auto-reload every 30 seconds
+        configCheckInterval = setInterval(async () => {
             try {
                 const newConfig = readModbusConfig();
-                // Check if mode has changed or if critical config has changed
                 let hasChanged = false;
                 let changeDescription = "";
                 if (currentModbusConfig.mode !== newConfig.mode) {
                     hasChanged = true;
-                    changeDescription = `mode changed from ${currentModbusConfig.mode} to ${newConfig.mode}`;
+                    changeDescription = `mode: ${currentModbusConfig.mode} → ${newConfig.mode}`;
                 }
-                else if (newConfig.mode === 'single' && currentModbusConfig.mode === 'single') {
+                else if (newConfig.mode === 'single') {
                     const oldCfg = currentModbusConfig.config;
                     const newCfg = newConfig.config;
-                    hasChanged =
-                        oldCfg.host !== newCfg.host ||
-                            oldCfg.tcpPort !== newCfg.tcpPort ||
-                            oldCfg.serialPort !== newCfg.serialPort ||
-                            oldCfg.type !== newCfg.type;
-                    if (hasChanged) {
-                        changeDescription = `${newCfg.host}:${newCfg.tcpPort}`;
-                    }
-                }
-                else if (newConfig.mode === 'multi' && currentModbusConfig.mode === 'multi') {
-                    const oldBoards = JSON.stringify(currentModbusConfig.boards);
-                    const newBoards = JSON.stringify(newConfig.boards);
-                    hasChanged = oldBoards !== newBoards;
-                    if (hasChanged) {
-                        changeDescription = `board configuration updated`;
-                    }
+                    hasChanged = oldCfg.host !== newCfg.host || oldCfg.tcpPort !== newCfg.tcpPort;
+                    if (hasChanged)
+                        changeDescription = `host: ${newCfg.host}:${newCfg.tcpPort}`;
                 }
                 if (hasChanged) {
-                    node.warn(`[HOT-RELOAD] Config change detected: ${changeDescription}`);
+                    node.warn(`Config change: ${changeDescription}`);
                     if (newConfig.mode === 'multi') {
-                        const multiConfig = {
+                        client_registry_1.default.initializeMultiBoardConfig({
                             mode: 'multi',
                             defaultBoard: newConfig.defaultBoard,
                             boards: newConfig.boards
-                        };
-                        client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
-                        const boardToUse = currentBoardId || newConfig.defaultBoard;
-                        modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+                        }, node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(currentBoardId || newConfig.defaultBoard, node);
                     }
                     else {
-                        const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
-                        if (reloaded) {
-                            modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
-                        }
+                        await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
                     }
                     currentModbusConfig = Object.assign({}, newConfig);
                     isMultiBoardMode = newConfig.mode === 'multi';
-                    node.warn(`[HOT-RELOAD] Modbus reloaded: ${changeDescription}`);
+                    node.log(`Modbus reloaded: ${changeDescription}`);
                 }
-                // Update Modbus mappings
-                modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
-                modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-                modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
+                // Update coil mappings - Follow common pattern
+                const boardIdForMapping = currentBoardId || "board1";
+                modbusCoils = (node.context().global.get(`modbus_${boardIdForMapping}_coils`) ||
+                    node.context().global.get("modbusCoils") ||
+                    globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_COILS, {}));
+                modbusHoldingRegisters = (node.context().global.get(`modbus_${boardIdForMapping}_holding_registers`) ||
+                    node.context().global.get("modbusHoldingRegisters") || {});
+                modbusInputRegisters = (node.context().global.get(`modbus_${boardIdForMapping}_input_registers`) ||
+                    node.context().global.get("modbusInputRegisters") || {});
             }
             catch (error) {
-                node.error(`[HOT-RELOAD] Config check error: ${error.message}`);
+                node.error(`Config check error: ${error.message}`);
             }
-        }, 30000); // Check every 30 seconds
-        node.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
-        // Cleanup khi node bị xóa hoặc đóng
+        }, constants_1.PROTECTION_CONFIG.CONFIG_CHECK_INTERVAL_MS);
+        node.log("Protection node started (v2.0 with Min/Max/Bypass/Force)");
+        // ========================================================================
+        // Cleanup
+        // ========================================================================
         node.on("close", (done) => {
             clearInterval(interval);
             if (configCheckInterval) {
                 clearInterval(configCheckInterval);
-                node.log("[CLEANUP] Config check interval stopped");
+                node.log("Config check interval stopped");
             }
-            // Release Modbus client (multi-board aware)
             if (isMultiBoardMode && currentBoardId) {
                 client_registry_1.default.releaseClientV2("modbus-board", node, currentBoardId);
             }
             else {
                 client_registry_1.default.releaseClientV2("modbus", node);
             }
-            node.log("Protection node closed and Modbus client released");
+            node.log("Protection node closed");
             done();
         });
     }
