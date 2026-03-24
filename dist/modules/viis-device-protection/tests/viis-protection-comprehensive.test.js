@@ -437,5 +437,34 @@ describe('VIIS Device Protection', () => {
             expect(result.upperLimit).toBe(32);
             expect(result.lowerLimit).toBe(20);
         });
+        it('should resolve generalized protect config for dynamic label', () => {
+            const mockData = {
+                configKeyValues: {
+                    'lamp_control_protect_max_time_on': 120,
+                    'lamp_control_protect_bypass': true
+                }
+            };
+            const mockNode = createMockNode(mockData);
+            const configService = new configService_1.ConfigService(mockNode);
+            const result = configService.getProtectionConfigByLabel('lamp_control_1');
+            expect(result.maxTimeOn).toBe(120);
+            expect(result.bypass).toBe(true);
+            expect(result.deviceType).toBe('lamp_control_1');
+        });
+        it('should prioritize specific protect config over generalized config', () => {
+            const mockData = {
+                configKeyValues: {
+                    'lamp_control_protect_max_time_on': 120,
+                    'lamp_control_1_protect_max_time_on': 30,
+                    'lamp_control_protect_force_on': false,
+                    'lamp_control_1_protect_force_on': true
+                }
+            };
+            const mockNode = createMockNode(mockData);
+            const configService = new configService_1.ConfigService(mockNode);
+            const result = configService.getProtectionConfigByLabel('lamp_control_1');
+            expect(result.maxTimeOn).toBe(30);
+            expect(result.forceOn).toBe(true);
+        });
     });
 });

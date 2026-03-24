@@ -287,9 +287,10 @@ When protection actions are triggered, the node sends messages:
 ```javascript
 {
   payload: {
-    "LAMP_CONTROL": false,
-    reason: "Max time ON exceeded (3601.2s/3600s) - Auto OFF",
-    action: "auto_off"
+    "lamp_control_1": false,
+    "reason": "Max time ON exceeded (3601.2s/3600s) - Auto OFF",
+    "action": "auto_off",
+    "writeSuccess": true
   }
 }
 ```
@@ -299,8 +300,9 @@ When protection actions are triggered, the node sends messages:
 {
   payload: {
     "COOL_AC1_CONTROL": true,
-    reason: "Min time ON not met (120.5s/300s) - Must stay ON",
-    action: "block"
+    "reason": "Min time ON not met (120.5s/300s) - Must stay ON",
+    "action": "block",
+    "writeSuccess": null
   }
 }
 ```
@@ -310,8 +312,9 @@ When protection actions are triggered, the node sends messages:
 {
   payload: {
     "FAN_INTAKE_CONTROL": true,
-    reason: "Force ON active",
-    action: "force_on"
+    "reason": "Force ON active",
+    "action": "force_on",
+    "writeSuccess": true
   }
 }
 ```
@@ -321,14 +324,24 @@ When protection actions are triggered, the node sends messages:
 {
   payload: {
     "COOL_AC1_CONTROL": true,
-    reason: "Sensor (29.5) exceeded upper limit (28) - Auto ON",
-    action: "auto_on",
-    metadata: {
+    "reason": "Sensor (29.5) exceeded upper limit (28) - Auto ON",
+    "action": "auto_on",
+    "metadata": {
       sensor_value: 29.5
-    }
+    },
+    "writeSuccess": true
   }
 }
 ```
+
+### Output Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `payload.{coil_key}` | Boolean | New coil state |
+| `reason` | String | Human-readable reason for action |
+| `action` | String | Action type (`allow`, `block`, `force_on`, `force_off`, `auto_on`, `auto_off`, `bypass`) |
+| `writeSuccess` | Boolean | `true` if write + read-back succeeded, `false` if verification failed |
 
 ---
 

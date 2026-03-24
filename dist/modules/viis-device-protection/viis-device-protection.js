@@ -38,11 +38,12 @@ module.exports = function (RED) {
         let isMultiBoardMode = false;
         let currentModbusConfig = null;
         let modbusClient;
+        let mqttClient;
+        let publishTopic;
         let configCheckInterval = null;
-        let protectionCheckInterval = null;
+        let isProtectionCheckRunning = false;
         // Debug mode
         const enableDebug = config.enableDebug === true;
-        const checkIntervalMs = config.checkInterval || 1000; // Default 1 second
         // Debug helper
         const debugLog = (message) => {
             if (enableDebug) {
@@ -50,8 +51,45 @@ module.exports = function (RED) {
             }
         };
         node.log(`Debug mode: ${enableDebug ? 'ENABLED' : 'DISABLED'}`);
-        node.log(`Check interval: ${checkIntervalMs}ms`);
         node.log(`Board ID: ${currentBoardId}`);
+        // ========================================================================
+        // Initialize MQTT (non-blocking)
+        // ========================================================================
+        const initMqtt = async () => {
+            try {
+                const deviceId = globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ID, "unknown");
+                const mqttBroker = "thingsboard"; // Default to ThingsBoard
+                const mqttConfig = mqttBroker === "thingsboard"
+                    ? {
+                        broker: `mqtt://${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_HOST, "mqtt.viis.tech")}:${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PORT, "1883")}`,
+                        clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
+                        username: globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
+                        password: globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PASSWORD, ""),
+                        qos: 1,
+                    }
+                    : {
+                        broker: `mqtt://${globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_HOST, "emqx")}:${globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PORT, "1883")}`,
+                        clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
+                        username: globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_USERNAME, ""),
+                        password: globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PASSWORD, ""),
+                        qos: 1,
+                    };
+                publishTopic = mqttBroker === "thingsboard"
+                    ? `v1/devices/me/telemetry`
+                    : `v1/devices/me/telemetry/${deviceId}`;
+                mqttClient = mqttBroker === "thingsboard"
+                    ? await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node)
+                    : await client_registry_1.default.getLocalMqttClient(mqttConfig, node);
+                node.log("MQTT client initialized for protection telemetry");
+            }
+            catch (error) {
+                node.warn(`MQTT initialization failed: ${error.message}`);
+                node.warn("Protection node will work locally without MQTT publishing");
+            }
+        };
+        initMqtt().catch(err => {
+            node.error(`MQTT init error: ${err.message}`);
+        });
         // Modbus mappings - Follow common_pattern.md
         // Primary: Use modbus_board1_coils for multi-board setup
         // Fallback: Use modbusCoils for backward compatibility
@@ -166,7 +204,7 @@ module.exports = function (RED) {
                     return false;
                 }
                 node.log("Modbus client initialized");
-                node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.RUNNING });
+                node.status({ fill: "green", shape: "ring", text: "Ready (inject)" });
                 return true;
             }
             catch (err) {
@@ -198,14 +236,50 @@ module.exports = function (RED) {
         const writeCoil = async (address, value) => {
             if (!modbusClient) {
                 node.warn("Modbus client not ready");
-                return;
+                return false;
             }
             try {
                 await modbusClient.writeCoil(address, value);
                 node.log(`Write coil ${address}: ${value}`);
+                // Read-back to verify write succeeded
+                const readValue = await readCoil(address);
+                debugLog(`Read-back verification for coil ${address}: ${readValue} (expected: ${value})`);
+                // Update global context cache (coilRegisterData)
+                try {
+                    const coilRegisterData = node.context().global.get("coilRegisterData") || {};
+                    // Find coil key by address
+                    const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
+                    if (coilKey) {
+                        coilRegisterData[coilKey] = readValue;
+                        node.context().global.set("coilRegisterData", coilRegisterData);
+                        debugLog(`Updated coilRegisterData: ${coilKey}=${readValue}`);
+                    }
+                }
+                catch (cacheError) {
+                    node.warn(`Failed to update coilRegisterData cache: ${cacheError.message}`);
+                }
+                // Publish to MQTT
+                if (mqttClient && mqttClient.isConnected()) {
+                    try {
+                        const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
+                        if (coilKey) {
+                            const payload = {
+                                ts: Date.now(),
+                                [coilKey]: readValue
+                            };
+                            await mqttClient.publish(publishTopic, JSON.stringify(payload));
+                            debugLog(`Published to MQTT ${publishTopic}: ${coilKey}=${readValue}`);
+                        }
+                    }
+                    catch (mqttError) {
+                        node.warn(`Failed to publish MQTT: ${mqttError.message}`);
+                    }
+                }
+                return readValue === value; // Return true if read-back matches written value
             }
             catch (error) {
                 node.error(`${constants_1.ERROR_MESSAGES.MODBUS_WRITE_FAILED(address.toString())}: ${error.message}`);
+                return false;
             }
         };
         // ========================================================================
@@ -252,10 +326,22 @@ module.exports = function (RED) {
             // Auto-detect all protection configs from configKeyValues
             // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
             const protectedCoils = new Set();
+            const coilKeys = Object.keys(modbusCoils);
             for (const key of Object.keys(configKeyValues)) {
                 const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit)$/);
                 if (match) {
-                    protectedCoils.add(match[1]); // coil name like "lamp_control_1"
+                    const baseKey = match[1];
+                    // Exact mapping support (e.g. lamp_control_1_protect_* -> lamp_control_1)
+                    if (modbusCoils[baseKey] !== undefined) {
+                        protectedCoils.add(baseKey);
+                    }
+                    // Generalized mapping support (e.g. lamp_control_protect_* -> lamp_control_1, lamp_control_2)
+                    const prefix = `${baseKey}_`;
+                    for (const coilKey of coilKeys) {
+                        if (coilKey.startsWith(prefix)) {
+                            protectedCoils.add(coilKey);
+                        }
+                    }
                 }
             }
             debugLog(`Found ${protectedCoils.size} protected coils: ${Array.from(protectedCoils).join(", ")}`);
@@ -305,26 +391,24 @@ module.exports = function (RED) {
                     }
                     // WRITE coil if state needs to change
                     if (result.finalState !== currentState) {
-                        if (result.action === 'auto_off' || result.action === 'force_off') {
-                            await writeCoil(coilAddress, false);
-                            node.send({
-                                payload: {
-                                    [coilKey]: false,
-                                    reason: result.reason,
-                                    action: result.action
-                                }
-                            });
+                        const targetState = result.finalState;
+                        debugLog(`Writing coil ${coilKey} to ${targetState}`);
+                        const writeSuccess = await writeCoil(coilAddress, targetState);
+                        if (writeSuccess) {
+                            debugLog(`Coil ${coilKey} successfully updated to ${targetState}`);
                         }
-                        else if (result.action === 'auto_on' || result.action === 'force_on') {
-                            await writeCoil(coilAddress, true);
-                            node.send({
-                                payload: {
-                                    [coilKey]: true,
-                                    reason: result.reason,
-                                    action: result.action
-                                }
-                            });
+                        else {
+                            node.warn(`Coil ${coilKey} write may have failed - read-back verification failed`);
                         }
+                        // Send output message
+                        node.send({
+                            payload: {
+                                [coilKey]: targetState,
+                                reason: result.reason,
+                                action: result.action,
+                                writeSuccess: writeSuccess
+                            }
+                        });
                     }
                     node.log(`${deviceLabel}: ${result.reason}`);
                 }
@@ -332,11 +416,43 @@ module.exports = function (RED) {
             node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.RUNNING });
         };
         // ========================================================================
-        // Intervals
+        // Trigger / Config Reload
         // ========================================================================
-        // Run protection check with configurable interval
-        protectionCheckInterval = setInterval(checkProtection, checkIntervalMs);
-        node.log(`Protection check started with interval: ${checkIntervalMs}ms`);
+        const runProtectionCheck = async (trigger, done) => {
+            if (isProtectionCheckRunning) {
+                const warning = `Skip trigger (${trigger}): protection check is already running`;
+                debugLog(warning);
+                if (done)
+                    done();
+                return;
+            }
+            isProtectionCheckRunning = true;
+            try {
+                debugLog(`Run protection check by trigger: ${trigger}`);
+                await checkProtection();
+                node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.RUNNING });
+                if (done)
+                    done();
+            }
+            catch (error) {
+                const err = error;
+                node.error(`Protection check error: ${err.message}`);
+                node.status({ fill: "red", shape: "ring", text: "Check failed" });
+                if (done)
+                    done(err);
+            }
+            finally {
+                isProtectionCheckRunning = false;
+            }
+        };
+        node.on("input", (msg, send, done) => {
+            if (msg && typeof msg === "object" && msg.boardId && msg.boardId !== currentBoardId) {
+                currentBoardId = String(msg.boardId);
+                debugLog(`Updated boardId from inject: ${currentBoardId}`);
+            }
+            runProtectionCheck("inject", done);
+        });
+        node.log("Protection node started (inject-trigger mode)");
         // Config auto-reload every 30 seconds
         configCheckInterval = setInterval(async () => {
             try {
@@ -386,24 +502,35 @@ module.exports = function (RED) {
                 node.error(`Config check error: ${error.message}`);
             }
         }, constants_1.PROTECTION_CONFIG.CONFIG_CHECK_INTERVAL_MS);
-        node.log("Protection node started (v2.0 with Min/Max/Bypass/Force)");
         // ========================================================================
         // Cleanup
         // ========================================================================
         node.on("close", (done) => {
-            if (protectionCheckInterval) {
-                clearInterval(protectionCheckInterval);
-                node.log("Protection check interval stopped");
-            }
             if (configCheckInterval) {
                 clearInterval(configCheckInterval);
                 node.log("Config check interval stopped");
             }
+            // Disconnect MQTT client
+            if (mqttClient) {
+                mqttClient.disconnect();
+                node.log("MQTT client disconnected");
+            }
+            // Release Modbus client (multi-board aware)
             if (isMultiBoardMode && currentBoardId) {
                 client_registry_1.default.releaseClientV2("modbus-board", node, currentBoardId);
             }
             else {
                 client_registry_1.default.releaseClientV2("modbus", node);
+            }
+            // Release MQTT clients
+            if (mqttClient) {
+                const mqttBroker = "thingsboard"; // Match initialization
+                if (mqttBroker === "thingsboard") {
+                    client_registry_1.default.releaseClient("thingsboard", node);
+                }
+                else {
+                    client_registry_1.default.releaseClient("local", node);
+                }
             }
             node.log("Protection node closed");
             done();

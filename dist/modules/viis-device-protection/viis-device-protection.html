@@ -8,11 +8,6 @@
         <input type="text" id="node-input-boardId" placeholder="board1">
     </div>
     <div class="form-row">
-        <label for="node-input-checkInterval"><i class="fa fa-clock-o"></i> Check Interval (ms)</label>
-        <input type="number" id="node-input-checkInterval" placeholder="1000" min="100" step="100">
-        <small style="display: block; margin-top: 5px; color: #666;">Minimum: 100ms, Default: 1000ms</small>
-    </div>
-    <div class="form-row">
         <label for="node-input-enableDebug"><i class="fa fa-bug"></i> Enable Debug</label>
         <input type="checkbox" id="node-input-enableDebug" style="width: auto;">
         <span style="margin-left: 10px;">Enable detailed logging</span>
@@ -29,10 +24,9 @@
         defaults: {
             name: { value: "" },
             boardId: { value: "board1" },
-            checkInterval: { value: 1000, validate: function(v) { return !v || (RED.validators.number(v) && v >= 100); } },
             enableDebug: { value: false }
         },
-        inputs: 0,
+        inputs: 1,
         outputs: 1,
         icon: "shield.png",
         label: function () {
@@ -51,7 +45,6 @@
     <ul>
         <li><b>Name</b> – Optional label for this node.</li>
         <li><b>Board ID</b> – Modbus board identifier (e.g., "board1", "board2"). Default: "board1".</li>
-        <li><b>Check Interval (ms)</b> – How often to check protection rules. Minimum: 100ms, Default: 1000ms.</li>
         <li><b>Enable Debug</b> – Enable detailed debug logging with [DEBUG] prefix.</li>
     </ul>
 
@@ -98,13 +91,30 @@
   "payload": {
     "lamp_control_1": false,
     "reason": "Max time ON exceeded (3601.2s/3600s) - Auto OFF",
-    "action": "auto_off"
+    "action": "auto_off",
+    "writeSuccess": true
   }
 }
     </pre>
+    <p><b>writeSuccess</b>: true if write + read-back verification succeeded, false otherwise.</p>
+
+    <h4>🔄 Read-Back & MQTT Publishing</h4>
+    <p>After writing to Modbus, the node automatically:</p>
+    <ol>
+        <li>Reads back the coil state to verify write succeeded</li>
+        <li>Updates global context <code>coilRegisterData</code> cache</li>
+        <li>Publishes to MQTT telemetry topic (if MQTT is connected)</li>
+    </ol>
+    <p>This ensures data consistency across the system and enables real-time monitoring.</p>
 
     <h4>📥 Inputs</h4>
-    <p>None (node runs autonomously)</p>
+        <p>Connect an Inject node (or any upstream node) to trigger protection check on demand.</p>
+        <pre>
+{
+    "boardId": "board1"
+}
+        </pre>
+        <p><code>boardId</code> is optional. If provided, node updates board selection for next checks.</p>
 
     <h4>🧠 Global Context Used</h4>
     <ul>
@@ -117,7 +127,7 @@
 
     <h4>🔁 Behavior</h4>
     <ul>
-        <li>Runs protection check at configured interval (default: 1 second)</li>
+        <li>Runs protection check only when receiving input message</li>
         <li>Auto-reloads Modbus configuration every 30 seconds</li>
         <li>Node status:
             <ul>

@@ -55,18 +55,42 @@ class ConfigService {
     }
     /**
      * Get protection config by device label (dynamic coil names)
-     * Example: deviceLabel = "lamp_control_1" → looks for "lamp_control_1_protect_*"
+     * Resolution order:
+     * 1) Exact key: lamp_control_1_protect_*
+     * 2) Generalized prefixes: lamp_control_protect_*, lamp_protect_*
+     *
+     * Example: deviceLabel = "lamp_control_1"
+     * - exact: lamp_control_1_protect_max_time_on
+     * - fallback: lamp_control_protect_max_time_on
      */
     getProtectionConfigByLabel(deviceLabel) {
         const configKeyValues = this.getConfigKeyValues();
+        const buildLookupLabels = (label) => {
+            const labels = [label];
+            const parts = label.split('_');
+            // Add generalized prefixes by removing trailing segments.
+            // Example: lamp_control_1 -> lamp_control -> lamp
+            for (let i = parts.length - 1; i >= 1; i--) {
+                labels.push(parts.slice(0, i).join('_'));
+            }
+            return labels;
+        };
+        const lookupLabels = buildLookupLabels(deviceLabel);
+        const resolveValue = (field, transformer, defaultValue) => {
+            for (const label of lookupLabels) {
+                const key = `${label}_protect_${field}`;
+                if (Object.prototype.hasOwnProperty.call(configKeyValues, key)) {
+                    return transformer(configKeyValues[key]);
+                }
+            }
+            return defaultValue;
+        };
         // Helper to get field value
         const getFieldValue = (field) => {
-            const key = `${deviceLabel}_protect_${field}`;
-            return Number(configKeyValues[key] || 0);
+            return resolveValue(field, (value) => Number(value || 0), 0);
         };
         const getBoolField = (field) => {
-            const key = `${deviceLabel}_protect_${field}`;
-            return Boolean(configKeyValues[key]);
+            return resolveValue(field, (value) => Boolean(value), false);
         };
         return {
             bypass: getBoolField('bypass'),

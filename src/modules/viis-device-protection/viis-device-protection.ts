@@ -16,6 +16,7 @@ import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ErrorNotificationService } from "../../services/error-notification.service";
 import { ProtectionManager, ProtectionResult } from "./protection-manager";
 import { ConfigService } from "./services/configService";
+import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import {
     CONTEXT_KEYS,
     ENV_KEYS,
@@ -28,7 +29,6 @@ import {
 
 interface ViisDeviceProtectionNodeDef extends NodeDef {
     boardId?: string;
-    checkInterval?: number;
     enableDebug?: boolean;
 }
 
@@ -54,12 +54,13 @@ module.exports = function (RED: NodeAPI) {
         let isMultiBoardMode: boolean = false;
         let currentModbusConfig: any = null;
         let modbusClient: any;
+        let mqttClient: any;
+        let publishTopic: string;
         let configCheckInterval: NodeJS.Timeout | null = null;
-        let protectionCheckInterval: NodeJS.Timeout | null = null;
+        let isProtectionCheckRunning = false;
 
         // Debug mode
         const enableDebug = config.enableDebug === true;
-        const checkIntervalMs = config.checkInterval || 1000; // Default 1 second
 
         // Debug helper
         const debugLog = (message: string) => {
@@ -69,8 +70,51 @@ module.exports = function (RED: NodeAPI) {
         };
 
         node.log(`Debug mode: ${enableDebug ? 'ENABLED' : 'DISABLED'}`);
-        node.log(`Check interval: ${checkIntervalMs}ms`);
         node.log(`Board ID: ${currentBoardId}`);
+
+        // ========================================================================
+        // Initialize MQTT (non-blocking)
+        // ========================================================================
+
+        const initMqtt = async () => {
+            try {
+                const deviceId = globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, "unknown");
+                const mqttBroker = "thingsboard"; // Default to ThingsBoard
+
+                const mqttConfig: MqttConfig = mqttBroker === "thingsboard"
+                    ? {
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, "mqtt.viis.tech")}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, "1883")}`,
+                        clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
+                        username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
+                        password: globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PASSWORD, ""),
+                        qos: 1,
+                    }
+                    : {
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.EMQX_HOST, "emqx")}:${globalHelper.getEnvVar(ENV_KEYS.EMQX_PORT, "1883")}`,
+                        clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
+                        username: globalHelper.getEnvVar(ENV_KEYS.EMQX_USERNAME, ""),
+                        password: globalHelper.getEnvVar(ENV_KEYS.EMQX_PASSWORD, ""),
+                        qos: 1,
+                    };
+
+                publishTopic = mqttBroker === "thingsboard"
+                    ? `v1/devices/me/telemetry`
+                    : `v1/devices/me/telemetry/${deviceId}`;
+
+                mqttClient = mqttBroker === "thingsboard"
+                    ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+                    : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
+
+                node.log("MQTT client initialized for protection telemetry");
+            } catch (error) {
+                node.warn(`MQTT initialization failed: ${(error as Error).message}`);
+                node.warn("Protection node will work locally without MQTT publishing");
+            }
+        };
+
+        initMqtt().catch(err => {
+            node.error(`MQTT init error: ${err.message}`);
+        });
 
         // Modbus mappings - Follow common_pattern.md
         // Primary: Use modbus_board1_coils for multi-board setup
@@ -196,7 +240,7 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 node.log("Modbus client initialized");
-                node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.RUNNING });
+                node.status({ fill: "green", shape: "ring", text: "Ready (inject)" });
                 return true;
             } catch (err) {
                 node.error(`Modbus init error: ${(err as Error).message}`);
@@ -227,16 +271,54 @@ module.exports = function (RED: NodeAPI) {
             }
         };
 
-        const writeCoil = async (address: number, value: boolean): Promise<void> => {
+        const writeCoil = async (address: number, value: boolean): Promise<boolean> => {
             if (!modbusClient) {
                 node.warn("Modbus client not ready");
-                return;
+                return false;
             }
             try {
                 await modbusClient.writeCoil(address, value);
                 node.log(`Write coil ${address}: ${value}`);
+
+                // Read-back to verify write succeeded
+                const readValue = await readCoil(address);
+                debugLog(`Read-back verification for coil ${address}: ${readValue} (expected: ${value})`);
+
+                // Update global context cache (coilRegisterData)
+                try {
+                    const coilRegisterData = node.context().global.get("coilRegisterData") || {};
+                    // Find coil key by address
+                    const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
+                    if (coilKey) {
+                        coilRegisterData[coilKey] = readValue;
+                        node.context().global.set("coilRegisterData", coilRegisterData);
+                        debugLog(`Updated coilRegisterData: ${coilKey}=${readValue}`);
+                    }
+                } catch (cacheError) {
+                    node.warn(`Failed to update coilRegisterData cache: ${(cacheError as Error).message}`);
+                }
+
+                // Publish to MQTT
+                if (mqttClient && mqttClient.isConnected()) {
+                    try {
+                        const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
+                        if (coilKey) {
+                            const payload = {
+                                ts: Date.now(),
+                                [coilKey]: readValue
+                            };
+                            await mqttClient.publish(publishTopic, JSON.stringify(payload));
+                            debugLog(`Published to MQTT ${publishTopic}: ${coilKey}=${readValue}`);
+                        }
+                    } catch (mqttError) {
+                        node.warn(`Failed to publish MQTT: ${(mqttError as Error).message}`);
+                    }
+                }
+
+                return readValue === value; // Return true if read-back matches written value
             } catch (error) {
                 node.error(`${ERROR_MESSAGES.MODBUS_WRITE_FAILED(address.toString())}: ${(error as Error).message}`);
+                return false;
             }
         };
 
@@ -370,25 +452,26 @@ module.exports = function (RED: NodeAPI) {
 
                     // WRITE coil if state needs to change
                     if (result.finalState !== currentState) {
-                        if (result.action === 'auto_off' || result.action === 'force_off') {
-                            await writeCoil(coilAddress, false);
-                            node.send({
-                                payload: {
-                                    [coilKey]: false,
-                                    reason: result.reason,
-                                    action: result.action
-                                }
-                            });
-                        } else if (result.action === 'auto_on' || result.action === 'force_on') {
-                            await writeCoil(coilAddress, true);
-                            node.send({
-                                payload: {
-                                    [coilKey]: true,
-                                    reason: result.reason,
-                                    action: result.action
-                                }
-                            });
+                        const targetState = result.finalState;
+                        debugLog(`Writing coil ${coilKey} to ${targetState}`);
+
+                        const writeSuccess = await writeCoil(coilAddress, targetState);
+
+                        if (writeSuccess) {
+                            debugLog(`Coil ${coilKey} successfully updated to ${targetState}`);
+                        } else {
+                            node.warn(`Coil ${coilKey} write may have failed - read-back verification failed`);
                         }
+
+                        // Send output message
+                        node.send({
+                            payload: {
+                                [coilKey]: targetState,
+                                reason: result.reason,
+                                action: result.action,
+                                writeSuccess: writeSuccess
+                            }
+                        });
                     }
 
                     node.log(`${deviceLabel}: ${result.reason}`);
@@ -399,12 +482,44 @@ module.exports = function (RED: NodeAPI) {
         };
 
         // ========================================================================
-        // Intervals
+        // Trigger / Config Reload
         // ========================================================================
 
-        // Run protection check with configurable interval
-        protectionCheckInterval = setInterval(checkProtection, checkIntervalMs);
-        node.log(`Protection check started with interval: ${checkIntervalMs}ms`);
+        const runProtectionCheck = async (trigger: string, done?: (err?: Error) => void) => {
+            if (isProtectionCheckRunning) {
+                const warning = `Skip trigger (${trigger}): protection check is already running`;
+                debugLog(warning);
+                if (done) done();
+                return;
+            }
+
+            isProtectionCheckRunning = true;
+
+            try {
+                debugLog(`Run protection check by trigger: ${trigger}`);
+                await checkProtection();
+                node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.RUNNING });
+                if (done) done();
+            } catch (error) {
+                const err = error as Error;
+                node.error(`Protection check error: ${err.message}`);
+                node.status({ fill: "red", shape: "ring", text: "Check failed" });
+                if (done) done(err);
+            } finally {
+                isProtectionCheckRunning = false;
+            }
+        };
+
+        node.on("input", (msg: any, send: any, done: any) => {
+            if (msg && typeof msg === "object" && msg.boardId && msg.boardId !== currentBoardId) {
+                currentBoardId = String(msg.boardId);
+                debugLog(`Updated boardId from inject: ${currentBoardId}`);
+            }
+
+            runProtectionCheck("inject", done);
+        });
+
+        node.log("Protection node started (inject-trigger mode)");
 
         // Config auto-reload every 30 seconds
         configCheckInterval = setInterval(async () => {
@@ -459,27 +574,37 @@ module.exports = function (RED: NodeAPI) {
             }
         }, PROTECTION_CONFIG.CONFIG_CHECK_INTERVAL_MS);
 
-        node.log("Protection node started (v2.0 with Min/Max/Bypass/Force)");
-
         // ========================================================================
         // Cleanup
         // ========================================================================
 
         node.on("close", (done: any) => {
-            if (protectionCheckInterval) {
-                clearInterval(protectionCheckInterval);
-                node.log("Protection check interval stopped");
-            }
-
             if (configCheckInterval) {
                 clearInterval(configCheckInterval);
                 node.log("Config check interval stopped");
             }
 
+            // Disconnect MQTT client
+            if (mqttClient) {
+                mqttClient.disconnect();
+                node.log("MQTT client disconnected");
+            }
+
+            // Release Modbus client (multi-board aware)
             if (isMultiBoardMode && currentBoardId) {
                 ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
             } else {
                 ClientRegistry.releaseClientV2("modbus", node);
+            }
+
+            // Release MQTT clients
+            if (mqttClient) {
+                const mqttBroker = "thingsboard"; // Match initialization
+                if (mqttBroker === "thingsboard") {
+                    ClientRegistry.releaseClient("thingsboard", node);
+                } else {
+                    ClientRegistry.releaseClient("local", node);
+                }
             }
 
             node.log("Protection node closed");
