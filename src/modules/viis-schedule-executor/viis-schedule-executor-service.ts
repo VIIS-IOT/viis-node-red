@@ -23,8 +23,49 @@ import { v4 as uuidv4 } from "uuid";
 
 // require('dotenv').config();
 
-
-
+/**
+ * Configuration parameter keys that should be excluded from command overlap checking.
+ * These parameters are stored in global context and do not conflict with Modbus commands.
+ */
+const CONFIG_PARAMETER_KEYS = new Set([
+    'iri_time',
+    'set_ec',
+    'set_ph',
+    'control_mode',
+    'iri_sensor_mode',
+    'water_only_time',
+    'cycle_ec',
+    'cycle_ph',
+    'time_on_valve_01',
+    'time_on_valve_02',
+    'time_on_valve_03',
+    'time_on_valve_04',
+    'time_on_valve_05',
+    'set_flow',
+    'set_flow_1',
+    'set_flow_2',
+    'set_flow_3',
+    'set_flow_4',
+    'set_flow_5',
+    'volume_factor_01',
+    'volume_factor_02',
+    'volume_factor_03',
+    'volume_factor_04',
+    'volume_factor_05',
+    'volume_factor_main',
+    'flow_factor_01',
+    'flow_factor_02',
+    'flow_factor_03',
+    'flow_factor_04',
+    'flow_factor_05',
+    'flow_factor_main',
+    'pressure_div_factor',
+    'pressure_sub_factor',
+    'min_pressure_limit',
+    'max_pressure_limit',
+    'EC_max',
+    'EC_min',
+]);
 
 @Service()
 export class ScheduleService {
@@ -1151,6 +1192,11 @@ export class ScheduleService {
         const allCommands = [...holdingCommands, ...coilCommands];
 
         for (const cmd of allCommands) {
+            // Skip config parameters - they don't need overlap checking
+            if (CONFIG_PARAMETER_KEYS.has(cmd.key)) {
+                continue;
+            }
+            
             // Kiểm tra overlap với các schedule khác, bỏ qua schedule hiện tại
             for (const scheduleId in activeModbusCommands) {
                 if (scheduleId === currentScheduleId) continue;
