@@ -1,28 +1,37 @@
 import { Node } from 'node-red';
 import { DataSource, Repository } from 'typeorm';
 import { logger } from '../utils/logger';
-import { AppDataSource } from '../../../orm/dataSource';
+import { DataSourceManager } from '../../../orm/dataSource';
 import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSchedulePlan';
 
+/**
+ * DatabaseService for viis-crud-schedule module
+ * Uses DataSourceManager for thread-safe singleton with reference counting
+ */
 export class DatabaseService {
-    private dataSource: DataSource;
+    private dataSource: DataSource | null = null;
     private initialized = false;
 
     constructor() {
-        this.dataSource = AppDataSource;
+        // Don't initialize here - wait for initialize() call
     }
 
+    /**
+     * Initialize database connection using DataSourceManager
+     * Thread-safe singleton with reference counting prevents race conditions
+     */
     async initialize(): Promise<void> {
         if (!this.initialized) {
             try {
                 logger.info(null, 'Initializing database connection...');
-                await this.dataSource.initialize();
+                // Use DataSourceManager.acquire() for thread-safe initialization
+                this.dataSource = await DataSourceManager.acquire();
                 this.initialized = true;
-                logger.info(null, 'Database initialized successfully');
+                logger.info(null, `Database initialized successfully (refCount: ${DataSourceManager.getRefCount()})`);
             } catch (error) {
                 logger.error(null, `Failed to initialize database: ${(error as Error).message}`);
-                throw error; // Throw để báo lỗi rõ ràng
+                throw error;
             }
         } else {
             logger.info(null, 'Database already initialized, skipping.');
@@ -30,26 +39,32 @@ export class DatabaseService {
     }
 
     isInitialized(): boolean {
-        const status = this.initialized && this.dataSource.isInitialized;
-        logger.info(null, `Database initialized status: ${status}`);
+        const status = this.initialized && this.dataSource?.isInitialized;
         return status;
     }
 
+    /**
+     * Release database connection using DataSourceManager
+     * Reference counting ensures connection stays alive while other nodes use it
+     */
     async destroy(): Promise<void> {
-        if (this.initialized && this.dataSource && this.dataSource.isInitialized) {
+        if (this.initialized && this.dataSource) {
             try {
-                logger.info(null, 'Destroying database connection...');
-                await this.dataSource.destroy();
+                logger.info(null, 'Releasing database connection...');
+                // Use DataSourceManager.release() for proper reference counting
+                await DataSourceManager.release();
                 this.initialized = false;
-                logger.info(null, 'Database connection destroyed');
+                this.dataSource = null;
+                logger.info(null, `Database connection released (refCount: ${DataSourceManager.getRefCount()})`);
             } catch (error) {
                 // Log but don't throw - prevent crash during cleanup
-                logger.error(null, `Error while destroying database connection: ${(error as Error).message}`);
+                logger.error(null, `Error while releasing database connection: ${(error as Error).message}`);
                 this.initialized = false;
+                this.dataSource = null;
             }
         } else {
-            logger.info(null, 'Destroy called, but database is not initialized or already destroyed.');
             this.initialized = false;
+            this.dataSource = null;
         }
     }
 
@@ -59,8 +74,7 @@ export class DatabaseService {
             logger.error(null, errorMessage);
             throw new Error(errorMessage);
         }
-        logger.info(null, 'Retrieving TabiotSchedule repository');
-        return this.dataSource.getRepository(TabiotSchedule);
+        return this.dataSource!.getRepository(TabiotSchedule);
     }
 
     getSchedulePlanRepository(): Repository<TabiotSchedulePlan> {
@@ -69,7 +83,6 @@ export class DatabaseService {
             logger.error(null, errorMessage);
             throw new Error(errorMessage);
         }
-        logger.info(null, 'Retrieving TabiotSchedulePlan repository');
-        return this.dataSource.getRepository(TabiotSchedulePlan);
+        return this.dataSource!.getRepository(TabiotSchedulePlan);
     }
 }

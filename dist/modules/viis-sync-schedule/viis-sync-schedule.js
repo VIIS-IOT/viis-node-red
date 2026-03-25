@@ -3,6 +3,14 @@
  * @fileoverview Sync Schedule Node for VIIS IoT system
  * This node synchronizes schedules and schedule plans between the local database and server
  * It fetches data from the server, compares with local records, and updates as needed
+ *
+ * Configuration:
+ * - Credentials are auto-loaded from JSON config files (/services/env/configs/device*.json)
+ * - env-loader node must be present in flow to load JSON configs into global context
+ * - Device identity: DEVICE_ID, DEVICE_ACCESS_TOKEN from deviceIdentity section
+ *
+ * @author VIIS Team
+ * @version 2.0.0 (JSON Config Support)
  */
 const logger_1 = require("./utils/logger");
 const databaseService_1 = require("./services/databaseService");
@@ -22,29 +30,33 @@ module.exports = function (RED) {
         config.maxRetries = config.maxRetries || 3;
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
-        // Auto-load access token from environment if not provided or if useEnvAccessToken is enabled
+        config.useAutoLoadedCredentials = config.useAutoLoadedCredentials !== false; // Default to true
+        // Load credentials from JSON config via global context (recommended approach)
         const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
         let accessToken;
-        if (config.useEnvAccessToken) {
-            // Force load from environment
+        if (config.useAutoLoadedCredentials) {
+            // Auto-load from JSON config (loaded by env-loader node)
             accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
             if (!accessToken) {
-                node.error('DEVICE_ACCESS_TOKEN environment variable not found');
-                node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ACCESS_TOKEN env' });
+                node.error('DEVICE_ACCESS_TOKEN not found in JSON config. Ensure env-loader node is configured and JSON config file exists.');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing credentials (check JSON config)' });
                 return;
             }
-            logger_1.logger.info(node, 'Using Access Token from DEVICE_ACCESS_TOKEN environment variable');
+            const deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            logger_1.logger.info(node, 'Credentials auto-loaded from JSON config');
+            logger_1.logger.info(node, `Device ID: ${deviceId.substring(0, 8)}...`);
+            logger_1.logger.info(node, `Access Token: ${accessToken.substring(0, 8)}...`);
         }
         else {
-            // Use config or fallback to environment
+            // Legacy mode: Use config or fallback to environment
             accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
             if (!accessToken) {
-                node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found in environment variables');
+                node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found');
                 node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
                 return;
             }
             if (!config.accessToken) {
-                logger_1.logger.info(node, 'Access Token auto-loaded from DEVICE_ACCESS_TOKEN environment variable');
+                logger_1.logger.info(node, 'Access Token loaded from environment fallback');
             }
         }
         logger_1.logger.info(node, 'Initializing VIIS Sync Schedule Node');

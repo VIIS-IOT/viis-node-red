@@ -10,7 +10,7 @@
         defaults: {
             name: { value: "" },
             accessToken: { value: "", required: false },
-            useEnvAccessToken: { value: false },
+            useAutoLoadedCredentials: { value: true },
             syncInterval: { value: 15, required: true, validate: RED.validators.number() },
             syncOnStartup: { value: true },
             showDetailedLogs: { value: false },
@@ -24,16 +24,16 @@
         },
         paletteLabel: "VIIS Sync Schedule",
         oneditprepare: function () {
-            // Disable access token input when useEnvAccessToken is checked
+            // Disable access token input when useAutoLoadedCredentials is enabled
             const updateAccessTokenState = function() {
-                const useEnv = $('#node-input-useEnvAccessToken').is(':checked');
-                $('#node-input-accessToken').prop('disabled', useEnv);
-                if (useEnv) {
+                const useAutoLoaded = $('#node-input-useAutoLoadedCredentials').is(':checked');
+                $('#node-input-accessToken').prop('disabled', useAutoLoaded);
+                if (useAutoLoaded) {
                     $('#node-input-accessToken').val('');
                 }
             };
-            
-            $('#node-input-useEnvAccessToken').on('change', updateAccessTokenState);
+
+            $('#node-input-useAutoLoadedCredentials').on('change', updateAccessTokenState);
             updateAccessTokenState();
             
             // Show/hide advanced options
@@ -90,13 +90,13 @@
     <div class="form-section-header">Device Configuration</div>
     <div class="form-row">
         <label for="node-input-accessToken"><i class="fa fa-key"></i> Access Token</label>
-        <input type="text" id="node-input-accessToken" placeholder="Auto-loaded from DEVICE_ACCESS_TOKEN env">
-        <div class="form-tips">Optional - Auto-loads from DEVICE_ACCESS_TOKEN environment variable if not provided</div>
+        <input type="text" id="node-input-accessToken" placeholder="Auto-loaded from JSON config">
+        <div class="form-tips">Optional - Auto-loads from DEVICE_ACCESS_TOKEN in JSON config if not provided</div>
     </div>
     <div class="form-row">
-        <label for="node-input-useEnvAccessToken"><i class="fa fa-toggle-on"></i> Use Env Variable</label>
-        <input type="checkbox" id="node-input-useEnvAccessToken" style="display:inline-block; width:auto; vertical-align:top;">
-        <div class="form-tips">Always load from DEVICE_ACCESS_TOKEN environment variable (ignore input above)</div>
+        <label for="node-input-useAutoLoadedCredentials"><i class="fa fa-toggle-on"></i> Use Auto-Loaded Credentials</label>
+        <input type="checkbox" id="node-input-useAutoLoadedCredentials" style="display:inline-block; width:auto; vertical-align:top;">
+        <div class="form-tips">Load from JSON config (recommended). Uncheck to use manual token input</div>
     </div>
     
     <div class="form-section-header">Sync Configuration</div>
@@ -166,8 +166,8 @@
     <h4>Basic Settings</h4>
     <ul>
         <li><b>Name</b>: Customize the node name in the flow</li>
-        <li><b>Access Token</b>: (Optional) The device access token for authentication with the server. If not provided, will auto-load from DEVICE_ACCESS_TOKEN environment variable.</li>
-        <li><b>Use Env Variable</b>: When checked, always loads from DEVICE_ACCESS_TOKEN environment variable and ignores the Access Token input field.</li>
+        <li><b>Access Token</b>: (Optional) The device access token for authentication with the server. If not provided, will auto-load from DEVICE_ACCESS_TOKEN in JSON config.</li>
+        <li><b>Use Auto-Loaded Credentials</b>: When checked (recommended), always loads from DEVICE_ACCESS_TOKEN in JSON config (loaded by env-loader node).</li>
         <li><b>Sync Interval</b>: How often to automatically sync (in minutes, 0 to disable)</li>
         <li><b>Sync on Startup</b>: Whether to perform a sync when the node is deployed</li>
     </ul>

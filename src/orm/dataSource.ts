@@ -51,7 +51,7 @@ export class DataSourceManager {
 
     private static async initialize(nodeContext?: NodeContext): Promise<DataSource> {
         const cfg = this.getConfig(nodeContext);
-        
+
         const ds = new DataSource({
             type: "mysql",
             host: cfg.host,
@@ -63,6 +63,14 @@ export class DataSourceManager {
             migrations: [__dirname + "/migrations/**/*.{js,ts}"],
             synchronize: false,
             logging: false,
+            // Connection pool configuration
+            extra: {
+                connectionLimit: 20,           // Max connections in pool
+                acquireTimeout: 30000,         // Wait max 30s for available connection
+                connectTimeout: 10000,         // Fail fast if can't connect in 10s
+                timeout: 30000,                // Query timeout
+                reconnect: true,               // Auto-reconnect on connection loss
+            },
         });
 
         await ds.initialize();

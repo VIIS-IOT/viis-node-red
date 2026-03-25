@@ -10,16 +10,16 @@
     </div>
     <div class="form-row">
         <label for="node-input-thingsboardAccessToken"><i class="fa fa-key"></i> Access Token</label>
-        <input type="text" id="node-input-thingsboardAccessToken" placeholder="Auto-loaded from DEVICE_ACCESS_TOKENenv">
+        <input type="text" id="node-input-thingsboardAccessToken" placeholder="Auto-loaded from JSON config">
         <div style="margin-left: 105px; color: #666; font-size: 11px;">
-            Optional - Auto-loads from DEVICE_ACCESS_TOKENenvironment variable if not provided
+            Optional - Auto-loads from DEVICE_ACCESS_TOKEN in JSON config if not provided
         </div>
     </div>
     <div class="form-row">
-        <label for="node-input-useEnvAccessToken"><i class="fa fa-toggle-on"></i> Use Env Variable</label>
-        <input type="checkbox" id="node-input-useEnvAccessToken" style="width: auto;">
+        <label for="node-input-useAutoLoadedCredentials"><i class="fa fa-toggle-on"></i> Use Auto-Loaded Credentials</label>
+        <input type="checkbox" id="node-input-useAutoLoadedCredentials" style="width: auto;" checked>
         <div style="margin-left: 105px; color: #666; font-size: 11px;">
-            Always load from DEVICE_ACCESS_TOKENenvironment variable (ignore input above)
+            Load from JSON config (recommended). Uncheck to use manual token input
         </div>
     </div>
     <div class="form-row">
@@ -80,8 +80,8 @@
 
     <h3>Configuration</h3>
     <ul>
-        <li><code>Access Token</code> - (Optional) ThingsBoard access token for authentication with the VIIS IoT API. If not provided, will auto-load from DEVICE_ACCESS_TOKENenvironment variable.</li>
-        <li><code>Use Env Variable</code> - When checked, always loads from DEVICE_ACCESS_TOKENenvironment variable and ignores the Access Token input field.</li>
+        <li><code>Access Token</code> - (Optional) ThingsBoard access token for authentication with the VIIS IoT API. If not provided, will auto-load from DEVICE_ACCESS_TOKEN in JSON config.</li>
+        <li><code>Use Auto-Loaded Credentials</code> - When checked (recommended), always loads from DEVICE_ACCESS_TOKEN in JSON config (loaded by env-loader node).</li>
         <li><code>Sync Interval</code> - How often to automatically sync (in minutes, 0 to disable)</li>
         <li><code>Sync on Startup</code> - Whether to perform a sync when the node starts</li>
         <li><code>Detailed Logs</code> - Enable to see more detailed log information</li>
@@ -96,7 +96,7 @@
         defaults: {
             name: { value: "" },
             thingsboardAccessToken: { value: "", required: false },
-            useEnvAccessToken: { value: false },
+            useAutoLoadedCredentials: { value: true },
             syncInterval: { value: 60, required: true, validate: RED.validators.number() },
             syncOnStartup: { value: true },
             showDetailedLogs: { value: false },
@@ -112,16 +112,16 @@
         inputLabels: ["trigger sync"],
         outputLabels: ["sync result"],
         oneditprepare: function() {
-            // Disable access token input when useEnvAccessToken is checked
+            // Disable access token input when useAutoLoadedCredentials is checked
             const updateAccessTokenState = function() {
-                const useEnv = $('#node-input-useEnvAccessToken').is(':checked');
-                $('#node-input-thingsboardAccessToken').prop('disabled', useEnv);
-                if (useEnv) {
+                const useAutoLoaded = $('#node-input-useAutoLoadedCredentials').is(':checked');
+                $('#node-input-thingsboardAccessToken').prop('disabled', useAutoLoaded);
+                if (useAutoLoaded) {
                     $('#node-input-thingsboardAccessToken').val('');
                 }
             };
 
-            $('#node-input-useEnvAccessToken').on('change', updateAccessTokenState);
+            $('#node-input-useAutoLoadedCredentials').on('change', updateAccessTokenState);
             updateAccessTokenState();
         }
     });
