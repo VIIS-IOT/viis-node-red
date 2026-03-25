@@ -20,6 +20,12 @@ export interface ServerProductionFunction {
     name: string;
     type?: string;
     label?: string;  // Custom label or default label (already merged by backend)
+    label_multilingual?: {
+        'vi-VN'?: string;
+        'en-US'?: string;
+        'ko-KR'?: string;
+        [key: string]: string | undefined;
+    };
     identifier?: string;
     data_type?: 'Bool' | 'Value' | 'Enum' | 'Raw' | 'String' | 'Group Break' | 'Tab Break' | 'IP' | 'Checkbox-bit' | 'User data type';
     icon_url?: string;

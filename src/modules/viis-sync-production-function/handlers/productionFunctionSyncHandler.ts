@@ -78,6 +78,16 @@ export class ProductionFunctionSyncHandler {
     }
 
     /**
+     * Compares multilingual label objects safely
+     */
+    private isLabelMultilingualChanged(
+        localLabelMultilingual?: TabiotProductionFunction['label_multilingual'],
+        serverLabelMultilingual?: ServerProductionFunction['label_multilingual']
+    ): boolean {
+        return JSON.stringify(localLabelMultilingual ?? null) !== JSON.stringify(serverLabelMultilingual ?? null);
+    }
+
+    /**
      * Synchronizes all production functions
      * @returns Promise that resolves to the sync result
      */
@@ -286,6 +296,7 @@ export class ProductionFunctionSyncHandler {
             newFunction.name = serverFunction.name;
             newFunction.type = serverFunction.type;
             newFunction.label = serverFunction.label;
+            newFunction.label_multilingual = serverFunction.label_multilingual;
             newFunction.identifier = serverFunction.identifier;
             newFunction.data_type = serverFunction.data_type;
             newFunction.icon_url = serverFunction.icon_url;
@@ -367,6 +378,7 @@ export class ProductionFunctionSyncHandler {
 
             if (localFunction.type !== serverFunction.type ||
                 localFunction.label !== serverFunction.label ||
+                this.isLabelMultilingualChanged(localFunction.label_multilingual, serverFunction.label_multilingual) ||
                 localFunction.identifier !== serverFunction.identifier ||
                 localFunction.data_type !== serverFunction.data_type ||
                 localFunction.icon_url !== serverFunction.icon_url ||
@@ -405,6 +417,7 @@ export class ProductionFunctionSyncHandler {
             // Update production function fields
             localFunction.type = serverFunction.type;
             localFunction.label = serverFunction.label;
+            localFunction.label_multilingual = serverFunction.label_multilingual;
             localFunction.identifier = serverFunction.identifier;
             localFunction.data_type = serverFunction.data_type;
             localFunction.icon_url = serverFunction.icon_url;

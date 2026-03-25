@@ -13,6 +13,14 @@ export class TabiotProductionFunction extends CustomBaseEntity {
 
     @Column({ type: 'varchar', length: 255, nullable: true })
     label?: string;
+    
+    @Column({ type: 'json', nullable: true })
+    label_multilingual?: {
+        'vi-VN'?: string;
+        'en-US'?: string;
+        'ko-KR'?: string;
+        [key: string]: string | undefined;
+    };
 
     @Column({ type: 'varchar', length: 255, nullable: true })
     identifier?: string;
