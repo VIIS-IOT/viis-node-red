@@ -374,10 +374,13 @@ module.exports = function (RED: NodeAPI) {
 
             // Auto-detect all protection configs from configKeyValues
             // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
+            // Supports new function identifiers:
+            // - lamp_protect_*, fan_protect_intake_*, fan_protect_circ_*, etc.
+            // - cool_protect_1_*, cool_protect_2_*, humid_protect_*, dehumid_protect_*, co2_protect_*
             const protectedCoils = new Set<string>();
             const coilKeys = Object.keys(modbusCoils);
             for (const key of Object.keys(configKeyValues)) {
-                const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit)$/);
+                const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit|pulse_time_on|pulse_time_off)$/);
                 if (match) {
                     const baseKey = match[1];
 
@@ -418,12 +421,31 @@ module.exports = function (RED: NodeAPI) {
                 debugLog(`Coil ${coilKey} current state: ${currentState}`);
 
                 // Get sensor value if applicable
+                // Sensor mapping based on new function identifiers:
+                // - Temperature: cool_monitor_Aquara_temp_1, cool_monitor_Aquara_temp_2
+                // - Humidity: humid_sensor_1, humid_sensor_2, humid_monitor_Aquara_humid_1, humid_monitor_Aquara_humid_2
+                // - CO2: co2_sensor_1
                 let sensorValue: number | undefined;
                 if (coilKey.includes('cool') || coilKey.includes('ac')) {
-                    sensorValue = sensorData['cool_Aquara_temp_1'] || sensorData['cool_Aquara_temp_2'];
+                    // Cooling devices use temperature sensors
+                    sensorValue = sensorData['cool_monitor_Aquara_temp_1'] 
+                        || sensorData['cool_monitor_Aquara_temp_2']
+                        || sensorData['cool_Aquara_temp_1'] 
+                        || sensorData['cool_Aquara_temp_2'];
                 } else if (coilKey.includes('humid')) {
-                    sensorValue = sensorData['humid_sensor_1'] || sensorData['humid_sensor_2'];
+                    // Humidity devices use humidity sensors
+                    sensorValue = sensorData['humid_sensor_1'] 
+                        || sensorData['humid_sensor_2']
+                        || sensorData['humid_monitor_Aquara_humid_1']
+                        || sensorData['humid_monitor_Aquara_humid_2'];
+                } else if (coilKey.includes('dehumid')) {
+                    // Dehumidification uses humidity sensors
+                    sensorValue = sensorData['humid_sensor_1'] 
+                        || sensorData['humid_sensor_2']
+                        || sensorData['humid_monitor_Aquara_humid_1']
+                        || sensorData['humid_monitor_Aquara_humid_2'];
                 } else if (coilKey.includes('co2')) {
+                    // CO2 devices use CO2 sensor
                     sensorValue = sensorData['co2_sensor_1'];
                 }
 

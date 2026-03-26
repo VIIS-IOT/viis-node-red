@@ -179,48 +179,80 @@ class ProtectionManager {
         if (sensorValue !== undefined) {
             // Check upper limit
             if (config.upperLimit > 0 && sensorValue > config.upperLimit) {
-                if (deviceKey.includes('cool') || deviceKey.includes('fan')) {
-                    // For cooling/fan - turn ON when above upper limit
+                if (deviceKey.includes('cool') || deviceKey.includes('ac')) {
+                    // For cooling/AC - turn ON when temperature exceeds upper limit
                     return {
                         allowed: true,
                         finalState: true,
-                        reason: `Sensor (${sensorValue}) exceeded upper limit (${config.upperLimit}) - Auto ON`,
+                        reason: `Temperature (${sensorValue}°C) exceeded upper limit (${config.upperLimit}°C) - Auto ON`,
                         action: 'auto_on',
                         metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
                     };
                 }
-                else if (deviceKey.includes('humid') || deviceKey.includes('dehumid')) {
-                    // For humid/dehumid - depends on device type
-                    if (deviceKey.includes('dehumid')) {
-                        return {
-                            allowed: true,
-                            finalState: true,
-                            reason: `Sensor (${sensorValue}) exceeded upper limit (${config.upperLimit}) - Auto ON`,
-                            action: 'auto_on',
-                            metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
-                        };
-                    }
+                else if (deviceKey.includes('fan')) {
+                    // For fan - turn ON when temperature exceeds upper limit
+                    return {
+                        allowed: true,
+                        finalState: true,
+                        reason: `Temperature (${sensorValue}°C) exceeded upper limit (${config.upperLimit}°C) - Auto ON`,
+                        action: 'auto_on',
+                        metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
+                    };
+                }
+                else if (deviceKey.includes('dehumid')) {
+                    // For dehumid - turn ON when humidity exceeds upper limit
+                    return {
+                        allowed: true,
+                        finalState: true,
+                        reason: `Humidity (${sensorValue}%) exceeded upper limit (${config.upperLimit}%) - Auto ON`,
+                        action: 'auto_on',
+                        metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
+                    };
+                }
+                else if (deviceKey.includes('humid')) {
+                    // For humidifier - typically don't auto-on for upper limit
+                    // Upper limit would trigger dehumidification instead
                 }
             }
             // Check lower limit
             if (config.lowerLimit > 0 && sensorValue < config.lowerLimit) {
-                if (deviceKey.includes('cool') || deviceKey.includes('fan')) {
-                    // For cooling/fan - turn OFF when below lower limit
+                if (deviceKey.includes('cool') || deviceKey.includes('ac')) {
+                    // For cooling/AC - turn OFF when temperature below lower limit
                     return {
                         allowed: true,
                         finalState: false,
-                        reason: `Sensor (${sensorValue}) below lower limit (${config.lowerLimit}) - Auto OFF`,
+                        reason: `Temperature (${sensorValue}°C) below lower limit (${config.lowerLimit}°C) - Auto OFF`,
+                        action: 'auto_off',
+                        metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
+                    };
+                }
+                else if (deviceKey.includes('fan')) {
+                    // For fan - turn OFF when temperature below lower limit
+                    return {
+                        allowed: true,
+                        finalState: false,
+                        reason: `Temperature (${sensorValue}°C) below lower limit (${config.lowerLimit}°C) - Auto OFF`,
                         action: 'auto_off',
                         metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
                     };
                 }
                 else if (deviceKey.includes('humid')) {
-                    // For humid - turn ON when below lower limit
+                    // For humidifier - turn ON when humidity below lower limit
                     return {
                         allowed: true,
                         finalState: true,
-                        reason: `Sensor (${sensorValue}) below lower limit (${config.lowerLimit}) - Auto ON`,
+                        reason: `Humidity (${sensorValue}%) below lower limit (${config.lowerLimit}%) - Auto ON`,
                         action: 'auto_on',
+                        metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
+                    };
+                }
+                else if (deviceKey.includes('dehumid')) {
+                    // For dehumid - turn OFF when humidity below lower limit
+                    return {
+                        allowed: true,
+                        finalState: false,
+                        reason: `Humidity (${sensorValue}%) below lower limit (${config.lowerLimit}%) - Auto OFF`,
+                        action: 'auto_off',
                         metadata: { elapsedOnTime, elapsedOffTime, sensorValue }
                     };
                 }

@@ -59,25 +59,53 @@ export const PROTECTION_CONFIG = {
 
 // Device types supported (must match device profile identifiers)
 export const DEVICE_TYPES = [
-    "lamp",
-    "fan_intake",
-    "fan_circ",
-    "cool_ac1",
-    "cool_ac2",
-    "humid",
-    "dehumid",
-    "co2"
+    "lamp_control_1",
+    "lamp_control_2",
+    "fan_control_intake",
+    "fan_control_circ",
+    "fan_control_dc",
+    "cool_control_ac1",
+    "cool_control_ac2",
+    "cool_control_freezer",
+    "humid_control_on",
+    "dehumid_control_1",
+    "dehumid_control_2",
+    "co2_control_valve"
 ] as const;
 
 // Device label mapping for config lookup (deviceKey -> config field prefix)
+// Maps coil control keys to their protection config prefixes
 export const DEVICE_LABEL_MAP: Record<string, string> = {
+    // Lamp protection mappings
+    "lamp_control_1": "lamp_protect",
+    "lamp_control_2": "lamp_protect",
     "lamp": "lamp_protect",
+    
+    // Fan protection mappings
+    "fan_control_intake": "fan_protect_intake",
+    "fan_control_circ": "fan_protect_circ",
+    "fan_control_dc": "fan_protect_dc",
     "fan_intake": "fan_protect_intake",
     "fan_circ": "fan_protect_circ",
+    
+    // Cooling protection mappings
+    "cool_control_ac1": "cool_protect_1",
+    "cool_control_ac2": "cool_protect_2",
+    "cool_control_freezer": "cool_protect_freezer",
     "cool_ac1": "cool_protect_1",
     "cool_ac2": "cool_protect_2",
+    
+    // Humidity protection mappings
+    "humid_control_on": "humid_protect",
     "humid": "humid_protect",
+    
+    // Dehumidification protection mappings
+    "dehumid_control_1": "dehumid_protect",
+    "dehumid_control_2": "dehumid_protect",
     "dehumid": "dehumid_protect",
+    
+    // CO2 protection mappings
+    "co2_control_valve": "co2_protect",
     "co2": "co2_protect"
 } as const;
 

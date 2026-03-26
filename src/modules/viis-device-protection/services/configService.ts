@@ -3,12 +3,14 @@
  * Handles reading/writing protection configuration from global context
  *
  * Field naming convention matches device profile:
- * - lamp_protect_bypass
- * - fan_protect_intake_bypass
- * - cool_protect_1_bypass
- * - humid_protect_bypass
- * - co2_protect_bypass
- * - etc.
+ * - lamp_protect_bypass, lamp_protect_force_on, lamp_protect_max_time_on, etc.
+ * - fan_protect_intake_bypass, fan_protect_intake_force_on, etc.
+ * - fan_protect_circ_bypass, fan_protect_circ_force_on, etc.
+ * - cool_protect_1_bypass, cool_protect_1_force_on, etc.
+ * - cool_protect_2_bypass, cool_protect_2_force_on, etc.
+ * - humid_protect_bypass, humid_protect_force_on, etc.
+ * - dehumid_protect_bypass, dehumid_protect_force_on, etc.
+ * - co2_protect_bypass, co2_protect_force_on, etc.
  */
 
 import { Node } from "node-red";
@@ -76,13 +78,21 @@ export class ConfigService {
 
     /**
      * Get protection config by device label (dynamic coil names)
-     * Resolution order:
+     * Resolution order for new function identifiers:
      * 1) Exact key: lamp_control_1_protect_*
      * 2) Generalized prefixes: lamp_control_protect_*, lamp_protect_*
+     * 3) Device type prefixes: fan_protect_intake_*, fan_protect_circ_*, cool_protect_1_*, etc.
      *
      * Example: deviceLabel = "lamp_control_1"
      * - exact: lamp_control_1_protect_max_time_on
      * - fallback: lamp_control_protect_max_time_on
+     * - fallback: lamp_protect_max_time_on
+     *
+     * Example: deviceLabel = "fan_control_intake"
+     * - exact: fan_control_intake_protect_max_time_on
+     * - fallback: fan_control_protect_max_time_on
+     * - fallback: fan_protect_intake_max_time_on
+     * - fallback: fan_protect_max_time_on
      */
     getProtectionConfigByLabel(deviceLabel: string): ProtectionConfig {
         const configKeyValues = this.getConfigKeyValues();
@@ -93,8 +103,40 @@ export class ConfigService {
 
             // Add generalized prefixes by removing trailing segments.
             // Example: lamp_control_1 -> lamp_control -> lamp
+            // Example: fan_control_intake -> fan_control -> fan
+            // Example: cool_control_ac1 -> cool_control -> cool
             for (let i = parts.length - 1; i >= 1; i--) {
                 labels.push(parts.slice(0, i).join('_'));
+            }
+
+            // Add device-type specific prefixes for new function identifiers
+            // Map control keys to protect keys
+            if (label.includes('lamp_control')) {
+                labels.push('lamp_protect');
+            } else if (label.includes('fan_control_intake')) {
+                labels.push('fan_protect_intake');
+                labels.push('fan_protect');
+            } else if (label.includes('fan_control_circ')) {
+                labels.push('fan_protect_circ');
+                labels.push('fan_protect');
+            } else if (label.includes('fan_control_dc')) {
+                labels.push('fan_protect_dc');
+                labels.push('fan_protect');
+            } else if (label.includes('cool_control_ac1') || label.includes('cool_ac1')) {
+                labels.push('cool_protect_1');
+                labels.push('cool_protect');
+            } else if (label.includes('cool_control_ac2') || label.includes('cool_ac2')) {
+                labels.push('cool_protect_2');
+                labels.push('cool_protect');
+            } else if (label.includes('cool_control_freezer')) {
+                labels.push('cool_protect_freezer');
+                labels.push('cool_protect');
+            } else if (label.includes('humid_control') || label.includes('humid')) {
+                labels.push('humid_protect');
+            } else if (label.includes('dehumid_control') || label.includes('dehumid')) {
+                labels.push('dehumid_protect');
+            } else if (label.includes('co2_control') || label.includes('co2')) {
+                labels.push('co2_protect');
             }
 
             return labels;
