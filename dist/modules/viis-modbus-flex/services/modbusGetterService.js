@@ -9,9 +9,66 @@ const logger_1 = require("../utils/logger");
  */
 class ModbusGetterService {
     constructor(serviceOptions, modbusClient) {
+        // Retry configuration for serial port operations
+        this.MAX_RETRY_ATTEMPTS = 3;
+        this.RETRY_BASE_DELAY_MS = 500;
+        this.RETRY_MAX_DELAY_MS = 3000;
+        this.SERIAL_PORT_ERRORS = [
+            "Resource temporarily unavailable",
+            "Cannot lock port",
+            "Port is busy",
+            "EACCES",
+            "EBUSY",
+            "timeout"
+        ];
         this.serviceOptions = serviceOptions;
         this.modbusClient = modbusClient;
         this.logger = new logger_1.Logger(serviceOptions.node, serviceOptions.nodeId, serviceOptions.enableLogging);
+    }
+    /**
+     * Check if error is related to serial port locking
+     */
+    isSerialPortError(error) {
+        return this.SERIAL_PORT_ERRORS.some(err => error.includes(err));
+    }
+    /**
+     * Calculate retry delay with exponential backoff + jitter
+     */
+    calculateRetryDelay(attempt) {
+        const exponentialDelay = this.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        const jitter = Math.random() * 200; // Add 0-200ms jitter to avoid thundering herd
+        return Math.min(exponentialDelay + jitter, this.RETRY_MAX_DELAY_MS);
+    }
+    /**
+     * Execute operation with retry logic for serial port errors
+     */
+    async executeWithRetry(operation, operationName, address) {
+        let lastError = null;
+        for (let attempt = 0; attempt < this.MAX_RETRY_ATTEMPTS; attempt++) {
+            try {
+                return await operation();
+            }
+            catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                lastError = error;
+                // Check if this is a retryable serial port error
+                if (this.isSerialPortError(errorMessage)) {
+                    const isLastAttempt = attempt === this.MAX_RETRY_ATTEMPTS - 1;
+                    if (!isLastAttempt) {
+                        const retryDelay = this.calculateRetryDelay(attempt);
+                        this.logger.warn(`[RETRY] ${operationName} failed at addr ${address}: ${errorMessage}. ` +
+                            `Retrying in ${retryDelay}ms (attempt ${attempt + 1}/${this.MAX_RETRY_ATTEMPTS})`);
+                        // Wait before retry
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                        continue;
+                    }
+                }
+                // Non-retryable error or last attempt failed
+                break;
+            }
+        }
+        // All retries exhausted
+        throw lastError;
     }
     /**
      * Process modbus request and return response
@@ -182,36 +239,41 @@ class ModbusGetterService {
     async executeModbusWrite(request) {
         const { fc, address, value } = request;
         this.logger.debug(`Executing modbus write: FC=${fc}, Address=${address}, Value=${JSON.stringify(value)}`);
-        switch (fc) {
-            case constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL:
-                this.logger.debug("Writing single coil...");
-                await this.modbusClient.writeCoil(address, value);
-                break;
-            case constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER:
-                this.logger.debug("Writing single register...");
-                await this.modbusClient.writeRegister(address, value);
-                break;
-            case constants_1.MODBUS_FUNCTION_CODES.WRITE_MULTIPLE_COILS:
-                this.logger.debug("Writing multiple coils...");
-                // Write coils one by one since writeMultipleCoils is not available
-                const coilValues = value;
-                for (let i = 0; i < coilValues.length; i++) {
-                    await this.modbusClient.writeCoil(address + i, coilValues[i]);
-                }
-                break;
-            case constants_1.MODBUS_FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS:
-                this.logger.debug("Writing multiple registers...");
-                // Write registers one by one since writeMultipleRegisters is not available
-                const registerValues = value;
-                for (let i = 0; i < registerValues.length; i++) {
-                    await this.modbusClient.writeRegister(address + i, registerValues[i]);
-                }
-                break;
-            default:
-                this.logger.error(`Unsupported write function code: ${fc}`);
-                throw new Error(constants_1.ERROR_MESSAGES.UNSUPPORTED_FUNCTION_CODE);
-        }
-        this.logger.debug(`Modbus write completed successfully`);
+        // Wrap write operations with retry logic
+        const writeOperation = async () => {
+            switch (fc) {
+                case constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL:
+                    this.logger.debug("Writing single coil...");
+                    await this.modbusClient.writeCoil(address, value);
+                    break;
+                case constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER:
+                    this.logger.debug("Writing single register...");
+                    await this.modbusClient.writeRegister(address, value);
+                    break;
+                case constants_1.MODBUS_FUNCTION_CODES.WRITE_MULTIPLE_COILS:
+                    this.logger.debug("Writing multiple coils...");
+                    // Write coils one by one since writeMultipleCoils is not available
+                    const coilValues = value;
+                    for (let i = 0; i < coilValues.length; i++) {
+                        await this.modbusClient.writeCoil(address + i, coilValues[i]);
+                    }
+                    break;
+                case constants_1.MODBUS_FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS:
+                    this.logger.debug("Writing multiple registers...");
+                    // Write registers one by one since writeMultipleRegisters is not available
+                    const registerValues = value;
+                    for (let i = 0; i < registerValues.length; i++) {
+                        await this.modbusClient.writeRegister(address + i, registerValues[i]);
+                    }
+                    break;
+                default:
+                    this.logger.error(`Unsupported write function code: ${fc}`);
+                    throw new Error(constants_1.ERROR_MESSAGES.UNSUPPORTED_FUNCTION_CODE);
+            }
+            this.logger.debug(`Modbus write completed successfully`);
+        };
+        // Execute with retry for serial port errors
+        await this.executeWithRetry(writeOperation, `WRITE_FC${fc}`, address);
     }
     /**
      * Validate modbus request payload
@@ -255,32 +317,38 @@ class ModbusGetterService {
     async executeModbusRead(request) {
         const { fc, address, quantity } = request;
         this.logger.debug(`Executing modbus read: FC=${fc}, Address=${address}, Quantity=${quantity}`);
-        let result;
-        switch (fc) {
-            case constants_1.MODBUS_FUNCTION_CODES.READ_COILS:
-                this.logger.debug("Reading coils...");
-                result = await this.modbusClient.readCoils(address, quantity);
-                break;
-            case constants_1.MODBUS_FUNCTION_CODES.READ_DISCRETE_INPUTS:
-                // Note: ModbusClientCore doesn't have readDiscreteInputs method
-                // Using readCoils as fallback for discrete inputs
-                this.logger.warn("READ_DISCRETE_INPUTS not implemented, using readCoils as fallback");
-                this.logger.debug("Reading discrete inputs (fallback to coils)...");
-                result = await this.modbusClient.readCoils(address, quantity);
-                break;
-            case constants_1.MODBUS_FUNCTION_CODES.READ_HOLDING_REGISTERS:
-                this.logger.debug("Reading holding registers...");
-                result = await this.modbusClient.readHoldingRegisters(address, quantity);
-                break;
-            case constants_1.MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS:
-                this.logger.debug("Reading input registers...");
-                result = await this.modbusClient.readInputRegisters(address, quantity);
-                break;
-            default:
-                this.logger.error(`Unsupported function code: ${fc}`);
-                throw new Error(constants_1.ERROR_MESSAGES.UNSUPPORTED_FUNCTION_CODE);
-        }
-        this.logger.debug(`Modbus read completed. Data length: ${result.data.length}`);
+        // Wrap read operations with retry logic
+        const readOperation = async () => {
+            let result;
+            switch (fc) {
+                case constants_1.MODBUS_FUNCTION_CODES.READ_COILS:
+                    this.logger.debug("Reading coils...");
+                    result = await this.modbusClient.readCoils(address, quantity);
+                    break;
+                case constants_1.MODBUS_FUNCTION_CODES.READ_DISCRETE_INPUTS:
+                    // Note: ModbusClientCore doesn't have readDiscreteInputs method
+                    // Using readCoils as fallback for discrete inputs
+                    this.logger.warn("READ_DISCRETE_INPUTS not implemented, using readCoils as fallback");
+                    this.logger.debug("Reading discrete inputs (fallback to coils)...");
+                    result = await this.modbusClient.readCoils(address, quantity);
+                    break;
+                case constants_1.MODBUS_FUNCTION_CODES.READ_HOLDING_REGISTERS:
+                    this.logger.debug("Reading holding registers...");
+                    result = await this.modbusClient.readHoldingRegisters(address, quantity);
+                    break;
+                case constants_1.MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS:
+                    this.logger.debug("Reading input registers...");
+                    result = await this.modbusClient.readInputRegisters(address, quantity);
+                    break;
+                default:
+                    this.logger.error(`Unsupported function code: ${fc}`);
+                    throw new Error(constants_1.ERROR_MESSAGES.UNSUPPORTED_FUNCTION_CODE);
+            }
+            this.logger.debug(`Modbus read completed. Data length: ${result.data.length}`);
+            return result;
+        };
+        // Execute with retry for serial port errors
+        const result = await this.executeWithRetry(readOperation, `READ_FC${fc}`, address);
         // Return ModbusResponse format
         return {
             address: result.address,
