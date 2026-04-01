@@ -141,6 +141,40 @@ let ScheduleService = class ScheduleService {
         return result;
     }
     /**
+     * Check if a value is falsy (should be skipped during schedule execution)
+     * Falsy values: 0, "0", false, "false", null, undefined, ""
+     */
+    isFalsyValue(value) {
+        // Explicit null/undefined check
+        if (value === null || value === undefined) {
+            return true;
+        }
+        // Empty string check
+        if (value === "") {
+            return true;
+        }
+        // Boolean check (including string "false")
+        if (value === false || value === "false") {
+            return true;
+        }
+        // Number check (including 0 and "0")
+        if (value === 0 || value === "0") {
+            return true;
+        }
+        // For string numbers like "0.0", "0.00", etc.
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            // Check if it's a numeric string that equals 0
+            if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+                const num = parseFloat(trimmed);
+                if (num === 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    /**
      * Load all Modbus coils from both legacy single-board and multi-board configurations
      * Returns a merged object with all coil mappings
      */
@@ -451,34 +485,34 @@ let ScheduleService = class ScheduleService {
                             value = false;
                         }
                     }
-                    // Xử lý tất cả các key, không chỉ những key có giá trị truthy
+                    // Skip falsy values for all keys (Modbus-mapped and unmapped)
+                    // Falsy values: 0, "0", false, "false", null, undefined, ""
+                    if (this.isFalsyValue(value)) {
+                        this.debugLog(`Skipping falsy value for key "${key}": ${JSON.stringify(value)} in schedule ${schedule.name}`);
+                        continue;
+                    }
+                    // Process Modbus-mapped keys
                     if (modbusHolding.hasOwnProperty(key)) {
-                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
-                        if (value) {
-                            holdingCommands.push({
-                                key,
-                                value: Number(value),
-                                fc: 6,
-                                unitid: 1,
-                                address: modbusHolding[key],
-                                quantity: 1,
-                            });
-                            this.debugLog(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
-                        }
+                        holdingCommands.push({
+                            key,
+                            value: Number(value),
+                            fc: 6,
+                            unitid: 1,
+                            address: modbusHolding[key],
+                            quantity: 1,
+                        });
+                        this.debugLog(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
                     }
                     else if (modbusCoils.hasOwnProperty(key)) {
-                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
-                        if (value) {
-                            coilCommands.push({
-                                key,
-                                value: Boolean(value),
-                                fc: 5,
-                                unitid: 1,
-                                address: modbusCoils[key],
-                                quantity: 1,
-                            });
-                            this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
-                        }
+                        coilCommands.push({
+                            key,
+                            value: Boolean(value),
+                            fc: 5,
+                            unitid: 1,
+                            address: modbusCoils[key],
+                            quantity: 1,
+                        });
+                        this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                     }
                     else {
                         // Xử lý unmapped keys như configuration parameters
@@ -1368,10 +1402,9 @@ let ScheduleService = class ScheduleService {
      * Store configuration parameter (for schedule execution)
      */
     storeConfigParameter(key, value, scheduleId) {
-        // Skip if value is falsy (empty string, null, undefined)
-        // Note: 0 and false are valid values for configuration
-        if (value === "" || value === null || value === undefined) {
-            console.warn(`Skipping config parameter storage for ${key}: value is empty/null/undefined (schedule: ${scheduleId})`);
+        // Skip all falsy values: 0, "0", false, "false", null, undefined, ""
+        if (this.isFalsyValue(value)) {
+            console.warn(`Skipping config parameter storage for ${key}: value is falsy (schedule: ${scheduleId})`);
             return null;
         }
         const validatedValue = this.validateAndConvertValue(key, value);
@@ -1395,14 +1428,13 @@ let ScheduleService = class ScheduleService {
      */
     processRpcControlCommand(key, value) {
         try {
-            // Skip if value is falsy (empty string, null, undefined)
-            // Note: 0 and false are valid values for control commands
-            if (value === "" || value === null || value === undefined) {
-                console.warn(`Skipping RPC control command for ${key}: value is empty/null/undefined`);
+            // Skip all falsy values: 0, "0", false, "false", null, undefined, ""
+            if (this.isFalsyValue(value)) {
+                console.warn(`Skipping RPC control command for ${key}: value is falsy`);
                 return {
                     success: false,
                     action: 'config',
-                    result: { key, error: 'Empty or null value not allowed' }
+                    result: { key, error: 'Falsy value not allowed' }
                 };
             }
             // Get modbus mappings
