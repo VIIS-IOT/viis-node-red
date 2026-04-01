@@ -223,8 +223,9 @@ export class ScheduleService {
 
                     // Xử lý tất cả các key, không chỉ những key có giá trị truthy
                     if (modbusHolding.hasOwnProperty(key)) {
-                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
-                        if (value) {
+                        // Ghi xuống Modbus holding register nếu value !== null và !== undefined
+                        // Cho phép các giá trị 0, false, "" được ghi xuống
+                        if (value !== null && value !== undefined) {
                             holdingCommands.push({
                                 key,
                                 value: Number(value),
@@ -233,11 +234,12 @@ export class ScheduleService {
                                 address: modbusHolding[key],
                                 quantity: 1,
                             });
-                            console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
+                            console.log(`Mapped ${key} to holding register at address ${modbusHolding[key]} with value ${value}`);
                         }
                     } else if (modbusCoils.hasOwnProperty(key)) {
-                        // Chỉ xử lý các key có giá trị truthy cho Modbus commands
-                        if (value) {
+                        // Ghi xuống Modbus coil nếu value !== null và !== undefined
+                        // Cho phép các giá trị 0, false, "" được ghi xuống
+                        if (value !== null && value !== undefined) {
                             coilCommands.push({
                                 key,
                                 value: Boolean(value),
@@ -246,7 +248,7 @@ export class ScheduleService {
                                 address: modbusCoils[key],
                                 quantity: 1,
                             });
-                            console.log(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
+                            console.log(`Mapped ${key} to coil at address ${modbusCoils[key]} with value ${value}`);
                         }
                     } else {
                         // Xử lý unmapped keys như configuration parameters

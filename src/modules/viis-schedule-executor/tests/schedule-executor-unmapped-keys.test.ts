@@ -179,15 +179,15 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                 set_flow_A1: 200,         // Mapped to holding register
                 custom_timeout: 30,       // Unmapped - should be config
                 enable_logging: false,    // Unmapped - should be config
-                valve_A1: false,          // Mapped to coil (but false, so not included)
+                valve_A1: false,          // Mapped to coil (false should still be written to Modbus)
                 user_notes: 'test run'    // Unmapped - should be config
             }));
 
             const result = scheduleService.mapScheduleToModbus(schedule);
 
-            // Check Modbus commands
+            // Check Modbus commands - false values are now written to Modbus
             expect(result.holdingCommands).toHaveLength(1);
-            expect(result.coilCommands).toHaveLength(1); // valve_A1 is false, so not included
+            expect(result.coilCommands).toHaveLength(2); // pump_1: true, valve_A1: false (both included now)
             // Note: iri_time is automatically added, so we expect 4 config parameters
             expect(result.configParameters).toHaveLength(4);
 
@@ -198,11 +198,20 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                 fc: 6
             });
 
-            expect(result.coilCommands[0]).toMatchObject({
-                key: 'pump_1',
-                value: true,
-                fc: 5
-            });
+            expect(result.coilCommands).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        key: 'pump_1',
+                        value: true,
+                        fc: 5
+                    }),
+                    expect.objectContaining({
+                        key: 'valve_A1',
+                        value: false,
+                        fc: 5
+                    })
+                ])
+            );
 
             // Verify config parameters
             expect(result.configParameters).toEqual(
@@ -343,6 +352,69 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                     expect.objectContaining({
                         key: 'iri_time',
                         type: 'number'
+                    })
+                ])
+            );
+        });
+
+        it('should write zero values to Modbus when keys are mapped', () => {
+            const schedule = createMockSchedule('test-zero-modbus', JSON.stringify({
+                pump_1: 0,           // Mapped to coil - should write false
+                valve_A1: '0',       // Mapped to coil - should write false after parsing
+                set_flow_A1: 0,      // Mapped to holding - should write 0
+                temperature: '0',    // Mapped to holding - should write 0 after parsing
+                power: false         // Mapped to coil - should write false
+            }));
+
+            const result = scheduleService.mapScheduleToModbus(schedule);
+
+            // All zero/false values should be written to Modbus (not skipped)
+            // pump_1: 0 -> false for coil
+            // valve_A1: '0' -> 0 -> false for coil
+            // set_flow_A1: 0 -> 0 for holding
+            // temperature: '0' -> 0 for holding
+            // power: false -> false for coil
+            expect(result.holdingCommands).toHaveLength(2);
+            expect(result.coilCommands).toHaveLength(3);
+
+            // Verify holding commands have zero values
+            expect(result.holdingCommands).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        key: 'set_flow_A1',
+                        value: 0,
+                        fc: 6,
+                        address: 10
+                    }),
+                    expect.objectContaining({
+                        key: 'temperature',
+                        value: 0,
+                        fc: 6,
+                        address: 12
+                    })
+                ])
+            );
+
+            // Verify coil commands have false values
+            expect(result.coilCommands).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        key: 'pump_1',
+                        value: false,
+                        fc: 5,
+                        address: 0
+                    }),
+                    expect.objectContaining({
+                        key: 'valve_A1',
+                        value: false,
+                        fc: 5,
+                        address: 1
+                    }),
+                    expect.objectContaining({
+                        key: 'power',
+                        value: false,
+                        fc: 5,
+                        address: 2
                     })
                 ])
             );
