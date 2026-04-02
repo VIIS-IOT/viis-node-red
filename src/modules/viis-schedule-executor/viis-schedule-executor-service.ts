@@ -74,10 +74,10 @@ export class ScheduleService {
     private globalHelper: GlobalContextHelper; // Thêm GlobalContextHelper
     private debugEnable: boolean; // Thêm biến debugEnable
     private verifyAfterWrite: boolean; // Enable/disable write verification
-    constructor(node?: Node, verifyAfterWrite: boolean = true) { // Add verifyAfterWrite parameter, default true
+    constructor(node?: Node, verifyAfterWrite: boolean = true, debugEnable: boolean = false) {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
-        this.debugEnable = false; // debugEnable is controlled by node config
+        this.debugEnable = debugEnable; // Store debugEnable setting from node config
         this.globalHelper = node ? new GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -1924,6 +1924,7 @@ export class ScheduleService {
     /**
      * Send notification to backend via HTTP API
      * This bypasses MQTT ThingsBoard and sends directly to backend
+     * Note: Error notifications (success=false) are only sent when debugEnable is true
      */
     async sendNotificationToBackend(
         schedule: TabiotSchedule,
@@ -1940,6 +1941,14 @@ export class ScheduleService {
             baseDelay = 1000,
             timeout = 10000
         } = options || {};
+
+        // Skip error notifications when debug is disabled
+        if (!success && !this.debugEnable) {
+            if (this.node) {
+                this.node.warn(`⚠️ Error notification skipped (debug disabled): ${schedule.name} | Action: ${action}`);
+            }
+            return true; // Return true to indicate "success" (notification intentionally skipped)
+        }
 
         // Get backend URL and device access token from global context
         const backendUrl = this.globalHelper

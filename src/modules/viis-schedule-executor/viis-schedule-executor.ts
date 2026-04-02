@@ -159,9 +159,10 @@ module.exports = function (RED: NodeAPI) {
             globalContext.set(lastCleanupKey, now);
         };
 
+        // Initialize ScheduleService with debugEnable setting
         let scheduleService: ScheduleService;
         try {
-            scheduleService = new ScheduleService(node, verifyAfterWrite);
+            scheduleService = new ScheduleService(node, verifyAfterWrite, debugEnable);
             debugLog("ScheduleService initialized successfully");
         } catch (error) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);

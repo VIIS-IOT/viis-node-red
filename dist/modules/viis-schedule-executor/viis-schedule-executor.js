@@ -132,9 +132,10 @@ module.exports = function (RED) {
             }
             globalContext.set(lastCleanupKey, now);
         };
+        // Initialize ScheduleService with debugEnable setting
         let scheduleService;
         try {
-            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node, verifyAfterWrite);
+            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node, verifyAfterWrite, debugEnable);
             debugLog("ScheduleService initialized successfully");
         }
         catch (error) {

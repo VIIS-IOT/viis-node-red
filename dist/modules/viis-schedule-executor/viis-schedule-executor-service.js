@@ -100,10 +100,10 @@ const CONFIG_PARAMETER_KEYS = new Set([
     'EC_min',
 ]);
 let ScheduleService = class ScheduleService {
-    constructor(node, verifyAfterWrite = true) {
+    constructor(node, verifyAfterWrite = true, debugEnable = false) {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
-        this.debugEnable = false; // debugEnable is controlled by node config
+        this.debugEnable = debugEnable; // Store debugEnable setting from node config
         this.globalHelper = node ? new global_context_helper_1.GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -1717,10 +1717,18 @@ let ScheduleService = class ScheduleService {
     /**
      * Send notification to backend via HTTP API
      * This bypasses MQTT ThingsBoard and sends directly to backend
+     * Note: Error notifications (success=false) are only sent when debugEnable is true
      */
     async sendNotificationToBackend(schedule, action, success = true, options) {
         var _a, _b;
         const { maxRetries = 3, baseDelay = 1000, timeout = 10000 } = options || {};
+        // Skip error notifications when debug is disabled
+        if (!success && !this.debugEnable) {
+            if (this.node) {
+                this.node.warn(`⚠️ Error notification skipped (debug disabled): ${schedule.name} | Action: ${action}`);
+            }
+            return true; // Return true to indicate "success" (notification intentionally skipped)
+        }
         // Get backend URL and device access token from global context
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
@@ -1848,5 +1856,5 @@ let ScheduleService = class ScheduleService {
 exports.ScheduleService = ScheduleService;
 exports.ScheduleService = ScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [Object, Boolean])
+    __metadata("design:paramtypes", [Object, Boolean, Boolean])
 ], ScheduleService);
