@@ -56,6 +56,13 @@ export class MqttClientCore extends EventEmitter {
     private subscribedTopics: Set<string> = new Set();
 
     // Enhanced state management
+    private readonly RECONNECT_INTERVAL_MIN = 500; // 500ms - more aggressive
+    private readonly RECONNECT_INTERVAL_MAX = 10000; // 10 seconds - faster recovery
+    private readonly RECONNECT_INTERVAL_MULTIPLIER = 1.3; // slower backoff
+    private readonly CIRCUIT_BREAKER_TIMEOUT = 20000; // 20 seconds - quicker recovery
+    private readonly CIRCUIT_BREAKER_MAX_ATTEMPTS = 10; // more attempts before circuit break
+    private readonly HEALTH_CHECK_INTERVAL = 300000; // 5 minutes - health check interval
+
     private connectionState: ConnectionState;
     private messageQueue: QueuedMessage[] = [];
     private healthCheckTimer: NodeJS.Timeout | null = null;
@@ -68,13 +75,13 @@ export class MqttClientCore extends EventEmitter {
     constructor(config: MqttConfig, node: Node) {
         super();
         this.config = {
-            reconnectPeriod: 5000,
-            connectTimeout: 30000,
-            keepalive: 60,
-            maxReconnectAttempts: 10,
-            reconnectBackoffMultiplier: 1.5,
-            maxReconnectDelay: 60000,
-            healthCheckInterval: 30000,
+            reconnectPeriod: 0, // Disable auto reconnect (0 = disabled), we'll handle it manually
+            connectTimeout: 10000, // 10 second timeout for faster failure detection
+            keepalive: 30, // 30 second keepalive for quicker disconnection detection
+            maxReconnectAttempts: this.CIRCUIT_BREAKER_MAX_ATTEMPTS,
+            reconnectBackoffMultiplier: this.RECONNECT_INTERVAL_MULTIPLIER,
+            maxReconnectDelay: this.RECONNECT_INTERVAL_MAX,
+            healthCheckInterval: this.HEALTH_CHECK_INTERVAL,
             messageQueueSize: 100,
             enableCircuitBreaker: true,
             ...config,
@@ -271,7 +278,7 @@ export class MqttClientCore extends EventEmitter {
         this.node.status({ fill: "red", shape: "ring", text: "Circuit breaker open - will retry in 30s" });
 
         // Shorter initial timeout with progressive backoff
-        const initialTimeout = 30000; // 30 seconds instead of 5 minutes
+        const initialTimeout = this.CIRCUIT_BREAKER_TIMEOUT; // 20 seconds instead of 5 minutes
         this.circuitBreakerTimer = setTimeout(() => {
             this.connectionState.circuitBreakerOpen = false;
             this.connectionState.reconnectAttempts = 0;
@@ -418,8 +425,10 @@ export class MqttClientCore extends EventEmitter {
             JSON.stringify(healthData),
             { qos: 0, retain: false }
         ).catch((error: Error) => {
+            // Don't trigger reconnection on health check failure
+            // Health check failures can be false positives and cause unnecessary reconnects
             this.node.warn(`Health check failed: ${error.message}`);
-            this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
+            // Removed: this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
         });
     }
 
@@ -549,7 +558,23 @@ export class MqttClientCore extends EventEmitter {
                     this.node.error(`Failed to publish to ${topic}: ${err.message}`);
                     reject(err);
                 } else {
-                    this.node.log(`Published to topic: ${topic}`);
+                    // Format message for logging
+                    const messageStr = Buffer.isBuffer(message) ? message.toString('utf8') : message;
+                    const truncatedMsg = messageStr.length > 200 ? messageStr.substring(0, 200) + '...' : messageStr;
+
+                    // Try to parse as JSON for better readability
+                    let displayMsg = truncatedMsg;
+                    try {
+                        const parsed = JSON.parse(messageStr);
+                        displayMsg = JSON.stringify(parsed);
+                        if (displayMsg.length > 200) {
+                            displayMsg = displayMsg.substring(0, 200) + '...';
+                        }
+                    } catch {
+                        // Not JSON, use as is
+                    }
+
+                    // this.node.log(`Published to topic: ${topic} | Message: ${displayMsg}`);
                     resolve();
                 }
             });
@@ -561,13 +586,21 @@ export class MqttClientCore extends EventEmitter {
     // Resubscribe tất cả các topic khi reconnect
     private resubscribeTopics(): void {
         if (!this.client) return;
+
+        // Only log resubscribe if there are topics to resubscribe
+        const topicsCount = this.subscribedTopics.size;
+        if (topicsCount === 0) return;
+
+        // Use a single log message for all resubscriptions to reduce spam
+        const topics = Array.from(this.subscribedTopics);
+        this.node.log(`Resubscribing to ${topicsCount} topic(s): ${topics.join(', ')}`);
+
         this.subscribedTopics.forEach((topic) => {
             this.client.subscribe(topic, { qos: this.config.qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to resubscribe to ${topic}: ${err.message}`);
-                } else {
-                    this.node.log(`Resubscribed to topic: ${topic}`);
                 }
+                // Remove individual success log to reduce spam
             });
         });
     }

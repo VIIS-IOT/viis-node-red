@@ -30,6 +30,7 @@ const createMockSchedule = (name, action) => ({
     enable: 1,
     is_deleted: 0,
     device_id: 'test-device',
+    machine_type: 'MAIN_ENGINE',
     created: new Date(),
     modified: new Date(),
     type: 'fixed',
@@ -149,21 +150,21 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
         });
     });
     describe('mapScheduleToModbus with mixed mapped and unmapped keys', () => {
-        it('should process both mapped and unmapped keys correctly', () => {
+        it('should process only truthy values, skip falsy values', () => {
             const schedule = createMockSchedule('test-mixed', JSON.stringify({
-                pump_1: true, // Mapped to coil
-                set_flow_A1: 200, // Mapped to holding register
-                custom_timeout: 30, // Unmapped - should be config
-                enable_logging: false, // Unmapped - should be config
-                valve_A1: false, // Mapped to coil (false should still be written to Modbus)
-                user_notes: 'test run' // Unmapped - should be config
+                pump_1: true, // Mapped to coil - truthy, include
+                set_flow_A1: 200, // Mapped to holding - truthy, include
+                custom_timeout: 30, // Unmapped - truthy, include
+                enable_logging: false, // Unmapped - falsy, SKIP
+                valve_A1: false, // Mapped to coil - falsy, SKIP
+                user_notes: 'test run' // Unmapped - truthy, include
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
             // Check Modbus commands - false values are now written to Modbus
             expect(result.holdingCommands).toHaveLength(1);
-            expect(result.coilCommands).toHaveLength(2); // pump_1: true, valve_A1: false (both included now)
-            // Note: iri_time is automatically added, so we expect 4 config parameters
-            expect(result.configParameters).toHaveLength(4);
+            expect(result.coilCommands).toHaveLength(1); // valve_A1 is false, so skipped
+            // Note: iri_time is automatically added, so we expect 3 config parameters (custom_timeout, user_notes, iri_time)
+            expect(result.configParameters).toHaveLength(3);
             // Verify Modbus commands
             expect(result.holdingCommands[0]).toMatchObject({
                 key: 'set_flow_A1',
@@ -188,11 +189,6 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                     key: 'custom_timeout',
                     value: 30,
                     type: 'number'
-                }),
-                expect.objectContaining({
-                    key: 'enable_logging',
-                    value: false,
-                    type: 'boolean'
                 }),
                 expect.objectContaining({
                     key: 'user_notes',
@@ -241,17 +237,13 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                 bool_mixed: 'True'
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            // Should have 4 config parameters: 3 test params + iri_time
-            expect(result.configParameters).toHaveLength(4);
+            // Should have 3 config parameters: 2 truthy test params + iri_time
+            // bool_false is skipped because it converts to false (falsy)
+            expect(result.configParameters).toHaveLength(3);
             expect(result.configParameters).toEqual(expect.arrayContaining([
                 expect.objectContaining({
                     key: 'bool_true',
                     value: true,
-                    type: 'boolean'
-                }),
-                expect.objectContaining({
-                    key: 'bool_false',
-                    value: false,
                     type: 'boolean'
                 }),
                 expect.objectContaining({
@@ -282,28 +274,9 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                 zero_value: 0
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            // Should have config parameters for all values + iri_time
-            expect(result.configParameters.length).toBeGreaterThan(3);
-            expect(result.configParameters).toEqual(expect.arrayContaining([
-                expect.objectContaining({
-                    key: 'null_value',
-                    value: null
-                }),
-                expect.objectContaining({
-                    key: 'empty_string',
-                    value: '',
-                    type: 'string'
-                }),
-                expect.objectContaining({
-                    key: 'zero_value',
-                    value: 0,
-                    type: 'number'
-                }),
-                expect.objectContaining({
-                    key: 'iri_time',
-                    type: 'number'
-                })
-            ]));
+            // All values are falsy and should be skipped, only iri_time remains
+            expect(result.configParameters).toHaveLength(1);
+            expect(result.configParameters[0].key).toBe('iri_time');
         });
         it('should write zero values to Modbus when keys are mapped', () => {
             const schedule = createMockSchedule('test-zero-modbus', JSON.stringify({

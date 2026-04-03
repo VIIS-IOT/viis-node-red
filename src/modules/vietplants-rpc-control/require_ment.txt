@@ -1,0 +1,24 @@
+{
+    "method": "set_state",
+    "params": {
+        // "COIL_BOM_TRON": 1,
+        "COIL_AUTO_TRON": 1,
+        // "HOLDING_THOI_GIAN_TRON_TOI_DA": 200,
+        "schedule_id": "683d312bdfc82ffc"
+    },
+    "timeout": 5000
+}
+
+hiện tại node D:\WORK\PYROJECT\VIIS\viis-local-system\services\nodered\custom-nodes\viis-node-red\src\modules\viis-rpc-control
+khi nhận lệnh RPC control
+{
+    "method": "set_state",
+    "params": {
+        // "COIL_BOM_TRON": 1,
+        "COIL_AUTO_TRON": 1,
+        // "HOLDING_THOI_GIAN_TRON_TOI_DA": 200,
+        "schedule_id": "683d312bdfc82ffc"
+    },
+    "timeout": 5000
+}
+thì node sẽ check mapping trong coil và holding, tôi cần bạn confirm nó có đang ghi các giá trị holding trước coil hay không

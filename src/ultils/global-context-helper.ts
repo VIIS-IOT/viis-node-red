@@ -2,7 +2,7 @@
  * Global Context Helper for VIIS Node-RED Custom Nodes
  * Provides utilities to access environment variables from Node-RED global context
  * with fallback to process.env for backward compatibility
- * 
+ *
  * @author VIIS Team
  * @version 1.0.0
  */
@@ -19,8 +19,8 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'DEVICE_SERIAL': 'device_serial',
   'DEVICE_PROFILE_ID': 'device_profile_id',
   'DEVICE_PROFILE_LABEL': 'device_profile_label',
-  'VIIS_BACKEND': 'backend_url',
-  'BACKEND_URL': 'server_url',
+  'VIIS_BACKEND': 'server_url',
+  'BACKEND_URL': 'backend_url',
   // Modbus configuration
   'MODBUS_HOST': 'modbus_host',
   'MODBUS_TCP_PORT': 'modbus_tcp_port',
@@ -34,16 +34,40 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'MODBUS_HOLDING_REGISTERS': 'modbusHoldingRegisters',
   'MODBUS_INPUT_REGISTERS': 'modbusInputRegisters',
   'MODBUS_COILS': 'modbusCoils',
+  // Multi-board configuration
+  'MODBUS_BOARDS': 'modbus_boards',
+  'MODBUS_DEFAULT_BOARD': 'modbus_default_board',
+  // Board-specific mappings (for per-board coils/registers)
+  'MODBUS_BOARD1_COILS': 'modbus_board1_coils',
+  'MODBUS_BOARD2_COILS': 'modbus_board2_coils',
+  'MODBUS_BOARD1_HOLDING_REGISTERS': 'modbus_board1_holding_registers',
+  'MODBUS_BOARD2_HOLDING_REGISTERS': 'modbus_board2_holding_registers',
+  'MODBUS_BOARD1_INPUT_REGISTERS': 'modbus_board1_input_registers',
+  'MODBUS_BOARD2_INPUT_REGISTERS': 'modbus_board2_input_registers',
   // ThingsBoard configuration
   'THINGSBOARD_HOST': 'thingsboard_host',
   'THINGSBOARD_PORT': 'thingsboard_port',
   'THINGSBOARD_PASSWORD': 'thingsboard_password',
   'THINGSBOARD_URL': 'thingsboard_url',
+  'THINGSBOARD_MQTT_BROKER': 'thingsboard_mqtt_broker',
   // EMQX configuration
   'EMQX_HOST': 'emqx_host',
   'EMQX_PORT': 'emqx_port',
   'EMQX_USERNAME': 'emqx_username',
   'EMQX_PASSWORD': 'emqx_password',
+  // Database configuration
+  'DATABASE_HOST': 'database_host',
+  'DATABASE_PORT': 'database_port',
+  'DATABASE_USERNAME': 'database_username',
+  'DATABASE_USER': 'database_username', // Alias for DATABASE_USERNAME
+  'DATABASE_PASSWORD': 'database_password',
+  'DATABASE_NAME': 'database_name',
+  // Legacy database configuration (db_* prefix)
+  'DB_HOST': 'db_host',
+  'DB_PORT': 'db_port',
+  'DB_USERNAME': 'db_username',
+  'DB_PASSWORD': 'db_password',
+  'DB_DATABASE': 'db_database',
   // Additional mappings for other environment variables
   'PORT': 'port',
   'ERP_URL': 'erp_url',
@@ -61,7 +85,12 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'EMQX_ACCESS_KEY': 'emqx_access_key',
   'EMQX_SECRET_KEY': 'emqx_secret_key',
   'AWS_SNS_ACCESS_KEY_ID': 'aws_sns_access_key_id',
-  'AWS_SNS_SECRET_ACCESS_KEY': 'aws_sns_secret_access_key'
+  'AWS_SNS_SECRET_ACCESS_KEY': 'aws_sns_secret_access_key',
+  'DH6400_ENABLED': 'dh6400_enabled',
+  'DH6400_SERIAL_PORT': 'dh6400_serial_port',
+  'DH6400_BAUD_RATE': 'dh6400_baud_rate',
+  'DH6400_POLLING_INTERVAL': 'dh6400_polling_interval',
+  'DH6400_ENABLED_CHANNELS': 'dh6400_enabled_channels'
 };
 
 /**
@@ -264,6 +293,81 @@ export class GlobalContextHelper {
     }
 
     return result;
+  }
+
+  /**
+   * Gets error code mappings from global context
+   * @returns Error code mappings object
+   */
+  getErrorCodeMappings(): Record<string, any> {
+    const mappings = this.globalContext.get('errorCodeMappings');
+    return mappings || {};
+  }
+
+  /**
+   * Gets error code mapping for a specific device type
+   * @param deviceType - Device type name (e.g., 'Climate_Controller')
+   * @returns Error code mapping or null if not found
+   */
+  getErrorCodeMappingForDevice(deviceType: string): any | null {
+    const allMappings = this.getErrorCodeMappings();
+    return allMappings[deviceType] || allMappings['default'] || null;
+  }
+
+  /**
+   * Gets all available device types with error code mappings
+   * @returns Array of device type names
+   */
+  getAvailableErrorDeviceTypes(): string[] {
+    const allMappings = this.getErrorCodeMappings();
+    return Object.keys(allMappings);
+  }
+
+  /**
+   * Checks if error code mappings are loaded
+   * @returns True if mappings exist in global context
+   */
+  hasErrorCodeMappings(): boolean {
+    const mappings = this.globalContext.get('errorCodeMappings');
+    return mappings !== undefined && mappings !== null && Object.keys(mappings).length > 0;
+  }
+
+  /**
+   * Gets a generic global variable by name
+   * @param varName - Variable name in global context
+   * @param defaultValue - Default value if not found
+   * @returns Variable value or default
+   */
+  getGlobalVar(varName: string, defaultValue?: any): any {
+    const value = this.globalContext.get(varName);
+    return value !== undefined ? value : defaultValue;
+  }
+
+  /**
+   * Sets a generic global variable by name
+   * @param varName - Variable name in global context
+   * @param value - Value to set
+   */
+  setGlobalVar(varName: string, value: any): void {
+    this.globalContext.set(varName, value);
+  }
+
+  /**
+   * Gets config key values from global context
+   * Used for calibration flags and settings
+   * @returns Config key values object
+   */
+  getGlobalConfigKeyValues(): Record<string, any> {
+    return this.globalContext.get('configKeyValues') || {};
+  }
+
+  /**
+   * Gets holding register data from global context
+   * Contains current Modbus register values
+   * @returns Holding register data object
+   */
+  getGlobalHoldingRegisterData(): Record<string, any> {
+    return this.globalContext.get('holdingRegisterData') || {};
   }
 
   /**

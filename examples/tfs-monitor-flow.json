@@ -1,0 +1,151 @@
+[
+    {
+        "id": "tfs_monitor_example_flow",
+        "type": "tab",
+        "label": "TFS Monitor Example",
+        "disabled": false,
+        "info": "Example flow for TFS counter overflow monitoring and auto-reset"
+    },
+    {
+        "id": "tfs_monitor_node",
+        "type": "viis-tfs-monitor",
+        "z": "tfs_monitor_example_flow",
+        "name": "TFS Monitor (Auto Reset)",
+        "enableAutoReset": true,
+        "cronSchedule": "0 * * * *",
+        "overflowThreshold": 90,
+        "boardId": "board1",
+        "enableLogging": true,
+        "tfsKeys": "tfs01,tfs02,tfs03,tfs04,tfs05,tfs06",
+        "x": 340,
+        "y": 180,
+        "wires": [
+            ["debug_output", "mqtt_publish"]
+        ]
+    },
+    {
+        "id": "debug_output",
+        "type": "debug",
+        "z": "tfs_monitor_example_flow",
+        "name": "TFS Monitor Results",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 600,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "manual_check_inject",
+        "type": "inject",
+        "z": "tfs_monitor_example_flow",
+        "name": "Manual Check",
+        "props": [
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "check",
+        "x": 140,
+        "y": 140,
+        "wires": [
+            ["tfs_monitor_node"]
+        ]
+    },
+    {
+        "id": "manual_reset_inject",
+        "type": "inject",
+        "z": "tfs_monitor_example_flow",
+        "name": "Manual Reset TFS01",
+        "props": [
+            {
+                "p": "topic",
+                "vt": "str"
+            },
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "reset",
+        "payload": "{\"sensor\":\"tfs01\"}",
+        "payloadType": "json",
+        "x": 140,
+        "y": 220,
+        "wires": [
+            ["tfs_monitor_node"]
+        ]
+    },
+    {
+        "id": "mqtt_publish",
+        "type": "mqtt out",
+        "z": "tfs_monitor_example_flow",
+        "name": "Publish to ThingsBoard",
+        "topic": "v1/devices/me/telemetry",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "thingsboard_broker",
+        "x": 630,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "comment_node",
+        "type": "comment",
+        "z": "tfs_monitor_example_flow",
+        "name": "TFS Counter Overflow Prevention System",
+        "info": "This flow monitors TFS counters and automatically resets them before overflow.\n\n**Features:**\n- Scheduled monitoring (default: hourly)\n- Auto-reset when counter reaches 90% of max value (65535)\n- Manual check and reset triggers\n- Database logging of all reset events\n- MQTT publishing to ThingsBoard\n\n**TFS Register Structure:**\n- Each sensor uses 2 registers: integer + decimal\n- Example: tfs01 at addresses 10,11 → 91.4589 m³\n- Reset register: reset_tfs01 at address 30\n\n**Configuration:**\nEnsure MODBUS_BOARD1_HOLDING_REGISTERS in device.env contains:\n- TFS registers (tfs01-06)\n- Reset registers (reset_tfs01-06)\n\n**Manual Triggers:**\n1. Check Now: Click 'Manual Check' inject\n2. Reset Sensor: Click 'Manual Reset TFS01' inject",
+        "x": 230,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "thingsboard_broker",
+        "type": "mqtt-broker",
+        "name": "ThingsBoard",
+        "broker": "mqtt.viis.tech",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]

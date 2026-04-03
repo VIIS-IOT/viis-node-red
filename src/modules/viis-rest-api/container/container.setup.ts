@@ -4,6 +4,7 @@
  */
 
 import Container, { Token } from "typedi";
+import { DataSource } from "typeorm";
 import { Node } from "node-red";
 import { DatabaseService } from "../services/database.service";
 import { AuthService } from "../services/auth.service";
@@ -12,6 +13,10 @@ import { NotificationService } from "../services/notification.service";
 import { ScheduleActivationService } from "../services/schedule-activation.service";
 import { ScheduleCompletionMonitorService } from "../services/schedule-completion-monitor.service";
 import { DeviceService } from "../services/device.service";
+import { MarineTelemetryService } from "../services/marine-telemetry.service";
+import { MarineWebSocketService } from "../services/marine-websocket.service";
+import { TripManagementService } from "../../../services/MarineIoT/TripManagementService";
+import { TripAccumulationService } from "../../../services/MarineIoT/TripAccumulationService";
 import { AuthController } from "../controllers/auth.controller";
 import { UserController } from "../controllers/user.controller";
 import { HealthController } from "../controllers/health.controller";
@@ -93,6 +98,11 @@ export class ContainerSetup {
             await databaseService.initialize();
             Container.set(DatabaseService, databaseService);
 
+            // Register DataSource for services that need direct access
+            // This fixes the "DataSource not found in container" error
+            const dataSource = databaseService.getDataSource();
+            Container.set(DataSource, dataSource);
+
             // Create service context for base services
             const serviceContext: ServiceContext = {
                 node,
@@ -150,12 +160,14 @@ export class ContainerSetup {
         Container.set(NotificationService, notificationService);
 
         // Register ScheduleCompletionMonitorService
+        // DISABLED: Automatic schedule monitoring causes continuous MQTT publishing
+        // To enable, uncomment the following lines
         const scheduleCompletionMonitor = new ScheduleCompletionMonitorService(
             serviceContext,
             databaseService,
             notificationService
         );
-        await scheduleCompletionMonitor.initialize();
+        // await scheduleCompletionMonitor.initialize(); // ← DISABLED: This starts the 5-second interval
         Container.set(ScheduleCompletionMonitorService, scheduleCompletionMonitor);
 
         // Register ScheduleActivationService
@@ -175,6 +187,26 @@ export class ContainerSetup {
         const thingsBoardService = new ThingsBoardService(serviceContext, scheduleActivationService);
         await thingsBoardService.initialize();
         Container.set(ThingsBoardService, thingsBoardService);
+
+        // Register MarineTelemetryService
+        const dataSource = databaseService.getDataSource();
+        const marineTelemetryService = new MarineTelemetryService(dataSource);
+        Container.set(MarineTelemetryService, marineTelemetryService);
+
+        // Register MarineWebSocketService (will be initialized later with HTTP server)
+        const marineWebSocketService = new MarineWebSocketService(
+            marineTelemetryService,
+            authService,
+            node
+        );
+        Container.set(MarineWebSocketService, marineWebSocketService);
+
+        // Register Trip Management Services
+        const tripManagementService = new TripManagementService(dataSource);
+        Container.set(TripManagementService, tripManagementService);
+
+        const tripAccumulationService = new TripAccumulationService(dataSource);
+        Container.set(TripAccumulationService, tripAccumulationService);
 
         // Note: DeviceService is decorated with @Service()
         // It will be automatically instantiated by TypeDI when needed
@@ -223,10 +255,31 @@ export class ContainerSetup {
     }
 
     /**
-     * Reset container (useful for testing)
+     * Reset container (useful for testing and cleanup)
+     * Safely handles cases where DataSource may not be initialized
      */
     static reset(): void {
-        Container.reset();
+        try {
+            // Check and safely destroy DataSource before container reset
+            if (Container.has(DataSource)) {
+                const dataSource = Container.get(DataSource);
+                if (dataSource && dataSource.isInitialized) {
+                    // Don't destroy here - let DatabaseService handle it
+                    // dataSource.destroy() is async and Container.reset() is sync
+                    console.log('[VIIS-REST-API] DataSource will be cleaned up by DatabaseService');
+                }
+            }
+            
+            // Reset container - this may throw if services have destroy callbacks
+            // that try to access disconnected DataSource
+            try {
+                Container.reset();
+            } catch (resetError) {
+                console.warn('[VIIS-REST-API] Container reset warning:', (resetError as Error).message);
+            }
+        } catch (error) {
+            console.warn('[VIIS-REST-API] Container reset error (non-fatal):', (error as Error).message);
+        }
         this.isInitialized = false;
     }
 

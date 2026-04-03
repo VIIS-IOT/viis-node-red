@@ -10,15 +10,17 @@ const constants_1 = require("../constants");
 const scheduleValidator_1 = require("../utils/scheduleValidator");
 const helper_1 = require("../../../ultils/helper");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
-const typedi_1 = __importDefault(require("typedi"));
 const moment_timezone_1 = __importDefault(require("moment-timezone"));
 const typeorm_1 = require("typeorm");
+const viis_schedule_executor_service_1 = require("../../viis-schedule-executor/viis-schedule-executor-service");
+const client_registry_1 = __importDefault(require("../../../core/client-registry"));
+const global_context_helper_1 = require("../../../ultils/global-context-helper");
 class ScheduleHandler {
     constructor(dbService, node) {
-        this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
+        this.node = node;
+        this.syncScheduleService = new SyncScheduleService_1.SyncScheduleService(node.context());
         this.dbService = dbService;
         this.scheduleRepo = dbService.getScheduleRepository();
-        this.node = node;
     }
     async handleRequest(msg) {
         try {
@@ -55,8 +57,17 @@ class ScheduleHandler {
         catch (error) {
             logger_1.logger.error(this.node, `Request handling failed: ${error.message}`);
             msg.payload = { error: error.message };
-            if ('statusCode' in msg)
-                msg.statusCode = error instanceof Error && error.message.includes('Validation failed') ? 400 : 500;
+            // Set appropriate status code
+            if ('statusCode' in msg) {
+                const errorMsg = error.message;
+                // Business logic errors should return 400
+                const isBadRequest = errorMsg.includes('Validation failed') ||
+                    errorMsg.includes('Cannot change') ||
+                    errorMsg.includes('Cannot disable') ||
+                    errorMsg.includes('not found') ||
+                    errorMsg.includes('Invalid');
+                msg.statusCode = isBadRequest ? 400 : 500;
+            }
             return msg;
         }
     }
@@ -68,7 +79,7 @@ class ScheduleHandler {
             throw new Error('Invalid GET endpoint');
         }
         const page = parseInt(query === null || query === void 0 ? void 0 : query.page) || 1;
-        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 10;
+        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 1000;
         const orderBy = (query === null || query === void 0 ? void 0 : query.order_by) || 'name ASC';
         const [field, direction] = orderBy.split(' ');
         try {
@@ -162,6 +173,7 @@ class ScheduleHandler {
             const schedule = this.scheduleRepo.create(scheduleData);
             const savedSchedule = await this.scheduleRepo.save(schedule);
             logger_1.logger.info(this.node, `Schedule saved successfully`);
+            this.node.warn(`✓ CREATE LOCAL: Schedule "${dto.name}" created successfully in local database`);
             // Sync to server
             try {
                 logger_1.logger.info(this.node, 'Starting schedule sync to server');
@@ -175,9 +187,11 @@ class ScheduleHandler {
                 if (updatedSchedule) {
                     Object.assign(savedSchedule, updatedSchedule);
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule "${dto.name}" synced successfully to server`);
             }
             catch (syncError) {
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule "${dto.name}" - ${syncError.message}`);
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             // Create a response object with all necessary fields
@@ -208,6 +222,7 @@ class ScheduleHandler {
         }
         catch (error) {
             logger_1.logger.error(this.node, `POST request failed: ${error.message}`);
+            this.node.warn(`✗ CREATE LOCAL FAILED: ${error.message}`);
             throw error; // Let handleRequest catch and handle it
         }
     }
@@ -225,15 +240,111 @@ class ScheduleHandler {
         }
         // Get existing schedule to check current status
         const existingSchedule = await this.scheduleRepo.findOne({
-            where: { name },
-            select: ['status']
+            where: { name }
         });
         if (!existingSchedule) {
             throw new Error(`Schedule with name ${name} not found`);
         }
-        // Prevent changing status from running to finished
-        if (existingSchedule.status === 'running' && payload.status === 'finished') {
-            throw new Error('Cannot change schedule status from running to finished directly');
+        // Check if we need to finish a running schedule
+        // Case 1: Explicitly changing status from 'running' to 'finished'
+        // Case 2: Disabling a running schedule (enable: 0)
+        const isExplicitFinish = existingSchedule.status === 'running' && payload.status === 'finished';
+        const isDisablingRunning = existingSchedule.status === 'running' && payload.enable === 0;
+        const shouldFinishSchedule = isExplicitFinish || isDisablingRunning;
+        if (shouldFinishSchedule) {
+            try {
+                const action = isExplicitFinish ? 'FINISHING' : 'DISABLING';
+                this.node.warn(`🛑 ${action} RUNNING SCHEDULE: ${existingSchedule.label || name} | Executing finish sequence...`);
+                // Initialize helpers and get Modbus client
+                const globalHelper = new global_context_helper_1.GlobalContextHelper(this.node.context());
+                const scheduleService = new viis_schedule_executor_service_1.ScheduleService(this.node, false);
+                // Read Modbus config to determine if multi-board mode
+                const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+                let modbusClient;
+                if (boardsConfig) {
+                    // Multi-board mode
+                    let boards;
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    }
+                    else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    }
+                    if (boards && boards.length > 0) {
+                        const defaultBoard = globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id);
+                        modbusClient = await client_registry_1.default.getModbusClientV2(defaultBoard, this.node);
+                        this.node.warn(`Using multi-board mode with board: ${defaultBoard}`);
+                    }
+                }
+                else {
+                    // Single-board mode - try to get default client
+                    const modbusHost = globalHelper.getEnvVar('MODBUS_HOST');
+                    if (modbusHost) {
+                        const config = {
+                            host: modbusHost,
+                            tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
+                            type: globalHelper.getEnvVar('MODBUS_TYPE', 'TCP'),
+                            unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1)
+                        };
+                        modbusClient = await client_registry_1.default.getModbusClientV2(config, this.node);
+                    }
+                }
+                if (!modbusClient) {
+                    this.node.warn(`⚠️ No Modbus client available, skipping finish sequence for ${name}`);
+                }
+                else {
+                    // Create a finish schedule object with status = 'finished'
+                    const finishSchedule = Object.assign(Object.assign({}, existingSchedule), { status: 'finished' });
+                    // Get commands to reset all coils/registers
+                    const commands = scheduleService.mapScheduleToModbus(finishSchedule);
+                    // Execute finish sequence (pumps/power off first, then valves)
+                    await scheduleService.executeModbusCommands(modbusClient, commands, finishSchedule);
+                    this.node.warn(`✅ FINISH SEQUENCE COMPLETE: ${existingSchedule.label || name} | All Modbus commands reset`);
+                    // Publish MQTT notification and sync log (same as viis-schedule-executor)
+                    try {
+                        // Create MQTT configs
+                        const thingsboardConfig = {
+                            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+                            clientId: `node-red-tb-api-${Math.random().toString(16).substring(2, 10)}`,
+                            username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
+                            password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),
+                            qos: 1,
+                        };
+                        const emqxConfig = {
+                            broker: `mqtt://${globalHelper.getEnvVar("EMQX_HOST", "emqx")}:${globalHelper.getEnvVar("EMQX_PORT", "1883")}`,
+                            clientId: `node-red-emqx-api-${Math.random().toString(16).substring(2, 10)}`,
+                            username: globalHelper.getEnvVar("EMQX_USERNAME", ""),
+                            password: globalHelper.getEnvVar("EMQX_PASSWORD", ""),
+                            qos: 1,
+                        };
+                        // Get MQTT clients from ClientRegistry
+                        const thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, this.node);
+                        const emqxClient = await client_registry_1.default.getLocalMqttClient(emqxConfig, this.node);
+                        if (thingsboardClient && emqxClient) {
+                            // Publish MQTT notification with 'finished' status
+                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, finishSchedule, true);
+                            // Sync schedule log
+                            await scheduleService.syncScheduleLog(finishSchedule, true);
+                        }
+                        else {
+                            this.node.warn(`⚠️ MQTT clients not available, skipping MQTT publish for ${name}`);
+                        }
+                    }
+                    catch (mqttError) {
+                        this.node.warn(`⚠️ MQTT/LOG ERROR: ${name} | ${mqttError.message}`);
+                        // Don't fail the whole operation if MQTT fails
+                    }
+                }
+                // Force status to 'finished' and disable schedule
+                payload.status = 'finished';
+                payload.enable = 0;
+            }
+            catch (modbusError) {
+                this.node.warn(`❌ MODBUS FINISH ERROR: ${name} | ${modbusError.message}`);
+                // Continue with the update even if Modbus fails
+                payload.status = 'finished';
+                payload.enable = 0;
+            }
         }
         try {
             // Validate payload against DTO
@@ -269,6 +380,7 @@ class ScheduleHandler {
             if (!updated) {
                 throw new Error(`Failed to retrieve updated schedule`);
             }
+            this.node.warn(`✓ UPDATE LOCAL: Schedule "${dto.name}" updated successfully in local database`);
             // Sync to server
             try {
                 logger_1.logger.info(this.node, 'Starting schedule sync to server');
@@ -281,9 +393,11 @@ class ScheduleHandler {
                 if (refreshedUpdated) {
                     Object.assign(updated, refreshedUpdated);
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule "${dto.name}" synced successfully to server`);
             }
             catch (syncError) {
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule "${dto.name}" - ${syncError.message}`);
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             // Create a response object with all necessary fields
@@ -314,6 +428,7 @@ class ScheduleHandler {
         }
         catch (error) {
             logger_1.logger.error(this.node, `PUT request failed: ${error.message}`);
+            this.node.warn(`✗ UPDATE LOCAL FAILED: ${error.message}`);
             throw error; // Let handleRequest catch and handle it
         }
     }
@@ -362,7 +477,7 @@ class ScheduleHandler {
             const deviceIds = deviceQuery.map(item => item.device_id).filter(Boolean);
             // Apply device filter
             if (deviceIds.length > 0) {
-                whereOptions.device_id = deviceIds;
+                whereOptions.device_id = (0, typeorm_1.In)(deviceIds);
             }
             // Query for schedules
             const [schedules, totalCount] = await this.scheduleRepo.findAndCount({
@@ -387,6 +502,7 @@ class ScheduleHandler {
                         .utc().valueOf() : null;
                 return {
                     id: schedule.name,
+                    status: schedule.status,
                     device_id: schedule.device_id,
                     device_name: schedule.device_label || schedule.device_id,
                     action: JSON.parse(schedule.action || '{}'),
@@ -478,6 +594,7 @@ class ScheduleHandler {
             if (!updatedSchedule) {
                 throw new Error(`Failed to retrieve updated schedule for syncing`);
             }
+            this.node.warn(`✓ DELETE LOCAL: Schedule "${name}" marked as deleted in local database`);
             // Sync to server
             try {
                 logger_1.logger.info(this.node, 'Starting schedule sync to server');
@@ -485,9 +602,11 @@ class ScheduleHandler {
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             }
             catch (syncError) {
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule "${name}" - ${syncError.message}`);
                 // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             msg.payload = { result: { message: 'Schedule marked as deleted' } };
@@ -496,6 +615,7 @@ class ScheduleHandler {
             return msg;
         }
         catch (error) {
+            this.node.warn(`✗ DELETE LOCAL FAILED: Schedule "${name}" - ${error.message}`);
             throw new Error(`DELETE request failed: ${error.message}`);
         }
     }

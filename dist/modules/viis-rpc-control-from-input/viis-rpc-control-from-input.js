@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
+const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     function ViisRpcControlFromInputNode(config) {
         RED.nodes.createNode(this, config);
@@ -11,6 +12,12 @@ module.exports = function (RED) {
         // Log when node is initialized
         node.warn("VIIS RPC Control From Input Node initialized");
         console.log("VIIS RPC Control From Input Node initialized");
+        // Initialize GlobalContextHelper for environment variables
+        const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+        // Multi-board state variables
+        let currentBoardId = config.boardId;
+        let isMultiBoardMode = false;
+        let currentModbusConfig = null;
         // Flow context cho config
         const flowContext = node.context().flow;
         const SCALE_CONFIG_KEY = `scaleConfigs_${node.id}`;
@@ -56,46 +63,113 @@ module.exports = function (RED) {
         function setConfigKeyValues(values) {
             flowContext.set(CONFIG_VALUES_KEY, values);
         }
-        // Environment variables
-        const modbusCoils = JSON.parse(process.env.MODBUS_COILS || "{}");
-        const modbusInputRegisters = JSON.parse(process.env.MODBUS_INPUT_REGISTERS || "{}");
-        const modbusHoldingRegisters = JSON.parse(process.env.MODBUS_HOLDING_REGISTERS || "{}");
-        // Initialize modbus client
-        // Environment variables
-        const deviceId = process.env.DEVICE_ID || "unknown";
-        // Modbus config
-        const modbusConfig = {
-            type: process.env.MODBUS_TYPE || "TCP",
-            host: process.env.MODBUS_HOST || "localhost",
-            tcpPort: parseInt(process.env.MODBUS_TCP_PORT || "502", 10),
-            serialPort: process.env.MODBUS_SERIAL_PORT || "/dev/ttyUSB0",
-            baudRate: parseInt(process.env.MODBUS_BAUD_RATE || "9600", 10),
-            parity: process.env.MODBUS_PARITY || "none",
-            unitId: parseInt(process.env.MODBUS_UNIT_ID || "1", 10),
-            timeout: parseInt(process.env.MODBUS_TIMEOUT || "5000", 10),
-            reconnectInterval: parseInt(process.env.MODBUS_RECONNECT_INTERVAL || "5000", 10),
+        // Helper function to read fresh config from global context (for hot-reload)
+        const readModbusConfig = () => {
+            // Check for multi-board configuration
+            const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+            if (boardsConfig) {
+                try {
+                    let boards;
+                    // Handle both already-parsed array and JSON string
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    }
+                    else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    }
+                    else {
+                        node.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                        boards = null;
+                    }
+                    if (Array.isArray(boards) && boards.length > 0) {
+                        return {
+                            mode: 'multi',
+                            boards: boards,
+                            defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                        };
+                    }
+                }
+                catch (e) {
+                    node.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                }
+            }
+            // Single-board mode (backward compatible)
+            return {
+                mode: 'single',
+                config: {
+                    type: globalHelper.getEnvVar('MODBUS_TYPE', 'TCP'),
+                    host: globalHelper.getEnvVar('MODBUS_HOST', 'localhost'),
+                    tcpPort: globalHelper.getNumericEnvVar('MODBUS_TCP_PORT', 502),
+                    serialPort: globalHelper.getEnvVar('MODBUS_SERIAL_PORT', '/dev/ttyUSB0'),
+                    baudRate: globalHelper.getNumericEnvVar('MODBUS_BAUD_RATE', 9600),
+                    parity: globalHelper.getEnvVar('MODBUS_PARITY', 'none'),
+                    unitId: globalHelper.getNumericEnvVar('MODBUS_UNIT_ID', 1),
+                    timeout: globalHelper.getNumericEnvVar('MODBUS_TIMEOUT', 5000),
+                    reconnectInterval: globalHelper.getNumericEnvVar('MODBUS_RECONNECT_INTERVAL', 5000),
+                }
+            };
         };
-        // MQTT config
+        const readEnvConfig = () => {
+            return {
+                modbusCoils: globalHelper.getJsonEnvVar('MODBUS_COILS', {}),
+                modbusInputRegisters: globalHelper.getJsonEnvVar('MODBUS_INPUT_REGISTERS', {}),
+                modbusHoldingRegisters: globalHelper.getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {}),
+                deviceId: globalHelper.getEnvVar('DEVICE_ID', 'unknown'),
+            };
+        };
+        // Read initial config
+        let currentEnvConfig = readEnvConfig();
+        let modbusCoils = currentEnvConfig.modbusCoils;
+        let modbusInputRegisters = currentEnvConfig.modbusInputRegisters;
+        let modbusHoldingRegisters = currentEnvConfig.modbusHoldingRegisters;
+        let deviceId = currentEnvConfig.deviceId;
+        // Initialize Modbus configuration
+        const configData = readModbusConfig();
+        currentModbusConfig = Object.assign({}, configData);
+        // Auto-detect mode
+        if (configData.mode === 'multi') {
+            isMultiBoardMode = true;
+            node.log(`Multi-board mode detected with ${configData.boards.length} boards`);
+            const multiConfig = {
+                mode: 'multi',
+                defaultBoard: configData.defaultBoard,
+                boards: configData.boards
+            };
+            client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
+        }
+        else {
+            isMultiBoardMode = false;
+            node.log(`Single-board mode: ${configData.config.type} ${configData.config.host}:${configData.config.tcpPort}`);
+        }
+        // MQTT config from global context
         const mqttConfig = config.mqttBroker === "thingsboard"
             ? {
-                broker: `mqtt://${process.env.THINGSBOARD_HOST || "mqtt.viis.tech"}:${process.env.THINGSBOARD_PORT || "1883"}`,
+                broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech')}:${globalHelper.getNumericEnvVar('THINGSBOARD_PORT', 1883)}`,
                 clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substr(2, 8)}`,
-                username: process.env.DEVICE_ACCESS_TOKEN || "",
-                password: process.env.THINGSBOARD_PASSWORD || "",
+                username: globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', ''),
+                password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
                 qos: 1,
             }
             : {
-                broker: `mqtt://${process.env.EMQX_HOST || "emqx"}:${process.env.EMQX_PORT || "1883"}`,
+                broker: `mqtt://${globalHelper.getEnvVar('EMQX_HOST', 'emqx')}:${globalHelper.getNumericEnvVar('EMQX_PORT', 1883)}`,
                 clientId: `node-red-local-rpc-${Math.random().toString(16).substr(2, 8)}`,
-                username: process.env.EMQX_USERNAME || "",
-                password: process.env.EMQX_PASSWORD || "",
+                username: globalHelper.getEnvVar('EMQX_USERNAME', ''),
+                password: globalHelper.getEnvVar('EMQX_PASSWORD', ''),
                 qos: 1,
             };
         const publishTopic = config.mqttBroker === "thingsboard"
             ? "v1/devices/me/telemetry"
             : `v1/devices/me/telemetry/${deviceId}`;
-        // Lấy clients
-        const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
+        // Lấy clients  
+        let modbusClient;
+        if (isMultiBoardMode) {
+            const boardToUse = currentBoardId || configData.defaultBoard;
+            node.log(`Getting client for board: ${boardToUse}`);
+            modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+        }
+        else {
+            modbusClient = client_registry_1.default.getModbusClientV2(configData.config, node);
+        }
         let mqttClient = null;
         // Khởi tạo MQTT client nếu cần (async/sync)
         if (config.mqttBroker) {
@@ -131,6 +205,78 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "Modbus client initialization failed" });
             return;
         }
+        // Hot-reload: Check for config changes every 30 seconds
+        const configCheckInterval = setInterval(async () => {
+            try {
+                const newEnvConfig = readEnvConfig();
+                const newConfig = readModbusConfig();
+                // Check if mode has changed or if critical config has changed
+                let hasChanged = false;
+                let changeDescription = "";
+                if (currentModbusConfig.mode !== newConfig.mode) {
+                    hasChanged = true;
+                    changeDescription = `mode changed from ${currentModbusConfig.mode} to ${newConfig.mode}`;
+                }
+                else if (newConfig.mode === 'single' && currentModbusConfig.mode === 'single') {
+                    const oldCfg = currentModbusConfig.config;
+                    const newCfg = newConfig.config;
+                    hasChanged =
+                        oldCfg.host !== newCfg.host ||
+                            oldCfg.tcpPort !== newCfg.tcpPort ||
+                            oldCfg.type !== newCfg.type;
+                    if (hasChanged) {
+                        changeDescription = `${newCfg.host}:${newCfg.tcpPort}`;
+                    }
+                }
+                else if (newConfig.mode === 'multi' && currentModbusConfig.mode === 'multi') {
+                    const oldBoards = JSON.stringify(currentModbusConfig.boards);
+                    const newBoards = JSON.stringify(newConfig.boards);
+                    hasChanged = oldBoards !== newBoards;
+                    if (hasChanged) {
+                        changeDescription = `board configuration updated`;
+                    }
+                }
+                if (hasChanged) {
+                    node.warn(`[HOT-RELOAD] Config change detected: ${changeDescription}`);
+                    if (newConfig.mode === 'multi') {
+                        const multiConfig = {
+                            mode: 'multi',
+                            defaultBoard: newConfig.defaultBoard,
+                            boards: newConfig.boards
+                        };
+                        client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
+                        const boardToUse = currentBoardId || newConfig.defaultBoard;
+                        modbusClient = client_registry_1.default.getModbusClientV2(boardToUse, node);
+                    }
+                    else {
+                        const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
+                        if (reloaded) {
+                            modbusClient = client_registry_1.default.getModbusClientV2(newConfig.config, node);
+                        }
+                    }
+                    currentModbusConfig = Object.assign({}, newConfig);
+                    isMultiBoardMode = newConfig.mode === 'multi';
+                    node.warn(`[HOT-RELOAD] Modbus reloaded: ${changeDescription}`);
+                    node.status({ fill: "green", shape: "dot", text: `Reloaded: ${changeDescription}` });
+                    setTimeout(() => {
+                        node.status({ fill: "green", shape: "dot", text: "Ready" });
+                    }, 3000);
+                }
+                // Update all env variables
+                if (currentEnvConfig.deviceId !== newEnvConfig.deviceId) {
+                    node.warn(`[HOT-RELOAD] Device ID changed: ${currentEnvConfig.deviceId} -> ${newEnvConfig.deviceId}`);
+                    deviceId = newEnvConfig.deviceId;
+                }
+                modbusCoils = newEnvConfig.modbusCoils;
+                modbusInputRegisters = newEnvConfig.modbusInputRegisters;
+                modbusHoldingRegisters = newEnvConfig.modbusHoldingRegisters;
+                currentEnvConfig = newEnvConfig;
+            }
+            catch (error) {
+                node.error(`[HOT-RELOAD] Config check error: ${error.message}`);
+            }
+        }, 30000); // Check every 30 seconds
+        node.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
         // Utility functions
         function scaleValue(key, value, direction) {
             const config = getScaleConfigs().find((c) => c.key === key && c.direction === direction);
@@ -246,10 +392,34 @@ module.exports = function (RED) {
                 node.error(`MQTT publish error for ${key}: ${error.message}`);
             }
         }
+        // Filter out parameters with "undefined" values (string or actual undefined)
+        function filterUndefinedParams(params) {
+            const filteredParams = {};
+            const filteredKeys = [];
+            for (const [key, value] of Object.entries(params)) {
+                // Filter out "undefined" string values and actual undefined values
+                if (value === "undefined" || value === undefined) {
+                    filteredKeys.push(key);
+                    continue;
+                }
+                filteredParams[key] = value;
+            }
+            if (filteredKeys.length > 0) {
+                node.warn(`Filtered out parameters with undefined values: ${filteredKeys.join(", ")}`);
+            }
+            return filteredParams;
+        }
         async function handleRpcRequest(rpcBody) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
-                    for (const [key, rawValue] of Object.entries(rpcBody.params)) {
+                    // Filter out undefined parameters
+                    const filteredParams = filterUndefinedParams(rpcBody.params);
+                    if (Object.keys(filteredParams).length === 0) {
+                        node.warn("All parameters were filtered out due to undefined values");
+                        node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
+                        return;
+                    }
+                    for (const [key, rawValue] of Object.entries(filteredParams)) {
                         const mapping = findModbusMapping(key);
                         if (mapping) {
                             const value = validateAndConvertValue(key, rawValue);
@@ -374,12 +544,22 @@ module.exports = function (RED) {
         // Cleanup on close
         node.on('close', function () {
             try {
+                // Stop config check interval
+                if (configCheckInterval) {
+                    clearInterval(configCheckInterval);
+                    node.log("[CLEANUP] Config check interval stopped");
+                }
                 flowContext.set(SCALE_CONFIG_KEY, []);
                 flowContext.set(CONFIG_KEYS_KEY, {});
                 flowContext.set(CONFIG_VALUES_KEY, {});
                 flowContext.set(MANUAL_OVERRIDES_KEY, {});
                 // Giải phóng các clients
-                client_registry_1.default.releaseClient("modbus", node);
+                if (isMultiBoardMode && currentBoardId) {
+                    client_registry_1.default.releaseClientV2("modbus-board", node, currentBoardId);
+                }
+                else {
+                    client_registry_1.default.releaseClientV2("modbus", node);
+                }
                 if (config.mqttBroker === "thingsboard") {
                     client_registry_1.default.releaseClient("thingsboard", node);
                 }

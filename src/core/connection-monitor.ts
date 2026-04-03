@@ -10,7 +10,7 @@ export class ConnectionMonitor {
     private monitorTimer: NodeJS.Timeout | null = null;
     private readonly MONITOR_INTERVAL = 30000; // 30 seconds
     private readonly MAX_FAILED_CHECKS = 3;
-    
+
     private clients: Map<string, {
         client: MqttClientCore;
         node: Node;
@@ -18,7 +18,7 @@ export class ConnectionMonitor {
         lastSeen: number;
     }> = new Map();
 
-    private constructor() {}
+    private constructor() { }
 
     public static getInstance(): ConnectionMonitor {
         if (!this.instance) {
@@ -90,10 +90,10 @@ export class ConnectionMonitor {
      */
     private performHealthCheck(): void {
         const now = Date.now();
-        
+
         for (const [clientId, clientInfo] of this.clients.entries()) {
             const { client, node } = clientInfo;
-            
+
             try {
                 if (client.isConnected()) {
                     // Client is healthy, reset failed checks
@@ -102,8 +102,8 @@ export class ConnectionMonitor {
                 } else {
                     // Client is disconnected
                     clientInfo.failedChecks++;
-                    node.warn(`[CONNECTION-MONITOR] Client ${clientId} disconnected (failed checks: ${clientInfo.failedChecks})`);
-                    
+                    // node.warn(`[CONNECTION-MONITOR] Client ${clientId} disconnected (failed checks: ${clientInfo.failedChecks})`);
+
                     // Attempt recovery if failed checks exceed threshold
                     if (clientInfo.failedChecks >= this.MAX_FAILED_CHECKS) {
                         this.attemptRecovery(clientId, clientInfo);
@@ -121,19 +121,19 @@ export class ConnectionMonitor {
      */
     private attemptRecovery(clientId: string, clientInfo: any): void {
         const { client, node } = clientInfo;
-        
-        node.warn(`[CONNECTION-MONITOR] Attempting recovery for client ${clientId}`);
-        
+
+        // node.warn(`[CONNECTION-MONITOR] Attempting recovery for client ${clientId}`);
+
         try {
             // Reset circuit breaker if available
             if (typeof client.resetCircuitBreaker === 'function') {
                 client.resetCircuitBreaker();
                 node.log(`[CONNECTION-MONITOR] Reset circuit breaker for ${clientId}`);
             }
-            
+
             // Reset failed checks to give recovery a chance
             clientInfo.failedChecks = 0;
-            
+
         } catch (error) {
             node.error(`[CONNECTION-MONITOR] Recovery failed for ${clientId}: ${(error as Error).message}`);
         }
@@ -152,7 +152,7 @@ export class ConnectionMonitor {
 
         for (const [clientId, clientInfo] of this.clients.entries()) {
             const isConnected = clientInfo.client.isConnected();
-            
+
             if (isConnected) {
                 stats.connectedClients++;
             } else {
@@ -175,7 +175,7 @@ export class ConnectionMonitor {
      */
     public forceRecoveryAll(): void {
         console.log("[CONNECTION-MONITOR] Forcing recovery for all clients");
-        
+
         for (const [clientId, clientInfo] of this.clients.entries()) {
             if (!clientInfo.client.isConnected()) {
                 this.attemptRecovery(clientId, clientInfo);

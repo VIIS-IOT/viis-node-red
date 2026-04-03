@@ -104,3 +104,6 @@ typings/
 1
 
 src/services/sns/credentials
+
+# ORM migrations
+src/orm/migrations/

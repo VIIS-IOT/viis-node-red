@@ -7,6 +7,7 @@ import { Node, NodeContext } from "node-red";
 import { ModbusClientCore, ModbusData } from "../../core/modbus-client";
 import { TelemetryData, ScaleConfig } from "./viis-telemetry-utils";
 import { applyScaling } from "./viis-telemetry-utils";
+import { ErrorNotificationService, BusinessLogicError } from "../../services/error-notification.service";
 import {
   MAX_CONSECUTIVE_FAILURES,
   POLLING_BACKOFF_TIME,
@@ -44,6 +45,7 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private readonly node: Node;
   private readonly nodeContext: NodeContext;
   private readonly modbusClient: ModbusClientCore;
+  private readonly errorNotificationService: ErrorNotificationService;
 
   private readonly pollingStates: {
     coils: PollingState;
@@ -53,16 +55,23 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
   private isPollingPaused = false;
   private isConfigUpdating = false;
+  private currentBoardId: string | undefined;
+  private deviceId: string;
 
   constructor(
     node: Node,
     nodeContext: NodeContext,
-    modbusClient: ModbusClientCore
+    modbusClient: ModbusClientCore,
+    boardId?: string,
+    deviceId?: string
   ) {
     super();
     this.node = node;
     this.nodeContext = nodeContext;
     this.modbusClient = modbusClient;
+    this.errorNotificationService = new ErrorNotificationService(nodeContext);
+    this.currentBoardId = boardId;
+    this.deviceId = deviceId || node.id;
 
     this.pollingStates = {
       coils: { isPolling: false, consecutiveFailures: 0, interval: null },
@@ -160,7 +169,13 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private async pollCoils(config: PollingConfig, mapping: { [key: string]: number }): Promise<void> {
     const state = this.pollingStates.coils;
 
-    if (state.isPolling || this.isPollingPaused || this.isConfigUpdating) return;
+    // Skip if previous polling is still in progress
+    if (state.isPolling) {
+      this.node.warn('coils polling skipped - previous operation still in progress');
+      return;
+    }
+
+    if (this.isPollingPaused || this.isConfigUpdating) return;
 
     if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.handleMaxFailures('coils', state);
@@ -171,7 +186,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
     try {
       const result = await this.retryOperation(
-        () => this.modbusClient.readCoils(config.startAddress, config.quantity)
+        () => this.modbusClient.readCoils(config.startAddress, config.quantity),
+        config.interval
       );
 
       const currentState = this.processCoilData(result, mapping, config.startAddress);
@@ -181,7 +197,7 @@ export class ViisTelemetryPollingService extends EventEmitter {
       state.consecutiveFailures = 0;
 
     } catch (error) {
-      this.handlePollingError('coils', state, error as Error);
+      await this.handlePollingError('coils', state, error as Error);
     } finally {
       state.isPolling = false;
       if (this.isConfigUpdating) {
@@ -196,7 +212,13 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private async pollInputRegisters(config: PollingConfig, mapping: { [key: string]: number }): Promise<void> {
     const state = this.pollingStates.inputRegisters;
 
-    if (state.isPolling || this.isPollingPaused || this.isConfigUpdating) return;
+    // Skip if previous polling is still in progress
+    if (state.isPolling) {
+      this.node.warn('inputRegisters polling skipped - previous operation still in progress');
+      return;
+    }
+
+    if (this.isPollingPaused || this.isConfigUpdating) return;
 
     if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.handleMaxFailures('inputRegisters', state);
@@ -207,17 +229,18 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
     try {
       const result = await this.retryOperation(
-        () => this.modbusClient.readInputRegisters(config.startAddress, config.quantity)
+        () => this.modbusClient.readInputRegisters(config.startAddress, config.quantity),
+        config.interval
       );
 
-      const currentState = this.processRegisterData(result, mapping, 'read');
+      const currentState = this.processRegisterData(result, mapping, 'read', 'input');
       this.node.context().global.set(GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA, currentState);
 
       this.emitTelemetryData(currentState, REGISTER_TYPES.INPUT_REGISTERS);
       state.consecutiveFailures = 0;
 
     } catch (error) {
-      this.handlePollingError('inputRegisters', state, error as Error);
+      await this.handlePollingError('inputRegisters', state, error as Error);
     } finally {
       state.isPolling = false;
       if (this.isConfigUpdating) {
@@ -232,7 +255,13 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private async pollHoldingRegisters(config: PollingConfig, mapping: { [key: string]: number }): Promise<void> {
     const state = this.pollingStates.holdingRegisters;
 
-    if (state.isPolling || this.isPollingPaused || this.isConfigUpdating) return;
+    // Skip if previous polling is still in progress
+    if (state.isPolling) {
+      this.node.warn('holdingRegisters polling skipped - previous operation still in progress');
+      return;
+    }
+
+    if (this.isPollingPaused || this.isConfigUpdating) return;
 
     if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.handleMaxFailures('holdingRegisters', state);
@@ -243,17 +272,19 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
     try {
       const result = await this.retryOperation(
-        () => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity)
+        () => this.modbusClient.readHoldingRegisters(config.startAddress, config.quantity),
+        config.interval
       );
 
-      const currentState = this.processRegisterData(result, mapping, 'read');
+      const currentState = this.processRegisterData(result, mapping, 'read', 'holding');
       this.node.context().global.set(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, currentState);
 
-      this.emitTelemetryData(currentState, REGISTER_TYPES.HOLDING_REGISTERS);
+      // Emit with raw data for TFS parsing
+      this.emitTelemetryData(currentState, REGISTER_TYPES.HOLDING_REGISTERS, result.data as number[]);
       state.consecutiveFailures = 0;
 
     } catch (error) {
-      this.handlePollingError('holdingRegisters', state, error as Error);
+      await this.handlePollingError('holdingRegisters', state, error as Error);
     } finally {
       state.isPolling = false;
       if (this.isConfigUpdating) {
@@ -289,18 +320,22 @@ export class ViisTelemetryPollingService extends EventEmitter {
 
   /**
    * Process register data with scaling
+   * Scaling is configured via SCALE_CONFIGS in global context
    */
   private processRegisterData(
     result: ModbusData,
     mapping: { [key: string]: number },
-    direction: 'read' | 'write'
+    direction: 'read' | 'write',
+    registerType: 'holding' | 'input' = 'input'
   ): TelemetryData {
     const currentState: TelemetryData = {};
     const values = result.data as number[];
     const scaleConfigs = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
 
     Object.entries(mapping).forEach(([key, index]) => {
-      currentState[key] = applyScaling(key, values[index], direction, scaleConfigs);
+      // Apply scaling from config - handles all scaling including fs01-fs06 division
+      const value = applyScaling(key, values[index], direction, scaleConfigs);
+      currentState[key] = value;
     });
 
     return currentState;
@@ -309,8 +344,8 @@ export class ViisTelemetryPollingService extends EventEmitter {
   /**
    * Emit telemetry data event
    */
-  private emitTelemetryData(data: TelemetryData, source: string): void {
-    this.emit('telemetry-data', { data, source });
+  private emitTelemetryData(data: TelemetryData, source: string, rawData?: number[]): void {
+    this.emit('telemetry-data', { data, source, rawData });
   }
 
   /**
@@ -327,25 +362,35 @@ export class ViisTelemetryPollingService extends EventEmitter {
   /**
    * Handle polling error
    */
-  private handlePollingError(type: string, state: PollingState, error: Error): void {
+  private async handlePollingError(type: string, state: PollingState, error: Error): Promise<void> {
     state.consecutiveFailures++;
     this.node.error(`${type} polling error: ${error.message}`);
     this.node.warn(`Consecutive ${type} failures: ${state.consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}`);
+    
+    // Proactively write error notification when max failures reached
+    if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      await this.writeModbusConnectionError(type, error);
+    }
   }
 
   /**
    * Retry operation with exponential backoff
+   * Automatically reduces retries for fast polling intervals
    */
-  private async retryOperation<T>(operation: () => Promise<T>): Promise<T> {
+  private async retryOperation<T>(operation: () => Promise<T>, pollInterval?: number): Promise<T> {
     let lastError: Error;
+    
+    // Reduce retries for fast polling (< 2s) to avoid request buildup
+    const maxRetries = pollInterval && pollInterval < 2000 ? 1 : MAX_RETRY_ATTEMPTS;
+    const retryDelay = pollInterval && pollInterval < 2000 ? 200 : RETRY_DELAY;
 
-    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error as Error;
-        if (attempt < MAX_RETRY_ATTEMPTS) {
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
       }
     }
@@ -359,5 +404,37 @@ export class ViisTelemetryPollingService extends EventEmitter {
   private resetPreviousState(): void {
     this.nodeContext.set('previousState', {});
     this.isConfigUpdating = false;
+  }
+
+  /**
+   * Proactively write Modbus connection error notification
+   */
+  private async writeModbusConnectionError(registerType: string, error: Error): Promise<void> {
+    try {
+      const errorData: BusinessLogicError = {
+        err_code: `MODBUS_${registerType.toUpperCase()}_CONNECTION_FAILURE`,
+        message: `Failed to read ${registerType} after ${MAX_RETRY_ATTEMPTS} retry attempts: ${error.message}`,
+        severity: 'high',
+        type: 'error',
+        entity: this.deviceId,
+        entity_label: `Device ${this.deviceId}`,
+        metadata: {
+          register_type: registerType,
+          board_id: this.currentBoardId,
+          error_message: error.message,
+          consecutive_failures: MAX_CONSECUTIVE_FAILURES,
+          max_retry_attempts: MAX_RETRY_ATTEMPTS,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      await this.errorNotificationService.createFromBusinessLogic(errorData);
+      this.node.warn(`Error notification created for ${registerType} connection failure`);
+    } catch (notificationError: any) {
+      // Silently skip if database not ready
+      if (notificationError?.message !== 'Database not initialized') {
+        this.node.error(`Failed to create error notification: ${notificationError.message}`);
+      }
+    }
   }
 }

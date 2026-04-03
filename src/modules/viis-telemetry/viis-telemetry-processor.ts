@@ -25,6 +25,7 @@ export interface TelemetryProcessorConfig {
 export interface TelemetryDataEvent {
   data: TelemetryData;
   source: string;
+  rawData?: number[]; // Raw register data for special processing (e.g., TFS parsing)
 }
 
 /** Periodic snapshot configuration */
@@ -183,7 +184,7 @@ export class ViisTelemetryProcessor {
    */
   private async publishTelemetryData(data: TelemetryData): Promise<void> {
     try {
-      publishTelemetry({
+      await publishTelemetry({
         data,
         emqxClient: this.localMqttClient,
         thingsboardClient: this.thingsboardMqttClient,
@@ -192,7 +193,8 @@ export class ViisTelemetryProcessor {
       });
     } catch (error) {
       this.node.error(`Failed to publish telemetry: ${(error as Error).message}`);
-      throw error;
+      // Don't throw - let the service continue even if MQTT publish fails
+      this.node.warn('Continuing local operations despite MQTT publish failure');
     }
   }
 

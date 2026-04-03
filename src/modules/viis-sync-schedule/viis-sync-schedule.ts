@@ -2,6 +2,14 @@
  * @fileoverview Sync Schedule Node for VIIS IoT system
  * This node synchronizes schedules and schedule plans between the local database and server
  * It fetches data from the server, compares with local records, and updates as needed
+ * 
+ * Configuration:
+ * - Credentials are auto-loaded from JSON config files (/services/env/configs/device*.json)
+ * - env-loader node must be present in flow to load JSON configs into global context
+ * - Device identity: DEVICE_ID, DEVICE_ACCESS_TOKEN from deviceIdentity section
+ * 
+ * @author VIIS Team
+ * @version 2.0.0 (JSON Config Support)
  */
 
 import { Node, NodeAPI, NodeDef, NodeStatus } from 'node-red';
@@ -11,6 +19,7 @@ import { ScheduleSyncHandler } from './handlers/scheduleSyncHandler';
 import { ExtendedNodeMessage } from './interfaces/types';
 import { SyncResult } from './services/syncStateService';
 import { SYNC_DEFAULTS } from './constants';
+import { GlobalContextHelper } from '../../ultils/global-context-helper';
 
 /**
  * Configuration definition for the VIIS sync schedule node
@@ -18,8 +27,10 @@ import { SYNC_DEFAULTS } from './constants';
  * @extends NodeDef
  */
 interface ViisSyncScheduleNodeDef extends NodeDef {
-    /** Access token for device authentication */
-    accessToken: string;
+    /** Access token for device authentication (optional, auto-loaded from JSON config if not provided) */
+    accessToken?: string;
+    /** Use auto-loaded credentials from JSON config (recommended, default: true) */
+    useAutoLoadedCredentials: boolean;
     /** Sync interval in minutes */
     syncInterval: number;
     /** Whether to sync on startup */
@@ -44,8 +55,41 @@ export = function(RED: NodeAPI) {
         config.maxRetries = config.maxRetries || 3;
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
+        config.useAutoLoadedCredentials = config.useAutoLoadedCredentials !== false; // Default to true
+
+        // Load credentials from JSON config via global context (recommended approach)
+        const globalHelper = new GlobalContextHelper(node.context());
+        let accessToken: string;
+
+        if (config.useAutoLoadedCredentials) {
+            // Auto-load from JSON config (loaded by env-loader node)
+            accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            
+            if (!accessToken) {
+                node.error('DEVICE_ACCESS_TOKEN not found in JSON config. Ensure env-loader node is configured and JSON config file exists.');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing credentials (check JSON config)' });
+                return;
+            }
+            
+            const deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            logger.info(node, 'Credentials auto-loaded from JSON config');
+            logger.info(node, `Device ID: ${deviceId.substring(0, 8)}...`);
+            logger.info(node, `Access Token: ${accessToken.substring(0, 8)}...`);
+        } else {
+            // Legacy mode: Use config or fallback to environment
+            accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
+                return;
+            }
+            if (!config.accessToken) {
+                logger.info(node, 'Access Token loaded from environment fallback');
+            }
+        }
 
         logger.info(node, 'Initializing VIIS Sync Schedule Node');
+        logger.info(node, `Using Access Token: ${accessToken.substring(0, 8)}...`);
         
         const dbService = new DatabaseService();
         let syncIntervalId: NodeJS.Timeout | null = null;
@@ -59,7 +103,7 @@ export = function(RED: NodeAPI) {
                 logger.info(node, 'Database initialized successfully');
 
                 // Initialize the sync handler
-                scheduleSyncHandler = new ScheduleSyncHandler(dbService, node, config.accessToken);
+                scheduleSyncHandler = new ScheduleSyncHandler(dbService, node, accessToken);
                 
                 // Update node status with initial state
                 updateNodeStatus('ready');

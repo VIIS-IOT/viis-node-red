@@ -36,46 +36,77 @@ function applyQueryFilters(qb, filters, defaultTable) {
         const paramKey = `param${index}`;
         // Quote the field name using MySQL backticks to preserve case sensitivity
         const fieldPath = `${tableAlias}.\`${field}\``;
+        let conditionApplied = false;
+        let conditionText = '';
+        let conditionParams = {};
         switch (operator.toLowerCase()) {
             case '=':
             case 'eq':
-                qb.andWhere(`${fieldPath} = :${paramKey}`, { [paramKey]: value });
+                conditionText = `${fieldPath} = :${paramKey}`;
+                conditionParams = { [paramKey]: value };
+                qb.andWhere(conditionText, conditionParams);
+                conditionApplied = true;
                 break;
             case 'like':
                 // Use MySQL-compatible LIKE syntax (no ::text cast, use LIKE instead of ILIKE)
-                qb.andWhere(`${fieldPath} LIKE :${paramKey}`, { [paramKey]: `%${value}%` });
+                conditionText = `${fieldPath} LIKE :${paramKey}`;
+                conditionParams = { [paramKey]: `%${value}%` };
+                qb.andWhere(conditionText, conditionParams);
+                conditionApplied = true;
                 break;
             case 'in':
                 if (Array.isArray(value)) {
-                    qb.andWhere(`${fieldPath} IN (:...${paramKey})`, { [paramKey]: value });
+                    conditionText = `${fieldPath} IN (:...${paramKey})`;
+                    conditionParams = { [paramKey]: value };
+                    qb.andWhere(conditionText, conditionParams);
+                    conditionApplied = true;
                 }
                 break;
             case '>':
             case 'gt':
-                qb.andWhere(`${fieldPath} > :${paramKey}`, { [paramKey]: value });
+                conditionText = `${fieldPath} > :${paramKey}`;
+                conditionParams = { [paramKey]: value };
+                qb.andWhere(conditionText, conditionParams);
+                conditionApplied = true;
                 break;
             case '<':
             case 'lt':
-                qb.andWhere(`${fieldPath} < :${paramKey}`, { [paramKey]: value });
+                conditionText = `${fieldPath} < :${paramKey}`;
+                conditionParams = { [paramKey]: value };
+                qb.andWhere(conditionText, conditionParams);
+                conditionApplied = true;
                 break;
             case '>=':
             case 'gte':
-                qb.andWhere(`${fieldPath} >= :${paramKey}`, { [paramKey]: value });
+                conditionText = `${fieldPath} >= :${paramKey}`;
+                conditionParams = { [paramKey]: value };
+                qb.andWhere(conditionText, conditionParams);
+                conditionApplied = true;
                 break;
             case '<=':
             case 'lte':
-                qb.andWhere(`${fieldPath} <= :${paramKey}`, { [paramKey]: value });
+                conditionText = `${fieldPath} <= :${paramKey}`;
+                conditionParams = { [paramKey]: value };
+                qb.andWhere(conditionText, conditionParams);
+                conditionApplied = true;
                 break;
             case 'between':
                 if (Array.isArray(value) && value.length === 2) {
-                    qb.andWhere(`${fieldPath} BETWEEN :${paramKey}0 AND :${paramKey}1`, { [`${paramKey}0`]: value[0], [`${paramKey}1`]: value[1] });
+                    conditionText = `${fieldPath} BETWEEN :${paramKey}0 AND :${paramKey}1`;
+                    conditionParams = { [`${paramKey}0`]: value[0], [`${paramKey}1`]: value[1] };
+                    qb.andWhere(conditionText, conditionParams);
+                    conditionApplied = true;
                 }
                 break;
             case 'isnull':
-                qb.andWhere(`${fieldPath} IS NULL`);
+                conditionText = `${fieldPath} IS NULL`;
+                qb.andWhere(conditionText);
+                conditionApplied = true;
                 break;
             case 'notnull':
-                qb.andWhere(`${fieldPath} IS NOT NULL`);
+                conditionText = `${fieldPath} IS NOT NULL`;
+                qb.andWhere(conditionText);
+                conditionApplied = true;
                 break;
             default:
                 console.warn(`Unsupported operator: ${operator}`);

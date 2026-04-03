@@ -10,6 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const logger_1 = require("../utils/logger");
+const offline_resilience_1 = require("../../../core/offline-resilience");
 /**
  * Service for API operations related to customer users
  */
@@ -37,9 +38,10 @@ class ApiService {
     }
     /**
      * Gets all customers and their users from the server
-     * @returns Promise that resolves to the API response containing customers
+     * @param throwOnError - If false, returns empty result instead of throwing (default: false for resilience)
+     * @returns Promise that resolves to the API response containing customers, or empty result if offline
      */
-    async getAllCustomers() {
+    async getAllCustomers(throwOnError = false) {
         var _a, _b, _c, _d, _e, _f, _g, _h;
         const timer = logger_1.logger.startTimer('getAllCustomers API call');
         const config = {
@@ -83,6 +85,27 @@ class ApiService {
             if (this.node) {
                 logger_1.logger.apiError(this.node, error, duration, this.showDetailedLogs);
             }
+            // Check if this is a network/offline error
+            const isNetworkError = axios_1.default.isAxiosError(error) &&
+                (!error.response || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND');
+            if (isNetworkError) {
+                // Record circuit breaker failure
+                const circuitBreaker = offline_resilience_1.ExternalServiceCircuitBreaker.getInstance();
+                circuitBreaker.recordFailure('backend-http', error);
+                if (this.node) {
+                    this.node.warn(`[OFFLINE-RESILIENT] Backend API unreachable (likely offline). ` +
+                        `Returning empty customer list. Local operations continue normally.`);
+                }
+                // If throwOnError is false (default), return empty result instead of throwing
+                if (!throwOnError) {
+                    return {
+                        result: {
+                            data: []
+                        }
+                    };
+                }
+            }
+            // For non-network errors or if throwOnError is true, throw as before
             if (axios_1.default.isAxiosError(error)) {
                 const errorDetails = {
                     message: error.message,

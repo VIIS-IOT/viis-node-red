@@ -41,6 +41,9 @@ class CurtainControlService {
             // Process luoi_2 control with both outdoor and indoor light
             const luoi2Actions = await this.processLuoiControl("luoi_2", lightOutdoor, lightIndoor, config.set_light_dai_luoi_2 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI, config.set_light_thu_luoi_2 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU, config.set_light_indoor_thu_luoi_2 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_INDOOR_THU, config.set_tolerance_light_luoi_2 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME, deviceStatus);
             actions.push(...luoi2Actions);
+            // Process luoi_3 control with both outdoor and indoor light
+            const luoi3Actions = await this.processLuoiControl("luoi_3", lightOutdoor, lightIndoor, config.set_light_dai_luoi_3 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI, config.set_light_thu_luoi_3 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU, config.set_light_indoor_thu_luoi_3 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_INDOOR_THU, config.set_tolerance_light_luoi_3 || constants_1.CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME, deviceStatus);
+            actions.push(...luoi3Actions);
             // Check and process tolerance timers
             const toleranceActions = await this.checkToleranceTimers(config, sensorData);
             actions.push(...toleranceActions);

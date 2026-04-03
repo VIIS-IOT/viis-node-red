@@ -1,0 +1,195 @@
+<!--
+  VIIS Aqara Device Node - UI Definition
+  Loads credentials from global context
+-->
+
+<script type="text/javascript">
+  RED.nodes.registerType("viis-aqara-device", {
+    category: "VIIS IoT",
+    color: "#44C4A1",
+    icon: "icons/spider-web.png",
+    inputs: 1,
+    outputs: 1,
+    label: function () {
+      return this.name || "Aqara Device";
+    },
+    labelStyle: function () {
+      return this.name ? "node_label_italic" : "";
+    },
+    defaults: {
+      name: { value: "" },
+      deviceType: { value: "ac", required: true },
+      operationMode: { value: "auto", required: true },
+      defaultTemperature: { value: 25, min: 16, max: 30, required: true },
+      defaultFanSpeed: { value: 2, min: 0, max: 3, required: true },
+      requestDelay: { value: 2000, min: 500, max: 10000, required: true },
+      enableRetry: { value: true },
+      maxRetries: { value: 3, min: 1, max: 5, required: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    inputLabels: ["Command"],
+    outputLabels: ["Result"],
+    
+    oneditprepare: function () {
+      const node = this;
+      $("#node-input-deviceType").val(node.deviceType || "ac");
+      $("#node-input-operationMode").val(node.operationMode || "auto");
+      $("#node-input-requestDelay").val(node.requestDelay || 2000);
+      $("#node-input-enableRetry").prop("checked", node.enableRetry !== false);
+      $("#node-input-maxRetries").val(node.maxRetries || 3);
+      
+      $("#node-input-deviceType").on("change", function() {
+        $("#acKeyTemplate-row").toggle($(this).val() === "custom");
+      }).trigger("change");
+    },
+    
+    oneditsave: function () {
+      const node = this;
+      node.defaultTemperature = Number($("#node-input-defaultTemperature").val());
+      node.defaultFanSpeed = Number($("#node-input-defaultFanSpeed").val());
+      node.requestDelay = Number($("#node-input-requestDelay").val());
+      node.enableRetry = $("#node-input-enableRetry").is(":checked");
+      node.maxRetries = Number($("#node-input-maxRetries").val());
+      return true;
+    }
+  });
+</script>
+
+<!-- Editor Form Template -->
+<script type="text/html" data-template-name="viis-aqara-device">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="e.g., Bedroom AC" />
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-deviceType"><i class="fa fa-cog"></i> Device Type</label>
+    <select id="node-input-deviceType" style="width: 70%;">
+      <option value="ac">Air Conditioner (IR)</option>
+      <option value="ir_generic">Generic IR Device</option>
+      <option value="custom">Custom Command</option>
+    </select>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-operationMode"><i class="fa fa-wrench"></i> Operation</label>
+    <select id="node-input-operationMode" style="width: 70%;">
+      <option value="auto">Auto (respect msg.payload.auto)</option>
+      <option value="manual">Manual (always execute)</option>
+    </select>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-defaultTemperature"><i class="fa fa-thermometer-half"></i> Default Temp</label>
+    <input type="number" id="node-input-defaultTemperature" min="16" max="30" style="width: 70px;" />
+    <span style="margin-left: 10px;">°C (16-30)</span>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-defaultFanSpeed"><i class="fa fa-tachometer"></i> Default Fan</label>
+    <select id="node-input-defaultFanSpeed" style="width: 70%;">
+      <option value="0">Auto</option>
+      <option value="1">Low</option>
+      <option value="2" selected>Medium</option>
+      <option value="3">High</option>
+    </select>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-requestDelay"><i class="fa fa-clock-o"></i> Request Delay</label>
+    <input type="number" id="node-input-requestDelay" min="500" max="10000" step="100" style="width: 70px;" />
+    <span style="margin-left: 10px;">ms (min 500, recommended 2000)</span>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-enableRetry"><i class="fa fa-refresh"></i> Retry</label>
+    <label style="width: auto; margin-left: 10px;">
+      <input type="checkbox" id="node-input-enableRetry" style="width: auto;" />
+      Enable retry on failure
+    </label>
+  </div>
+  
+  <div class="form-row">
+    <label for="node-input-maxRetries"><i class="fa fa-repeat"></i> Max Retries</label>
+    <input type="number" id="node-input-maxRetries" min="1" max="5" style="width: 70px;" />
+    <span style="margin-left: 10px;">attempts (1-5)</span>
+  </div>
+  
+  <div class="form-tips" style="margin-top: 15px; padding: 15px; background: #e7f3ff; border-left: 4px solid #2196f3;">
+    <i class="fa fa-info-circle"></i> <strong>Setup:</strong>
+    <ol style="margin: 10px 0 0 20px; padding: 0;">
+      <li style="margin-bottom: 10px;">
+        <strong>Create init function node:</strong>
+        <pre style="margin: 5px 0; padding: 10px; background: #f5f5f5; font-size: 0.85em;">// Init Aqara Credentials
+global.set("aqaraCredentials", {
+  appid: "your-app-id",
+  keyid: "your-key-id",
+  appkey: "your-app-key"
+});</pre>
+      </li>
+      <li style="margin-bottom: 10px;"><strong>Deploy init node</strong></li>
+      <li><strong>This node will auto-load credentials</strong> from global context</li>
+    </ol>
+  </div>
+</script>
+
+<!-- Help Content -->
+<script type="text/html" data-help-name="viis-aqara-device">
+  <h3>Aqara Device Control</h3>
+
+  <p>Controls Aqara IR devices (air conditioners) via Aqara Open API.</p>
+
+  <h4>Credentials Setup</h4>
+  <p>Set credentials in global context via init function:</p>
+  <pre><code>global.set("aqaraCredentials", {
+  appid: "your-app-id",
+  keyid: "your-key-id",
+  appkey: "your-app-key",
+  accesstoken: "your-access-token"
+});</code></pre>
+
+  <h4>Mode 1: Standard Aqara API (passthrough)</h4>
+  <p>Send any Aqara API command directly. The node will handle authentication automatically:</p>
+  <pre><code>msg.payload = {
+  "intent": "query.device.info",
+  "data": {
+    "dids": ["lumi1.54ef44509e39"],
+    "positionId": "",
+    "pageNum": 1,
+    "pageSize": 50
+  }
+};
+return msg;</code></pre>
+  <p>Returns exact Aqara response: <code>{"code":0,"message":"Success","result":{...}}</code></p>
+
+  <h4>Mode 2: WRITE (IR Command)</h4>
+  <dl class="message-properties">
+    <dt>payload.power</dt>
+    <dd>true/false to turn ON/OFF</dd>
+    <dt>payload.temperature</dt>
+    <dd>Target temperature (16-30°C)</dd>
+    <dt>payload.mode</dt>
+    <dd>0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry</dd>
+    <dt>payload.fanSpeed</dt>
+    <dd>0=Auto, 1=Low, 2=Medium, 3=High</dd>
+  </dl>
+
+  <h4>Mode 3: READ (AC State)</h4>
+  <dl class="message-properties">
+    <dt>payload.action</dt>
+    <dd>"read" or "query" to read AC state</dd>
+  </dl>
+
+  <h4>Output</h4>
+  <p>Returns exact Aqara response (Mode 1) or success/error with AC state (Mode 2/3)</p>
+
+  <h4>AC Key Format</h4>
+  <p><code>P{power}_M{mode}_T{temp}_S{fan}</code></p>
+  <ul>
+    <li>P: 0=ON, 1=OFF</li>
+    <li>M: 0=Cool, 1=Heat, 2=Auto, 3=Fan, 4=Dry</li>
+    <li>T: 16-30 (°C)</li>
+    <li>S: 0=Auto, 1=Low, 2=Medium, 3=High</li>
+  </ul>
+</script>

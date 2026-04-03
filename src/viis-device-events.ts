@@ -16,6 +16,13 @@ module.exports = function (RED: NodeAPI) {
       return;
     }
 
+    // Validate config node has device credentials (auto-loaded)
+    if (!configNode.device || !configNode.device.id) {
+      node.warn("Device credentials not fully configured. Events may not be received.");
+    } else {
+      node.log(`Listening for events from device: ${configNode.device.id}`);
+    }
+
     configNode.on("mqtt-status", (data: { status: string; error?: string }) => {
       if (data.status === "connected") {
         node.status({ fill: "green", shape: "dot", text: "Connected" });

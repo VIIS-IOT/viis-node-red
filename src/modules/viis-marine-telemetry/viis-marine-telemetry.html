@@ -1,0 +1,129 @@
+<script type="text/html" data-template-name="viis-marine-telemetry">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Marine IoT Telemetry">
+    </div>
+
+    <!-- Marine IoT Specific Section -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #4169E1; padding-bottom: 5px;">
+            <i class="fa fa-ship"></i> <strong>Marine IoT Configuration</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableMarineIoT"><i class="fa fa-toggle-on"></i> Enable Marine IoT</label>
+        <input type="checkbox" id="node-input-enableMarineIoT" style="width:auto;" checked>
+    </div>
+    <div class="form-row">
+        <label for="node-input-flowSensorKeys"><i class="fa fa-tachometer"></i> Flow Sensor Keys</label>
+        <input type="text" id="node-input-flowSensorKeys" placeholder="fs01,fs02,fs03,fs04,fs05,fs06">
+        <span class="form-tips">Comma-separated list of flow sensor keys</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-profileCacheDuration"><i class="fa fa-clock-o"></i> Profile Cache Duration (ms)</label>
+        <input type="text" id="node-input-profileCacheDuration" placeholder="300000">
+        <span class="form-tips">Oil profile cache duration (default: 300000 = 5 min)</span>
+    </div>
+
+    <!-- DH6400 Serial Polling Configuration -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #99BC85; padding-bottom: 5px;">
+            <i class="fa fa-cog"></i> <strong>DH6400 Serial Polling Configuration</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-dh6400PollingInterval"><i class="fa fa-clock-o"></i> Polling Interval (ms)</label>
+        <input type="text" id="node-input-dh6400PollingInterval" placeholder="5000">
+        <span class="form-tips">Recommended: ≥ 5000ms (5 seconds) for 6 channels</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-marine-telemetry">
+    <p>Marine IoT telemetry node - polls DH6400 flow sensors via serial (Modbus RTU) and enriches readings with oil profile information.</p>
+    
+    <h3>Marine IoT Features</h3>
+    <ul>
+        <li><strong>DH6400 Serial Polling:</strong> Reads 6 flow sensors via Modbus RTU on shared serial port</li>
+        <li><strong>Oil Profile Tracking:</strong> Automatically tracks active oil profile (BO/DO)</li>
+        <li><strong>Density Snapshot:</strong> Records density at time of reading</li>
+        <li><strong>Flow Sensor Data:</strong> Enriches fs01-fs06 data with profile context</li>
+        <li><strong>Database Integration:</strong> Saves to tabiot_device_telemetry with oil_profile_id</li>
+    </ul>
+
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Enable Marine IoT</dt>
+        <dd>Enable/disable Marine IoT oil profile tracking</dd>
+        
+        <dt>Flow Sensor Keys</dt>
+        <dd>Comma-separated list of flow sensor keys (default: fs01-fs06)</dd>
+        
+        <dt>Profile Cache Duration</dt>
+        <dd>How long to cache active profile (ms, default: 300000 = 5 min)</dd>
+        
+        <dt>DH6400 Polling Interval</dt>
+        <dd>Interval between polling cycles (ms, default: 5000 = 5 sec). Recommended ≥ 5000ms for 6 channels.</dd>
+    </dl>
+
+    <h3>Input Messages</h3>
+    <dl class="message-properties">
+        <dt>clearProfileCache <span class="property-type">boolean</span></dt>
+        <dd>Set to true to clear oil profile cache</dd>
+        
+        <dt>getCacheStatus <span class="property-type">boolean</span></dt>
+        <dd>Set to true to get current cache status</dd>
+    </dl>
+
+    <h3>Database Schema</h3>
+    <p>Saves flow sensor data to <code>tabiot_device_telemetry</code> with:</p>
+    <ul>
+        <li><code>oil_profile_id</code>: Active profile at time of reading</li>
+        <li><code>density_snapshot</code>: Density value for m3→tons conversion</li>
+    </ul>
+
+    <h3>Details</h3>
+    <p>This node polls DH6400 flow sensors directly via serial port (Modbus RTU) and enriches data with Marine IoT capabilities. It queries the active oil profile periodically and enriches flow sensor data with profile information before saving to database.</p>
+    
+    <p>Profile data is cached to reduce database queries. The cache refreshes automatically based on configured duration.</p>
+    
+    <h3>Serial Communication</h3>
+    <p>Uses Modbus RTU protocol over serial (default: /dev/ttyACM0 @ 9600 baud). Each polling cycle queries all 6 channels sequentially with 500ms delay between requests. Total cycle time ≈ 3.6 seconds.</p>
+</script>
+
+<style>
+    /* Marine IoT specific styling */
+    .form-tips {
+        display: block;
+        font-size: 11px;
+        color: #666;
+        font-style: italic;
+        margin-top: 2px;
+    }
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-marine-telemetry", {
+        category: "function",
+        color: "#6988e5",  // Royal Blue for Marine IoT
+        defaults: {
+            name: { value: "" },
+            enableMarineIoT: { value: true },
+            flowSensorKeys: { value: "fs01,fs02,fs03,fs04,fs05,fs06" },
+            profileCacheDuration: { value: "300000", validate: RED.validators.number() },
+            dh6400PollingInterval: { value: "5000", validate: RED.validators.number() }
+        },
+        inputs: 0,
+        outputs: 1,
+        icon: "ship.png",
+        label: function () {
+            return this.name || "marine-telemetry";
+        },
+        oneditprepare: function () {
+            // Marine IoT specific
+            $("#node-input-enableMarineIoT").prop("checked", this.enableMarineIoT !== false);
+        },
+        oneditsave: function () {
+            this.enableMarineIoT = $("#node-input-enableMarineIoT").is(":checked");
+        }
+    });
+</script>

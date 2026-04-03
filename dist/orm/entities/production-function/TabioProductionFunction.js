@@ -29,6 +29,10 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotProductionFunction.prototype, "label", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'json', nullable: true }),
+    __metadata("design:type", Object)
+], TabiotProductionFunction.prototype, "label_multilingual", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: 'varchar', length: 255, nullable: true }),
     __metadata("design:type", String)
 ], TabiotProductionFunction.prototype, "identifier", void 0);

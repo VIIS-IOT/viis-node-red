@@ -63,6 +63,7 @@ export interface ServerSchedulePlan {
 export interface ServerSchedule {
     /** Unique identifier */
     name: string;
+    id: string;
     /** Human-readable label */
     label: string;
     /** Device ID */

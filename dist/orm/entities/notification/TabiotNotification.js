@@ -71,6 +71,10 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotNotification.prototype, "severity", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], TabiotNotification.prototype, "metadata", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => customer_1.TabiotCustomer, customer => customer.notifications, {
         nullable: true,
         onDelete: 'CASCADE'

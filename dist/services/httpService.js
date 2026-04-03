@@ -1,25 +1,21 @@
 "use strict";
-var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
-    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
-    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-    return c > 3 && r && Object.defineProperty(target, key, r), r;
-};
-var __metadata = (this && this.__metadata) || function (k, v) {
-    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HttpService = void 0;
 const axios_1 = __importDefault(require("axios"));
-const typedi_1 = require("typedi");
-let HttpService = class HttpService {
-    constructor() {
+const global_context_helper_1 = require("../ultils/global-context-helper");
+class HttpService {
+    constructor(nodeContext) {
+        this.nodeContext = nodeContext;
+        // Use GlobalContextHelper if nodeContext is available
+        const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
+        const baseURL = helper ?
+            helper.getEnvVar('API_BASE_URL', '') :
+            (process.env.API_BASE_URL || '');
         // Tạo instance của axios với các cấu hình mặc định
         this.axiosInstance = axios_1.default.create({
-            baseURL: process.env.API_BASE_URL || '', // Có thể cấu hình từ biến môi trường
+            baseURL: baseURL, // Có thể cấu hình từ global context hoặc biến môi trường
             timeout: 10000, // timeout 10 giây
             headers: {
                 'Content-Type': 'application/json',
@@ -63,9 +59,4 @@ let HttpService = class HttpService {
             throw error;
         }
     }
-};
-exports.HttpService = HttpService;
-exports.HttpService = HttpService = __decorate([
-    (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [])
-], HttpService);
+}

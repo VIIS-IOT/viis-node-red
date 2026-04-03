@@ -2,12 +2,21 @@ import { NodeAPI, NodeDef, Node } from "node-red";
 import { DeviceIntent, DeviceLatestData } from "./core/type";
 import { getDeviceIntentsByToken } from "./core/device";
 import { DeviceIntentService } from "./core/deviceIntents";
+import { setupGlobalErrorHandlers } from "./core/offline-resilience";
 
 interface MyNodeDef extends NodeDef {
   configNode: string;
 }
 
+// Global flag to ensure error handlers are setup only once
+let globalErrorHandlersInitialized = false;
+
 module.exports = function (RED: NodeAPI) {
+  // Setup global error handlers (only once for all nodes)
+  if (!globalErrorHandlersInitialized) {
+    setupGlobalErrorHandlers(RED);
+    globalErrorHandlersInitialized = true;
+  }
   function ViisAutomationNode(this: Node, config: MyNodeDef) {
     RED.nodes.createNode(this, config);
 
@@ -18,8 +27,19 @@ module.exports = function (RED: NodeAPI) {
       node.error("Configuration node not found");
       return;
     }
-    // Lấy thông tin thiết bị được chọn
+
+    // Get device credentials (auto-loaded from config node)
     const selectedDevice = configNode.device;
+
+    // Validate credentials
+    if (!selectedDevice || !selectedDevice.id || !selectedDevice.accessToken) {
+      node.error("Device credentials not found. Configure viis-config-node or set device_id/device_access_token in env-loader");
+      node.status({ fill: "red", shape: "ring", text: "No credentials" });
+      return;
+    }
+
+    node.log(`Using device: ${selectedDevice.id}`);
+    // Lấy thông tin thiết bị được chọn
 
     async function processIntents(
       intents: DeviceIntent[],
@@ -74,7 +94,8 @@ module.exports = function (RED: NodeAPI) {
     async function getMyIntents() {
       try {
         const intents = await getDeviceIntentsByToken(
-          selectedDevice.accessToken
+          selectedDevice.accessToken,
+          node.context()
         );
         node.context().set("intents", intents || []);
 

@@ -8,6 +8,7 @@ const logger_1 = require("./utils/logger");
 const databaseService_1 = require("./services/databaseService");
 const customerUserSyncHandler_1 = require("./handlers/customerUserSyncHandler");
 const constants_1 = require("./constants");
+const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     /**
      * Constructor for the VIIS sync customer user node
@@ -21,7 +22,33 @@ module.exports = function (RED) {
         config.maxRetries = config.maxRetries || 3;
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
+        // Auto-load device ID from environment if not provided or if useEnvDeviceId is enabled
+        const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+        let deviceId;
+        if (config.useEnvDeviceId) {
+            // Force load from environment
+            deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            if (!deviceId) {
+                node.error('DEVICE_ID environment variable not found');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ID env' });
+                return;
+            }
+            logger_1.logger.info(node, 'Using Device ID from DEVICE_ID environment variable');
+        }
+        else {
+            // Use config or fallback to environment
+            deviceId = config.deviceId || globalHelper.getEnvVar('DEVICE_ID', '');
+            if (!deviceId) {
+                node.error('Device ID not configured and DEVICE_ID not found in environment variables');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing Device ID' });
+                return;
+            }
+            if (!config.deviceId) {
+                logger_1.logger.info(node, 'Device ID auto-loaded from DEVICE_ID environment variable');
+            }
+        }
         logger_1.logger.info(node, 'Initializing VIIS Sync Customer User Node');
+        logger_1.logger.info(node, `Using Device ID: ${deviceId.substring(0, 8)}...`);
         const dbService = new databaseService_1.DatabaseService();
         let syncIntervalId = null;
         let customerUserSyncHandler = null;
@@ -32,7 +59,7 @@ module.exports = function (RED) {
                 await dbService.initialize();
                 logger_1.logger.info(node, 'Database initialized successfully');
                 // Initialize the sync handler
-                customerUserSyncHandler = new customerUserSyncHandler_1.CustomerUserSyncHandler(dbService, node, config.deviceId, config.showDetailedLogs, config.maxRetries);
+                customerUserSyncHandler = new customerUserSyncHandler_1.CustomerUserSyncHandler(dbService, node, deviceId, config.showDetailedLogs, config.maxRetries);
                 // Update node status with initial state
                 updateNodeStatus('ready');
                 // Set up sync interval if configured
@@ -134,7 +161,7 @@ module.exports = function (RED) {
             }
             const syncStartTime = Date.now();
             logger_1.logger.info(node, `Performing ${type} sync`);
-            logger_1.logger.debug(node, `Sync configuration: deviceId=${config.deviceId}, maxRetries=${config.maxRetries}, showDetailedLogs=${config.showDetailedLogs}`, config.showDetailedLogs);
+            logger_1.logger.debug(node, `Sync configuration: deviceId=${deviceId}, maxRetries=${config.maxRetries}, showDetailedLogs=${config.showDetailedLogs}`, config.showDetailedLogs);
             updateNodeStatus('syncing', `${type.charAt(0).toUpperCase() + type.slice(1)} sync...`);
             try {
                 const result = await customerUserSyncHandler.syncAll();
@@ -161,7 +188,21 @@ module.exports = function (RED) {
                     logger_1.logger.debug(node, `Error stack trace: ${error.stack}`, true);
                 }
                 updateNodeStatus('error', 'Sync failed');
-                throw error;
+                logger_1.logger.warn(node, '⚠️  Continuing operations despite sync failure (network may be down)');
+                // Don't throw - return failed result to allow node to continue
+                return {
+                    success: false,
+                    errorMessage,
+                    customersCreated: 0,
+                    customersUpdated: 0,
+                    usersCreated: 0,
+                    usersUpdated: 0,
+                    credentialsCreated: 0,
+                    credentialsUpdated: 0,
+                    totalCustomers: 0,
+                    totalUsers: 0,
+                    timestamp: Date.now()
+                };
             }
         }
         /**

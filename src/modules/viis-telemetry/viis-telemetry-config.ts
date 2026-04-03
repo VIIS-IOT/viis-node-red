@@ -28,6 +28,8 @@ export interface ViisTelemetryNodeDef extends NodeDef {
   pollingInterval: string;
   periodicSnapshotIntervalCoil: string;
   periodicSnapshotIntervalInput: string;
+  boardMode?: 'auto' | 'single' | 'multi';
+  boardId?: string;
   periodicSnapshotIntervalHolding: string;
 }
 
@@ -119,9 +121,49 @@ export class ViisTelemetryConfigManager {
 
   /**
    * Get environment-based configuration
+   * Supports both single-board and multi-board modes
+   * @param boardId - Board ID for multi-board mode (e.g., 'board1')
    */
-  getEnvironmentConfig(): EnvironmentConfig {
+  getEnvironmentConfig(boardId?: string): EnvironmentConfig {
     if (this.globalHelper) {
+      // Check if multi-board mode by detecting MODBUS_BOARDS (try lowercase first)
+      let boardsConfig = this.globalHelper.getEnvVar('modbus_boards', null);
+      if (!boardsConfig) {
+        boardsConfig = this.globalHelper.getEnvVar('MODBUS_BOARDS', null);
+      }
+      const isMultiBoard = !!boardsConfig;
+
+      if (isMultiBoard && boardId) {
+        // Multi-board mode: Load board-specific env vars
+        // Try lowercase first (env-loader uses lowercase), then uppercase (legacy)
+        const boardIdLower = boardId.toLowerCase();
+        const boardIdUpper = boardId.toUpperCase();
+        
+        // Try lowercase keys first (from env-loader)
+        let coils = this.globalHelper.getJsonEnvVar(`modbus_${boardIdLower}_coils`, null);
+        let inputRegs = this.globalHelper.getJsonEnvVar(`modbus_${boardIdLower}_input_registers`, null);
+        let holdingRegs = this.globalHelper.getJsonEnvVar(`modbus_${boardIdLower}_holding_registers`, null);
+        
+        // Fallback to uppercase keys if lowercase not found
+        if (coils === null) {
+          coils = this.globalHelper.getJsonEnvVar(`MODBUS_${boardIdUpper}_COILS`, {});
+        }
+        if (inputRegs === null) {
+          inputRegs = this.globalHelper.getJsonEnvVar(`MODBUS_${boardIdUpper}_INPUT_REGISTERS`, {});
+        }
+        if (holdingRegs === null) {
+          holdingRegs = this.globalHelper.getJsonEnvVar(`MODBUS_${boardIdUpper}_HOLDING_REGISTERS`, {});
+        }
+        
+        return {
+          deviceId: this.globalHelper.getEnvVar('DEVICE_ID', 'unknown'),
+          modbusCoils: coils || {},
+          modbusInputRegisters: inputRegs || {},
+          modbusHoldingRegisters: holdingRegs || {},
+        };
+      }
+
+      // Single-board mode: Load standard env vars
       return {
         deviceId: this.globalHelper.getEnvVar('DEVICE_ID', 'unknown'),
         modbusCoils: this.globalHelper.getJsonEnvVar('MODBUS_COILS', {}),
@@ -130,12 +172,12 @@ export class ViisTelemetryConfigManager {
       };
     }
 
-    // Fallback to process.env if no global helper
+    // No global helper: return defaults only (no process.env fallback)
     return {
-      deviceId: process.env.DEVICE_ID || 'unknown',
-      modbusCoils: this.parseJsonWithDefault(process.env.MODBUS_COILS, {}),
-      modbusInputRegisters: this.parseJsonWithDefault(process.env.MODBUS_INPUT_REGISTERS, {}),
-      modbusHoldingRegisters: this.parseJsonWithDefault(process.env.MODBUS_HOLDING_REGISTERS, {}),
+      deviceId: 'unknown',
+      modbusCoils: {},
+      modbusInputRegisters: {},
+      modbusHoldingRegisters: {},
     };
   }
 

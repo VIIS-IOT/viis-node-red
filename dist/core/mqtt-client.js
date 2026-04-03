@@ -14,13 +14,20 @@ class MqttClientCore extends events_1.EventEmitter {
         this.client = null;
         this.connectionPromise = null;
         this.subscribedTopics = new Set();
+        // Enhanced state management
+        this.RECONNECT_INTERVAL_MIN = 500; // 500ms - more aggressive
+        this.RECONNECT_INTERVAL_MAX = 10000; // 10 seconds - faster recovery
+        this.RECONNECT_INTERVAL_MULTIPLIER = 1.3; // slower backoff
+        this.CIRCUIT_BREAKER_TIMEOUT = 20000; // 20 seconds - quicker recovery
+        this.CIRCUIT_BREAKER_MAX_ATTEMPTS = 10; // more attempts before circuit break
+        this.HEALTH_CHECK_INTERVAL = 300000; // 5 minutes - health check interval
         this.messageQueue = [];
         this.healthCheckTimer = null;
         this.reconnectTimer = null;
         this.circuitBreakerTimer = null;
         // Event listeners for cleanup
         this.eventListeners = new Map();
-        this.config = Object.assign({ reconnectPeriod: 5000, connectTimeout: 30000, keepalive: 60, maxReconnectAttempts: 10, reconnectBackoffMultiplier: 1.5, maxReconnectDelay: 60000, healthCheckInterval: 30000, messageQueueSize: 100, enableCircuitBreaker: true }, config);
+        this.config = Object.assign({ reconnectPeriod: 0, connectTimeout: 10000, keepalive: 30, maxReconnectAttempts: this.CIRCUIT_BREAKER_MAX_ATTEMPTS, reconnectBackoffMultiplier: this.RECONNECT_INTERVAL_MULTIPLIER, maxReconnectDelay: this.RECONNECT_INTERVAL_MAX, healthCheckInterval: this.HEALTH_CHECK_INTERVAL, messageQueueSize: 100, enableCircuitBreaker: true }, config);
         this.node = node;
         // Initialize connection state
         this.connectionState = {
@@ -182,7 +189,7 @@ class MqttClientCore extends events_1.EventEmitter {
         this.node.warn("Circuit breaker opened - stopping reconnection attempts");
         this.node.status({ fill: "red", shape: "ring", text: "Circuit breaker open - will retry in 30s" });
         // Shorter initial timeout with progressive backoff
-        const initialTimeout = 30000; // 30 seconds instead of 5 minutes
+        const initialTimeout = this.CIRCUIT_BREAKER_TIMEOUT; // 20 seconds instead of 5 minutes
         this.circuitBreakerTimer = setTimeout(() => {
             this.connectionState.circuitBreakerOpen = false;
             this.connectionState.reconnectAttempts = 0;
@@ -297,8 +304,10 @@ class MqttClientCore extends events_1.EventEmitter {
             memory: process.memoryUsage().heapUsed
         };
         this.publishMessage("v1/devices/me/telemetry", JSON.stringify(healthData), { qos: 0, retain: false }).catch((error) => {
+            // Don't trigger reconnection on health check failure
+            // Health check failures can be false positives and cause unnecessary reconnects
             this.node.warn(`Health check failed: ${error.message}`);
-            this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
+            // Removed: this.handleConnectionError(new Error(`Health check failed: ${error.message}`));
         });
     }
     // Alias for publish method to maintain consistency
@@ -421,7 +430,22 @@ class MqttClientCore extends events_1.EventEmitter {
                     reject(err);
                 }
                 else {
-                    this.node.log(`Published to topic: ${topic}`);
+                    // Format message for logging
+                    const messageStr = Buffer.isBuffer(message) ? message.toString('utf8') : message;
+                    const truncatedMsg = messageStr.length > 200 ? messageStr.substring(0, 200) + '...' : messageStr;
+                    // Try to parse as JSON for better readability
+                    let displayMsg = truncatedMsg;
+                    try {
+                        const parsed = JSON.parse(messageStr);
+                        displayMsg = JSON.stringify(parsed);
+                        if (displayMsg.length > 200) {
+                            displayMsg = displayMsg.substring(0, 200) + '...';
+                        }
+                    }
+                    catch (_a) {
+                        // Not JSON, use as is
+                    }
+                    // this.node.log(`Published to topic: ${topic} | Message: ${displayMsg}`);
                     resolve();
                 }
             });
@@ -431,14 +455,19 @@ class MqttClientCore extends events_1.EventEmitter {
     resubscribeTopics() {
         if (!this.client)
             return;
+        // Only log resubscribe if there are topics to resubscribe
+        const topicsCount = this.subscribedTopics.size;
+        if (topicsCount === 0)
+            return;
+        // Use a single log message for all resubscriptions to reduce spam
+        const topics = Array.from(this.subscribedTopics);
+        this.node.log(`Resubscribing to ${topicsCount} topic(s): ${topics.join(', ')}`);
         this.subscribedTopics.forEach((topic) => {
             this.client.subscribe(topic, { qos: this.config.qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to resubscribe to ${topic}: ${err.message}`);
                 }
-                else {
-                    this.node.log(`Resubscribed to topic: ${topic}`);
-                }
+                // Remove individual success log to reduce spam
             });
         });
     }

@@ -12,7 +12,7 @@ import { NodeContext } from "node-red";
 import { GlobalContextHelper } from "../ultils/global-context-helper";
 
 /**
- * Configuration factory function that uses global context when available
+ * Configuration factory function that uses global context exclusively
  * @param nodeContext - Optional Node-RED node context for global variable access
  * @returns Configuration object
  */
@@ -20,31 +20,42 @@ export function createConfig(nodeContext?: NodeContext) {
     // Create helper if nodeContext is available
     const helper = nodeContext ? new GlobalContextHelper(nodeContext) : null;
 
-    // Helper function to get environment variable with fallback
+    // Helper function to get environment variable from global context only
     const getEnvVar = (envVarName: string, defaultValue?: any): any => {
         if (helper) {
             return helper.getEnvVar(envVarName, defaultValue);
         }
-        return process.env[envVarName] || defaultValue;
+        // No nodeContext: return default only (no process.env fallback)
+        return defaultValue;
     };
 
     const getNumericEnvVar = (envVarName: string, defaultValue: number = 0): number => {
         if (helper) {
             return helper.getNumericEnvVar(envVarName, defaultValue);
         }
-        return Number(process.env[envVarName] || defaultValue);
+        // No nodeContext: return default only (no process.env fallback)
+        return defaultValue;
     };
 
     const getBooleanEnvVar = (envVarName: string, defaultValue: boolean = false): boolean => {
         if (helper) {
             return helper.getBooleanEnvVar(envVarName, defaultValue);
         }
-        const value = process.env[envVarName];
-        if (!value) return defaultValue;
-        return value.toLowerCase() === 'true' || value === '1';
+        // No nodeContext: return default only (no process.env fallback)
+        return defaultValue;
     };
 
     return {
+        /**
+         * Device configuration
+         */
+        deviceId: getEnvVar('DEVICE_ID'),
+        deviceAccessToken: getEnvVar('DEVICE_ACCESS_TOKEN'),
+        deviceLabel: getEnvVar('DEVICE_LABEL'),
+        deviceSerial: getEnvVar('DEVICE_SERIAL'),
+        deviceProfileId: getEnvVar('DEVICE_PROFILE_ID'),
+        deviceProfileLabel: getEnvVar('DEVICE_PROFILE_LABEL'),
+        
         /**
          * Your favorite port
          */

@@ -124,7 +124,7 @@ class ViisTelemetryProcessor {
      */
     async publishTelemetryData(data) {
         try {
-            (0, viis_telemetry_utils_1.publishTelemetry)({
+            await (0, viis_telemetry_utils_1.publishTelemetry)({
                 data,
                 emqxClient: this.localMqttClient,
                 thingsboardClient: this.thingsboardMqttClient,
@@ -134,7 +134,8 @@ class ViisTelemetryProcessor {
         }
         catch (error) {
             this.node.error(`Failed to publish telemetry: ${error.message}`);
-            throw error;
+            // Don't throw - let the service continue even if MQTT publish fails
+            this.node.warn('Continuing local operations despite MQTT publish failure');
         }
     }
     /**

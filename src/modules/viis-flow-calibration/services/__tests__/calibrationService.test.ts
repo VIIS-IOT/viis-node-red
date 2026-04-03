@@ -1,0 +1,233 @@
+/**
+ * Unit tests for CalibrationService
+ */
+
+import { CalibrationService } from "../calibrationService";
+import { CalibrationInput } from "../../interfaces/types";
+
+describe("CalibrationService", () => {
+    let service: CalibrationService;
+
+    const board1Registers = {
+        HOLDING_CALIB_BOM_1: 17,
+        HOLDING_CALIB_BOM_2: 18,
+    };
+
+    const board2Registers = {
+        HOLDING_K_FACTOR_BOM_1: 0,
+        HOLDING_K_FACTOR_BOM_2: 1,
+        HOLDING_FLOWRATE_BOM_1: 20,
+        HOLDING_FLOWRATE_BOM_2: 21,
+    };
+
+    beforeEach(() => {
+        service = new CalibrationService("test-node", false);
+    });
+
+    describe("calculate()", () => {
+        it("should calculate calibration values correctly for normal input", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 950,           // User measured 950 mL
+                setMl: 1000,             // Target was 1000 mL
+                currentCalibBoard1: 10,  // Current calib = 10.00 ml/s (already unscaled by Node-RED)
+                currentKFactor: 450,      // Current K-factor
+                currentFlowrate: 10,      // Current flowrate = 10 mL/s (already unscaled)
+                reportedVolume: 1000,     // Sensor reported 1000 mL
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(true);
+            expect(result.pumpIndex).toBe(1);
+            expect(result.board1).not.toBeNull();
+            expect(result.board2).not.toBeNull();
+
+            // Board1: runTime = 1000 / 10 = 100s, newCalib = 950 / 100 = 9.5 (scaled = 950)
+            expect(result.board1!.address).toBe(17);
+            expect(result.board1!.newCalibValue).toBe(950);
+
+            // Board2 K-Factor: K_new = 450 * (950 / 1000) ≈ 428 (sensor over-reported, K decreases)
+            expect(result.board2!.newKFactor).toBe(428);
+
+            // Board2 Flowrate: Q_new = 950 / 100 = 9.5 (scaled = 950)
+            expect(result.board2!.newFlowrate).toBe(950);
+        });
+
+        it("should handle division by zero when actualMl is 0", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 0, // Will cause division by zero
+                setMl: 1000,
+                currentCalibBoard1: 10,  // Already unscaled
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(false);
+            expect(result.error).toContain("actualMl is zero");
+        });
+
+        it("should handle division by zero when currentCalibBoard1 is 0", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 950,
+                setMl: 1000,
+                currentCalibBoard1: 0, // Will cause division by zero
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(false);
+            expect(result.error).toContain("currentCalibBoard1 is zero");
+        });
+
+        it("should handle invalid pump index", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 20, // Invalid, max is 16
+                actualMl: 950,
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(false);
+            expect(result.error).toContain("Invalid pump index");
+        });
+
+        it("should calibrate only board1 when board2 is disabled", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 950,
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, false);
+
+            expect(result.success).toBe(true);
+            expect(result.board1).not.toBeNull();
+            expect(result.board2).toBeNull();
+        });
+
+        it("should calibrate only board2 when board1 is disabled", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 950,
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, false, true);
+
+            expect(result.success).toBe(true);
+            expect(result.board1).toBeNull();
+            expect(result.board2).not.toBeNull();
+        });
+
+        it("should handle case where sensor reported more than actual", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 950,           // User measured 950 mL
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1100,    // Sensor over-reported
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(true);
+            // K-Factor should DECREASE when sensor over-reports
+            // K_new = 450 * (950 / 1100) ≈ 389
+            expect(result.board2!.newKFactor).toBe(389);
+        });
+
+        it("should handle case where sensor reported less than actual", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 1050,          // User measured 1050 mL
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,    // Sensor under-reported
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(true);
+            // K-Factor should INCREASE when sensor under-reports
+            // K_new = 450 * (1050 / 1000) ≈ 473
+            expect(result.board2!.newKFactor).toBe(473);
+        });
+
+        it("should keep K-Factor unchanged when reported equals actual", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 1000,          // User measured 1000 mL
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,    // Sensor reported correctly
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(true);
+            // K-Factor should remain unchanged
+            // K_new = 450 * (1000 / 1000) = 450
+            expect(result.board2!.newKFactor).toBe(450);
+        });
+
+        it("should handle multiple pumps", () => {
+            const input1: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 900,
+                setMl: 1000,
+                currentCalibBoard1: 10,
+                currentKFactor: 450,
+                currentFlowrate: 10,
+                reportedVolume: 1000,
+            };
+
+            const input2: CalibrationInput = {
+                pumpIndex: 2,
+                actualMl: 800,
+                setMl: 1000,
+                currentCalibBoard1: 12,  // 12.00 ml/s
+                currentKFactor: 500,
+                currentFlowrate: 12,
+                reportedVolume: 1000,
+            };
+
+            const result1 = service.calculate(input1, board1Registers, board2Registers, true, true);
+            const result2 = service.calculate(input2, board1Registers, board2Registers, true, true);
+
+            expect(result1.success).toBe(true);
+            expect(result2.success).toBe(true);
+            expect(result1.pumpIndex).toBe(1);
+            expect(result2.pumpIndex).toBe(2);
+            expect(result1.board1!.address).toBe(17);
+            expect(result2.board1!.address).toBe(18);
+        });
+    });
+});

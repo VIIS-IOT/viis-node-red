@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marine IoT WebSocket Client - Real-time Telemetry</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+        }
+        
+        .controls {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        .control-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .control-group input,
+        .control-group button {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .control-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            padding: 30px;
+            background: white;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        
+        .status-disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .machine-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .machine-card h3 {
+            color: #495057;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        
+        .telemetry-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        .telemetry-row:last-child {
+            border-bottom: none;
+        }
+        
+        .telemetry-label {
+            font-weight: 600;
+            color: #6c757d;
+        }
+        
+        .telemetry-value {
+            font-weight: 700;
+            color: #667eea;
+        }
+        
+        .logs {
+            padding: 30px;
+            background: #212529;
+            color: #f8f9fa;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .logs h3 {
+            margin-bottom: 15px;
+            color: #fff;
+        }
+        
+        .log-entry {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 5px 0;
+            border-left: 3px solid #667eea;
+            padding-left: 10px;
+            margin-bottom: 5px;
+        }
+        
+        .log-time {
+            color: #6c757d;
+        }
+        
+        .log-info {
+            color: #17a2b8;
+        }
+        
+        .log-success {
+            color: #28a745;
+        }
+        
+        .log-error {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚢 Marine IoT Real-time Telemetry</h1>
+            <p>WebSocket-based real-time data streaming</p>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label>WebSocket Server URL:</label>
+                <input type="text" id="serverUrl" value="http://localhost:1881" placeholder="http://localhost:1881">
+            </div>
+            
+            <div class="control-group">
+                <label>JWT Token:</label>
+                <input type="text" id="token" placeholder="Enter your JWT token">
+            </div>
+            
+            <div class="control-group">
+                <label>Device ID:</label>
+                <input type="text" id="deviceId" value="4abebfd0-ab00-11f0-8b6a-ef2499d33d22" placeholder="device-uuid">
+            </div>
+            
+            <div class="control-group">
+                <label>Sensor Keys (comma-separated, optional):</label>
+                <input type="text" id="keys" value="fs01,fs02,fs03,fs04,fs05,fs06" placeholder="fs01,fs02,fs03">
+            </div>
+            
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" style="display:none; margin-top: 10px;">Disconnect</button>
+        </div>
+        
+        <div class="status">
+            <div id="statusBadge" class="status-badge status-disconnected">⚫ Disconnected</div>
+            
+            <div id="telemetryData" style="display:none;">
+                <h2 style="margin-bottom: 20px;">📊 Live Telemetry Data</h2>
+                <div id="lastUpdate" style="color: #6c757d; margin-bottom: 15px;">Last Update: Never</div>
+                <div class="telemetry-grid" id="machinesGrid"></div>
+            </div>
+        </div>
+        
+        <div class="logs">
+            <h3>📜 Connection Logs</h3>
+            <div id="logs"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let isConnected = false;
+
+        function log(message, type = 'info') {
+            const logsDiv = document.getElementById('logs');
+            const time = new Date().toLocaleTimeString();
+            const logClass = type === 'error' ? 'log-error' : type === 'success' ? 'log-success' : 'log-info';
+            
+            logsDiv.innerHTML += `<div class="log-entry ${logClass}"><span class="log-time">[${time}]</span> ${message}</div>`;
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            isConnected = connected;
+            const badge = document.getElementById('statusBadge');
+            const telemetryData = document.getElementById('telemetryData');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            
+            if (connected) {
+                badge.className = 'status-badge status-connected';
+                badge.textContent = '🟢 Connected';
+                telemetryData.style.display = 'block';
+                connectBtn.style.display = 'none';
+                disconnectBtn.style.display = 'block';
+            } else {
+                badge.className = 'status-badge status-disconnected';
+                badge.textContent = '⚫ Disconnected';
+                telemetryData.style.display = 'none';
+                connectBtn.style.display = 'block';
+                disconnectBtn.style.display = 'none';
+            }
+        }
+
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const token = document.getElementById('token').value;
+            const deviceId = document.getElementById('deviceId').value;
+            const keys = document.getElementById('keys').value;
+
+            if (!token) {
+                alert('Please enter a JWT token');
+                return;
+            }
+
+            if (!deviceId) {
+                alert('Please enter a device ID');
+                return;
+            }
+
+            log('Connecting to WebSocket server...', 'info');
+
+            // Create Socket.IO connection with authentication
+            socket = io(serverUrl, {
+                auth: {
+                    token: token
+                },
+                transports: ['websocket', 'polling']
+            });
+
+            // Connection successful
+            socket.on('connect', () => {
+                log('✅ WebSocket connected successfully', 'success');
+                updateStatus(true);
+                
+                // Subscribe to device telemetry
+                const subscribeData = { deviceId };
+                if (keys) {
+                    subscribeData.keys = keys.split(',').map(k => k.trim());
+                }
+                
+                socket.emit('marine:subscribe', subscribeData);
+                log(`📡 Subscribing to device: ${deviceId}`, 'info');
+            });
+
+            // Connection confirmed
+            socket.on('marine:connected', (data) => {
+                log(`Server confirmation: ${data.message}`, 'success');
+            });
+
+            // Subscribed confirmation
+            socket.on('marine:subscribed', (data) => {
+                log(`✅ Subscribed to device ${data.deviceId} successfully`, 'success');
+            });
+
+            // Receive telemetry updates
+            socket.on('marine:telemetry', (data) => {
+                updateTelemetryDisplay(data);
+            });
+
+            // Handle errors
+            socket.on('marine:error', (data) => {
+                log(`❌ Error: ${data.message}`, 'error');
+            });
+
+            // Connection error
+            socket.on('connect_error', (error) => {
+                log(`❌ Connection error: ${error.message}`, 'error');
+                updateStatus(false);
+            });
+
+            // Disconnected
+            socket.on('disconnect', () => {
+                log('⚠️ WebSocket disconnected', 'info');
+                updateStatus(false);
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                const deviceId = document.getElementById('deviceId').value;
+                socket.emit('marine:unsubscribe', { deviceId });
+                socket.disconnect();
+                socket = null;
+                log('Disconnected from server', 'info');
+                updateStatus(false);
+            }
+        }
+
+        function updateTelemetryDisplay(payload) {
+            const { deviceId, data, timestamp } = payload;
+            const telemetryData = data.data || payload.data;
+            
+            // Update last update time
+            const lastUpdate = document.getElementById('lastUpdate');
+            lastUpdate.textContent = `Last Update: ${new Date(timestamp).toLocaleString()}`;
+            
+            // Update machines data
+            const machinesGrid = document.getElementById('machinesGrid');
+            machinesGrid.innerHTML = '';
+            
+            if (data.machines) {
+                Object.entries(data.machines).forEach(([machineType, machineData]) => {
+                    const card = document.createElement('div');
+                    card.className = 'machine-card';
+                    
+                    card.innerHTML = `
+                        <h3>⚙️ ${machineType.replace('_', ' ')}</h3>
+                        <div class="telemetry-row">
+                            <span class="telemetry-label">Flow In (${machineData.flow_in.key}):</span>
+                            <span class="telemetry-value">${machineData.flow_in.m3h} m³/h (${machineData.flow_in.th} t/h)</span>
+                        </div>
+                        <div class="telemetry-row">
+                            <span class="telemetry-label">Flow Return (${machineData.flow_return.key}):</span>
+                            <span class="telemetry-value">${machineData.flow_return.m3h} m³/h (${machineData.flow_return.th} t/h)</span>
+                        </div>
+                        <div class="telemetry-row">
+                            <span class="telemetry-label">Consumption:</span>
+                            <span class="telemetry-value">${machineData.consumption_rate.m3h} m³/h (${machineData.consumption_rate.th} t/h)</span>
+                        </div>
+                        <div class="telemetry-row">
+                            <span class="telemetry-label">Density:</span>
+                            <span class="telemetry-value">${machineData.density} kg/m³</span>
+                        </div>
+                        ${machineData.oil_profile ? `
+                        <div class="telemetry-row">
+                            <span class="telemetry-label">Oil Profile:</span>
+                            <span class="telemetry-value">${machineData.oil_profile}</span>
+                        </div>
+                        ` : ''}
+                    `;
+                    
+                    machinesGrid.appendChild(card);
+                });
+            }
+            
+            log(`📊 Telemetry updated - ${Object.keys(data.machines || {}).length} machines`, 'info');
+        }
+
+        // Auto-fill token from URL parameter for testing
+        const urlParams = new URLSearchParams(window.location.search);
+        const tokenParam = urlParams.get('token');
+        if (tokenParam) {
+            document.getElementById('token').value = tokenParam;
+        }
+    </script>
+</body>
+</html>

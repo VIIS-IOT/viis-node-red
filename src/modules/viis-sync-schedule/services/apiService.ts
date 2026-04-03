@@ -6,9 +6,10 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 import { ServerResponse, ServerSchedulePlan } from '../interfaces/types';
 import { logger } from '../utils/logger';
-import configs from '../../../configs';
-import { SYNC_DEFAULTS } from '../constants';
+import { createConfig } from '../../../configs';
+import { API_PATHS, SYNC_DEFAULTS } from '../constants';
 import { withRetry } from '../utils/retry';
+import { NodeContext } from 'node-red';
 
 /**
  * Service for making API requests to the server
@@ -18,14 +19,18 @@ export class ApiService {
     private readonly instance: AxiosInstance;
     /** Device access token for authentication */
     private readonly accessToken: string;
+    /** Configuration object with hot reload support */
+    private readonly configs: any;
 
     /**
      * Creates a new API service instance
      * @param accessToken - Device access token for authentication
+     * @param nodeContext - Optional Node-RED context for hot reload support
      */
-    constructor(accessToken: string) {
+    constructor(accessToken: string, nodeContext?: NodeContext) {
+        this.configs = createConfig(nodeContext);
         const config: AxiosRequestConfig = {
-            baseURL: configs.serverUrl || 'http://localhost:8080',
+            baseURL: 'https://iot.viis.tech',
             timeout: SYNC_DEFAULTS.TIMEOUT,
             headers: {
                 'Content-Type': 'application/json',
@@ -44,7 +49,7 @@ export class ApiService {
      */
     async getAllSchedulePlans(): Promise<ServerResponse<ServerSchedulePlan[]>> {
         logger.info(null, 'Fetching all schedule plans from server');
-        const url = `api/v2/schedulePlan/device/all/${this.accessToken}`;
+        const url = `/api/v2${API_PATHS.SCHEDULE_PLAN_ALL}/${this.accessToken}`;
         
         return withRetry(async () => {
             try {

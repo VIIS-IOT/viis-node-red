@@ -1,0 +1,214 @@
+<script type="text/html" data-template-name="viis-ais-telemetry">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="AIS Telemetry">
+    </div>
+
+    <!-- AIS Gateway Connection -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #4169E1; padding-bottom: 5px;">
+            <i class="fa fa-wifi"></i> <strong>AIS Gateway Connection</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-aisHost"><i class="fa fa-server"></i> Gateway Host</label>
+        <input type="text" id="node-input-aisHost" placeholder="192.168.20.246">
+    </div>
+    <div class="form-row">
+        <label for="node-input-aisPort"><i class="fa fa-plug"></i> Gateway Port</label>
+        <input type="text" id="node-input-aisPort" placeholder="8899">
+    </div>
+
+    <!-- Output Configuration -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #99BC85; padding-bottom: 5px;">
+            <i class="fa fa-clock-o"></i> <strong>Output Configuration</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-outputInterval"><i class="fa fa-refresh"></i> Output Interval (ms)</label>
+        <input type="text" id="node-input-outputInterval" placeholder="300000">
+        <span class="form-tips">Interval to output telemetry data (default: 300000 = 5 min)</span>
+    </div>
+
+    <!-- AIS Data Configuration -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #E5A869; padding-bottom: 5px;">
+            <i class="fa fa-ship"></i> <strong>AIS Data Configuration</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-aisTtlSec"><i class="fa fa-hourglass"></i> AIS Target TTL (sec)</label>
+        <input type="text" id="node-input-aisTtlSec" placeholder="3600">
+        <span class="form-tips">Time-to-live for AIS targets (default: 3600 = 1 hour)</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-nearbyRadiusNm"><i class="fa fa-dot-circle-o"></i> Nearby Radius (NM)</label>
+        <input type="text" id="node-input-nearbyRadiusNm" placeholder="10">
+        <span class="form-tips">Radius for nearby vessels (default: 10 nautical miles)</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-nearbyMaxAgeSec"><i class="fa fa-clock-o"></i> Nearby Max Age (sec)</label>
+        <input type="text" id="node-input-nearbyMaxAgeSec" placeholder="600">
+        <span class="form-tips">Max age for nearby vessels (default: 600 = 10 min)</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-useOwnShipFromAis"><i class="fa fa-location-arrow"></i> Use AIVDO as Position</label>
+        <input type="checkbox" id="node-input-useOwnShipFromAis" style="width:auto;" checked>
+        <span class="form-tips">Use own ship AIS (AIVDO) as position source</span>
+    </div>
+
+    <!-- Logging Configuration -->
+    <div class="form-row">
+        <label style="width: 100%; border-bottom: 2px solid #888; padding-bottom: 5px;">
+            <i class="fa fa-file-text-o"></i> <strong>Logging</strong>
+        </label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-enableLogging"><i class="fa fa-bug"></i> Enable Debug Logging</label>
+        <input type="checkbox" id="node-input-enableLogging" style="width:auto;">
+        <span class="form-tips">Enable verbose logging for AIS data reception and parsing (warning: AIS streams data continuously)</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-ais-telemetry">
+    <p>AIS Gateway telemetry node - connects to AIS gateway via TCP, parses NMEA/AIS data, and outputs consolidated telemetry.</p>
+    
+    <h3>Features</h3>
+    <ul>
+        <li><strong>AIS Position Reports:</strong> Decodes Type 1, 2, 3, 18 messages</li>
+        <li><strong>NMEA Sentences:</strong> Parses RMC, GGA, GNS, GLL, VTG, HDT, ROT, VBW, ZDA, DTM</li>
+        <li><strong>State Management:</strong> Aggregates data from multiple sources</li>
+        <li><strong>Nearby Vessels:</strong> Calculates distance and bearing to vessels within radius</li>
+        <li><strong>TTL Cleanup:</strong> Automatically removes stale AIS targets</li>
+    </ul>
+
+    <h3>Configuration</h3>
+    <dl class="message-properties">
+        <dt>Gateway Host</dt>
+        <dd>IP address of AIS gateway (default: 192.168.20.246)</dd>
+        
+        <dt>Gateway Port</dt>
+        <dd>TCP port of AIS gateway (default: 8899)</dd>
+        
+        <dt>Output Interval</dt>
+        <dd>How often to output telemetry data (ms, default: 300000 = 5 min)</dd>
+        
+        <dt>AIS Target TTL</dt>
+        <dd>Time-to-live for AIS targets before removal (sec, default: 3600 = 1 hour)</dd>
+        
+        <dt>Nearby Radius</dt>
+        <dd>Radius for nearby vessel detection (NM, default: 10)</dd>
+        
+        <dt>Nearby Max Age</dt>
+        <dd>Max age of position for nearby vessel inclusion (sec, default: 600 = 10 min)</dd>
+        
+        <dt>Use AIVDO as Position</dt>
+        <dd>Use own ship AIS data (AIVDO) as position source</dd>
+    </dl>
+
+    <h3>Input Messages</h3>
+    <dl class="message-properties">
+        <dt>getStatus <span class="property-type">boolean</span></dt>
+        <dd>Set to true to get current connection status</dd>
+        
+        <dt>forceOutput <span class="property-type">boolean</span></dt>
+        <dd>Set to true to force immediate output</dd>
+        
+        <dt>clearState <span class="property-type">boolean</span></dt>
+        <dd>Set to true to clear all AIS targets and alarms</dd>
+    </dl>
+
+    <h3>Output Payload</h3>
+    <p>Outputs a JSON object with the following structure:</p>
+    <pre>
+{
+  // Own ship position
+  "location": [lat, lon],
+  "lat": 10.762622,
+  "lon": 106.660172,
+  "sog": 12.5,
+  "cog": 180.0,
+  "gps_time": "123045.00 030125",
+  
+  // VTG speed
+  "speed_vtg": 12.3,
+  "speed_vtg_kmh": 22.8,
+  "track_true": 180.5,
+  "track_mag": 182.0,
+  
+  // Heading & rotation
+  "heading_true": 182.0,
+  "rot": -5.2,
+  
+  // Doppler speed log
+  "speed_vbw_water_lng": 12.1,
+  "speed_vbw_water_trn": 0.3,
+  "speed_vbw_ground_lng": 12.5,
+  "speed_vbw_ground_trn": 0.2,
+  "speed_vbw_stern": 0.1,
+  
+  // UTC time
+  "zda_time": "2025-01-03T12:30:45.000Z",
+  "zda_day": "03",
+  "zda_month": "01",
+  "zda_year": "2025",
+  
+  // Datum
+  "datum_local": "W84",
+  "datum_ref": "W84",
+  
+  // AIS targets
+  "ais_targets": [...],
+  
+  // AIS alarms
+  "ais_alarms": [...],
+  
+  // Nearby vessels (within radius)
+  "nearby_vessels": [...]
+}
+    </pre>
+</script>
+
+<style>
+    .form-tips {
+        display: block;
+        font-size: 11px;
+        color: #666;
+        font-style: italic;
+        margin-top: 2px;
+    }
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-ais-telemetry", {
+        category: "VIIS Marine",
+        color: "#4169E1",
+        defaults: {
+            name: { value: "" },
+            aisHost: { value: "192.168.20.246" },
+            aisPort: { value: 8899, validate: RED.validators.number() },
+            outputInterval: { value: 300000, validate: RED.validators.number() },
+            aisTtlSec: { value: 3600, validate: RED.validators.number() },
+            nearbyRadiusNm: { value: 10, validate: RED.validators.number() },
+            nearbyMaxAgeSec: { value: 600, validate: RED.validators.number() },
+            useOwnShipFromAis: { value: true },
+            enableLogging: { value: false }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "font-awesome/fa-ship",
+        label: function () {
+            return this.name || "ais-telemetry";
+        },
+        paletteLabel: "AIS Telemetry",
+        oneditprepare: function () {
+            $("#node-input-useOwnShipFromAis").prop("checked", this.useOwnShipFromAis !== false);
+            $("#node-input-enableLogging").prop("checked", this.enableLogging === true);
+        },
+        oneditsave: function () {
+            this.useOwnShipFromAis = $("#node-input-useOwnShipFromAis").is(":checked");
+            this.enableLogging = $("#node-input-enableLogging").is(":checked");
+        }
+    });
+</script>

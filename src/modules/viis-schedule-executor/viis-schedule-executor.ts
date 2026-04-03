@@ -3,7 +3,7 @@ import { NodeAPI, Node } from "node-red";
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore, MqttConfig } from "../../core/mqtt-client";
 import { ScheduleService } from "./viis-schedule-executor-service";
-import ClientRegistry from "../../core/client-registry";
+import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
 import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, RpcControlResult, ScheduleExecutorNodeDef } from "./type";
@@ -16,27 +16,82 @@ module.exports = function (RED: NodeAPI) {
 
         // Initialize global activeModbusCommands with type
         const globalContext = node.context().global;
-        if (!globalContext.get("activeModbusCommands")) {
-            globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
-        }
 
-        if (!globalContext.get("manualModbusOverrides")) {
-            globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
-        }
+        // STARTUP RECOVERY: Track if this is a fresh startup (power cycle recovery)
+        // Use a unique startup ID to detect restarts
+        const currentStartupId = `startup_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const lastStartupId = globalContext.get("scheduleExecutorStartupId") as string || null;
+        const isStartupRecovery = !lastStartupId || lastStartupId !== currentStartupId;
 
-        // Initialize last check timestamps to avoid frequent re-execution checks
-        if (!globalContext.get("scheduleLastCheckTimestamps")) {
-            globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
-        }
+        if (isStartupRecovery) {
+            // Mark this startup
+            globalContext.set("scheduleExecutorStartupId", currentStartupId);
+            globalContext.set("scheduleExecutorStartupTime", Date.now());
 
-        // Initialize schedule status tracking to detect status changes
-        if (!globalContext.get("scheduleStatusHistory")) {
-            globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
+            // CRITICAL: Clear all potentially stale global state on startup
+            // This prevents stuck schedules after power outage
+            const existingActiveCommands = globalContext.get("activeModbusCommands") as ActiveModbusCommands || {};
+            const existingStatusHistory = globalContext.get("scheduleStatusHistory") as Record<string, string> || {};
+            const existingTimestamps = globalContext.get("scheduleLastCheckTimestamps") as Record<string, number> || {};
+
+            const staleCommandCount = Object.keys(existingActiveCommands).length;
+            const staleStatusCount = Object.keys(existingStatusHistory).length;
+            const staleTimestampCount = Object.keys(existingTimestamps).length;
+
+            if (staleCommandCount > 0 || staleStatusCount > 0 || staleTimestampCount > 0) {
+                node.warn(`🔄 STARTUP RECOVERY: Detected potential stale state from power outage`);
+                node.warn(`   - activeModbusCommands: ${staleCommandCount} entries (clearing)`);
+                node.warn(`   - scheduleStatusHistory: ${staleStatusCount} entries (clearing)`);
+                node.warn(`   - scheduleLastCheckTimestamps: ${staleTimestampCount} entries (clearing)`);
+
+                // Clear all stale state - schedules will be re-evaluated fresh
+                globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
+                globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
+                globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
+                globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
+
+                node.warn(`✅ STARTUP RECOVERY: Cleared stale global state - schedules will start fresh`);
+            } else {
+                // Initialize empty objects
+                globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
+                globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
+                globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
+                globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
+            }
+        } else {
+            // Not a fresh startup, just ensure variables exist
+            if (!globalContext.get("activeModbusCommands")) {
+                globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
+            }
+            if (!globalContext.get("manualModbusOverrides")) {
+                globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
+            }
+            if (!globalContext.get("scheduleLastCheckTimestamps")) {
+                globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
+            }
+            if (!globalContext.get("scheduleStatusHistory")) {
+                globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
+            }
         }
 
         node.name = config.name;
-        const scheduleInterval = config.scheduleInterval;
-        node.warn(`Schedule interval set to: ${scheduleInterval}`);
+        const debugEnable = config.debugEnable; // Read debugEnable from config
+        const verifyAfterWrite = config.verifyAfterWrite !== false; // Default to true if not specified
+        const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
+
+        // Multi-board state variables
+        let currentBoardId: string | undefined = config.boardId;
+        let isMultiBoardMode: boolean = false;
+        let currentModbusConfig: any = null;
+
+        // Helper function for conditional logging
+        const debugLog = (message: string) => {
+            if (debugEnable) {
+                node.warn(message);
+            }
+        };
+
+        debugLog(`Cleanup interval set to: ${cleanupInterval} minutes`);
 
         // Initialize GlobalContextHelper
         const globalHelper = new GlobalContextHelper(node.context());
@@ -47,37 +102,138 @@ module.exports = function (RED: NodeAPI) {
             const previousStatus = statusHistory[scheduleName];
             const changed = previousStatus !== newStatus;
 
+            if (changed && debugEnable) {
+                debugLog(`Status changed for ${scheduleName}: ${previousStatus || 'undefined'} -> ${newStatus}`);
+            }
+
             // Update status history
             statusHistory[scheduleName] = newStatus;
             globalContext.set("scheduleStatusHistory", statusHistory);
 
-            if (changed) {
-                node.warn(`Status changed for ${scheduleName}: ${previousStatus || 'undefined'} -> ${newStatus}`);
-            }
-
             return changed;
         };
 
+        // Helper function to clear status history for a schedule (call when schedule successfully finishes)
+        const clearStatusHistory = (scheduleName: string): void => {
+            const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
+            if (statusHistory[scheduleName]) {
+                debugLog(`Clearing status history for ${scheduleName} (was: ${statusHistory[scheduleName]})`);
+                delete statusHistory[scheduleName];
+                globalContext.set("scheduleStatusHistory", statusHistory);
+            }
+        };
+
+        // Helper function to check and clean stale "running" entries in status history
+        // This runs periodically to clean up schedules that are stuck as "running"
+        const cleanStaleStatusHistory = (): void => {
+            const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
+            const lastCleanupKey = "scheduleStatusHistoryLastCleanup";
+            const lastCleanup = globalContext.get(lastCleanupKey) as number || 0;
+            const now = Date.now();
+            const cleanupIntervalMs = cleanupInterval * 60 * 1000; // Convert minutes to milliseconds
+
+            // Run cleanup based on configured interval
+            if (now - lastCleanup < cleanupIntervalMs) {
+                return;
+            }
+
+            let cleanedCount = 0;
+            const currentRunningSchedules = Object.keys(
+                (globalContext.get("activeModbusCommands") as Record<string, any>) || {}
+            );
+
+            for (const scheduleId in statusHistory) {
+                // If status is "running" but schedule is NOT in activeModbusCommands, it's stale
+                if (statusHistory[scheduleId] === "running" && !currentRunningSchedules.includes(scheduleId)) {
+                    debugLog(`Cleaning stale status history: ${scheduleId} (was stuck as 'running')`);
+                    delete statusHistory[scheduleId];
+                    cleanedCount++;
+                }
+            }
+
+            if (cleanedCount > 0) {
+                globalContext.set("scheduleStatusHistory", statusHistory);
+                node.warn(`🧹 CLEANUP: Removed ${cleanedCount} stale 'running' entries from scheduleStatusHistory`);
+            }
+
+            globalContext.set(lastCleanupKey, now);
+        };
+
+        // Initialize ScheduleService with debugEnable setting
         let scheduleService: ScheduleService;
         try {
-            scheduleService = new ScheduleService(node);
-            node.warn("ScheduleService initialized successfully");
+            scheduleService = new ScheduleService(node, verifyAfterWrite, debugEnable);
+            debugLog("ScheduleService initialized successfully");
         } catch (error) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
             return;
         }
-        // Modbus configuration
-        const modbusConfig = {
-            type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
-            host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
-            tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
-            serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
-            baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
-            parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
-            unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
-            timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
-            reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+
+        // Helper function to read Modbus config
+        const readModbusConfig = () => {
+            const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+
+            if (boardsConfig) {
+                try {
+                    let boards;
+
+                    // Handle both already-parsed array and JSON string
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    } else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    } else {
+                        node.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                        boards = null;
+                    }
+
+                    if (Array.isArray(boards) && boards.length > 0) {
+                        return {
+                            mode: 'multi',
+                            boards: boards,
+                            defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                        };
+                    }
+                } catch (e) {
+                    node.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                }
+            }
+
+            return {
+                mode: 'single',
+                config: {
+                    type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
+                    host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
+                    tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
+                    serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
+                    baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
+                    parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
+                    unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
+                    timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
+                    reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+                }
+            };
         };
+
+        // Initialize Modbus configuration
+        const configData = readModbusConfig();
+        currentModbusConfig = { ...configData };
+
+        // Auto-detect mode
+        if (configData.mode === 'multi') {
+            isMultiBoardMode = true;
+            debugLog(`Multi-board mode detected with ${configData.boards.length} boards`);
+
+            const multiConfig: MultiModbusConfig = {
+                mode: 'multi',
+                defaultBoard: configData.defaultBoard,
+                boards: configData.boards
+            };
+            ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+        } else {
+            isMultiBoardMode = false;
+            debugLog(`Single-board mode: ${configData.config.type} ${configData.config.host}:${configData.config.tcpPort}`);
+        }
 
         // ThingsBoard MQTT configuration
         const thingsboardConfig: MqttConfig = {
@@ -97,26 +253,59 @@ module.exports = function (RED: NodeAPI) {
             qos: 1 as 0 | 1 | 2,
         };
 
+        // Get Modbus client
+        let modbusClient: ModbusClientCore;
+        let modbusUnitId: number;
 
-        const modbusClient: ModbusClientCore = ClientRegistry.getModbusClient(modbusConfig, node);
+        // Async initialization - defer Modbus client setup
+        const modbusClientPromise = (async () => {
+            if (isMultiBoardMode) {
+                const boardToUse = currentBoardId || configData.defaultBoard;
+                debugLog(`Getting client for board: ${boardToUse}`);
+                const client = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                // Get unitId from board config
+                const boardConfig = configData.boards.find((b: any) => b.id === boardToUse);
+                return { client, unitId: boardConfig?.unitId || 1 };
+            } else {
+                const client = await ClientRegistry.getModbusClientV2(configData.config, node);
+                return { client, unitId: configData.config.unitId };
+            }
+        })();
+
+        // Initialize synchronously - actual connection happens in background
+        modbusClientPromise.then(({ client, unitId }) => {
+            modbusClient = client;
+            modbusUnitId = unitId;
+            debugLog(`Modbus client initialized for unitId: ${modbusUnitId}`);
+        }).catch(error => {
+            node.error(`Failed to initialize Modbus client: ${error.message}`);
+        });
 
         node.on("input", async function (msg, send, done) {
             try {
+                // Ensure Modbus client is ready before processing
+                if (!modbusClient) {
+                    await modbusClientPromise.then(({ client, unitId }) => {
+                        modbusClient = client;
+                        modbusUnitId = unitId;
+                    });
+                }
+
                 // Initialize MQTT clients
                 const thingsboardClient: MqttClientCore = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
                 const emqxClient: MqttClientCore = await ClientRegistry.getLocalMqttClient(emqxConfig, node);
-                node.warn(`MQTT TB connected: ${thingsboardClient.isConnected()}, EMQX connected: ${emqxClient.isConnected()}`);
+                debugLog(`MQTT TB connected: ${thingsboardClient.isConnected()}, EMQX connected: ${emqxClient.isConnected()}`);
 
                 ClientRegistry.logConnectionCounts(node);
 
-                // Kiểm tra và xoá overrides nếu không có hẹn giờ nào đang chạy
+                // Check and clear overrides if no schedules are running
                 const activeModbusCommands: ActiveModbusCommands = node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
                 if (Object.keys(activeModbusCommands).length === 0) {
                     node.context().global.set("manualModbusOverrides", {});
-                    node.warn("Không có hẹn giờ đang chạy. Đã xoá manualModbusOverrides.");
+                    debugLog("No schedules running. Cleared manualModbusOverrides.");
                 }
 
-                // Xử lý RPC command
+                // Handle RPC command
                 if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && (msg.payload as RpcPayload).method === "schedule-disable-by-backend") {
                     const payload = msg.payload as RpcPayload;
                     const params = payload.params || {};
@@ -133,7 +322,7 @@ module.exports = function (RED: NodeAPI) {
                     const schedule = schedules.find(s => s.name === scheduleId);
 
                     if (!schedule) {
-                        node.warn(`Schedule with id ${scheduleId} not found`);
+                        debugLog(`Schedule with id ${scheduleId} not found`);
                         node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
                         send(msg);
                         done();
@@ -141,17 +330,11 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     if (schedule.status === "running") {
-                        // Check if status will actually change
-                        const statusChanged = hasStatusChanged(schedule.name, "finished");
-
-                        schedule.status = "finished";
-                        schedule.enable = 0;
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-
-                        // Xóa timestamp khi schedule bị disable qua RPC
+                        // Clear timestamp when schedule is disabled via RPC
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
+
                         const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
 
@@ -160,78 +343,231 @@ module.exports = function (RED: NodeAPI) {
                             for (const configParam of configParameters) {
                                 try {
                                     await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
-                                    node.warn(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                    debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
                                 } catch (error) {
                                     node.error(`Failed to publish config parameter ${configParam.key}: ${(error as Error).message}`);
                                 }
                             }
                         }
-                        // --- Bổ sung reset các key time_valve_ và set_flow ---
-                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
+
+                        // Reset time_valve_ and set_flow keys
+                        const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
+                        debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
                             .map(([key, address]) => ({
                                 key,
                                 value: 0,
-                                fc: 6, // holding register
-                                unitid: modbusConfig.unitId,
+                                fc: 6,
+                                unitid: modbusUnitId,
                                 address: Number(address),
                                 quantity: 1
                             }));
-                        // Loại bỏ các lệnh đã có trong activeCommands (theo address và fc)
                         const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands];
+
+                        let resetSuccess = true; // Track reset result
                         if (allResetCommands.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
-                            scheduleService.clearActiveCommands(schedule.name); // Xóa lệnh đã lưu
-                            node.warn(`Cleared active commands for schedule ${schedule.name} via RPC`);
+                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
+                            scheduleService.clearActiveCommands(schedule.name);
+                            debugLog(`Cleared active commands for schedule ${schedule.name} via RPC - Success: ${resetSuccess}`);
                         }
 
-                        // Only publish MQTT and sync log if status actually changed
-                        if (statusChanged) {
-                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
-                            await scheduleService.syncScheduleLog(schedule, true);
+                        // CRITICAL FIX: Only set status to "finished" if reset succeeded
+                        // If reset failed, keep status as "running" so users know devices are still ON
+                        if (resetSuccess) {
+                            const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            schedule.status = "finished";
+                            schedule.enable = 0;
+                            await scheduleService.updateScheduleStatus(schedule, "finished");
+
+                            // Clear status history after successful finish so next run will trigger notification
+                            clearStatusHistory(schedule.name);
+
+                            if (statusChanged) {
+                                // Send HTTP notification - success case
+                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                                await scheduleService.syncScheduleLog(schedule, true);
+
+                                // Publish audit log for RPC disable (success)
+                                try {
+                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                    await scheduleService.publishAuditLog(
+                                        thingsboardClient,
+                                        emqxClient,
+                                        schedule,
+                                        'end',
+                                        { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                        true
+                                    );
+                                } catch (auditError) {
+                                    debugLog(`Failed to publish audit log for RPC disable: ${(auditError as Error).message}`);
+                                }
+                            }
+                        } else {
+                            // Reset failed via RPC - keep status as "running" and send error notification
+                            debugLog(`⚠️ CRITICAL: RPC disable ${schedule.name} FAILED to turn off devices - keeping status as "running"`);
+
+                            // Disable schedule but keep status running to indicate devices are still ON
+                            schedule.enable = 0;
+                            await scheduleService.updateScheduleStatus(schedule, "running"); // Keep as running!
+
+                            // Send error notification
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', false);
+                            await scheduleService.syncScheduleLog(schedule, false);
+
+                            // Publish audit log for RPC disable (failure)
+                            try {
+                                const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                await scheduleService.publishAuditLog(
+                                    thingsboardClient,
+                                    emqxClient,
+                                    schedule,
+                                    'end',
+                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                    false,
+                                    'RPC disable: Không thể tắt thiết bị - Lỗi ghi Modbus'
+                                );
+                            } catch (auditError) {
+                                debugLog(`Failed to publish audit log for failed RPC disable: ${(auditError as Error).message}`);
+                            }
+
+                            // Log critical warning
+                            node.warn(`🚨 CRITICAL: RPC disable ${schedule.name} cannot turn off devices - MANUAL INTERVENTION REQUIRED`);
                         }
                     } else {
-                        node.warn(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
+                        debugLog(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
                         schedule.enable = 0;
                         await scheduleService.updateScheduleStatus(schedule, schedule.status as "running" | "finished");
-                        // No MQTT/log needed since status didn't change, just disabled
                     }
-
-
 
                     node.status({ fill: "green", shape: "dot", text: "RPC processed" });
                     send(msg);
                     done();
                     return;
-                } else if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
-                    // Handle other RPC methods (e.g., control commands)
+                }
+
+                // Handle RPC command: confirm-devices-off
+                // User manually confirms that devices have been turned off (for recovery from stuck 'running' status)
+                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && (msg.payload as RpcPayload).method === "confirm-devices-off") {
+                    const payload = msg.payload as RpcPayload;
+                    const params = payload.params || {};
+                    const scheduleId = params.scheduleId;
+                    const verifyDevices = params.verifyDevices !== false; // Default to true
+
+                    if (!scheduleId) {
+                        node.error("Missing scheduleId in confirm-devices-off RPC command");
+                        node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
+                        done(new Error("Missing scheduleId"));
+                        return;
+                    }
+
+                    const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
+                    const schedule = schedules.find(s => s.name === scheduleId);
+
+                    if (!schedule) {
+                        debugLog(`Schedule with id ${scheduleId} not found`);
+                        node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
+                        send(msg);
+                        done();
+                        return;
+                    }
+
+                    if (schedule.status !== "running") {
+                        node.warn(`Schedule ${scheduleId} is not running (status: ${schedule.status})`);
+                        node.status({ fill: "yellow", shape: "ring", text: "Not running" });
+                        send(msg);
+                        done();
+                        return;
+                    }
+
+                    let confirmSuccess = true;
+
+                    // If verifyDevices is true, read Modbus to confirm devices are actually OFF
+                    if (verifyDevices) {
+                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
+
+                        if (activeCommands.length > 0) {
+                            for (const cmd of activeCommands) {
+                                try {
+                                    let readResult: { data: any[] };
+                                    let currentValue: number | boolean;
+
+                                    if (cmd.fc === 5) {
+                                        readResult = await modbusClient.readCoils(cmd.address, 1);
+                                        currentValue = Boolean(readResult.data[0]);
+                                        if (currentValue !== false) {
+                                            confirmSuccess = false;
+                                            node.warn(`⚠️ Device at coil ${cmd.address} (${cmd.key}) is still ON`);
+                                        }
+                                    } else if (cmd.fc === 6) {
+                                        readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                                        currentValue = Number(readResult.data[0]);
+                                        if (currentValue !== 0) {
+                                            confirmSuccess = false;
+                                            node.warn(`⚠️ Register at ${cmd.address} (${cmd.key}) is still ${currentValue}`);
+                                        }
+                                    }
+                                } catch (error) {
+                                    node.error(`Error verifying device status: ${(error as Error).message}`);
+                                    confirmSuccess = false;
+                                }
+                            }
+                        }
+                    }
+
+                    if (confirmSuccess) {
+                        // Update status to finished
+                        schedule.status = "finished";
+                        schedule.enable = 0;
+                        scheduleService.clearActiveCommands(schedule.name);
+                        await scheduleService.updateScheduleStatus(schedule, "finished");
+
+                        // Clear status history after successful finish so next run will trigger notification
+                        clearStatusHistory(schedule.name);
+
+                        // Send success notification
+                        await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                        await scheduleService.syncScheduleLog(schedule, true);
+
+                        node.warn(`✅ MANUAL RECOVERY: Schedule ${schedule.name} confirmed OFF and set to finished`);
+                        node.status({ fill: "green", shape: "dot", text: "Confirmed OFF" });
+                    } else {
+                        node.warn(`❌ MANUAL RECOVERY FAILED: Some devices are still ON for ${schedule.name}`);
+                        node.status({ fill: "red", shape: "ring", text: "Devices still ON" });
+                    }
+
+                    send(msg);
+                    done();
+                    return;
+                }
+
+                // Handle RPC command: control (general Modbus control)
+                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
                     const payload = msg.payload as RpcPayload;
 
                     if (payload.method === "control" && payload.params) {
-                        // Process RPC control commands
                         const results: any[] = [];
 
                         for (const [key, value] of Object.entries(payload.params)) {
-                            if (key === 'scheduleId') continue; // Skip scheduleId parameter
+                            if (key === 'scheduleId') continue;
 
                             const result = scheduleService.processRpcControlCommand(key, value);
                             results.push({ key, ...result });
 
                             if (result.success && result.action === 'config') {
-                                node.warn(`RPC control: ${key}=${value} stored in configKeyValues`);
+                                debugLog(`RPC control: ${key}=${value} stored in configKeyValues`);
                             } else if (result.success && result.action === 'modbus') {
-                                node.warn(`RPC control: ${key}=${value} should be handled by modbus (address: ${result.result?.address})`);
+                                debugLog(`RPC control: ${key}=${value} should be handled by modbus (address: ${result.result?.address})`);
                             } else {
                                 node.error(`RPC control failed for ${key}=${value}`);
                             }
                         }
 
-                        // Send response with results
                         const responseMsg = {
                             ...msg,
                             payload: {
@@ -247,18 +583,19 @@ module.exports = function (RED: NodeAPI) {
                         return;
                     }
 
-                    // Unknown RPC method
-                    node.warn(`Unknown RPC method: ${payload.method}`);
+                    debugLog(`Unknown RPC method: ${payload.method}`);
                     return null;
                 }
 
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
-                node.warn(`Found ${schedules.length} schedule(s).`);
+                debugLog(`Found ${schedules.length} schedule(s).`);
+
+                // Run hourly cleanup of stale status history entries
+                cleanStaleStatusHistory();
 
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
                     const now = moment().utc().add(7, 'hours');
-                    // const now = moment('2025-04-03T00:10:00Z').utc();
                     const today = now.clone().startOf('day');
                     const startTime = moment(schedule.start_time, "HH:mm:ss");
                     const endTime = moment(schedule.end_time, "HH:mm:ss");
@@ -274,63 +611,61 @@ module.exports = function (RED: NodeAPI) {
                         second: endTime.second()
                     });
 
-                    // Xử lý trường hợp qua ngày (cross-midnight)
                     if (startDateTime.isAfter(endDateTime)) {
                         if (now.isBefore(endDateTime)) {
-                            // Nếu giờ hiện tại nằm sau nửa đêm (ví dụ: 00:10) và trước endTime,
-                            // schedule đã bắt đầu từ ngày hôm trước.
                             startDateTime.subtract(1, 'day');
                         } else {
-                            // Nếu giờ hiện tại nằm sau startTime,
-                            // thì endTime nằm vào ngày hôm sau.
                             endDateTime.add(1, 'day');
                         }
                     }
 
-                    if (isDue && schedule.status !== "running") {
-                        node.warn("start running schedule")
+                    // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
+                    // This happens after power outage when activeModbusCommands was cleared on startup
+                    const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
+                    const isStaleRunningStatus = schedule.status === "running" && existingActiveCommands.length === 0;
 
-                        // Check if status will actually change
+                    if (isStaleRunningStatus && isDue) {
+                        node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
+                    }
+
+                    if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
+                        debugLog("start running schedule");
+
                         const statusChanged = hasStatusChanged(schedule.name, "running");
 
-                        // --- Reset time_valve_ and set_flow keys except those present in action ---
-                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
-                        // Parse action (may be string or object)
+                        const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
+                        debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         let actionObj: Record<string, any> = {};
                         if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
                             try {
                                 actionObj = JSON.parse(schedule.action);
                             } catch (err) {
-                                node.warn('Cannot parse schedule.action, treat as empty object');
+                                debugLog('Cannot parse schedule.action, treat as empty object');
                             }
                         } else if (typeof schedule.action === 'object' && schedule.action !== null) {
                             actionObj = schedule.action;
                         }
-                        // Compose reset commands for all time_valve_ and set_flow keys not in actionObj or with falsy value
                         const resetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => (key.startsWith('time_valve_') || key.startsWith('set_flow')) && (!actionObj[key] || actionObj[key] === 0))
                             .map(([key, address]) => ({
                                 key,
                                 value: 0,
-                                fc: 6, // holding register
-                                unitid: modbusConfig.unitId,
+                                fc: 6,
+                                unitid: modbusUnitId,
                                 address: Number(address),
                                 quantity: 1
                             }));
                         if (resetKeys.length > 0) {
-                            node.warn(`Resetting keys at schedule start: ${resetKeys.map(k => k.key).join(', ')}`);
+                            debugLog(`Resetting keys at schedule start: ${resetKeys.map(k => k.key).join(', ')}`);
                             await scheduleService.resetModbusCommands(modbusClient, resetKeys);
                         }
-                        // --- End reset logic ---
                         const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
 
-                        // Publish configuration parameters if any
                         if (configParameters && configParameters.length > 0) {
                             for (const configParam of configParameters) {
                                 try {
                                     await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
-                                    node.warn(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                    debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
                                 } catch (error) {
                                     node.error(`Failed to publish config parameter ${configParam.key}: ${(error as Error).message}`);
                                 }
@@ -354,107 +689,162 @@ module.exports = function (RED: NodeAPI) {
                                 }
                             }
 
-                            // Only publish MQTT and sync log if status actually changed
                             if (statusChanged) {
-                                await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, writeSuccess);
+                                // Send HTTP notification directly to backend when schedule starts
+                                await scheduleService.sendNotificationToBackend(schedule, 'start', writeSuccess);
                                 await scheduleService.syncScheduleLog(schedule, writeSuccess);
+
+                                // Publish audit log for schedule start
+                                try {
+                                    await scheduleService.publishAuditLog(
+                                        thingsboardClient,
+                                        emqxClient,
+                                        schedule,
+                                        'start',
+                                        { holdingCommands, coilCommands },
+                                        writeSuccess,
+                                        writeSuccess ? undefined : 'Không thể ghi dữ liệu Modbus sau 3 lần thử'
+                                    );
+                                } catch (auditError) {
+                                    debugLog(`Failed to publish audit log for schedule start: ${(auditError as Error).message}`);
+                                }
                             }
                         }
                     } else if (schedule.status === "running" && isDue) {
-                        // Trường hợp đang running - DISABLED automatic coil recovery
-                        // Previously: System would check every 60 seconds and re-execute commands if coil states changed
-                        // Now: If external source turns off coils, they will remain off (no automatic recovery)
-
-                        // Keep the timestamp tracking for potential future use, but don't perform recovery
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         const now = Date.now();
                         const lastCheck = lastCheckTimestamps[schedule.name] || 0;
-                        const checkInterval = 60000; // Chỉ kiểm tra mỗi 60 giây
+                        const checkInterval = 60000;
 
                         if (now - lastCheck >= checkInterval) {
-                            // DISABLED: Automatic coil recovery logic
-                            // const writeSuccess = await scheduleService.reExecuteAfterPowerLoss(modbusClient, schedule);
-                            // if (writeSuccess) {
-                            //     node.warn(`Re-executed commands for schedule ${schedule.name} after detecting changes`);
-                            // }
-
-                            node.warn(`Schedule ${schedule.name} is running - automatic coil recovery is DISABLED`);
-
-                            // Cập nhật timestamp
+                            debugLog(`Schedule ${schedule.name} is running - automatic coil recovery is DISABLED`);
                             lastCheckTimestamps[schedule.name] = now;
                             globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         }
-                        // Không sync log liên tục khi đang running
                     } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
-                        node.warn("strart finishing schedule")
+                        debugLog("start finishing schedule");
 
-                        // Check if status will actually change
-                        const statusChanged = hasStatusChanged(schedule.name, "finished");
-
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-
-                        // Xóa timestamp khi schedule kết thúc
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
 
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        // --- Bổ sung reset các key time_valve_ và set_flow ---
-                        const holdingRegisters: Record<string, number> = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-                        node.warn(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`)
+                        const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
+                        debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
                             .map(([key, address]) => ({
                                 key,
                                 value: 0,
-                                fc: 6, // holding register
-                                unitid: modbusConfig.unitId,
+                                fc: 6,
+                                unitid: modbusUnitId,
                                 address: Number(address),
                                 quantity: 1
                             }));
-                        // Loại bỏ các lệnh đã có trong activeCommands (theo address và fc)
                         const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = [...activeCommands, ...extraResetCommands];
+
+                        let resetSuccess = true; // Track reset result
                         if (allResetCommands.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
+                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
                             scheduleService.clearActiveCommands(schedule.name);
                         }
 
-                        // Only publish MQTT and sync log if status actually changed
-                        if (statusChanged) {
-                            await scheduleService.publishMqttNotification(thingsboardClient, emqxClient, schedule, true);
-                            await scheduleService.syncScheduleLog(schedule, true);
+                        // CRITICAL FIX: Only set status to "finished" if reset succeeded
+                        // If reset failed, keep status as "running" so users know devices are still ON
+                        if (resetSuccess) {
+                            const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            await scheduleService.updateScheduleStatus(schedule, "finished");
+
+                            // Clear status history after successful finish so next day's run will trigger notification
+                            clearStatusHistory(schedule.name);
+
+                            if (statusChanged) {
+                                // Send HTTP notification - success case
+                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                                await scheduleService.syncScheduleLog(schedule, true);
+
+                                // Publish audit log for schedule end (success)
+                                try {
+                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                    await scheduleService.publishAuditLog(
+                                        thingsboardClient,
+                                        emqxClient,
+                                        schedule,
+                                        'end',
+                                        { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                        true
+                                    );
+                                } catch (auditError) {
+                                    debugLog(`Failed to publish audit log for schedule end: ${(auditError as Error).message}`);
+                                }
+                            }
+                        } else {
+                            // Reset failed - keep status as "running" and send error notification
+                            debugLog(`⚠️ CRITICAL: Schedule ${schedule.name} time ended but FAILED to turn off devices - keeping status as "running"`);
+
+                            // Send error notification immediately
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', false);
+                            await scheduleService.syncScheduleLog(schedule, false);
+
+                            // Publish audit log for schedule end (failure)
+                            try {
+                                const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => ({ ...cmd, value: false }));
+                                const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
+                                await scheduleService.publishAuditLog(
+                                    thingsboardClient,
+                                    emqxClient,
+                                    schedule,
+                                    'end',
+                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                    false,
+                                    'Không thể tắt thiết bị sau khi kết thúc lịch trình - Lỗi ghi Modbus'
+                                );
+                            } catch (auditError) {
+                                debugLog(`Failed to publish audit log for failed schedule end: ${(auditError as Error).message}`);
+                            }
+
+                            // Log critical warning
+                            if (node) {
+                                node.warn(`🚨 CRITICAL: Schedule ${schedule.name} cannot turn off devices - MANUAL INTERVENTION REQUIRED`);
+                            }
                         }
                     } else {
-                        node.warn(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
+                        debugLog(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
                 }
-                // Cleanup activeModbusCommands - chỉ cleanup những schedule không còn trong DB hoặc bị disable
+
+                // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
+                // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
+                try {
+                    await scheduleService.checkAndRecoverStuckSchedules(modbusClient, schedules);
+                } catch (error) {
+                    debugLog(`Error in recovery check: ${(error as Error).message}`);
+                }
+
                 const enabledScheduleIds = schedules.map(s => s.name);
 
                 for (const scheduleId in activeModbusCommands) {
-                    // Chỉ cleanup nếu schedule không còn tồn tại trong DB hoặc không còn enabled
-                    // Không cleanup những schedule vừa finished trong lần chạy này
                     if (!enabledScheduleIds.includes(scheduleId)) {
                         const commands = activeModbusCommands[scheduleId];
                         const resetSuccess = await scheduleService.resetModbusCommands(modbusClient, commands);
                         if (resetSuccess) {
                             scheduleService.clearActiveCommands(scheduleId);
-                            node.warn(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
+                            debugLog(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
                         } else {
-                            node.warn(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
+                            debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
                         }
                     }
                 }
 
-                // Cleanup old status history entries for schedules that are no longer enabled
                 const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
                 for (const scheduleId in statusHistory) {
                     if (!enabledScheduleIds.includes(scheduleId)) {
                         delete statusHistory[scheduleId];
-                        node.warn(`Cleaned up status history for disabled schedule ${scheduleId}`);
+                        debugLog(`Cleaned up status history for disabled schedule ${scheduleId}`);
                     }
                 }
                 globalContext.set("scheduleStatusHistory", statusHistory);
@@ -469,7 +859,13 @@ module.exports = function (RED: NodeAPI) {
         });
 
         node.on("close", function (done: () => void) {
-            ClientRegistry.releaseClient("modbus", node);
+            // Release Modbus client (multi-board aware)
+            if (isMultiBoardMode && currentBoardId) {
+                ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+            } else {
+                ClientRegistry.releaseClientV2("modbus", node);
+            }
+
             ClientRegistry.releaseClient("thingsboard", node);
             ClientRegistry.releaseClient("local", node);
             done();

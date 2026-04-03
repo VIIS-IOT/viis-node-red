@@ -1,0 +1,538 @@
+"use strict";
+/**
+ * @fileoverview Flow Accumulation Controller
+ *
+ * REST API endpoints for hourly flow accumulation data
+ * Path prefix: /api/v2/marine/accumulation
+ *
+ * This controller provides access to aggregated hourly flow data for Marine IoT systems.
+ */
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FlowAccumulationController = void 0;
+require("reflect-metadata");
+const routing_controllers_1 = require("routing-controllers");
+const typedi_1 = require("typedi");
+const logger_1 = require("../utils/logger");
+const FlowAccumulationService_1 = require("../../../services/MarineIoT/FlowAccumulationService");
+const container_setup_1 = require("../container/container.setup");
+const dataSource_1 = require("../../../orm/dataSource");
+/**
+ * Flow Accumulation Controller
+ *
+ * Endpoints:
+ * - GET /api/v2/marine/accumulation/latest/:device_id - Get latest hourly accumulation
+ * - GET /api/v2/marine/accumulation/history/:device_id - Get historical accumulation data
+ * - GET /api/v2/marine/accumulation/daily/:device_id - Get daily totals
+ * - GET /api/v2/marine/accumulation/summary/:device_id - Get summary statistics
+ * - POST /api/v2/marine/accumulation/backfill/:device_id - Trigger backfill calculation
+ */
+let FlowAccumulationController = class FlowAccumulationController {
+    constructor(node) {
+        this.node = node;
+        this.dataSource = null;
+        this.flowAccumulationService = null;
+        if (!this.node) {
+            console.error('[ACCUMULATION-API] FlowAccumulationController: Node injection failed');
+            throw new Error('FlowAccumulationController initialization failed: Node not injected');
+        }
+        logger_1.logger.info(this.node, 'FlowAccumulationController initialized with /marine/accumulation prefix');
+        // Initialize DataSource and Service
+        this.initializeServices();
+    }
+    async initializeServices() {
+        try {
+            this.dataSource = await (0, dataSource_1.createDataSource)(this.node.context());
+            if (!this.dataSource.isInitialized) {
+                await this.dataSource.initialize();
+            }
+            this.flowAccumulationService = new FlowAccumulationService_1.FlowAccumulationService(this.dataSource);
+            logger_1.logger.info(this.node, '[ACCUMULATION-API] FlowAccumulationService initialized');
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, '[ACCUMULATION-API] Failed to initialize services', {
+                error: error.message
+            });
+        }
+    }
+    /**
+     * Ensure DataSource is initialized before using
+     */
+    async ensureDataSource() {
+        if (!this.dataSource) {
+            await this.initializeServices();
+        }
+        if (!this.dataSource) {
+            throw new Error('DataSource initialization failed');
+        }
+        return this.dataSource;
+    }
+    /**
+     * Get latest hourly accumulation data
+     * GET /api/v2/marine/accumulation/latest/:device_id
+     *
+     * Returns the most recent hourly accumulation for all sensors
+     *
+     * @example
+     * GET /api/v2/marine/accumulation/latest/ship_001?sensor_keys=fs01,fs02,fs03
+     *
+     * Response:
+     * {
+     *   "device_id": "ship_001",
+     *   "hour_start": "2025-01-20T14:00:00Z",
+     *   "hour_end": "2025-01-20T15:00:00Z",
+     *   "data": [
+     *     {
+     *       "sensor_key": "fs01",
+     *       "avg_flow_m3h": 25.5,
+     *       "accumulated_m3": 25.5,
+     *       "accumulated_tons": 24.225,
+     *       "oil_profile_id": "BO_Generator",
+     *       "density_used": 950,
+     *       "sample_count": 720
+     *     }
+     *   ]
+     * }
+     */
+    async getLatestAccumulation(deviceId, query) {
+        logger_1.logger.info(this.node, `[ACCUMULATION] Get latest accumulation for device: ${deviceId}`);
+        const dataSource = await this.ensureDataSource();
+        try {
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
+            let queryBuilder = repo.createQueryBuilder('acc')
+                .where('acc.device_id = :deviceId', { deviceId })
+                .orderBy('acc.hour_start', 'DESC');
+            if (query.sensor_keys) {
+                const sensorKeys = query.sensor_keys.split(',').map(k => k.trim());
+                queryBuilder = queryBuilder.andWhere('acc.sensor_key IN (:...sensorKeys)', { sensorKeys });
+            }
+            queryBuilder = queryBuilder.limit(6); // Latest 6 sensors
+            const records = await queryBuilder.getMany();
+            if (records.length === 0) {
+                return {
+                    device_id: deviceId,
+                    hour_start: null,
+                    hour_end: null,
+                    data: []
+                };
+            }
+            return {
+                device_id: deviceId,
+                hour_start: records[0].hour_start,
+                hour_end: records[0].hour_end,
+                data: records.map(r => ({
+                    sensor_key: r.sensor_key,
+                    avg_flow_m3h: r.avg_flow_m3h,
+                    accumulated_m3: r.accumulated_m3,
+                    accumulated_tons: r.accumulated_tons,
+                    oil_profile_id: r.oil_profile_id,
+                    density_used: r.density_used,
+                    sample_count: r.sample_count
+                }))
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, `[ACCUMULATION] Failed to get latest accumulation`, {
+                deviceId,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+    /**
+     * Get historical accumulation data
+     * GET /api/v2/marine/accumulation/history/:device_id
+     *
+     * Returns time-series accumulation data for specified date range
+     *
+     * @example
+     * GET /api/v2/marine/accumulation/history/ship_001?start_time=2025-01-20T00:00:00Z&end_time=2025-01-21T00:00:00Z
+     *
+     * Response:
+     * {
+     *   "device_id": "ship_001",
+     *   "time_range": { "start": "2025-01-20T00:00:00Z", "end": "2025-01-21T00:00:00Z" },
+     *   "total_records": 144,
+     *   "data": [
+     *     {
+     *       "hour_start": "2025-01-20T00:00:00Z",
+     *       "hour_end": "2025-01-20T01:00:00Z",
+     *       "fs01": { "m3": 25.5, "tons": 24.225, "samples": 720 },
+     *       "fs02": { "m3": 30.2, "tons": 28.69, "samples": 720 }
+     *     }
+     *   ]
+     * }
+     */
+    async getAccumulationHistory(deviceId, query) {
+        logger_1.logger.info(this.node, `[ACCUMULATION] Get history for device: ${deviceId}`, query);
+        const dataSource = await this.ensureDataSource();
+        try {
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
+            let queryBuilder = repo.createQueryBuilder('acc')
+                .where('acc.device_id = :deviceId', { deviceId });
+            // Apply time filters
+            if (query.start_time) {
+                const startDate = typeof query.start_time === 'number'
+                    ? new Date(query.start_time)
+                    : new Date(parseInt(query.start_time, 10));
+                queryBuilder = queryBuilder.andWhere('acc.hour_start >= :startTime', { startTime: startDate });
+            }
+            if (query.end_time) {
+                const endDate = typeof query.end_time === 'number'
+                    ? new Date(query.end_time)
+                    : new Date(parseInt(query.end_time, 10));
+                queryBuilder = queryBuilder.andWhere('acc.hour_start < :endTime', { endTime: endDate });
+            }
+            if (query.sensor_keys) {
+                const sensorKeys = query.sensor_keys.split(',').map(k => k.trim());
+                queryBuilder = queryBuilder.andWhere('acc.sensor_key IN (:...sensorKeys)', { sensorKeys });
+            }
+            queryBuilder = queryBuilder.orderBy('acc.hour_start', 'DESC').addOrderBy('acc.sensor_key', 'ASC');
+            const records = await queryBuilder.getMany();
+            // Group by hour
+            const groupedData = new Map();
+            records.forEach(record => {
+                const hourKey = record.hour_start.toISOString();
+                if (!groupedData.has(hourKey)) {
+                    groupedData.set(hourKey, {
+                        hour_start: record.hour_start,
+                        hour_end: record.hour_end
+                    });
+                }
+                const hourData = groupedData.get(hourKey);
+                hourData[record.sensor_key] = {
+                    m3: record.accumulated_m3,
+                    tons: record.accumulated_tons,
+                    avg_flow: record.avg_flow_m3h,
+                    samples: record.sample_count,
+                    oil_profile: record.oil_profile_id,
+                    density: record.density_used
+                };
+            });
+            return {
+                device_id: deviceId,
+                time_range: {
+                    start: query.start_time || 'Not specified',
+                    end: query.end_time || 'Not specified'
+                },
+                total_records: groupedData.size,
+                data: Array.from(groupedData.values())
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, `[ACCUMULATION] Failed to get history`, {
+                deviceId,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+    /**
+     * Get daily accumulation totals
+     * GET /api/v2/marine/accumulation/daily/:device_id
+     *
+     * Returns daily aggregated totals for all sensors
+     *
+     * @example
+     * GET /api/v2/marine/accumulation/daily/ship_001?start_time=2025-01-01&end_time=2025-01-31
+     *
+     * Response:
+     * {
+     *   "device_id": "ship_001",
+     *   "data": [
+     *     {
+     *       "date": "2025-01-20",
+     *       "sensor_key": "fs01",
+     *       "total_m3": 612.0,
+     *       "total_tons": 581.4,
+     *       "avg_flow_rate": 25.5,
+     *       "hours_recorded": 24
+     *     }
+     *   ]
+     * }
+     */
+    async getDailyTotals(deviceId, query) {
+        logger_1.logger.info(this.node, `[ACCUMULATION] Get daily totals for device: ${deviceId}`);
+        const dataSource = await this.ensureDataSource();
+        try {
+            let queryString = `
+                SELECT 
+                    sensor_key,
+                    DATE(hour_start) as date,
+                    COUNT(*) as hours_recorded,
+                    SUM(accumulated_m3) as total_m3,
+                    SUM(accumulated_tons) as total_tons,
+                    AVG(avg_flow_m3h) as avg_flow_rate,
+                    MIN(oil_profile_id) as oil_profile
+                FROM tabiot_flow_accumulation
+                WHERE device_id = ?
+            `;
+            const params = [deviceId];
+            if (query.start_time) {
+                queryString += ` AND hour_start >= ?`;
+                const startDate = typeof query.start_time === 'number'
+                    ? new Date(query.start_time)
+                    : new Date(parseInt(query.start_time, 10));
+                params.push(startDate);
+            }
+            if (query.end_time) {
+                queryString += ` AND hour_start < ?`;
+                const endDate = typeof query.end_time === 'number'
+                    ? new Date(query.end_time)
+                    : new Date(parseInt(query.end_time, 10));
+                params.push(endDate);
+            }
+            if (query.sensor_keys) {
+                const keys = query.sensor_keys.split(',').map(k => k.trim());
+                queryString += ` AND sensor_key IN (${keys.map(() => '?').join(',')})`;
+                params.push(...keys);
+            }
+            queryString += ` GROUP BY sensor_key, DATE(hour_start) ORDER BY date DESC, sensor_key`;
+            const results = await dataSource.query(queryString, params);
+            return {
+                device_id: deviceId,
+                data: results
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, `[ACCUMULATION] Failed to get daily totals`, {
+                deviceId,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+    /**
+     * Get accumulation summary statistics
+     * GET /api/v2/marine/accumulation/summary/:device_id
+     *
+     * Returns summary statistics by machine type
+     *
+     * @example
+     * GET /api/v2/marine/accumulation/summary/ship_001?start_time=2025-01-20&end_time=2025-01-21
+     *
+     * Response:
+     * {
+     *   "device_id": "ship_001",
+     *   "time_range": { "start": "2025-01-20", "end": "2025-01-21" },
+     *   "machines": {
+     *     "GENERATOR": {
+     *       "total_m3": 1224.0,
+     *       "total_tons": 1162.8,
+     *       "sensors": ["fs01", "fs02"]
+     *     }
+     *   }
+     * }
+     */
+    async getAccumulationSummary(deviceId, query) {
+        logger_1.logger.info(this.node, `[ACCUMULATION] Get summary for device: ${deviceId}`);
+        const dataSource = await this.ensureDataSource();
+        try {
+            const repo = dataSource.getRepository('TabiotFlowAccumulation');
+            let queryBuilder = repo.createQueryBuilder('acc')
+                .where('acc.device_id = :deviceId', { deviceId });
+            if (query.start_time) {
+                const startTime = typeof query.start_time === 'number'
+                    ? new Date(query.start_time)
+                    : new Date(parseInt(query.start_time, 10));
+                queryBuilder = queryBuilder.andWhere('acc.hour_start >= :startTime', { startTime });
+            }
+            if (query.end_time) {
+                const endTime = typeof query.end_time === 'number'
+                    ? new Date(query.end_time)
+                    : new Date(parseInt(query.end_time, 10));
+                queryBuilder = queryBuilder.andWhere('acc.hour_start < :endTime', { endTime });
+            }
+            const records = await queryBuilder.getMany();
+            // Machine sensor mapping (NEW 4-machine configuration)
+            // BOILER: fs01 (direct consumption, no return)
+            // MAIN_ENGINE: fs02 (in) - fs03 (return)
+            // GENERATOR_HFO: fs03 (in) - fs04 (return)
+            // GENERATOR_DO: fs05 (in) - fs06 (return)
+            const machineMap = {
+                'BOILER': { sensors: ['fs01'], flow_in: 'fs01', flow_return: null },
+                'MAIN_ENGINE': { sensors: ['fs02', 'fs03'], flow_in: 'fs02', flow_return: 'fs03' },
+                'GENERATOR_HFO': { sensors: ['fs03', 'fs04'], flow_in: 'fs03', flow_return: 'fs04' },
+                'GENERATOR_DO': { sensors: ['fs05', 'fs06'], flow_in: 'fs05', flow_return: 'fs06' }
+            };
+            const machines = {};
+            Object.entries(machineMap).forEach(([machineType, config]) => {
+                const machineRecords = records.filter(r => config.sensors.includes(r.sensor_key));
+                if (machineRecords.length > 0) {
+                    // Calculate consumption based on machine type
+                    let totalM3 = 0;
+                    let totalTons = 0;
+                    if (config.flow_return === null) {
+                        // BOILER: Direct consumption (no return flow)
+                        totalM3 = machineRecords
+                            .filter(r => r.sensor_key === config.flow_in)
+                            .reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0);
+                        totalTons = machineRecords
+                            .filter(r => r.sensor_key === config.flow_in)
+                            .reduce((sum, r) => sum + (r.accumulated_tons || 0), 0);
+                    }
+                    else {
+                        // Machines with return flow: consumption = flow_in - flow_return
+                        const flowInSum = machineRecords
+                            .filter(r => r.sensor_key === config.flow_in)
+                            .reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0);
+                        const flowReturnSum = machineRecords
+                            .filter(r => r.sensor_key === config.flow_return)
+                            .reduce((sum, r) => sum + (r.accumulated_m3 || 0), 0);
+                        totalM3 = flowInSum - flowReturnSum;
+                        // Calculate tons from m3 using average density
+                        const flowInRecords = machineRecords.filter(r => r.sensor_key === config.flow_in);
+                        const avgDensity = flowInRecords.length > 0
+                            ? flowInRecords.reduce((sum, r) => sum + (r.density_used || 1000), 0) / flowInRecords.length
+                            : 1000;
+                        totalTons = totalM3 * (avgDensity / 1000);
+                    }
+                    machines[machineType] = {
+                        total_m3: Number(totalM3.toFixed(3)),
+                        total_tons: Number(totalTons.toFixed(3)),
+                        avg_flow_rate: machineRecords.reduce((sum, r) => sum + (r.avg_flow_m3h || 0), 0) / machineRecords.length,
+                        sensors: config.sensors,
+                        records_count: machineRecords.length / config.sensors.length
+                    };
+                }
+            });
+            return {
+                device_id: deviceId,
+                time_range: {
+                    start: query.start_time || 'Not specified',
+                    end: query.end_time || 'Not specified'
+                },
+                machines
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, `[ACCUMULATION] Failed to get summary`, {
+                deviceId,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+    /**
+     * Trigger backfill calculation for historical data
+     * POST /api/v2/marine/accumulation/backfill/:device_id
+     *
+     * Triggers accumulation calculation for a date range
+     *
+     * @example
+     * POST /api/v2/marine/accumulation/backfill/ship_001
+     * Body: { "start_date": "2025-01-01T00:00:00Z", "end_date": "2025-01-10T00:00:00Z" }
+     *
+     * Response:
+     * {
+     *   "status": "success",
+     *   "message": "Backfill started for 240 hours",
+     *   "device_id": "ship_001",
+     *   "start_date": "2025-01-01T00:00:00Z",
+     *   "end_date": "2025-01-10T00:00:00Z"
+     * }
+     */
+    async triggerBackfill(deviceId, body) {
+        logger_1.logger.info(this.node, `[ACCUMULATION] Backfill requested for device: ${deviceId}`, body);
+        if (!this.flowAccumulationService) {
+            throw new Error('FlowAccumulationService not initialized');
+        }
+        try {
+            const startDate = new Date(body.start_date);
+            const endDate = new Date(body.end_date);
+            const hoursDiff = Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60));
+            // Trigger backfill asynchronously
+            this.flowAccumulationService.backfillAccumulation(deviceId, startDate, endDate)
+                .then(() => {
+                logger_1.logger.info(this.node, `[ACCUMULATION] Backfill completed for ${deviceId}`);
+            })
+                .catch((error) => {
+                logger_1.logger.error(this.node, `[ACCUMULATION] Backfill failed for ${deviceId}`, {
+                    error: error.message
+                });
+            });
+            return {
+                status: 'success',
+                message: `Backfill started for ${hoursDiff} hours`,
+                device_id: deviceId,
+                start_date: body.start_date,
+                end_date: body.end_date
+            };
+        }
+        catch (error) {
+            logger_1.logger.error(this.node, `[ACCUMULATION] Failed to trigger backfill`, {
+                deviceId,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+};
+exports.FlowAccumulationController = FlowAccumulationController;
+__decorate([
+    (0, routing_controllers_1.Get)('/latest/:device_id'),
+    (0, routing_controllers_1.HttpCode)(200),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('device_id')),
+    __param(1, (0, routing_controllers_1.QueryParams)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], FlowAccumulationController.prototype, "getLatestAccumulation", null);
+__decorate([
+    (0, routing_controllers_1.Get)('/history/:device_id'),
+    (0, routing_controllers_1.HttpCode)(200),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('device_id')),
+    __param(1, (0, routing_controllers_1.QueryParams)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], FlowAccumulationController.prototype, "getAccumulationHistory", null);
+__decorate([
+    (0, routing_controllers_1.Get)('/daily/:device_id'),
+    (0, routing_controllers_1.HttpCode)(200),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('device_id')),
+    __param(1, (0, routing_controllers_1.QueryParams)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], FlowAccumulationController.prototype, "getDailyTotals", null);
+__decorate([
+    (0, routing_controllers_1.Get)('/summary/:device_id'),
+    (0, routing_controllers_1.HttpCode)(200),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('device_id')),
+    __param(1, (0, routing_controllers_1.QueryParams)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], FlowAccumulationController.prototype, "getAccumulationSummary", null);
+__decorate([
+    (0, routing_controllers_1.Post)('/backfill/:device_id'),
+    (0, routing_controllers_1.HttpCode)(202),
+    (0, routing_controllers_1.Authorized)(),
+    __param(0, (0, routing_controllers_1.Param)('device_id')),
+    __param(1, (0, routing_controllers_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], FlowAccumulationController.prototype, "triggerBackfill", null);
+exports.FlowAccumulationController = FlowAccumulationController = __decorate([
+    (0, routing_controllers_1.JsonController)('/marine/accumulation'),
+    (0, typedi_1.Service)(),
+    __param(0, (0, typedi_1.Inject)(container_setup_1.NODE_TOKEN)),
+    __metadata("design:paramtypes", [Object])
+], FlowAccumulationController);

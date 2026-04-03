@@ -1,7 +1,4 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchedulePlanHandler = void 0;
 const urlParser_1 = require("../utils/urlParser");
@@ -11,83 +8,65 @@ const helper_1 = require("../../../ultils/helper");
 const validation_1 = require("../utils/validation");
 const schedulePlan_dto_1 = require("../dto/schedulePlan.dto");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
-const typedi_1 = __importDefault(require("typedi"));
 const helper_2 = require("../../../ultils/helper");
 class SchedulePlanHandler {
     constructor(dbService, node) {
-        console.log('Initializing SchedulePlanHandler', { dbService, node });
-        this.syncScheduleService = typedi_1.default.get(SyncScheduleService_1.SyncScheduleService);
-        console.log('SyncScheduleService initialized', { syncScheduleService: !!this.syncScheduleService });
-        this.planRepo = dbService.getSchedulePlanRepository();
-        console.log('Plan repository initialized', { planRepo: !!this.planRepo });
         this.node = node;
-        console.log('Node assigned', { node });
+        this.syncScheduleService = new SyncScheduleService_1.SyncScheduleService(node.context());
+        this.planRepo = dbService.getSchedulePlanRepository();
+        this.scheduleRepo = dbService.getScheduleRepository();
     }
     async handleRequest(msg) {
-        console.log('Starting handleRequest', { msg });
         try {
             const { method, url, query, payload } = msg.req || {};
-            console.log('Request details', { method, url, query, payload });
             const path = (0, urlParser_1.parseUrl)(url || '');
-            console.log('Parsed path', { path });
             logger_1.logger.info(this.node, `Handling schedule plan request: ${method} ${path}`);
-            console.log('Logged request info', { method, path });
             switch (method) {
                 case 'GET':
-                    console.log('Routing to handleGetRaw');
                     return await this.handleGetRaw(path, query, msg);
                 case 'POST':
-                    console.log('Routing to handlePost');
                     return await this.handlePost(path, msg);
                 case 'PUT':
-                    console.log('Routing to handlePut');
                     return await this.handlePut(path, msg);
                 case 'DELETE':
-                    console.log('Routing to handleDelete');
                     return await this.handleDelete(path, msg);
                 default:
-                    console.error('Unsupported method', { method });
                     throw new Error(`Unsupported method: ${method}`);
             }
         }
         catch (error) {
-            console.error('Error in handleRequest', { error: error.message, stack: error.stack });
             logger_1.logger.error(this.node, `Request handling failed: ${error.message}`);
             msg.payload = { error: error.message };
-            if ('statusCode' in msg) {
-                msg.statusCode = error instanceof Error && error.message.includes('Validation failed') ? 400 : 500;
-                console.log('Set statusCode', { statusCode: msg.statusCode });
-            }
-            console.log('Returning error response', { msg });
+            // Set appropriate status code
+            const errorMsg = error.message;
+            // Business logic errors should return 400
+            const isBadRequest = errorMsg.includes('Validation failed') ||
+                errorMsg.includes('Cannot disable') ||
+                errorMsg.includes('not found') ||
+                errorMsg.includes('Invalid');
+            msg.statusCode = isBadRequest ? 400 : 500;
             return msg;
         }
     }
     async handleGetRaw(path, query, msg) {
-        console.log('Starting handleGetRaw', { path, query });
         if (path !== constants_1.API_PATHS.SCHEDULE_PLAN) {
-            console.error('Invalid GET endpoint', { path });
             throw new Error('Invalid GET endpoint');
         }
         const page = parseInt(query === null || query === void 0 ? void 0 : query.page) || 1;
-        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 10;
+        const size = parseInt(query === null || query === void 0 ? void 0 : query.size) || 1000;
         const orderBy = (query === null || query === void 0 ? void 0 : query.order_by) || 'tabiot_schedule_plan.name';
         const offset = (page - 1) * size;
-        console.log('Parsed query parameters', { page, size, orderBy, offset });
         let filters = [];
         if (query.filters) {
-            console.log('Raw filters from query', query.filters);
             let paramsFilters = JSON.parse(query.filters);
-            console.log('Parsed filters JSON', paramsFilters);
             paramsFilters.forEach((element) => {
                 if (element[0] === 'iot_schedule') {
                     element[0] = 'iot_schedule_plan';
                 }
                 filters.push(element);
             });
-            console.log('Processed filters', filters);
         }
         const sqlConditionStr = (0, helper_1.parseFilterParams)(filters);
-        console.log('Generated SQL condition string', sqlConditionStr);
         try {
             const dataQuery = `
                 SELECT 
@@ -145,15 +124,13 @@ class SchedulePlanHandler {
                 WHERE TRUE
                   AND tabiot_schedule_plan.is_deleted = 0
                   AND tabiot_schedule_plan.deleted IS NULL
+                  ${sqlConditionStr}
                 ORDER BY 
                   ${orderBy}
                 LIMIT ? OFFSET ?
             `;
-            console.log('Executing data query', { dataQuery, params: [size, offset] });
             const plans = await this.planRepo.query(dataQuery, [size, offset]);
-            console.log('Raw query results', plans);
             const parsedPlans = plans.map((plan) => (Object.assign(Object.assign({}, plan), { schedules: JSON.parse(plan.schedules) })));
-            console.log('Parsed plans', parsedPlans);
             const countQuery = `
                 SELECT 
                   COUNT(DISTINCT tabiot_schedule_plan.name) AS count
@@ -163,12 +140,10 @@ class SchedulePlanHandler {
                   tabiot_schedule ON tabiot_schedule_plan.name = tabiot_schedule.schedule_plan_id
                 WHERE TRUE
                   AND tabiot_schedule_plan.is_deleted = 0
+                  ${sqlConditionStr}
             `;
-            console.log('Executing count query', { countQuery });
             const countResult = await this.planRepo.query(countQuery);
-            console.log('Count query result', countResult);
             const total = parseInt(countResult[0].count, 10);
-            console.log('Total count', total);
             const pagination = {
                 totalElements: total,
                 totalPages: Math.ceil(total / size),
@@ -176,34 +151,25 @@ class SchedulePlanHandler {
                 pageNumber: page,
                 order_by: orderBy,
             };
-            console.log('Pagination info', pagination);
             msg.payload = { result: { data: parsedPlans, pagination } };
-            console.log('Final response payload', msg.payload);
             return msg;
         }
         catch (error) {
-            console.error('Error in handleGetRaw', { error: error.message, stack: error.stack });
             throw new Error(`GET request failed: ${error.message}`);
         }
     }
     async handlePost(path, msg) {
         var _a;
-        console.log('Starting handlePost', { path, payload: msg.payload });
         let payload = msg.payload;
         if (path !== `${constants_1.API_PATHS.SCHEDULE_PLAN}`) {
-            console.error('Invalid POST endpoint', { path });
             throw new Error('Invalid POST endpoint');
         }
         if (!payload || typeof payload !== 'object') {
-            console.error('Invalid payload', { payload });
             throw new Error('Invalid payload: Payload must be an object');
         }
         try {
-            console.log('Validating payload', { payload });
             const dto = await (0, validation_1.validateDto)(schedulePlan_dto_1.TabiotSchedulePlanDto, payload);
-            console.log('Validated DTO', { dto });
             let name = (0, helper_1.generateHashKey)(dto.label, (_a = dto.schedule_count) !== null && _a !== void 0 ? _a : 0, dto.status, 0, 1, dto.device_id, dto.start_date, dto.end_date);
-            console.log('Generated name', { name });
             const planData = {
                 name,
                 label: dto.label,
@@ -220,27 +186,21 @@ class SchedulePlanHandler {
                 creation: new Date(Date.now() + 7 * 60 * 60 * 1000),
                 modified: new Date(Date.now() + 7 * 60 * 60 * 1000),
             };
-            console.log('Prepared plan data', { planData });
             const plan = this.planRepo.create(planData);
-            console.log('Created plan entity', { plan });
             const savedPlan = await this.planRepo.save(plan);
-            console.log('Saved plan', { savedPlan });
+            this.node.warn(`✓ CREATE LOCAL: Schedule Plan "${dto.label}" created successfully in local database`);
             try {
-                console.log('Attempting to sync plan to server', { planName: savedPlan.name });
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([savedPlan]);
-                console.log('Sync response', { syncRes });
                 await this.planRepo.update({ name: savedPlan.name }, { is_synced: 1, modified: (0, helper_2.adjustToUTC7)(new Date()) });
-                console.log('Updated is_synced for plan', { planName: savedPlan.name });
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
-                console.log('Refreshed plan after sync', { refreshedUpdated });
                 if (refreshedUpdated) {
                     Object.assign(savedPlan, refreshedUpdated);
-                    console.log('Updated savedPlan with refreshed data', { savedPlan });
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${dto.label}" synced successfully to server`);
             }
             catch (syncError) {
-                console.error('Sync to server failed', { error: syncError.message, stack: syncError.stack });
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule Plan "${dto.label}" - ${syncError.message}`);
             }
             // Create a response object with all necessary fields
             const responseData = {
@@ -259,48 +219,53 @@ class SchedulePlanHandler {
                 modified: savedPlan.modified,
                 schedules: []
             };
-            console.log('Prepared response data', { responseData });
             msg.payload = { result: { data: responseData } };
             if ('statusCode' in msg)
                 msg.statusCode = 201;
-            console.log('Final response payload', { payload: msg.payload, statusCode: msg.statusCode });
             return msg;
         }
         catch (error) {
-            console.error('Error in handlePost', { error: error.message, stack: error.stack });
+            this.node.warn(`✗ CREATE LOCAL FAILED: ${error.message}`);
             throw error;
         }
     }
     async handlePut(path, msg) {
-        console.log('Starting handlePut', { path, payload: msg.payload });
         if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE_PLAN}/ver2`)) {
-            console.error('Invalid PUT endpoint', { path });
-            console.error(`correct path: ${constants_1.API_PATHS.SCHEDULE_PLAN}/ver2`);
             throw new Error('Invalid PUT endpoint');
         }
         const payload = msg.payload;
         if (!payload || typeof payload !== 'object') {
-            console.error('Invalid payload', { payload });
             throw new Error('Invalid payload: Payload must be an object');
         }
         const name = payload.name;
         if (!name || typeof name !== 'string') {
-            console.error('Invalid schedule plan name', { name });
             throw new Error('No valid schedule plan name provided in payload');
         }
         try {
-            console.log('Validating payload', { payload });
             const dto = await (0, validation_1.validateDto)(schedulePlan_dto_1.TabiotSchedulePlanDto, payload);
-            console.log('Validated DTO', { dto });
             logger_1.logger.info(this.node, `Validated DTO: ${JSON.stringify(dto)}`);
-            console.log('Checking for existing plan', { name });
             const existingPlan = await this.planRepo.findOne({
                 where: { name: name },
             });
-            console.log('Existing plan result', { existingPlan });
             if (!existingPlan) {
-                console.error('Schedule plan not found', { name });
                 throw new Error(`Schedule plan with name ${name} not found`);
+            }
+            // Check if trying to disable a schedule plan with running schedules
+            const isDisabling = dto.enable === 0;
+            if (isDisabling) {
+                const runningSchedules = await this.scheduleRepo.count({
+                    where: {
+                        schedule_plan_id: name,
+                        status: 'running',
+                        is_deleted: 0
+                    }
+                });
+                if (runningSchedules > 0) {
+                    const errorMsg = `Cannot disable schedule plan "${dto.label || name}": ${runningSchedules} schedule(s) are currently running. Please finish or disable all running schedules first.`;
+                    this.node.warn(`❌ DISABLE BLOCKED: ${errorMsg}`);
+                    throw new Error(errorMsg);
+                }
+                this.node.warn(`✓ VALIDATION PASSED: No running schedules found for plan "${dto.label || name}", proceeding with disable`);
             }
             const updateData = {
                 label: dto.label,
@@ -316,39 +281,28 @@ class SchedulePlanHandler {
                 deleted: null,
                 modified: (0, helper_2.adjustToUTC7)(new Date()),
             };
-            console.log('Prepared update data', { updateData });
-            logger_1.logger.info(this.node, `Updating schedule plan ${name} with data: ${JSON.stringify(updateData)}`);
+            logger_1.logger.info(this.node, `Updating schedule plan ${name}`);
             const result = await this.planRepo.update(name, updateData);
-            console.log('Update result', { result });
-            logger_1.logger.info(this.node, `Update result: ${JSON.stringify(result)}`);
             if (result.affected === 0) {
-                console.error('Update affected 0 rows', { name });
-                logger_1.logger.info(this.node, `Update affected 0 rows for existing plan ${name}`);
                 throw new Error(`Failed to update schedule plan ${name}`);
             }
             const updated = await this.planRepo.findOneBy({ name });
             if (!updated) {
-                console.error('Failed to retrieve updated plan', { name });
-                logger_1.logger.info(this.node, `Failed to retrieve updated plan ${name}`);
                 throw new Error(`Failed to retrieve updated schedule plan ${name}`);
             }
-            console.log('Retrieved updated plan', { updated });
+            this.node.warn(`✓ UPDATE LOCAL: Schedule Plan "${dto.label}" updated successfully in local database`);
             try {
-                console.log('Attempting to sync updated plan to server', { planName: updated.name });
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updated]);
-                console.log('Sync response', { syncRes });
                 await this.planRepo.update({ name: updated.name }, { is_synced: 1, modified: (0, helper_2.adjustToUTC7)(new Date()) });
-                console.log('Updated is_synced for plan', { planName: updated.name });
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
-                console.log('Refreshed plan after sync', { refreshedUpdated });
                 if (refreshedUpdated) {
                     Object.assign(updated, refreshedUpdated);
-                    console.log('Updated plan with refreshed data', { updated });
                 }
+                this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${dto.label}" synced successfully to server`);
             }
             catch (syncError) {
-                console.error('Sync to server failed', { error: syncError.message });
                 logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule Plan "${dto.label}" - ${syncError.message}`);
             }
             // Create a response object with all necessary fields
             const responseData = {
@@ -367,24 +321,20 @@ class SchedulePlanHandler {
                 modified: updated.modified,
                 schedules: []
             };
-            console.log('Transformed response data', { responseData });
             msg.payload = { result: { data: responseData } };
             if ('statusCode' in msg)
                 msg.statusCode = 200;
-            console.log('Final response payload', { payload: msg.payload, statusCode: msg.statusCode });
             return msg;
         }
         catch (error) {
-            console.error('Error in handlePut', { error: error.message, stack: error.stack });
             logger_1.logger.error(this.node, `PUT error: ${error.message}`);
+            this.node.warn(`✗ UPDATE LOCAL FAILED: ${error.message}`);
             throw new Error(`PUT request failed: ${error.message}`);
         }
     }
     async handleDelete(path, msg) {
-        var _a, _b;
-        console.log('Starting handleDelete', { path });
+        var _a;
         if (!path.startsWith(`${constants_1.API_PATHS.SCHEDULE_PLAN}`)) {
-            console.error('Invalid DELETE endpoint', { path });
             throw new Error('Invalid DELETE endpoint');
         }
         let name;
@@ -397,27 +347,46 @@ class SchedulePlanHandler {
             const query = ((_a = msg.req) === null || _a === void 0 ? void 0 : _a.query) || {};
             name = query.name;
         }
-        console.log('Parsed name for deletion', { name });
         if (!name) {
-            console.error('No schedule plan name provided', { path, query: (_b = msg.req) === null || _b === void 0 ? void 0 : _b.query });
             throw new Error('No schedule plan name provided in path or query');
         }
         try {
-            console.log('Attempting to mark plan as deleted', { name });
-            const result = await this.planRepo.update({ name }, { is_deleted: 1 });
-            console.log('Delete update result', { result });
+            const result = await this.planRepo.update({ name }, {
+                is_deleted: 1,
+                is_from_local: 1,
+                is_synced: 0,
+                modified: (0, helper_2.adjustToUTC7)(new Date()),
+            });
             if (result.affected === 0) {
-                console.error('Schedule plan not found for deletion', { name });
                 throw new Error(`Schedule plan with name ${name} not found`);
+            }
+            // Retrieve the updated schedule plan for syncing
+            const updatedPlan = await this.planRepo.findOneBy({ name });
+            if (!updatedPlan) {
+                throw new Error(`Failed to retrieve updated schedule plan for syncing`);
+            }
+            this.node.warn(`✓ DELETE LOCAL: Schedule Plan "${name}" marked as deleted in local database`);
+            // Sync to server
+            try {
+                logger_1.logger.info(this.node, 'Starting schedule plan sync to server');
+                const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updatedPlan]);
+                logger_1.logger.info(this.node, 'Schedule plan sync completed successfully');
+                // If sync is successful, update is_synced to 1
+                await this.planRepo.update({ name: updatedPlan.name }, { is_synced: 1, modified: (0, helper_2.adjustToUTC7)(new Date()) });
+                this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${name}" deletion synced successfully to server`);
+            }
+            catch (syncError) {
+                logger_1.logger.info(this.node, `Sync to server failed: ${syncError.message}`);
+                this.node.warn(`✗ SYNC TO SERVER FAILED: Schedule Plan "${name}" - ${syncError.message}`);
+                // If sync fails (HTTP error or timeout), keep is_synced as 0, no update needed
             }
             msg.payload = { result: { message: 'Schedule plan marked as deleted' } };
             if ('statusCode' in msg)
                 msg.statusCode = 200;
-            console.log('Final response payload', { payload: msg.payload, statusCode: msg.statusCode });
             return msg;
         }
         catch (error) {
-            console.error('Error in handleDelete', { error: error.message, stack: error.stack });
+            this.node.warn(`✗ DELETE LOCAL FAILED: Schedule Plan "${name}" - ${error.message}`);
             throw new Error(`DELETE request failed: ${error.message}`);
         }
     }

@@ -1,17 +1,14 @@
 /**
  * @fileoverview Configuration node for VIIS IoT device management
- * This file provides the core configuration node that manages MQTT connections
- * for IoT devices in the VIIS system. It handles device authentication,
- * connection management, and message processing.
+ * This node only stores device credentials (id and accessToken).
+ * MQTT connections are managed by ClientRegistry in other nodes (vietplants-rpc-control, viis-rpc-control).
  */
 
 import { NodeAPI, NodeDef, Node } from "node-red";
-import mqtt, { MqttClient } from "mqtt";
-import { v4 } from "uuid";
-import { mqttServerUrl } from "./const";
+import { loadDeviceCredentials } from "./ultils/env-helper";
 
 /**
- * Represents an IoT device with its connection credentials and MQTT client
+ * Represents an IoT device with its connection credentials
  * @interface Device
  */
 export interface Device {
@@ -19,8 +16,6 @@ export interface Device {
   id: string;
   /** Authentication token used for MQTT connection */
   accessToken: string;
-  /** MQTT client instance for device communication */
-  clientMQtt?: MqttClient;
 }
 
 /**
@@ -43,18 +38,7 @@ export interface ViisConfigNode extends Node {
   device: Device;
 }
 
-/**
- * Safely parses a JSON message string, returning null on parse errors
- * @param {string} msg - The message string to parse
- * @returns {object|null} Parsed JSON object or null if parsing fails
- */
-const parseMesssageIgnoreError = (msg: string) => {
-  try {
-    return JSON.parse(msg);
-  } catch (error) {
-    return null;
-  }
-};
+
 
 /**
  * Node-RED node registration function
@@ -67,91 +51,33 @@ module.exports = function (RED: NodeAPI) {
    */
   function ViisConfigNode(this: ViisConfigNode, config: ViisConfigNodeDef) {
     RED.nodes.createNode(this, config);
-    this.device = config.device || { id: "", accessToken: "" };
-    const node = this;
 
-    /**
-     * Establishes MQTT connection for the device
-     * Sets up event handlers for connection, message reception, errors, and disconnection
-     */
-    const connectMQTT = () => {
-      if (!this.device.clientMQtt || !this.device.clientMQtt.connected) {
-        const mqttOptions = {
-          host: mqttServerUrl,
-          port: 1883,
-          username: this.device.accessToken,
-          clientId: `node-red-${v4()}`,
-          keepalive: 15,
-          clean: true,
-        };
+    // Auto-load credentials from global context → process.env → UI config
+    const credentials = loadDeviceCredentials(
+      this.context(),
+      config.device?.id,
+      config.device?.accessToken
+    );
 
-        this.device.clientMQtt = mqtt.connect(mqttOptions);
-
-        this.device.clientMQtt.on("connect", () => {
-          this.log(`Device ${this.device.id} connected to MQTT`);
-          node.emit("mqtt-status", { status: "connected" });
-          this.device.clientMQtt?.subscribe(
-            "v1/devices/me/rpc/request/+",
-            (err) => {
-              if (err) {
-                this.log(
-                  `Device ${this.device.id} connected to MQTT, but can not subscribe, Err: ${err}`
-                );
-              }
-            }
-          );
-        });
-
-        this.device.clientMQtt.on("message", (topic, message) => {
-          this.log(`Device ${this.device.id} connected to MQTT`);
-          const payload = parseMesssageIgnoreError(message.toString());
-          if (payload) {
-            node.emit("mqtt-message", {
-              message: payload,
-            });
-          }
-        });
-
-        this.device.clientMQtt.on("error", (err) => {
-          this.error(`MQTT error for device ${this.device.id}: ${err.message}`);
-          node.emit("mqtt-status", { status: "error", error: err.message });
-        });
-
-        this.device.clientMQtt.on("close", () => {
-          this.log(`Device ${this.device.id} disconnected from MQTT`);
-          node.emit("mqtt-status", { status: "disconnected" });
-        });
-      }
+    this.device = {
+      id: credentials.deviceId,
+      accessToken: credentials.accessToken
     };
 
-    /**
-     * Closes the MQTT connection for the device
-     * Emits disconnection status event to notify other nodes
-     */
-    const disconnectMQTT = () => {
-      if (this.device.clientMQtt && this.device.clientMQtt.connected) {
-        this.device.clientMQtt.end();
-        this.device.clientMQtt = undefined;
-        this.log(`Device ${this.device.id} MQTT connection closed`);
-        node.emit("mqtt-status", { status: "disconnected" });
-      }
-    };
-
-    let isDeviceUsed = false;
-    RED.nodes.eachNode((node: any) => {
-      if (node.type === "viis-automation-node" && node.configNode === this.id) {
-        isDeviceUsed = true;
-      }
-    });
-
-    if (isDeviceUsed) {
-      connectMQTT();
-    } else {
-      disconnectMQTT();
+    // Log loading source for debugging
+    if (config.device?.id && config.device.id.trim() !== '') {
+      this.log(`Device ID loaded from UI config: ${credentials.deviceId}`);
+    } else if (credentials.deviceId) {
+      this.log(`Device ID auto-loaded from environment: ${credentials.deviceId}`);
     }
-    this.on("close", () => {
-      disconnectMQTT();
-    });
+
+
+
+
+
+    // IMPORTANT: This config node only stores device credentials
+    // All MQTT connections are managed by ClientRegistry in vietplants-rpc-control/viis-rpc-control nodes
+    this.log(`Device ${this.device.id} credentials loaded (MQTT managed by ClientRegistry)`);
   }
 
   RED.nodes.registerType("viis-config-node", ViisConfigNode);

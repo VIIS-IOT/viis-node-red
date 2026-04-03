@@ -3,11 +3,20 @@
  * @fileoverview Sync Schedule Node for VIIS IoT system
  * This node synchronizes schedules and schedule plans between the local database and server
  * It fetches data from the server, compares with local records, and updates as needed
+ *
+ * Configuration:
+ * - Credentials are auto-loaded from JSON config files (/services/env/configs/device*.json)
+ * - env-loader node must be present in flow to load JSON configs into global context
+ * - Device identity: DEVICE_ID, DEVICE_ACCESS_TOKEN from deviceIdentity section
+ *
+ * @author VIIS Team
+ * @version 2.0.0 (JSON Config Support)
  */
 const logger_1 = require("./utils/logger");
 const databaseService_1 = require("./services/databaseService");
 const scheduleSyncHandler_1 = require("./handlers/scheduleSyncHandler");
 const constants_1 = require("./constants");
+const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     /**
      * Constructor for the VIIS sync schedule node
@@ -21,7 +30,37 @@ module.exports = function (RED) {
         config.maxRetries = config.maxRetries || 3;
         config.showDetailedLogs = !!config.showDetailedLogs;
         config.syncOnStartup = config.syncOnStartup !== false; // Default to true if not specified
+        config.useAutoLoadedCredentials = config.useAutoLoadedCredentials !== false; // Default to true
+        // Load credentials from JSON config via global context (recommended approach)
+        const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+        let accessToken;
+        if (config.useAutoLoadedCredentials) {
+            // Auto-load from JSON config (loaded by env-loader node)
+            accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('DEVICE_ACCESS_TOKEN not found in JSON config. Ensure env-loader node is configured and JSON config file exists.');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing credentials (check JSON config)' });
+                return;
+            }
+            const deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            logger_1.logger.info(node, 'Credentials auto-loaded from JSON config');
+            logger_1.logger.info(node, `Device ID: ${deviceId.substring(0, 8)}...`);
+            logger_1.logger.info(node, `Access Token: ${accessToken.substring(0, 8)}...`);
+        }
+        else {
+            // Legacy mode: Use config or fallback to environment
+            accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!accessToken) {
+                node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found');
+                node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
+                return;
+            }
+            if (!config.accessToken) {
+                logger_1.logger.info(node, 'Access Token loaded from environment fallback');
+            }
+        }
         logger_1.logger.info(node, 'Initializing VIIS Sync Schedule Node');
+        logger_1.logger.info(node, `Using Access Token: ${accessToken.substring(0, 8)}...`);
         const dbService = new databaseService_1.DatabaseService();
         let syncIntervalId = null;
         let scheduleSyncHandler = null;
@@ -32,7 +71,7 @@ module.exports = function (RED) {
                 await dbService.initialize();
                 logger_1.logger.info(node, 'Database initialized successfully');
                 // Initialize the sync handler
-                scheduleSyncHandler = new scheduleSyncHandler_1.ScheduleSyncHandler(dbService, node, config.accessToken);
+                scheduleSyncHandler = new scheduleSyncHandler_1.ScheduleSyncHandler(dbService, node, accessToken);
                 // Update node status with initial state
                 updateNodeStatus('ready');
                 // Set up sync interval if configured

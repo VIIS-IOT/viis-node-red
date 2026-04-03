@@ -6,7 +6,7 @@
 import { DataSource, Repository } from 'typeorm';
 import { Node } from 'node-red';
 import { Service } from 'typedi';
-import { AppDataSource } from '../../../orm/dataSource';
+import { DataSourceManager } from '../../../orm/dataSource';
 import { TabiotCustomer } from '../../../orm/entities/customer/customer';
 import { IotCustomerUser } from '../../../orm/entities/customer/customer_user';
 import { IotCustomerUserCredentials } from '../../../orm/entities/customer/customer_user_credentials';
@@ -14,6 +14,7 @@ import { IotDynamicRole } from '../../../orm/entities/dynamicRole/dynamicRole';
 import { TabiotDevice } from '../../../orm/entities/device/TabiotDevice';
 import { TabiotDeviceTelemetry } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetry';
 import { TabiotDeviceTelemetryLatest } from '../../../orm/entities/device-telemetry/TabiotDeviceTelemetryLatest';
+import { TabiotThingsboardTelemetryQueue } from '../../../orm/entities/device-telemetry/TabiotThingsboardTelemetryQueue';
 import { TabiotSchedule, TabiotScheduleLog } from '../../../orm/entities/schedule/TabiotSchedule';
 import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSchedulePlan';
 import { TabiotNotification } from '../../../orm/entities/notification/TabiotNotification';
@@ -27,7 +28,7 @@ import { IService, ApiError, ErrorType } from '../types/common.types';
 @Service()
 export class DatabaseService implements IService {
     /** TypeORM data source */
-    private readonly dataSource: DataSource;
+    private dataSource: DataSource;
     /** Flag indicating if database is initialized */
     private initialized = false;
     /** Node-RED node instance for logging */
@@ -38,7 +39,6 @@ export class DatabaseService implements IService {
      * @param node - Node-RED node instance for logging
      */
     constructor(node: Node) {
-        this.dataSource = AppDataSource;
         this.node = node;
     }
 
@@ -52,10 +52,9 @@ export class DatabaseService implements IService {
         }
 
         try {
-            if (!this.dataSource.isInitialized) {
-                await this.dataSource.initialize();
-                logger.info(this.node, "TypeORM DataSource initialized");
-            }
+            // Use DataSourceManager with node context to get config from global context
+            this.dataSource = await DataSourceManager.acquire(this.node.context());
+            logger.info(this.node, "TypeORM DataSource initialized");
 
             this.initialized = true;
             logger.info(this.node, "Database service initialized successfully");
@@ -191,6 +190,14 @@ export class DatabaseService implements IService {
     getNotificationRepository(): Repository<TabiotNotification> {
         this.ensureInitialized();
         return this.dataSource.getRepository(TabiotNotification);
+    }
+
+    /**
+     * Get ThingsBoard telemetry queue repository
+     */
+    getThingsboardTelemetryQueueRepository(): Repository<TabiotThingsboardTelemetryQueue> {
+        this.ensureInitialized();
+        return this.dataSource.getRepository(TabiotThingsboardTelemetryQueue);
     }
 
     /**

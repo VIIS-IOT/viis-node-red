@@ -1,0 +1,159 @@
+[
+    {
+        "id": "97fb833a4717b2e1",
+        "type": "group",
+        "z": "975e232801523e77",
+        "style": {
+            "stroke": "#999999",
+            "stroke-opacity": "1",
+            "fill": "none",
+            "fill-opacity": "1",
+            "label": true,
+            "label-position": "nw",
+            "color": "#a4a4a4"
+        },
+        "nodes": [
+            "d3d904483d2dec8c",
+            "8f5bb9dfcc052603",
+            "05a7dee4c68f3da0",
+            "739dd30726be1347",
+            "e7f494fee2623707"
+        ],
+        "x": 34,
+        "y": 1159,
+        "w": 772,
+        "h": 142
+    },
+    {
+        "id": "d3d904483d2dec8c",
+        "type": "comment",
+        "z": "975e232801523e77",
+        "g": "97fb833a4717b2e1",
+        "name": "Kiểm tra lỗi lưu lượng",
+        "info": "",
+        "x": 160,
+        "y": 1220,
+        "wires": []
+    },
+    {
+        "id": "8f5bb9dfcc052603",
+        "type": "function",
+        "z": "975e232801523e77",
+        "g": "97fb833a4717b2e1",
+        "name": "Check lỗi lưu lượng (tolerance = 0.03)",
+        "func": "const moment = global.get(\"moment\");\nconst now = moment().add(7, 'hours');\n\n// Lấy dữ liệu từ flow\nlet inputRegisterData = global.get('inputRegisterData');\nlet holdingRegisterData = global.get('holdingRegisterData');\nlet coilRegisterData = global.get('coilRegisterData');  // Thêm dữ liệu từ coilRegisterData để kiểm tra trạng thái máy\n\n\n// Lấy giá trị lưu lượng tổng từ inputRegisterData\nlet volumeData = {\n    A1: inputRegisterData.volume_A1,\n    B1: inputRegisterData.volume_B1,\n    B2: inputRegisterData.volume_B2,\n    A2: inputRegisterData.volume_A2,\n    A3: inputRegisterData.volume_A3,\n    B3: inputRegisterData.volume_B3\n};\n\n// Lấy giá trị lưu lượng đặt từ holdingRegisterData (trên phút)\nlet setFlowData = {\n    A1: holdingRegisterData.set_flow_A1,\n    B1: holdingRegisterData.set_flow_B1,\n    B2: holdingRegisterData.set_flow_B2,\n    A2: holdingRegisterData.set_flow_A2,\n    A3: holdingRegisterData.set_flow_A3,\n    B3: holdingRegisterData.set_flow_B3\n};\n\n//irri time count in second from device\nlet irriTimeCountCountDown = inputRegisterData.set_irrigation_time_count\n\nlet timeValveData = {\n    A1: holdingRegisterData.time_valve_A1,\n    B1: holdingRegisterData.time_valve_B1,\n    B2: holdingRegisterData.time_valve_B2,\n    A2: holdingRegisterData.time_valve_A2,\n    A3: holdingRegisterData.time_valve_A3,\n    B3: holdingRegisterData.time_valve_B3\n};\n\n\n// Tính sai số cho phép\nconst toleranceRunning = 0.2;\nconst toleranceStopped = 0.03;\nlet errMapping = global.get(\"modbusErrMap\");\nlet errQueue = global.get(\"errorQueue\") || [];\n\n// Kiểm tra trạng thái của máy dựa trên các thanh ghi\nlet isMachineRunning = coilRegisterData.main_pump == 1 || coilRegisterData.power == 1;  // Kiểm tra các thanh ghi chính\n// let isMachineRunning = global.get(\"test_state\")\nlet previousMachineState = context.get('previousMachineState') || false;\n\n// Nếu máy bắt đầu chạy, lấy previousTimestamp và bắt đầu đếm thời gian chạy\nlet currentTimestamp = now.valueOf();\nlet previousTimestamp = context.get('previousTimestamp') || currentTimestamp;\nlet elapsedRunTime = context.get('elapsedRunTime') || 0;\nlet lastErrorTime = context.get('lastErrorTime') || 0;\n\nfunction resetMachineState() {\n    // node.warn(\"Máy không chạy, đặt lại thời gian theo dõi.\");\n    context.set('previousTimestamp', null);\n    context.set('elapsedRunTime', 0);\n    context.set('previousMachineState', isMachineRunning);\n}\n\nfunction checkInitialFlow(channel, actualVolume, setFlow, elapsedTimeMinutes) {\n    let expectedVolume = setFlow * elapsedTimeMinutes;\n    let lowerBound = expectedVolume * 0.8;  // 80% lưu lượng mong đợi\n\n    if (actualVolume < lowerBound) {\n        node.warn(`Cảnh báo: Lưu lượng kênh ${channel} nhỏ hơn 80% lưu lượng mong đợi. Đang dừng bơm.`);\n        stopPump();\n        node.warn(\"stop Pump xong sẽ in hàm này\")\n        let errors = []\n        errors.push(create1stMinuteFlowError(channel, actualVolume, expectedVolume, elapsedTimeMinutes))\n        // Kiểm tra nếu có lỗi và thời gian vượt qua debouncing\n        if (errors.length > 0 && shouldLogError(lastErrorTime, currentTimestamp)) {\n            errors.forEach(error => errQueue.push(error));\n            global.set(\"errorQueue\", errQueue);\n            node.warn(\"Phát hiện lỗi và đã đẩy vào hàng đợi errorQueue.\");\n            context.set('lastErrorTime', currentTimestamp);\n        } else if (errors.length > 0) {\n            node.warn(\"Phát hiện lỗi nhưng đang đợi hết thời gian chờ debouncing.\");\n        } else {\n            node.warn(\"Tất cả các giá trị lưu lượng đều nằm trong khoảng cho phép.\");\n        }\n        return true;  // Trả về true nếu cần dừng bơm\n    }\n    return false;\n}\n\nfunction stopPump() {\n    const modbusCoils = global.get(\"modbusCoils\");\n    const coilsToTurnOff = ['power'];\n    for (let coil of coilsToTurnOff) {\n        if (modbusCoils.hasOwnProperty(coil)) {\n            let address = modbusCoils[coil];\n            msg.payload = {\n                'value': 0,\n                'fc': 5,\n                'unitid': 1,\n                'address': address,\n                'quantity': 1\n            };\n            node.send(msg);\n        }\n    }\n}\n\nfunction createFlowError(channel, actualFlow, expectedFlow, elapsedTimeMinutes) {\n    let errorCode = \"F4\";\n    let errorMessage = errMapping[errorCode]?.description || \"Lỗi lưu lượng\";\n\n    // Làm tròn các số đến 2 chữ số thập phân\n    actualFlow = Math.round(actualFlow * 100) / 100;\n    expectedFlow = Math.round(expectedFlow * 100) / 100;\n    elapsedTimeMinutes = Math.round(elapsedTimeMinutes * 100) / 100;\n\n    return {\n        type: \"device_err\",\n        severity: \"alarm\",\n        device_label: global.get(\"device_label\"),\n        error_code: errorCode,\n        error_message: `${errorMessage} Kênh ${channel}: Thực tế ${actualFlow}, Mong đợi ${expectedFlow}, Thời gian ${elapsedTimeMinutes} phút`,\n        ts: now.format('YYYY-MM-DD HH:mm:ss')\n    };\n}\n\n\nfunction create1stMinuteFlowError(channel, actualFlow, expectedFlow, elapsedTimeMinutes) {\n    let errorCode = \"F5\";\n    let errorMessage = errMapping[errorCode]?.description || \"Lỗi lọt khí hoặc hết phân\";\n\n    // Làm tròn các số đến 2 chữ số thập phân\n    actualFlow = Math.round(actualFlow * 100) / 100;\n    expectedFlow = Math.round(expectedFlow * 100) / 100;\n    elapsedTimeMinutes = Math.round(elapsedTimeMinutes * 100) / 100;\n\n    return {\n        type: \"device_err\",\n        severity: \"alarm\",\n        device_label: global.get(\"device_label\"),\n        error_code: errorCode,\n        error_message: `${errorMessage}. Lưu lượng Kênh ${channel}: Thực tế ${actualFlow}, Mong đợi ${expectedFlow}, Thời gian ${elapsedTimeMinutes} phút`,\n        ts: now.format('YYYY-MM-DD HH:mm:ss')\n    };\n}\n\nfunction checkFlow(channel, actualVolume, setFlow, elapsedTimeMinutes, tolerance) {\n    //làm tròn 1 chữ số thập phân\n    const roundedElapsedTime = Math.round(elapsedTimeMinutes * 10) / 10;\n\n    node.warn(`Kiểm tra lưu lượng cho kênh ${channel}`);\n    node.warn(`Giá trị thực tế: ${actualVolume}`);\n    node.warn(`Lưu lượng đặt: ${setFlow}`);\n    node.warn(`Thời gian đã trôi qua (phút): ${roundedElapsedTime}`);\n    node.warn(`Sai số cho phép: ${tolerance}`);\n\n    let expectedVolume = setFlow * roundedElapsedTime;\n    node.warn(`Lưu lượng mong đợi: ${expectedVolume}`);\n\n    let lowerBound = expectedVolume * (1 - tolerance);\n    let upperBound = expectedVolume * (1 + tolerance);\n    node.warn(`Khoảng cho phép: [${lowerBound}, ${upperBound}]`);\n\n    node.warn(`Kênh ${channel}: Thực tế ${actualVolume}, Mong đợi ${expectedVolume}, Khoảng cho phép: [${lowerBound}, ${upperBound}]`);\n\n    if (actualVolume < lowerBound || actualVolume > upperBound) {\n        node.warn(`Lưu lượng kênh ${channel} nằm ngoài khoảng cho phép.`);\n        return createFlowError(channel, actualVolume, expectedVolume, roundedElapsedTime);\n    }\n    node.warn(`Lưu lượng kênh ${channel} nằm trong khoảng cho phép.`);\n    return null;\n}\n\nfunction shouldLogError(lastErrorTime, currentTime, debounceMinutes = 3) {\n    let elapsedMinutes = (currentTime - lastErrorTime) / 60000;\n    return elapsedMinutes >= debounceMinutes;\n}\n\nfunction checkFlowWithToleranceWhenFinish(tolerance) {\n    let errors = [];\n\n    for (let channel in volumeData) {\n        // Chỉ kiểm tra những kênh có setFlowData khác 0\n        if (setFlowData[channel] !== 0) {\n            // Tính toán thời gian thực tế từ device\n            let actualIrriTimeMinutes = (timeValveData[channel] - irriTimeCountCountDown) / 60;\n\n            // Chỉ kiểm tra nếu thời gian tưới thực tế > 0\n            if (actualIrriTimeMinutes > 0) {\n                let error = checkFlow(\n                    channel,\n                    volumeData[channel],\n                    setFlowData[channel],\n                    actualIrriTimeMinutes,\n                    tolerance\n                );\n                if (error) errors.push(error);\n            }\n        }\n    }\n\n    if (errors.length > 0 && shouldLogError(lastErrorTime, currentTimestamp)) {\n        errors.forEach(error => errQueue.push(error));\n        global.set(\"errorQueue\", errQueue);\n        node.warn(\"Phát hiện lỗi và đã đẩy vào hàng đợi errorQueue.\");\n        context.set('lastErrorTime', currentTimestamp);\n    } else if (errors.length > 0) {\n        node.warn(\"Phát hiện lỗi nhưng đang đợi hết thời gian chờ debouncing.\");\n    } else {\n        node.warn(\"Tất cả các giá trị lưu lượng đều nằm trong khoảng cho phép.\");\n    }\n}\n\n\n// function checkFlowWithToleranceWhenFinish(tolerance) {\n//     let errors = [];\n\n//     for (let channel in volumeData) {\n//         let error = checkFlow(channel, volumeData[channel], setFlowData[channel], elapsedRunTime, tolerance);\n//         if (error) errors.push(error);\n//     }\n\n//     // Kiểm tra nếu có lỗi và thời gian vượt qua debouncing\n//     if (errors.length > 0 && shouldLogError(lastErrorTime, currentTimestamp)) {\n//         errors.forEach(error => errQueue.push(error));\n//         global.set(\"errorQueue\", errQueue);\n//         node.warn(\"Phát hiện lỗi và đã đẩy vào hàng đợi errorQueue.\");\n//         context.set('lastErrorTime', currentTimestamp);\n//     } else if (errors.length > 0) {\n//         node.warn(\"Phát hiện lỗi nhưng đang đợi hết thời gian chờ debouncing.\");\n//     } else {\n//         node.warn(\"Tất cả các giá trị lưu lượng đều nằm trong khoảng cho phép.\");\n//     }\n// }\n\nif (!isMachineRunning) {\n    if (previousMachineState) {\n        // Máy vừa tắt, kiểm tra với tolerance thấp hơn\n        node.warn(\"Máy vừa tắt, kiểm tra lưu lượng với tolerance thấp hơn.\");\n        checkFlowWithToleranceWhenFinish(toleranceStopped);\n    }\n    resetMachineState();\n    return null;\n}\n\n// Tính thời gian đã trôi qua (tính bằng phút)\nlet timeSinceLastCheck = (currentTimestamp - previousTimestamp) / 60000;\nelapsedRunTime += timeSinceLastCheck;\n\n// Lưu giá trị timestamp hiện tại cho lần tiếp theo\ncontext.set('previousTimestamp', currentTimestamp);\n\n// Chỉ kiểm tra lỗi nếu máy đã chạy đủ thời gian tối thiểu (ví dụ: 1 phút)\nif (elapsedRunTime < 1) {\n    node.warn(`Máy đã chạy được ${elapsedRunTime.toFixed(2)} phút. Đang đợi ít nhất 1 phút.`);\n    context.set('elapsedRunTime', elapsedRunTime);\n    context.set('previousMachineState', isMachineRunning);\n    return null;\n} else if (elapsedRunTime < 1.5) {\n    node.warn(`Máy đã chạy được ${elapsedRunTime.toFixed(2)} phút. Đang kiểm tra lưu lượng phút đầu tiên.`);\n\n    // Kiểm tra các kênh trong phút đầu tiên\n    for (let channel in volumeData) {\n        // Chỉ kiểm tra những kênh có cấu hình setFlow và time\n        if (setFlowData[channel] > 0 && timeValveData[channel] > 0) {\n            checkInitialFlow(channel, volumeData[channel], setFlowData[channel], elapsedRunTime);\n        }\n    }\n\n    context.set('elapsedRunTime', elapsedRunTime);\n    context.set('previousMachineState', isMachineRunning);\n    return null;\n}\n\n// Kiểm tra lưu lượng với tolerance khi máy đang chạy\n// checkFlowWithToleranceWhenRunning(toleranceRunning); //tạm tắt, chỉ kiểm tra lúc chạy xong\n\n// Lưu thời gian chạy máy để kiểm tra sau\ncontext.set('elapsedRunTime', elapsedRunTime);\ncontext.set('previousMachineState', isMachineRunning);\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 1260,
+        "wires": [
+            [
+                "739dd30726be1347",
+                "e7f494fee2623707"
+            ]
+        ]
+    },
+    {
+        "id": "05a7dee4c68f3da0",
+        "type": "inject",
+        "z": "975e232801523e77",
+        "d": true,
+        "g": "97fb833a4717b2e1",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 150,
+        "y": 1260,
+        "wires": [
+            [
+                "8f5bb9dfcc052603"
+            ]
+        ]
+    },
+    {
+        "id": "739dd30726be1347",
+        "type": "debug",
+        "z": "975e232801523e77",
+        "g": "97fb833a4717b2e1",
+        "name": "debug 101",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 650,
+        "y": 1200,
+        "wires": []
+    },
+    {
+        "id": "e7f494fee2623707",
+        "type": "modbus-flex-write",
+        "z": "975e232801523e77",
+        "g": "97fb833a4717b2e1",
+        "name": "Modbus Flexible Write",
+        "showStatusActivities": false,
+        "showErrors": true,
+        "showWarnings": true,
+        "server": "934499d2478e940b",
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": false,
+        "delayOnStart": false,
+        "startDelayTime": "",
+        "x": 680,
+        "y": 1260,
+        "wires": [
+            [],
+            []
+        ]
+    },
+    {
+        "id": "934499d2478e940b",
+        "type": "modbus-client",
+        "name": "Slave 1",
+        "clienttype": "tcp",
+        "bufferCommands": true,
+        "stateLogEnabled": false,
+        "queueLogEnabled": false,
+        "failureLogEnabled": true,
+        "tcpHost": "127.0.0.1",
+        "tcpPort": "502",
+        "tcpType": "DEFAULT",
+        "serialPort": "/dev/ttyUSB",
+        "serialType": "RTU-BUFFERD",
+        "serialBaudrate": "9600",
+        "serialDatabits": "8",
+        "serialStopbits": "1",
+        "serialParity": "none",
+        "serialConnectionDelay": "100",
+        "serialAsciiResponseStartDelimiter": "0x3A",
+        "unit_id": "1",
+        "commandDelay": "1",
+        "clientTimeout": "1000",
+        "reconnectOnTimeout": true,
+        "reconnectTimeout": "2000",
+        "parallelUnitIdsAllowed": true,
+        "showErrors": true,
+        "showWarnings": true,
+        "showLogs": true
+    }
+]

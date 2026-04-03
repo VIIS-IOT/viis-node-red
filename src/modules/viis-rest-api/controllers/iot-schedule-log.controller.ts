@@ -286,7 +286,9 @@ export class IotScheduleLogController {
                     name: scheduleLog.customerUser.name,
                     user_name: scheduleLog.customerUser.user_name,
                     email: scheduleLog.customerUser.email,
-                    full_name: scheduleLog.customerUser.full_name
+                    full_name: scheduleLog.customerUser.full_name,
+                    first_name: scheduleLog.customerUser.first_name,
+                    last_name: scheduleLog.customerUser.last_name
                 } : null
             };
         } catch (error: any) {
@@ -324,7 +326,10 @@ export class IotScheduleLogController {
             }
 
             // Create new schedule log
-            const newScheduleLog = scheduleLogRepo.create(scheduleLogData);
+            const newScheduleLog = scheduleLogRepo.create({
+                ...scheduleLogData,
+                customer_user: user?.user_id // Automatically set customer_user from current user
+            });
             const savedScheduleLog = await scheduleLogRepo.save(newScheduleLog);
 
             logger.info(this.node, 'IoT schedule log created successfully', {
@@ -407,7 +412,9 @@ export class IotScheduleLogController {
                     name: updatedScheduleLog.customerUser.name,
                     user_name: updatedScheduleLog.customerUser.user_name,
                     email: updatedScheduleLog.customerUser.email,
-                    full_name: updatedScheduleLog.customerUser.full_name
+                    full_name: updatedScheduleLog.customerUser.full_name,
+                    first_name: updatedScheduleLog.customerUser.first_name,
+                    last_name: updatedScheduleLog.customerUser.last_name
                 } : null
             } : null;
         } catch (error: any) {

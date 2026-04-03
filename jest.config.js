@@ -4,4 +4,18 @@ module.exports = {
   transform: {
     "^.+\.tsx?$": ["ts-jest",{}],
   },
+  // Increase timeout for integration tests with database
+  testTimeout: 30000,
+  // Separate test patterns
+  testMatch: [
+    "**/__tests__/**/*.test.ts",
+    "**/__tests__/**/*.integration.test.ts",
+    "**/tests/**/*.test.ts"
+  ],
+  // Setup files to run before tests
+  setupFilesAfterEnv: ["<rootDir>/src/services/MarineIoT/__tests__/setup.ts"],
+  // Module path aliases
+  moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1"
+  },
 };

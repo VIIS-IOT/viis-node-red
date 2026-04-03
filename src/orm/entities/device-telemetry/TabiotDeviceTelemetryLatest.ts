@@ -25,6 +25,21 @@ export class TabiotDeviceTelemetryLatest {
     @Column({ type: 'text', nullable: true })
     string_value?: string;
 
+    @Column({ 
+        type: 'varchar', 
+        length: 255, 
+        nullable: true,
+        comment: 'Oil profile ID at time of last reading'
+    })
+    oil_profile_id?: string;
+
+    @Column({ 
+        type: 'float', 
+        nullable: true,
+        comment: 'Density snapshot at time of last reading'
+    })
+    density_snapshot?: number;
+
     @ManyToOne(() => TabiotDevice)
     @JoinColumn({ name: 'device_id' })
     device?: TabiotDevice;

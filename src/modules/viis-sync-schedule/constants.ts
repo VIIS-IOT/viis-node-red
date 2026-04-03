@@ -6,7 +6,7 @@ export const API_PATHS = {
     /** API endpoint for schedule plans */
     SCHEDULE_PLAN: '/schedulePlan/device',
     /** API endpoint for all schedule plans and their schedules */
-    SCHEDULE_PLAN_ALL: '/schedulePlan/device/all',
+    SCHEDULE_PLAN_ALL: '/schedulePlan/ubuntu',
 };
 
 export const SYNC_DEFAULTS = {

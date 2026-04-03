@@ -1,5 +1,5 @@
 import { NodeAPI, Node } from "node-red";
-import ClientRegistry from "../../core/client-registry";
+import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import { LuoiMappingHandler } from "./luoi-mapping-handler";
 import {
@@ -48,15 +48,73 @@ module.exports = function (RED: NodeAPI) {
             globalContext,
         };
 
+        // Track current Modbus config for hot-reload detection
+        let currentModbusConfig: any = null;
+        let configCheckInterval: NodeJS.Timeout | null = null;
+        let currentBoardId: string | undefined = config.boardId;
+        let isMultiBoardMode: boolean = false;
+
+        // Helper function to read fresh Modbus config from global context
+        const readModbusConfig = () => {
+            // Check for multi-board configuration
+            const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+
+            if (boardsConfig) {
+                try {
+                    let boards;
+
+                    // Handle both already-parsed array and JSON string
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    } else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    } else {
+                        logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                        boards = null;
+                    }
+
+                    if (Array.isArray(boards) && boards.length > 0) {
+                        // Multi-board mode
+                        return {
+                            mode: 'multi',
+                            boards: boards,
+                            defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                        };
+                    }
+                } catch (e) {
+                    logger.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                }
+            }
+
+            // Single-board mode (backward compatible)
+            return {
+                mode: 'single',
+                config: {
+                    type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
+                    host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
+                    tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                    serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                    baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                    parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
+                    unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                    timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                    reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
+                    // Board-specific configuration
+                    boardType: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_BOARD_TYPE, MODBUS_CONFIG.DEFAULT_BOARD_TYPE) as "STM32" | "ATMEGA" | "GENERIC"),
+                    writeTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_WRITE_TIMEOUT, MODBUS_CONFIG.DEFAULT_WRITE_TIMEOUT),
+                    readTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_READ_TIMEOUT, MODBUS_CONFIG.DEFAULT_READ_TIMEOUT),
+                    connectionTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_CONNECTION_TIMEOUT, MODBUS_CONFIG.DEFAULT_CONNECTION_TIMEOUT),
+                    maxRetries: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_MAX_RETRIES, MODBUS_CONFIG.DEFAULT_MAX_RETRIES),
+                }
+            };
+        };
+
         // Wrap async initialization in IIFE
         (async () => {
             try {
                 // Add random delay to stagger initialization when multiple nodes deploy simultaneously
                 const initDelay = Math.random() * 2000; // 0-2 seconds
-                logger.warn(`[INIT] Node ${node.id} waiting ${Math.round(initDelay)}ms before initialization to avoid conflicts`);
                 await new Promise(resolve => setTimeout(resolve, initDelay));
-
-                logger.warn(`[INIT] Node ${node.id} starting initialization sequence`);
 
                 // Initialize configuration service
                 const configService = new ConfigService(serviceOptions);
@@ -73,40 +131,40 @@ module.exports = function (RED: NodeAPI) {
                 const deviceId = globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, DEFAULTS.DEVICE_ID);
 
                 // Initialize Modbus client configuration with board-specific settings
-                const modbusConfig = {
-                    type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
-                    host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
-                    tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
-                    serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
-                    baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
-                    parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
-                    unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
-                    timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
-                    reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
-                    // Board-specific configuration
-                    boardType: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_BOARD_TYPE, MODBUS_CONFIG.DEFAULT_BOARD_TYPE) as "STM32" | "ATMEGA" | "GENERIC"),
-                    writeTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_WRITE_TIMEOUT, MODBUS_CONFIG.DEFAULT_WRITE_TIMEOUT),
-                    readTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_READ_TIMEOUT, MODBUS_CONFIG.DEFAULT_READ_TIMEOUT),
-                    connectionTimeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_CONNECTION_TIMEOUT, MODBUS_CONFIG.DEFAULT_CONNECTION_TIMEOUT),
-                    maxRetries: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_MAX_RETRIES, MODBUS_CONFIG.DEFAULT_MAX_RETRIES),
-                };
+                const configData = readModbusConfig();
+                currentModbusConfig = { ...configData }; // Store for hot-reload detection
 
-                // Log Modbus configuration for debugging
-                logger.log(`Modbus Configuration: ${JSON.stringify(modbusConfig, null, 2)}`);
+                // Auto-detect mode
+                if (configData.mode === 'multi') {
+                    isMultiBoardMode = true;
+                    logger.log(`Multi-board mode detected with ${configData.boards.length} boards`);
 
-                // Validate Modbus configuration
-                if (modbusConfig.type === "TCP" && (!modbusConfig.host || !modbusConfig.tcpPort)) {
-                    const error = "Invalid Modbus TCP configuration: host and tcpPort are required";
-                    logger.error(error);
-                    node.status({ fill: "red", shape: "ring", text: error });
-                    return;
-                }
+                    // Initialize multi-board configuration
+                    const multiConfig: MultiModbusConfig = {
+                        mode: 'multi',
+                        defaultBoard: configData.defaultBoard,
+                        boards: configData.boards
+                    };
+                    ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+                } else {
+                    isMultiBoardMode = false;
+                    const cfg = configData.config;
+                    logger.log(`Single-board mode: ${cfg.type} ${cfg.host}:${cfg.tcpPort}`);
 
-                if (modbusConfig.type === "RTU" && !modbusConfig.serialPort) {
-                    const error = "Invalid Modbus RTU configuration: serialPort is required";
-                    logger.error(error);
-                    node.status({ fill: "red", shape: "ring", text: error });
-                    return;
+                    // Validate single-board configuration
+                    if (cfg.type === "TCP" && (!cfg.host || !cfg.tcpPort)) {
+                        const error = "Invalid Modbus TCP configuration: host and tcpPort are required";
+                        logger.error(error);
+                        node.status({ fill: "red", shape: "ring", text: error });
+                        return;
+                    }
+
+                    if (cfg.type === "RTU" && !cfg.serialPort) {
+                        const error = "Invalid Modbus RTU configuration: serialPort is required";
+                        logger.error(error);
+                        node.status({ fill: "red", shape: "ring", text: error });
+                        return;
+                    }
                 }
 
                 // Initialize MQTT client configuration
@@ -126,16 +184,14 @@ module.exports = function (RED: NodeAPI) {
                         qos: MQTT_CONFIG.LOCAL.QOS,
                     };
 
-                logger.log(`mqttConfig: ${JSON.stringify(mqttConfig, null, 2)}`);
-
                 // Define MQTT topics
+                // Always use wildcard for RPC requests to receive all RPC commands
                 const subscribeTopic = config.mqttBroker === "thingsboard"
-                    ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC
-                    : `v1/devices/me/rpc/request/${deviceId}`;
+                    ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC  // "v1/devices/me/rpc/request/+"
+                    : MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC; // Also use wildcard for local MQTT
                 const publishTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
                     : `v1/devices/me/telemetry/${deviceId}`;
-                logger.log(`MQTT Configuration: ${JSON.stringify(mqttConfig, null, 2)}`);
 
                 // Initialize clients with better error handling
                 let modbusClient: any;
@@ -144,12 +200,18 @@ module.exports = function (RED: NodeAPI) {
                 try {
                     // Initialize Modbus client
                     logger.log("Initializing Modbus client...");
-                    modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
+
+                    // Determine which client to get based on mode and configuration
+                    if (isMultiBoardMode) {
+                        const boardToUse = currentBoardId || configData.defaultBoard;
+                        logger.log(`Getting client for board: ${boardToUse}`);
+                        modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                    } else {
+                        modbusClient = await ClientRegistry.getModbusClientV2(configData.config, node);
+                    }
 
                     // Wait a moment for Modbus connection to establish
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-
-                    // Check if Modbus client is actually connected
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for connection
                     if (!modbusClient.isConnectedCheck()) {
                         throw new Error("Modbus client failed to connect - check device connection and configuration");
                     }
@@ -164,30 +226,15 @@ module.exports = function (RED: NodeAPI) {
 
                 try {
                     // Initialize MQTT client
-                    logger.warn("[MQTT-INIT] Starting MQTT client initialization...");
-                    logger.warn(`[MQTT-INIT] Node ID: ${node.id}`);
-                    logger.warn(`[MQTT-INIT] Broker type: ${config.mqttBroker}`);
-                    logger.warn(`[MQTT-INIT] MQTT config: ${JSON.stringify(mqttConfig, null, 2)}`);
-
-                    // Log current client registry state
-                    ClientRegistry.logConnectionCounts(node);
-
                     // Add delay to avoid race conditions with other nodes
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
                     mqttClient = config.mqttBroker === "thingsboard"
                         ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
                         : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
-
-                    logger.warn("[MQTT-INIT] MQTT client initialized successfully");
-                    logger.warn(`[MQTT-INIT] Client connected status: ${mqttClient.isConnected()}`);
-
-                    // Log final client registry state
-                    ClientRegistry.logConnectionCounts(node);
                 } catch (error) {
                     const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
-                    logger.error(`[MQTT-INIT] ${errorMsg}`);
-                    logger.error(`[MQTT-INIT] Error stack: ${(error as Error).stack}`);
+                    logger.error(errorMsg);
                     node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
                     return;
                 }
@@ -197,8 +244,6 @@ module.exports = function (RED: NodeAPI) {
                     node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.CLIENT_INIT_FAILED });
                     return;
                 }
-
-                logger.log(`MQTT client initialized and connected: ${mqttClient.isConnected()}`);
 
                 // Initialize services
                 const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
@@ -216,67 +261,108 @@ module.exports = function (RED: NodeAPI) {
 
 
 
-                // Set up MQTT subscription
-                try {
-                    logger.warn("[MQTT-SUB] Setting up MQTT subscription...");
-                    logger.warn(`[MQTT-SUB] Node ID: ${node.id}`);
-                    logger.warn(`[MQTT-SUB] Subscribe topic: ${subscribeTopic}`);
-                    logger.warn(`[MQTT-SUB] Publish topic: ${publishTopic}`);
+                // Set up MQTT subscription with auto-recovery
+                const setupSubscription = async (isRetry = false): Promise<boolean> => {
+                    try {
+                        // Verify MQTT client is still valid
+                        if (!mqttClient) {
+                            throw new Error("MQTT client is null after initialization");
+                        }
 
-                    // Verify MQTT client is still valid
-                    if (!mqttClient) {
-                        throw new Error("MQTT client is null after initialization");
-                    }
-
-                    logger.warn(`[MQTT-SUB] MQTT client instance exists: ${!!mqttClient}`);
-                    logger.warn(`[MQTT-SUB] MQTT client type: ${mqttClient.constructor.name}`);
-
-                    // Wait for client to be connected before subscribing
-                    if (!mqttClient.isConnected()) {
-                        logger.warn("[MQTT-SUB] MQTT client not connected, waiting for connection...");
-                        await new Promise<void>((resolve) => {
-                            mqttClient.once("mqtt-status", ({ status }) => {
-                                logger.warn(`[MQTT-SUB] Received status event: ${status}`);
-                                if (status === "connected") {
-                                    logger.warn("[MQTT-SUB] Connection established, proceeding with subscription");
-                                    resolve();
+                        // Wait for connection before subscribing with shorter timeout for faster recovery
+                        if (!mqttClient.isConnected()) {
+                            try {
+                                await mqttClient.waitForConnection(10000); // Wait up to 10 seconds for faster failure detection
+                            } catch (error) {
+                                // Trigger circuit breaker reset for immediate recovery
+                                if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
+                                    mqttClient.resetCircuitBreaker();
                                 }
-                            });
+                                throw error;
+                            }
+                        }
 
-                            // Set a timeout in case connection never happens
-                            setTimeout(() => {
-                                logger.warn("[MQTT-SUB] MQTT connection timeout, proceeding anyway");
-                                resolve();
-                            }, 5000);
-                        });
-                    } else {
-                        logger.warn("[MQTT-SUB] MQTT client already connected");
+                        // Subscribe with more aggressive retries
+                        let retryCount = 0;
+                        const maxRetries = 5;
+
+                        while (retryCount < maxRetries) {
+                            try {
+                                await mqttClient.subscribe(subscribeTopic);
+                                logger.log(`Successfully subscribed to ${subscribeTopic}`);
+                                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                                return true;
+                            } catch (error) {
+                                retryCount++;
+                                logger.error(`Failed to subscribe (${retryCount}/${maxRetries}): ${(error as Error).message}`);
+                                if (retryCount < maxRetries) {
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                }
+                            }
+                        }
+
+                        throw new Error(`Failed to subscribe to ${subscribeTopic} after ${maxRetries} retries`);
+                    } catch (error) {
+                        if (!isRetry) {
+                            // Schedule periodic retry every 30 seconds if initial subscription fails
+                            logger.error(`Initial subscription failed, will retry every 30s: ${(error as Error).message}`);
+                            const subscriptionRetryInterval = setInterval(async () => {
+                                logger.log(`Retrying MQTT subscription to ${subscribeTopic}...`);
+                                const success = await setupSubscription(true).catch(() => false);
+                                if (success) {
+                                    clearInterval(subscriptionRetryInterval);
+                                    logger.log(`Subscription recovery successful`);
+                                }
+                            }, 30000); // Retry every 30 seconds
+
+                            // Store interval for cleanup
+                            node.context().set('subscriptionRetryInterval', subscriptionRetryInterval);
+                        }
+                        throw error;
                     }
+                };
 
-                    logger.warn(`[MQTT-SUB] Attempting to subscribe to: ${subscribeTopic}`);
-                    await mqttClient.subscribe(subscribeTopic);
-                    logger.warn(`[MQTT-SUB] Successfully subscribed to topic: ${subscribeTopic}`);
+                try {
+                    await setupSubscription();
                 } catch (error) {
-                    const errorMsg = `Failed to subscribe to ${subscribeTopic}: ${(error as Error).message}`;
-                    logger.error(`[MQTT-SUB] ${errorMsg}`);
-                    logger.error(`[MQTT-SUB] Error stack: ${(error as Error).stack}`);
-                    node.error(errorMsg);
+                    const errorMsg = `Failed to subscribe: ${(error as Error).message}`;
+                    logger.error(errorMsg);
                     node.status({ fill: "red", shape: "ring", text: ERROR_MESSAGES.SUBSCRIPTION_FAILED });
 
                     // Attempt to reconnect and resubscribe after a delay
                     setTimeout(async () => {
                         try {
+                            // Helper to cancel the 30s interval-based retry if we succeed here first
+                            const cancelIntervalRetry = () => {
+                                const retryInterval = node.context().get('subscriptionRetryInterval') as NodeJS.Timeout | undefined;
+                                if (retryInterval) {
+                                    clearInterval(retryInterval);
+                                    node.context().set('subscriptionRetryInterval', null);
+                                }
+                            };
+
                             if (mqttClient.isConnected()) {
                                 await mqttClient.subscribe(subscribeTopic);
                                 logger.log(`Resubscribed to topic after connection recovery: ${subscribeTopic}`);
                                 node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                                // Prevent the 30s interval from attempting a second subscription
+                                cancelIntervalRetry();
                             } else {
                                 logger.warn("MQTT still disconnected, will retry on connection event");
-                                mqttClient.once("mqtt-status", async ({ status }) => {
+                                mqttClient.once("mqtt-status", async ({ status }: any) => {
                                     if (status === "connected") {
                                         await mqttClient.subscribe(subscribeTopic);
-                                        logger.log(`Resubscribed on reconnection: ${subscribeTopic}`);
                                         node.status({ fill: "green", shape: "dot", text: "Subscription recovered" });
+                                        // Prevent the 30s interval from attempting a second subscription
+                                        cancelIntervalRetry();
+                                    } else if (status === 'disconnected') {
+                                        node.status({ fill: "yellow", shape: "ring", text: "Disconnected - recovering" });
+                                        // Trigger immediate recovery attempt
+                                        if (mqttClient && typeof mqttClient.resetCircuitBreaker === 'function') {
+                                            setTimeout(() => {
+                                                mqttClient.resetCircuitBreaker();
+                                            }, 1000); // 1 second delay to avoid rapid resets
+                                        }
                                     }
                                 });
                             }
@@ -288,55 +374,146 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 // Set up MQTT message handler
-                logger.warn("[MQTT-HANDLER] Setting up MQTT message event listener...");
                 mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
-                    logger.warn(`[MQTT-HANDLER] Received MQTT message on topic: ${message.topic}`);
-                    logger.warn(`[MQTT-HANDLER] Message content: ${JSON.stringify(message)}`);
-                    logger.warn(`[MQTT-HANDLER] Expected subscribe topic: ${subscribeTopic}`);
-
                     try {
-                        const result = messageHandler.processMqttMessage(
+                        messageHandler.processMqttMessage(
                             message,
                             subscribeTopic,
                             async (payload: any) => {
-                                logger.warn("[MQTT-HANDLER] Processing MQTT RPC message with payload:");
-                                logger.warn(`[MQTT-HANDLER] Payload: ${JSON.stringify(payload)}`);
-                                ClientRegistry.logConnectionCounts(node);
+                                // Log incoming RPC request
+                                // node.warn(`[RPC] Received: ${JSON.stringify(payload)}`);
                                 await rpcHandler.handleRpcRequest(payload);
                             }
                         );
-
-                        if (result === null) {
-                            logger.warn("[MQTT-HANDLER] Message was rejected or filtered out");
-                        } else {
-                            logger.warn("[MQTT-HANDLER] Message processed successfully");
-                        }
                     } catch (error) {
-                        logger.error(`[MQTT-HANDLER] Error processing MQTT message: ${(error as Error).message}`);
+                        logger.error(`Error processing MQTT message: ${(error as Error).message}`);
                     }
                 });
-                logger.warn("[MQTT-HANDLER] MQTT message event listener registered successfully");
+
+                // Auto-detect config changes every 30 seconds
+                configCheckInterval = setInterval(async () => {
+                    try {
+                        const newConfig = readModbusConfig();
+
+                        // Check if mode has changed or if critical config has changed
+                        let hasChanged = false;
+                        let changeDescription = "";
+
+                        if (currentModbusConfig.mode !== newConfig.mode) {
+                            hasChanged = true;
+                            changeDescription = `mode changed from ${currentModbusConfig.mode} to ${newConfig.mode}`;
+                        } else if (newConfig.mode === 'single' && currentModbusConfig.mode === 'single') {
+                            // Check single mode config changes
+                            const oldCfg = currentModbusConfig.config;
+                            const newCfg = newConfig.config;
+                            hasChanged =
+                                oldCfg.host !== newCfg.host ||
+                                oldCfg.tcpPort !== newCfg.tcpPort ||
+                                oldCfg.serialPort !== newCfg.serialPort ||
+                                oldCfg.type !== newCfg.type;
+                            if (hasChanged) {
+                                changeDescription = `${newCfg.host}:${newCfg.tcpPort}`;
+                            }
+                        } else if (newConfig.mode === 'multi' && currentModbusConfig.mode === 'multi') {
+                            // Check multi mode config changes
+                            const oldBoards = JSON.stringify(currentModbusConfig.boards);
+                            const newBoards = JSON.stringify(newConfig.boards);
+                            hasChanged = oldBoards !== newBoards;
+                            if (hasChanged) {
+                                changeDescription = `board configuration updated`;
+                            }
+                        }
+
+                        if (hasChanged) {
+                            logger.log(`Config change detected: ${changeDescription}`);
+
+                            // Reinitialize based on new mode
+                            if (newConfig.mode === 'multi') {
+                                const multiConfig: MultiModbusConfig = {
+                                    mode: 'multi',
+                                    defaultBoard: newConfig.defaultBoard,
+                                    boards: newConfig.boards
+                                };
+                                ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+
+                                // Get new client for current board
+                                const boardToUse = currentBoardId || newConfig.defaultBoard;
+                                modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                            } else {
+                                // Single mode reload
+                                const reloaded = await ClientRegistry.reloadModbusConfig(newConfig.config, node);
+                                if (reloaded) {
+                                    modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
+                                }
+                            }
+
+                            // Update service with new client
+                            if (modbusService && modbusClient) {
+                                (modbusService as any).modbusClient = modbusClient;
+                            }
+
+                            currentModbusConfig = { ...newConfig };
+                            isMultiBoardMode = newConfig.mode === 'multi';
+
+                            node.status({ fill: "green", shape: "dot", text: `Reloaded: ${changeDescription}` });
+                            setTimeout(() => {
+                                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                            }, 5000);
+                        }
+                    } catch (error) {
+                        logger.error(`[HOT-RELOAD] Config check error: ${(error as Error).message}`);
+                    }
+                }, 30000); // Check every 30 seconds
 
                 // Node initialization completed successfully
-                logger.warn("[INIT] ===== VIIS RPC Control Node initialization completed successfully =====");
-                logger.warn(`[INIT] Node ID: ${node.id}`);
-                logger.warn(`[INIT] MQTT Broker: ${config.mqttBroker}`);
-                logger.warn(`[INIT] Subscribe Topic: ${subscribeTopic}`);
-                logger.warn(`[INIT] Publish Topic: ${publishTopic}`);
-                logger.warn(`[INIT] MQTT Connected: ${mqttClient.isConnected()}`);
-                logger.warn(`[INIT] Modbus Connected: ${modbusClient.isConnectedCheck()}`);
-                node.status({ fill: "green", shape: "dot", text: "Ready - Listening for MQTT messages" });
+                logger.log(`Initialized: ${config.mqttBroker} | topic=${subscribeTopic}`);
+                node.status({ fill: "green", shape: "dot", text: "Ready" });
 
                 // Handle input messages for dynamic configuration updates and RPC commands
-                node.on('input', (msg: any) => {
+                node.on('input', async (msg: any) => {
                     logger.log('Input message received');
                     node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.MESSAGE_RECEIVED });
+
+                    // Handle manual Modbus config reload command
+                    if (msg.topic === 'reload-modbus-config' || msg.payload === 'reload-modbus-config') {
+                        logger.log("Manual Modbus config reload requested");
+
+                        try {
+                            const newConfig = readModbusConfig();
+
+                            // Reinitialize based on mode
+                            if (newConfig.mode === 'multi') {
+                                const multiConfig: MultiModbusConfig = {
+                                    mode: 'multi',
+                                    defaultBoard: newConfig.defaultBoard,
+                                    boards: newConfig.boards
+                                };
+                                ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+                                const boardToUse = currentBoardId || newConfig.defaultBoard;
+                                modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                            } else {
+                                const reloaded = await ClientRegistry.reloadModbusConfig(newConfig.config, node);
+                                if (reloaded) {
+                                    modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
+                                }
+                            }
+
+                            if (modbusService && modbusClient) {
+                                (modbusService as any).modbusClient = modbusClient;
+                            }
+                            currentModbusConfig = { ...newConfig };
+
+                            logger.log("Manual reload completed");
+                        } catch (error) {
+                            logger.error(`Manual reload failed: ${(error as Error).message}`);
+                        }
+                        return;
+                    }
 
                     // Handle RPC commands from input
                     if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
                         (typeof msg.method === 'string' && msg.method === 'set_state')) {
 
-                        logger.warn("Processing RPC input");
 
                         try {
                             let rpcBody: RpcMessage;
@@ -353,7 +530,7 @@ module.exports = function (RED: NodeAPI) {
                             }
 
                             node.status({ fill: "blue", shape: "dot", text: STATUS_MESSAGES.PROCESSING_RPC_INPUT });
-                            rpcHandler.handleRpcRequest(rpcBody);
+                            await rpcHandler.handleRpcRequest(rpcBody);
                         } catch (error) {
                             logger.error(ERROR_MESSAGES.RPC_INPUT_FAILED + `: ${(error as Error).message}`);
                             node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.RPC_INPUT_ERROR });
@@ -366,6 +543,20 @@ module.exports = function (RED: NodeAPI) {
                 // Cleanup when node is removed
                 node.on('close', async (done: () => void) => {
                     try {
+                        // Stop config check interval
+                        if (configCheckInterval) {
+                            clearInterval(configCheckInterval);
+                            configCheckInterval = null;
+                            logger.log("[CLEANUP] Config check interval stopped");
+                        }
+
+                        // Stop subscription retry interval if exists
+                        const subscriptionRetryInterval = node.context().get('subscriptionRetryInterval') as NodeJS.Timeout | undefined;
+                        if (subscriptionRetryInterval) {
+                            clearInterval(subscriptionRetryInterval);
+                            logger.log("[CLEANUP] Subscription retry interval stopped");
+                        }
+
                         // Clear all timeouts and caches
                         mqttService.clearAllTimeouts();
                         messageHandler.clearProcessedMessages();
@@ -373,7 +564,14 @@ module.exports = function (RED: NodeAPI) {
 
                         // Disconnect clients
                         mqttClient.disconnect();
-                        ClientRegistry.releaseClient("modbus", node);
+
+                        // Release Modbus client (multi-board aware)
+                        if (isMultiBoardMode && currentBoardId) {
+                            ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                        } else {
+                            ClientRegistry.releaseClientV2("modbus", node);
+                        }
+
                         if (config.mqttBroker === "thingsboard") {
                             ClientRegistry.releaseClient("thingsboard", node);
                         } else {

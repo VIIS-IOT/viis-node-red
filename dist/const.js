@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.mqttServerUrl = exports.httpServerUrl = void 0;
-exports.httpServerUrl = "https://iot.viis.tech";
-exports.mqttServerUrl = "mqtt.viis.tech";
+exports.DEFAULT_MQTT_SERVER_URL = exports.DEFAULT_HTTP_SERVER_URL = void 0;
+// Default server URLs - use GlobalContextHelper.getEnvVar() to get actual values from global context
+exports.DEFAULT_HTTP_SERVER_URL = "https://iot.viis.tech";
+exports.DEFAULT_MQTT_SERVER_URL = "mqtt.viis.tech";

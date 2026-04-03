@@ -39,12 +39,17 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContainerSetup = exports.SERVICE_CONTEXT_TOKEN = exports.GLOBAL_HELPER_TOKEN = exports.CONFIG_MANAGER_TOKEN = exports.JWT_SECRET_TOKEN = exports.NODE_TOKEN = void 0;
 const typedi_1 = __importStar(require("typedi"));
+const typeorm_1 = require("typeorm");
 const database_service_1 = require("../services/database.service");
 const auth_service_1 = require("../services/auth.service");
 const schedule_log_service_1 = require("../services/schedule-log.service");
 const notification_service_1 = require("../services/notification.service");
 const schedule_activation_service_1 = require("../services/schedule-activation.service");
 const schedule_completion_monitor_service_1 = require("../services/schedule-completion-monitor.service");
+const marine_telemetry_service_1 = require("../services/marine-telemetry.service");
+const marine_websocket_service_1 = require("../services/marine-websocket.service");
+const TripManagementService_1 = require("../../../services/MarineIoT/TripManagementService");
+const TripAccumulationService_1 = require("../../../services/MarineIoT/TripAccumulationService");
 const auth_validator_1 = require("../validators/auth.validator");
 const user_validator_1 = require("../validators/user.validator");
 const auth_middleware_1 = require("../middleware/auth.middleware");
@@ -97,6 +102,10 @@ class ContainerSetup {
             const databaseService = new database_service_1.DatabaseService(node);
             await databaseService.initialize();
             typedi_1.default.set(database_service_1.DatabaseService, databaseService);
+            // Register DataSource for services that need direct access
+            // This fixes the "DataSource not found in container" error
+            const dataSource = databaseService.getDataSource();
+            typedi_1.default.set(typeorm_1.DataSource, dataSource);
             // Create service context for base services
             const serviceContext = {
                 node,
@@ -139,8 +148,10 @@ class ContainerSetup {
         await notificationService.initialize();
         typedi_1.default.set(notification_service_1.NotificationService, notificationService);
         // Register ScheduleCompletionMonitorService
+        // DISABLED: Automatic schedule monitoring causes continuous MQTT publishing
+        // To enable, uncomment the following lines
         const scheduleCompletionMonitor = new schedule_completion_monitor_service_1.ScheduleCompletionMonitorService(serviceContext, databaseService, notificationService);
-        await scheduleCompletionMonitor.initialize();
+        // await scheduleCompletionMonitor.initialize(); // ← DISABLED: This starts the 5-second interval
         typedi_1.default.set(schedule_completion_monitor_service_1.ScheduleCompletionMonitorService, scheduleCompletionMonitor);
         // Register ScheduleActivationService
         const scheduleActivationService = new schedule_activation_service_1.ScheduleActivationService(serviceContext, scheduleLogService, notificationService, databaseService, scheduleCompletionMonitor);
@@ -152,6 +163,18 @@ class ContainerSetup {
         const thingsBoardService = new ThingsBoardService(serviceContext, scheduleActivationService);
         await thingsBoardService.initialize();
         typedi_1.default.set(ThingsBoardService, thingsBoardService);
+        // Register MarineTelemetryService
+        const dataSource = databaseService.getDataSource();
+        const marineTelemetryService = new marine_telemetry_service_1.MarineTelemetryService(dataSource);
+        typedi_1.default.set(marine_telemetry_service_1.MarineTelemetryService, marineTelemetryService);
+        // Register MarineWebSocketService (will be initialized later with HTTP server)
+        const marineWebSocketService = new marine_websocket_service_1.MarineWebSocketService(marineTelemetryService, authService, node);
+        typedi_1.default.set(marine_websocket_service_1.MarineWebSocketService, marineWebSocketService);
+        // Register Trip Management Services
+        const tripManagementService = new TripManagementService_1.TripManagementService(dataSource);
+        typedi_1.default.set(TripManagementService_1.TripManagementService, tripManagementService);
+        const tripAccumulationService = new TripAccumulationService_1.TripAccumulationService(dataSource);
+        typedi_1.default.set(TripAccumulationService_1.TripAccumulationService, tripAccumulationService);
         // Note: DeviceService is decorated with @Service()
         // It will be automatically instantiated by TypeDI when needed
     }
@@ -193,10 +216,32 @@ class ContainerSetup {
         return typedi_1.default.get(token);
     }
     /**
-     * Reset container (useful for testing)
+     * Reset container (useful for testing and cleanup)
+     * Safely handles cases where DataSource may not be initialized
      */
     static reset() {
-        typedi_1.default.reset();
+        try {
+            // Check and safely destroy DataSource before container reset
+            if (typedi_1.default.has(typeorm_1.DataSource)) {
+                const dataSource = typedi_1.default.get(typeorm_1.DataSource);
+                if (dataSource && dataSource.isInitialized) {
+                    // Don't destroy here - let DatabaseService handle it
+                    // dataSource.destroy() is async and Container.reset() is sync
+                    console.log('[VIIS-REST-API] DataSource will be cleaned up by DatabaseService');
+                }
+            }
+            // Reset container - this may throw if services have destroy callbacks
+            // that try to access disconnected DataSource
+            try {
+                typedi_1.default.reset();
+            }
+            catch (resetError) {
+                console.warn('[VIIS-REST-API] Container reset warning:', resetError.message);
+            }
+        }
+        catch (error) {
+            console.warn('[VIIS-REST-API] Container reset error (non-fatal):', error.message);
+        }
         this.isInitialized = false;
     }
     /**

@@ -2,7 +2,15 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const device_1 = require("./core/device");
 const deviceIntents_1 = require("./core/deviceIntents");
+const offline_resilience_1 = require("./core/offline-resilience");
+// Global flag to ensure error handlers are setup only once
+let globalErrorHandlersInitialized = false;
 module.exports = function (RED) {
+    // Setup global error handlers (only once for all nodes)
+    if (!globalErrorHandlersInitialized) {
+        (0, offline_resilience_1.setupGlobalErrorHandlers)(RED);
+        globalErrorHandlersInitialized = true;
+    }
     function ViisAutomationNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
@@ -11,8 +19,16 @@ module.exports = function (RED) {
             node.error("Configuration node not found");
             return;
         }
-        // Lấy thông tin thiết bị được chọn
+        // Get device credentials (auto-loaded from config node)
         const selectedDevice = configNode.device;
+        // Validate credentials
+        if (!selectedDevice || !selectedDevice.id || !selectedDevice.accessToken) {
+            node.error("Device credentials not found. Configure viis-config-node or set device_id/device_access_token in env-loader");
+            node.status({ fill: "red", shape: "ring", text: "No credentials" });
+            return;
+        }
+        node.log(`Using device: ${selectedDevice.id}`);
+        // Lấy thông tin thiết bị được chọn
         async function processIntents(intents, devicesData) {
             try {
                 const intentService = new deviceIntents_1.DeviceIntentService(intents, devicesData);
@@ -59,7 +75,7 @@ module.exports = function (RED) {
         });
         async function getMyIntents() {
             try {
-                const intents = await (0, device_1.getDeviceIntentsByToken)(selectedDevice.accessToken);
+                const intents = await (0, device_1.getDeviceIntentsByToken)(selectedDevice.accessToken, node.context());
                 node.context().set("intents", intents || []);
                 node.status({
                     fill: "green",

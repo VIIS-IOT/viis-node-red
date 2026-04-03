@@ -14,6 +14,7 @@ import { ApiConfigManager } from '../config/api.config';
 import { GlobalContextHelper } from '../../../ultils/global-context-helper';
 import { ENV_KEYS, MQTT_CONFIG, DEFAULTS } from '../constants';
 import { SERVICE_CONTEXT_TOKEN } from '../container/container.setup';
+import { MqttCircuitBreaker, createMqttCircuitBreaker, CircuitBreakerError } from '../utils/circuit-breaker';
 import {
     ThingsBoardRpcRequest,
     ThingsBoardRpcResponse,
@@ -38,6 +39,8 @@ import { ScheduleActivationService, UserContext } from './schedule-activation.se
 @Service()
 export class ThingsBoardService extends BaseService {
     private mqttClient: MqttClientCore | null = null;
+    private mqttCircuitBreaker: MqttCircuitBreaker;
+    private mqttAvailable = false;
     private globalHelper: GlobalContextHelper;
     private scheduleActivationService: ScheduleActivationService | null = null;
     private processingStats = {
@@ -56,6 +59,14 @@ export class ThingsBoardService extends BaseService {
         super(context, 'ThingsBoardService');
         this.globalHelper = new GlobalContextHelper(this.node.context());
         this.scheduleActivationService = scheduleActivationService || null;
+
+        // Initialize MQTT Circuit Breaker
+        this.mqttCircuitBreaker = createMqttCircuitBreaker(this.node, {
+            failureThreshold: 5,
+            timeout: 60000, // 1 minute
+            monitoringPeriod: 300000, // 5 minutes
+            halfOpenMaxCalls: 3
+        });
     }
 
     /**
@@ -67,9 +78,11 @@ export class ThingsBoardService extends BaseService {
         try {
             // Initialize MQTT client using existing core infrastructure
             await this.initializeMqttClient();
-            this.logInfo("ThingsBoard RPC service initialized successfully");
+            this.mqttAvailable = true;
+            this.logInfo("ThingsBoard RPC service initialized successfully with MQTT connectivity");
         } catch (error) {
-            this.logError("Failed to initialize ThingsBoard service", error);
+            this.logError("Failed to initialize ThingsBoard service MQTT client", error);
+            this.mqttAvailable = false;
             // Don't throw error to prevent Node-RED crash
             // Service will operate in degraded mode without MQTT
             this.logWarn("ThingsBoard service will operate in degraded mode without MQTT connectivity");
@@ -358,7 +371,7 @@ export class ThingsBoardService extends BaseService {
     }
 
     /**
-     * Publish telemetry data to MQTT broker
+     * Publish telemetry data to MQTT broker with Circuit Breaker protection
      */
     private async publishToMqtt(
         topic: string,
@@ -367,10 +380,11 @@ export class ThingsBoardService extends BaseService {
         rpcRequest: ThingsBoardRpcRequest
     ): Promise<boolean> {
         try {
-            if (!this.mqttClient) {
+            if (!this.mqttAvailable || !this.mqttClient) {
                 this.logWarn('MQTT client not available, skipping MQTT publish', {
                     topic,
-                    deviceId: context.deviceId
+                    deviceId: context.deviceId,
+                    mqttAvailable: this.mqttAvailable
                 });
                 return false;
             }
@@ -385,15 +399,18 @@ export class ThingsBoardService extends BaseService {
 
             // Prepare payload in original RPC request format
             const payload = this.buildMqttPayload(records, context, rpcRequest);
+            const payloadString = JSON.stringify(payload);
 
             this.logDebug(`Publishing to MQTT`, {
                 topic,
                 recordsCount: records.length,
-                payloadSize: JSON.stringify(payload).length
+                payloadSize: payloadString.length
             });
 
-            // Publish with retry logic
-            await this.publishWithRetry(topic, JSON.stringify(payload));
+            // Use Circuit Breaker to protect MQTT operations
+            await this.mqttCircuitBreaker.execute(async () => {
+                await this.publishWithRetry(topic, payloadString);
+            }, `MQTT-Publish-${topic}`);
 
             this.processingStats.mqttPublishSuccesses++;
             this.logInfo(`Successfully published to MQTT`, {
@@ -406,6 +423,18 @@ export class ThingsBoardService extends BaseService {
 
         } catch (error) {
             this.processingStats.mqttPublishFailures++;
+
+            if (error instanceof CircuitBreakerError) {
+                this.logWarn(`MQTT publish blocked by circuit breaker`, {
+                    topic,
+                    recordsCount: records.length,
+                    deviceId: context.deviceId,
+                    circuitState: error.state
+                });
+                // Don't throw error for circuit breaker - return false to indicate failure
+                return false;
+            }
+
             this.logError(`Failed to publish to MQTT`, error, {
                 topic,
                 recordsCount: records.length,
@@ -482,18 +511,35 @@ export class ThingsBoardService extends BaseService {
 
     /**
      * Initialize MQTT client using local EMQX broker
+     * Note: This method will not throw errors to allow service to continue in degraded mode
      */
     private async initializeMqttClient(): Promise<void> {
         try {
             const config = this.createLocalMqttConfig();
-            this.mqttClient = await ClientRegistry.getLocalMqttClient(config, this.node);
 
-            this.logInfo(`MQTT client initialized successfully ${JSON.stringify(config)}`);
+            // Use Circuit Breaker for MQTT client initialization
+            this.mqttClient = await this.mqttCircuitBreaker.execute(async () => {
+                return await ClientRegistry.getLocalMqttClient(config, this.node);
+            }, 'MQTT-Client-Init');
+
+            this.logInfo(`MQTT client initialized successfully`, {
+                broker: config.broker,
+                clientId: config.clientId
+            });
+
         } catch (error) {
             this.logError("Failed to initialize MQTT client", error);
             this.mqttClient = null;
-            // Don't throw error - let service continue without MQTT
-            throw error;
+
+            if (error instanceof CircuitBreakerError) {
+                this.logWarn(`MQTT client initialization blocked by circuit breaker`, {
+                    circuitState: error.state
+                });
+            }
+
+            // Don't throw error - let service continue without MQTT in degraded mode
+            // This allows the service to start even if MQTT broker is unavailable
+            this.logWarn("Service will continue in degraded mode without MQTT connectivity");
         }
     }
 
@@ -548,6 +594,7 @@ export class ThingsBoardService extends BaseService {
         user?: any
     ): Promise<RpcExecutionResultDto> {
         const requestId = this.generateRequestId();
+        console.log('user mother fucker', user);
         const userId = user?.user_id || user?.name;
 
         return this.executeOperation('processOneWayRpcFromDto', async () => {
@@ -629,7 +676,7 @@ export class ThingsBoardService extends BaseService {
     }
 
     /**
-     * Get service health information
+     * Get service health information including Circuit Breaker status
      */
     async getServiceHealthInfo(): Promise<any> {
         return this.executeOperation('getServiceHealthInfo', async () => {
@@ -638,9 +685,12 @@ export class ThingsBoardService extends BaseService {
             try {
                 const healthInfo = await this.healthCheck();
                 const processingStats = this.getProcessingStats();
+                const circuitBreakerStatus = this.mqttCircuitBreaker.getHealthStatus();
 
                 this.logDebug('ThingsBoard service health check completed', {
-                    status: healthInfo.status
+                    status: healthInfo.status,
+                    mqttAvailable: this.mqttAvailable,
+                    circuitBreakerState: circuitBreakerStatus.state
                 });
 
                 return {
@@ -649,7 +699,12 @@ export class ThingsBoardService extends BaseService {
                     timestamp: new Date().toISOString(),
                     details: {
                         ...healthInfo,
-                        processingStats
+                        processingStats,
+                        mqtt: {
+                            available: this.mqttAvailable,
+                            clientConnected: !!this.mqttClient,
+                            circuitBreaker: circuitBreakerStatus
+                        }
                     }
                 };
 

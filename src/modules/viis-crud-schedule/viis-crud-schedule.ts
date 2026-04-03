@@ -17,16 +17,30 @@ export = function (RED: NodeAPI) {
         RED.nodes.createNode(this, config);
         const node = this;
 
-        node.warn("start to 1");
         const dbService = new DatabaseService();
-        node.warn("start to 2");
+        let isInitialized = false;
+
+        // Register close handler OUTSIDE async IIFE to ensure it's always registered
+        node.on('close', async (done: () => void) => {
+            try {
+                logger.info(node, 'Node closing');
+                if (isInitialized) {
+                    await dbService.destroy();
+                }
+            } catch (error) {
+                logger.error(node, `Error during cleanup: ${(error as Error).message}`);
+            }
+            if (typeof done === 'function') {
+                done();
+            }
+        });
 
         // Khởi tạo database đồng bộ
         (async () => {
             try {
-                node.warn("start to init DB");
                 await dbService.initialize();
-                node.warn("Database initialized successfully");
+                isInitialized = true;
+                logger.info(node, "Database initialized successfully");
 
                 const scheduleHandler = new ScheduleHandler(dbService, node);
                 const schedulePlanHandler = new SchedulePlanHandler(dbService, node);
@@ -36,7 +50,6 @@ export = function (RED: NodeAPI) {
                         const url = msg.req?.url || '';
                         const method = msg.req?.method || 'GET';
                         const path = parseUrl(url);
-                        node.warn("Processing input");
                         logger.info(node, `Received request: ${method} ${path}`);
 
                         let responseMsg: ExtendedNodeMessage;
@@ -56,10 +69,6 @@ export = function (RED: NodeAPI) {
                     }
                 });
 
-                node.on('close', async () => {
-                    logger.info(node, 'Node closing');
-                    await dbService.destroy();
-                });
             } catch (err) {
                 logger.error(node, `Failed to initialize node: ${(err as Error).message}`);
                 node.error(`Node initialization failed: ${(err as Error).message}`);

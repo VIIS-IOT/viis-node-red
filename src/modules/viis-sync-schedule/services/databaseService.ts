@@ -35,25 +35,17 @@ export class DatabaseService {
      */
     async initialize(): Promise<void> {
         try {
-            // Simply check if the DataSource is initialized
+            // Chủ động khởi tạo AppDataSource nếu chưa được initialize
             if (!this.dataSource.isInitialized) {
-                logger.warn(null, 'DataSource is not initialized, waiting for initialization...');
-                
-                // Wait for a short period to see if it gets initialized by another process
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                // Check again after waiting
-                if (!this.dataSource.isInitialized) {
-                    logger.error(null, 'DataSource still not initialized after waiting');
-                    throw new Error('Database connection not available');
-                }
+                logger.info(null, 'Initializing AppDataSource...');
+                await this.dataSource.initialize();
+                logger.info(null, 'AppDataSource initialized successfully');
             }
             
-            // If we get here, the connection is active
             this.initialized = true;
             logger.info(null, 'Database connection verified successfully');
         } catch (error) {
-            logger.error(null, `Failed to verify database connection: ${(error as Error).message}`);
+            logger.error(null, `Failed to initialize database connection: ${(error as Error).message}`);
             throw error;
         }
     }

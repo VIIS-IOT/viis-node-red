@@ -1,134 +1,635 @@
-import { NodeAPI, NodeDef, Node } from "node-red";
-import ClientRegistry from "../../core/client-registry";
-import { GlobalContextHelper } from "../../ultils/global-context-helper";
+/**
+ * VIIS Device Protection Node v2.0
+ *
+ * Advanced protection logic with Min/Max/Bypass/Force support
+ *
+ * Architecture follows viis-rpc-control pattern:
+ * - ConfigService for configuration management
+ * - ProtectionManager for business logic
+ * - ErrorNotificationService for alerts
+ * - Constants for centralized configuration
+ */
 
-interface ViisDeviceProtectionNodeDef extends NodeDef { }
+import { NodeAPI, NodeDef, Node } from "node-red";
+import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
+import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { ErrorNotificationService } from "../../services/error-notification.service";
+import { ProtectionManager, ProtectionResult } from "./protection-manager";
+import { ConfigService } from "./services/configService";
+import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
+import {
+    CONTEXT_KEYS,
+    ENV_KEYS,
+    MODBUS_CONFIG,
+    PROTECTION_CONFIG,
+    DEVICE_TYPES,
+    ERROR_MESSAGES,
+    STATUS_MESSAGES
+} from "./constants";
+
+interface ViisDeviceProtectionNodeDef extends NodeDef {
+    boardId?: string;
+    enableDebug?: boolean;
+}
 
 module.exports = function (RED: NodeAPI) {
     function ViisDeviceProtectionNode(this: Node, config: ViisDeviceProtectionNodeDef) {
         RED.nodes.createNode(this, config);
         const node = this;
 
-        // Initialize GlobalContextHelper
+        // ========================================================================
+        // Initialize Services
+        // ========================================================================
+
         const globalHelper = new GlobalContextHelper(node.context());
+        const errorNotificationService = new ErrorNotificationService(node.context());
+        const configService = new ConfigService(node);
+        const protectionManager = new ProtectionManager();
 
-        // Environment variables for Modbus mappings
-        const modbusCoils = globalHelper.getJsonEnvVar("MODBUS_COILS", {});
-        const modbusHoldingRegisters = globalHelper.getJsonEnvVar("MODBUS_HOLDING_REGISTERS", {});
-        const modbusInputRegisters = globalHelper.getJsonEnvVar("MODBUS_INPUT_REGISTERS", {});
+        // ========================================================================
+        // Node State
+        // ========================================================================
 
-        // Modbus client configuration
-        const modbusConfig = {
-            type: (globalHelper.getEnvVar("MODBUS_TYPE", "TCP") as "TCP" | "RTU"),
-            host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
-            tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
-            serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
-            baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
-            parity: (globalHelper.getEnvVar("MODBUS_PARITY", "none") as "none" | "even" | "odd"),
-            unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1),
-            timeout: globalHelper.getNumericEnvVar("MODBUS_TIMEOUT", 5000),
-            reconnectInterval: globalHelper.getNumericEnvVar("MODBUS_RECONNECT_INTERVAL", 5000),
+        let currentBoardId: string | undefined = config.boardId || "board1";
+        let isMultiBoardMode: boolean = false;
+        let currentModbusConfig: any = null;
+        let modbusClient: any;
+        let mqttClient: any;
+        let publishTopic: string;
+        let configCheckInterval: NodeJS.Timeout | null = null;
+        let isProtectionCheckRunning = false;
+
+        // Debug mode
+        const enableDebug = config.enableDebug === true;
+
+        // Debug helper
+        const debugLog = (message: string) => {
+            if (enableDebug) {
+                node.warn(`[DEBUG] ${message}`);
+            }
         };
 
-        const modbusClient = ClientRegistry.getModbusClient(modbusConfig, node);
-        if (!modbusClient) {
-            node.error("Failed to initialize Modbus client");
-            node.status({ fill: "red", shape: "ring", text: "Modbus client failed" });
-            return;
+        node.log(`Debug mode: ${enableDebug ? 'ENABLED' : 'DISABLED'}`);
+        node.log(`Board ID: ${currentBoardId}`);
+
+        // ========================================================================
+        // Initialize MQTT (non-blocking)
+        // ========================================================================
+
+        const initMqtt = async () => {
+            try {
+                const deviceId = globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, "unknown");
+                const mqttBroker = "thingsboard"; // Default to ThingsBoard
+
+                const mqttConfig: MqttConfig = mqttBroker === "thingsboard"
+                    ? {
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, "mqtt.viis.tech")}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, "1883")}`,
+                        clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
+                        username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
+                        password: globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PASSWORD, ""),
+                        qos: 1,
+                    }
+                    : {
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.EMQX_HOST, "emqx")}:${globalHelper.getEnvVar(ENV_KEYS.EMQX_PORT, "1883")}`,
+                        clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
+                        username: globalHelper.getEnvVar(ENV_KEYS.EMQX_USERNAME, ""),
+                        password: globalHelper.getEnvVar(ENV_KEYS.EMQX_PASSWORD, ""),
+                        qos: 1,
+                    };
+
+                publishTopic = mqttBroker === "thingsboard"
+                    ? `v1/devices/me/telemetry`
+                    : `v1/devices/me/telemetry/${deviceId}`;
+
+                mqttClient = mqttBroker === "thingsboard"
+                    ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
+                    : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
+
+                node.log("MQTT client initialized for protection telemetry");
+            } catch (error) {
+                node.warn(`MQTT initialization failed: ${(error as Error).message}`);
+                node.warn("Protection node will work locally without MQTT publishing");
+            }
+        };
+
+        initMqtt().catch(err => {
+            node.error(`MQTT init error: ${err.message}`);
+        });
+
+        // Modbus mappings - Follow common_pattern.md
+        // Primary: Use modbus_board1_coils for multi-board setup
+        // Fallback: Use modbusCoils for backward compatibility
+        let modbusCoils: Record<string, number> = {};
+        let modbusHoldingRegisters: Record<string, number> = {};
+        let modbusInputRegisters: Record<string, number> = {};
+
+        // Try to get multi-board mappings first (common pattern)
+        const boardIdForMapping = currentBoardId || "board1";
+        modbusCoils = (node.context().global.get(`modbus_${boardIdForMapping}_coils`) || {}) as Record<string, number>;
+        modbusHoldingRegisters = (node.context().global.get(`modbus_${boardIdForMapping}_holding_registers`) || {}) as Record<string, number>;
+        modbusInputRegisters = (node.context().global.get(`modbus_${boardIdForMapping}_input_registers`) || {}) as Record<string, number>;
+
+        // Fallback to legacy modbusCoils if multi-board mapping not found
+        if (Object.keys(modbusCoils).length === 0) {
+            modbusCoils = (node.context().global.get("modbusCoils") || {}) as Record<string, number>;
+        }
+        if (Object.keys(modbusHoldingRegisters).length === 0) {
+            modbusHoldingRegisters = (node.context().global.get("modbusHoldingRegisters") || {}) as Record<string, number>;
+        }
+        if (Object.keys(modbusInputRegisters).length === 0) {
+            modbusInputRegisters = (node.context().global.get("modbusInputRegisters") || {}) as Record<string, number>;
         }
 
-        // Trạng thái theo dõi thời gian bật của các coil
-        const coilTimers: { [key: string]: { startTime: number; maxTime: number } } = {};
+        // Final fallback to environment variables
+        if (Object.keys(modbusCoils).length === 0) {
+            modbusCoils = globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_COILS, {}) as Record<string, number>;
+        }
 
-        // Hàm đọc trạng thái coil từ Modbus
-        async function readCoil(address: number): Promise<boolean> {
+        node.log(`Modbus coils loaded: ${Object.keys(modbusCoils).length} coils`);
+        node.log(`Coil keys: ${JSON.stringify(Object.keys(modbusCoils))}`);
+
+        // Debug: Log a sample coil address
+        if (modbusCoils["lamp_control_1"]) {
+            node.log(`lamp_control_1 address: ${modbusCoils["lamp_control_1"]}`);
+        } else {
+            node.warn(`lamp_control_1 NOT FOUND in modbusCoils!`);
+            node.warn(`Available keys: ${JSON.stringify(Object.keys(modbusCoils))}`);
+        }
+
+        // ========================================================================
+        // Modbus Configuration
+        // ========================================================================
+
+        const readModbusConfig = () => {
+            const boardsConfig = globalHelper.getEnvVar(ENV_KEYS.MODBUS_BOARDS, null);
+
+            if (boardsConfig) {
+                try {
+                    let boards;
+                    if (Array.isArray(boardsConfig)) {
+                        boards = boardsConfig;
+                    } else if (typeof boardsConfig === 'string') {
+                        boards = JSON.parse(boardsConfig);
+                    } else {
+                        node.error(`${ERROR_MESSAGES.CONFIG_LOAD_FAILED}: Invalid MODBUS_BOARDS type`);
+                        boards = null;
+                    }
+
+                    if (Array.isArray(boards) && boards.length > 0) {
+                        return {
+                            mode: 'multi',
+                            boards: boards,
+                            defaultBoard: globalHelper.getEnvVar(ENV_KEYS.MODBUS_DEFAULT_BOARD, boards[0].id)
+                        };
+                    }
+                } catch (e) {
+                    node.error(`${ERROR_MESSAGES.CONFIG_LOAD_FAILED}: ${e}`);
+                }
+            }
+
+            return {
+                mode: 'single',
+                config: {
+                    type: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_TYPE, MODBUS_CONFIG.DEFAULT_TYPE) as "TCP" | "RTU"),
+                    host: globalHelper.getEnvVar(ENV_KEYS.MODBUS_HOST, MODBUS_CONFIG.DEFAULT_HOST),
+                    tcpPort: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TCP_PORT, MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                    serialPort: globalHelper.getEnvVar(ENV_KEYS.MODBUS_SERIAL_PORT, MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                    baudRate: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_BAUD_RATE, MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                    parity: (globalHelper.getEnvVar(ENV_KEYS.MODBUS_PARITY, MODBUS_CONFIG.DEFAULT_PARITY) as "none" | "even" | "odd"),
+                    unitId: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_UNIT_ID, MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                    timeout: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_TIMEOUT, MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                    reconnectInterval: globalHelper.getNumericEnvVar(ENV_KEYS.MODBUS_RECONNECT_INTERVAL, MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL),
+                }
+            };
+        };
+
+        // Initialize Modbus
+        const configData = readModbusConfig();
+        currentModbusConfig = { ...configData };
+
+        if (configData.mode === 'multi') {
+            isMultiBoardMode = true;
+            node.log(`Multi-board mode: ${configData.boards.length} boards`);
+            const multiConfig: MultiModbusConfig = {
+                mode: 'multi',
+                defaultBoard: configData.defaultBoard,
+                boards: configData.boards
+            };
+            ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+        } else {
+            node.log(`Single-board mode`);
+        }
+
+        // ========================================================================
+        // Async Initialization
+        // ========================================================================
+
+        const initModbusClient = async () => {
             try {
-                const result = await modbusClient.readCoils(address, 1);
-                return Boolean(result.data[0]);
-            } catch (error) {
-                const err = error as Error;
-                node.error(`Modbus read coil error at address ${address}: ${err.message}`);
+                if (isMultiBoardMode) {
+                    const boardToUse = currentBoardId || configData.defaultBoard;
+                    modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                } else {
+                    modbusClient = await ClientRegistry.getModbusClientV2(configData.config, node);
+                }
+
+                if (!modbusClient) {
+                    node.error(ERROR_MESSAGES.CLIENT_INIT_FAILED);
+                    node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.MODBUS_FAILED });
+                    return false;
+                }
+
+                node.log("Modbus client initialized");
+                node.status({ fill: "green", shape: "ring", text: "Ready (inject)" });
+                return true;
+            } catch (err) {
+                node.error(`Modbus init error: ${(err as Error).message}`);
                 return false;
             }
-        }
+        };
 
-        // Hàm ghi trạng thái coil vào Modbus
-        async function writeCoil(address: number, value: boolean): Promise<void> {
+        initModbusClient().catch(err => {
+            node.error(`Modbus init error: ${err.message}`);
+        });
+
+        // ========================================================================
+        // Modbus Operations
+        // ========================================================================
+
+        const readCoil = async (address: number): Promise<boolean> => {
+            if (!modbusClient) {
+                node.warn("Modbus client not ready");
+                return false;
+            }
+            try {
+                const result = await modbusClient.readCoils(address, 1);
+                const state = Boolean(result.data[0]);
+                return state;
+            } catch (error) {
+                node.error(`Read coil error at ${address}: ${(error as Error).message}`);
+                return false;
+            }
+        };
+
+        const writeCoil = async (address: number, value: boolean): Promise<boolean> => {
+            if (!modbusClient) {
+                node.warn("Modbus client not ready");
+                return false;
+            }
             try {
                 await modbusClient.writeCoil(address, value);
-                node.log(`Wrote to coil at address ${address}: ${value}`);
-            } catch (error) {
-                const err = error as Error;
-                node.error(`Modbus write coil error at address ${address}: ${err.message}`);
-            }
-        }
+                node.log(`Write coil ${address}: ${value}`);
 
-        // Hàm kiểm tra và áp dụng logic bảo vệ
-        async function checkProtection() {
-            const configKeyValues = node.context().global.get("configKeyValues") || {};
+                // Read-back to verify write succeeded
+                const readValue = await readCoil(address);
+                debugLog(`Read-back verification for coil ${address}: ${readValue} (expected: ${value})`);
+
+                // Update global context cache (coilRegisterData)
+                try {
+                    const coilRegisterData = node.context().global.get("coilRegisterData") || {};
+                    // Find coil key by address
+                    const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
+                    if (coilKey) {
+                        coilRegisterData[coilKey] = readValue;
+                        node.context().global.set("coilRegisterData", coilRegisterData);
+                        debugLog(`Updated coilRegisterData: ${coilKey}=${readValue}`);
+                    }
+                } catch (cacheError) {
+                    node.warn(`Failed to update coilRegisterData cache: ${(cacheError as Error).message}`);
+                }
+
+                // Publish to MQTT
+                if (mqttClient && mqttClient.isConnected()) {
+                    try {
+                        const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
+                        if (coilKey) {
+                            const payload = {
+                                ts: Date.now(),
+                                [coilKey]: readValue
+                            };
+                            await mqttClient.publish(publishTopic, JSON.stringify(payload));
+                            debugLog(`Published to MQTT ${publishTopic}: ${coilKey}=${readValue}`);
+                        }
+                    } catch (mqttError) {
+                        node.warn(`Failed to publish MQTT: ${(mqttError as Error).message}`);
+                    }
+                }
+
+                return readValue === value; // Return true if read-back matches written value
+            } catch (error) {
+                node.error(`${ERROR_MESSAGES.MODBUS_WRITE_FAILED(address.toString())}: ${(error as Error).message}`);
+                return false;
+            }
+        };
+
+        // ========================================================================
+        // Protection Logic
+        // ========================================================================
+
+        const createProtectionNotification = async (
+            deviceKey: string,
+            deviceLabel: string,
+            result: ProtectionResult,
+            coilAddress?: number
+        ) => {
+            try {
+                await errorNotificationService.createFromBusinessLogic({
+                    err_code: `PROTECTION_${deviceLabel}_${result.action?.toUpperCase()}`,
+                    message: `${deviceLabel}: ${result.reason}`,
+                    severity: result.action === 'block' || result.action === 'auto_off' ? 'high' : 'medium',
+                    type: 'alert',
+                    entity: node.id,
+                    metadata: {
+                        device_key: deviceKey,
+                        device_label: deviceLabel,
+                        action: result.action,
+                        reason: result.reason,
+                        coil_address: coilAddress,
+                        elapsed_on_time: result.metadata?.elapsedOnTime,
+                        elapsed_off_time: result.metadata?.elapsedOffTime,
+                        violation: result.metadata?.violation,
+                        sensor_value: result.metadata?.sensorValue,
+                        board_id: currentBoardId || 'default',
+                        timestamp: new Date().toISOString()
+                    }
+                });
+                node.log(`Created notification for ${deviceLabel}: ${result.reason}`);
+            } catch (notifError) {
+                node.error(`${ERROR_MESSAGES.NOTIFICATION_CREATE_FAILED}: ${(notifError as Error).message}`);
+            }
+        };
+
+        const checkProtection = async () => {
+            const configKeyValues = configService.getConfigKeyValues();
+
             if (!configKeyValues || Object.keys(configKeyValues).length === 0) {
-                // node.warn("No configKeyValues found in global context");
-                node.status({ fill: "yellow", shape: "ring", text: "No configKeyValues" });
+                debugLog("No configKeyValues found");
+                node.status({ fill: "yellow", shape: "ring", text: STATUS_MESSAGES.NO_CONFIG });
                 return;
             }
 
-            // Lấy dữ liệu telemetry từ biến global coilRegisterData
-            const coilData = node.context().global.get("coilRegisterData") || {};
+            const sensorData = configService.getSensorData();
 
-            for (const [key, value] of Object.entries(configKeyValues)) {
-                // Chỉ xử lý các key liên quan đến giới hạn thời gian (có hậu tố _MAX_TIME)
-                if (!key.endsWith("_MAX_TIME")) continue;
+            debugLog(`Checking ${Object.keys(configKeyValues).length} config keys`);
 
-                const coilKey = key.replace("_MAX_TIME", ""); // Ví dụ: COIL_OUTPUT_WATER_IN_MAX_TIME -> COIL_OUTPUT_WATER_IN
-                const maxTime = Number(value); // Thời gian tối đa (giây)
-                if (isNaN(maxTime) || maxTime <= 0) {
-                    node.warn(`Invalid max time for ${key}: ${value}`);
-                    continue;
-                }
+            // Auto-detect all protection configs from configKeyValues
+            // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
+            // Supports new function identifiers:
+            // - lamp_protect_*, fan_protect_intake_*, fan_protect_circ_*, etc.
+            // - cool_protect_1_*, cool_protect_2_*, humid_protect_*, dehumid_protect_*, co2_protect_*
+            const protectedCoils = new Set<string>();
+            const coilKeys = Object.keys(modbusCoils);
+            for (const key of Object.keys(configKeyValues)) {
+                const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit|pulse_time_on|pulse_time_off)$/);
+                if (match) {
+                    const baseKey = match[1];
 
-                // Lấy trạng thái của coil từ dữ liệu telemetry
-                const isCoilOn = coilData[coilKey];
-
-                if (isCoilOn) {
-                    if (!coilTimers[coilKey]) {
-                        // Bắt đầu đếm thời gian nếu coil vừa bật
-                        coilTimers[coilKey] = {
-                            startTime: Date.now(),
-                            maxTime: maxTime * 1000, // Chuyển sang milliseconds
-                        };
-                        node.log(`Started timer for ${coilKey} with max time ${maxTime}s`);
-                    } else {
-                        // Kiểm tra thời gian đã vượt quá chưa
-                        const elapsedTime = Date.now() - coilTimers[coilKey].startTime;
-                        if (elapsedTime > coilTimers[coilKey].maxTime) {
-                            node.warn(`Coil ${coilKey} exceeded max time (${maxTime}s). Turning off.`);
-                            // Giữ lại thao tác tắt coil qua Modbus nếu cần (ví dụ khi cần gửi lệnh về PLC)
-                            await writeCoil(modbusCoils[coilKey], false);
-                            delete coilTimers[coilKey];
-                            node.send({ payload: { [coilKey]: false, reason: "Exceeded max time" } });
-                        }
+                    // Exact mapping support (e.g. lamp_control_1_protect_* -> lamp_control_1)
+                    if (modbusCoils[baseKey] !== undefined) {
+                        protectedCoils.add(baseKey);
                     }
-                } else {
-                    // Nếu coil đã tắt, xóa timer (nếu có)
-                    if (coilTimers[coilKey]) {
-                        delete coilTimers[coilKey];
-                        node.log(`Timer for ${coilKey} cleared`);
+
+                    // Generalized mapping support (e.g. lamp_control_protect_* -> lamp_control_1, lamp_control_2)
+                    const prefix = `${baseKey}_`;
+                    for (const coilKey of coilKeys) {
+                        if (coilKey.startsWith(prefix)) {
+                            protectedCoils.add(coilKey);
+                        }
                     }
                 }
             }
 
-            node.status({ fill: "green", shape: "dot", text: "Running" });
-        }
+            debugLog(`Found ${protectedCoils.size} protected coils: ${Array.from(protectedCoils).join(", ")}`);
 
+            // Process each protected coil (use Array.from for ES5 compatibility)
+            const coilsArray = Array.from(protectedCoils);
+            for (let i = 0; i < coilsArray.length; i++) {
+                const coilKey = coilsArray[i];
+                const deviceLabel = coilKey.toLowerCase();
+                const coilAddress = modbusCoils[coilKey];
 
-        // Chạy kiểm tra định kỳ mỗi 1 giây
-        const interval = setInterval(checkProtection, 1000);
+                debugLog(`Processing coil: ${coilKey}, address: ${coilAddress}`);
 
-        // Cleanup khi node bị xóa hoặc đóng
+                // Skip if coil address not defined
+                if (coilAddress === undefined) {
+                    debugLog(`Coil ${coilKey} not in modbus mapping, skipping`);
+                    continue;
+                }
+
+                // READ coil state directly from Modbus
+                const currentState = await readCoil(coilAddress);
+                debugLog(`Coil ${coilKey} current state: ${currentState}`);
+
+                // Get sensor value if applicable
+                // Sensor mapping based on new function identifiers:
+                // - Temperature: cool_monitor_Aquara_temp_1, cool_monitor_Aquara_temp_2
+                // - Humidity: humid_sensor_1, humid_sensor_2, humid_monitor_Aquara_humid_1, humid_monitor_Aquara_humid_2
+                // - CO2: co2_sensor_1
+                let sensorValue: number | undefined;
+                if (coilKey.includes('cool') || coilKey.includes('ac')) {
+                    // Cooling devices use temperature sensors
+                    sensorValue = sensorData['cool_monitor_Aquara_temp_1'] 
+                        || sensorData['cool_monitor_Aquara_temp_2']
+                        || sensorData['cool_Aquara_temp_1'] 
+                        || sensorData['cool_Aquara_temp_2'];
+                } else if (coilKey.includes('humid')) {
+                    // Humidity devices use humidity sensors
+                    sensorValue = sensorData['humid_sensor_1'] 
+                        || sensorData['humid_sensor_2']
+                        || sensorData['humid_monitor_Aquara_humid_1']
+                        || sensorData['humid_monitor_Aquara_humid_2'];
+                } else if (coilKey.includes('dehumid')) {
+                    // Dehumidification uses humidity sensors
+                    sensorValue = sensorData['humid_sensor_1'] 
+                        || sensorData['humid_sensor_2']
+                        || sensorData['humid_monitor_Aquara_humid_1']
+                        || sensorData['humid_monitor_Aquara_humid_2'];
+                } else if (coilKey.includes('co2')) {
+                    // CO2 devices use CO2 sensor
+                    sensorValue = sensorData['co2_sensor_1'];
+                }
+
+                if (sensorValue !== undefined) {
+                    debugLog(`Sensor value for ${coilKey}: ${sensorValue}`);
+                    protectionManager.updateSensorValue(coilKey, sensorValue);
+                }
+
+                // Get protection config using the coil key as device label
+                const protectionConfig = configService.getProtectionConfigByLabel(deviceLabel);
+                debugLog(`Protection config for ${deviceLabel}: ${JSON.stringify(protectionConfig)}`);
+
+                const result = protectionManager.evaluateProtection(coilKey, currentState, protectionConfig);
+                debugLog(`Protection result for ${coilKey}: ${result.action} - ${result.reason}`);
+
+                // Handle protection actions
+                if (!result.allowed || (result.allowed && result.action !== 'allow')) {
+                    debugLog(`Action required for ${coilKey}: ${result.action}`);
+
+                    // Create notification for significant events
+                    if (result.action === 'auto_off' || result.action === 'block' ||
+                        result.action === 'force_on' || result.action === 'force_off' ||
+                        result.action === 'auto_on') {
+                        await createProtectionNotification(coilKey, deviceLabel, result, coilAddress);
+                    }
+
+                    // WRITE coil if state needs to change
+                    if (result.finalState !== currentState) {
+                        const targetState = result.finalState;
+                        debugLog(`Writing coil ${coilKey} to ${targetState}`);
+
+                        const writeSuccess = await writeCoil(coilAddress, targetState);
+
+                        if (writeSuccess) {
+                            debugLog(`Coil ${coilKey} successfully updated to ${targetState}`);
+                        } else {
+                            node.warn(`Coil ${coilKey} write may have failed - read-back verification failed`);
+                        }
+
+                        // Send output message
+                        node.send({
+                            payload: {
+                                [coilKey]: targetState,
+                                reason: result.reason,
+                                action: result.action,
+                                writeSuccess: writeSuccess
+                            }
+                        });
+                    }
+
+                    node.log(`${deviceLabel}: ${result.reason}`);
+                }
+            }
+
+            node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.RUNNING });
+        };
+
+        // ========================================================================
+        // Trigger / Config Reload
+        // ========================================================================
+
+        const runProtectionCheck = async (trigger: string, done?: (err?: Error) => void) => {
+            if (isProtectionCheckRunning) {
+                const warning = `Skip trigger (${trigger}): protection check is already running`;
+                debugLog(warning);
+                if (done) done();
+                return;
+            }
+
+            isProtectionCheckRunning = true;
+
+            try {
+                debugLog(`Run protection check by trigger: ${trigger}`);
+                await checkProtection();
+                node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.RUNNING });
+                if (done) done();
+            } catch (error) {
+                const err = error as Error;
+                node.error(`Protection check error: ${err.message}`);
+                node.status({ fill: "red", shape: "ring", text: "Check failed" });
+                if (done) done(err);
+            } finally {
+                isProtectionCheckRunning = false;
+            }
+        };
+
+        node.on("input", (msg: any, send: any, done: any) => {
+            if (msg && typeof msg === "object" && msg.boardId && msg.boardId !== currentBoardId) {
+                currentBoardId = String(msg.boardId);
+                debugLog(`Updated boardId from inject: ${currentBoardId}`);
+            }
+
+            runProtectionCheck("inject", done);
+        });
+
+        node.log("Protection node started (inject-trigger mode)");
+
+        // Config auto-reload every 30 seconds
+        configCheckInterval = setInterval(async () => {
+            try {
+                const newConfig = readModbusConfig();
+                let hasChanged = false;
+                let changeDescription = "";
+
+                if (currentModbusConfig.mode !== newConfig.mode) {
+                    hasChanged = true;
+                    changeDescription = `mode: ${currentModbusConfig.mode} → ${newConfig.mode}`;
+                } else if (newConfig.mode === 'single') {
+                    const oldCfg = currentModbusConfig.config;
+                    const newCfg = newConfig.config;
+                    hasChanged = oldCfg.host !== newCfg.host || oldCfg.tcpPort !== newCfg.tcpPort;
+                    if (hasChanged) changeDescription = `host: ${newCfg.host}:${newCfg.tcpPort}`;
+                }
+
+                if (hasChanged) {
+                    node.warn(`Config change: ${changeDescription}`);
+
+                    if (newConfig.mode === 'multi') {
+                        ClientRegistry.initializeMultiBoardConfig({
+                            mode: 'multi',
+                            defaultBoard: newConfig.defaultBoard,
+                            boards: newConfig.boards
+                        }, node);
+                        modbusClient = await ClientRegistry.getModbusClientV2(
+                            currentBoardId || newConfig.defaultBoard, node
+                        );
+                    } else {
+                        await ClientRegistry.reloadModbusConfig(newConfig.config, node);
+                        modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
+                    }
+
+                    currentModbusConfig = { ...newConfig };
+                    isMultiBoardMode = newConfig.mode === 'multi';
+                    node.log(`Modbus reloaded: ${changeDescription}`);
+                }
+
+                // Update coil mappings - Follow common pattern
+                const boardIdForMapping = currentBoardId || "board1";
+                modbusCoils = ((node.context().global.get(`modbus_${boardIdForMapping}_coils`) ||
+                              node.context().global.get("modbusCoils") ||
+                              globalHelper.getJsonEnvVar(ENV_KEYS.MODBUS_COILS, {})) as Record<string, number>);
+                modbusHoldingRegisters = ((node.context().global.get(`modbus_${boardIdForMapping}_holding_registers`) ||
+                                         node.context().global.get("modbusHoldingRegisters") || {}) as Record<string, number>);
+                modbusInputRegisters = ((node.context().global.get(`modbus_${boardIdForMapping}_input_registers`) ||
+                                       node.context().global.get("modbusInputRegisters") || {}) as Record<string, number>);
+            } catch (error) {
+                node.error(`Config check error: ${(error as Error).message}`);
+            }
+        }, PROTECTION_CONFIG.CONFIG_CHECK_INTERVAL_MS);
+
+        // ========================================================================
+        // Cleanup
+        // ========================================================================
+
         node.on("close", (done: any) => {
-            clearInterval(interval);
-            ClientRegistry.releaseClient("modbus", node);
-            node.log("Protection node closed and Modbus client released");
+            if (configCheckInterval) {
+                clearInterval(configCheckInterval);
+                node.log("Config check interval stopped");
+            }
+
+            // Disconnect MQTT client
+            if (mqttClient) {
+                mqttClient.disconnect();
+                node.log("MQTT client disconnected");
+            }
+
+            // Release Modbus client (multi-board aware)
+            if (isMultiBoardMode && currentBoardId) {
+                ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+            } else {
+                ClientRegistry.releaseClientV2("modbus", node);
+            }
+
+            // Release MQTT clients
+            if (mqttClient) {
+                const mqttBroker = "thingsboard"; // Match initialization
+                if (mqttBroker === "thingsboard") {
+                    ClientRegistry.releaseClient("thingsboard", node);
+                } else {
+                    ClientRegistry.releaseClient("local", node);
+                }
+            }
+
+            node.log("Protection node closed");
             done();
         });
     }

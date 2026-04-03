@@ -8,27 +8,27 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SyncScheduleService = void 0;
 const AxiosService_1 = require("../AxiosService");
-const configs_1 = __importDefault(require("../../configs"));
+const configs_1 = require("../../configs");
 const typedi_1 = require("typedi");
 let SyncScheduleService = class SyncScheduleService extends AxiosService_1.AxiosService {
-    constructor() {
+    constructor(nodeContext) {
+        const configs = (0, configs_1.createConfig)(nodeContext);
         super({
-            baseURL: configs_1.default.serverUrl || "http://localhost:8080", // Default fallback
+            baseURL: configs.serverUrl || "http://localhost:8080", // Default fallback
             withCredentials: true,
         });
-        this.accessToken = process.env.DEVICE_ACCESS_TOKEN || "NA";
-        console.log("SyncScheduleService constructor called with baseURL:", configs_1.default.serverUrl);
+        this.configs = configs;
+        this.accessToken = configs.deviceAccessToken || "NA";
+        // Only warn if token is missing
+        if (this.accessToken === "NA") {
+            console.warn("⚠️ SyncScheduleService: Access token is 'NA' - check if env-loader is running and nodeContext is passed!");
+        }
     }
     async logSchedule(body) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleLog/v2?access_token=${this.accessToken}`;
-            console.debug("Calling API logSchedule:", fullPath, "with body:", body);
             const response = await this.instance.post(`/api/v2/scheduleLog`, body, {
                 withCredentials: true,
             });
@@ -36,14 +36,11 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         }
         catch (error) {
             console.error(`Error in logSchedule: ${error.message}`);
-            // console.log(error)
             throw error;
         }
     }
     async syncScheduleFromLocalToServer(body) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
-            console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
             const response = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
                 withCredentials: true,
             });
@@ -51,14 +48,11 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         }
         catch (error) {
             console.error(`Error in syncLocalToServer: ${error.message}`);
-            console.log(error);
             throw error;
         }
     }
     async syncSchedulePlanFromLocalToServer(body) {
         try {
-            const fullPath = `${this.instance.defaults.baseURL}/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`;
-            console.debug("Calling API syncLocalToServer:", fullPath, "with body:", body);
             const response = await this.instance.post(`/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
                 withCredentials: true,
             });
@@ -66,7 +60,6 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
         }
         catch (error) {
             console.error(`Error in syncLocalToServer: ${error.message}`);
-            console.log(error);
             throw error;
         }
     }
@@ -74,5 +67,5 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
 exports.SyncScheduleService = SyncScheduleService;
 exports.SyncScheduleService = SyncScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [Object])
 ], SyncScheduleService);

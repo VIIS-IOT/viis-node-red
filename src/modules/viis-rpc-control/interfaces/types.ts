@@ -6,9 +6,12 @@ import { NodeDef } from "node-red";
 
 // Node configuration interface
 export interface ViisRpcControlNodeDef extends NodeDef {
-    mqttBroker: string;
+    name: string;
+    mqttBroker: "thingsboard" | "local";
     configKeys: string;
     scaleConfigs: string;
+    boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
+    boardId?: string; // Board ID for multi-board mode (Note: auto-detected from key mapping in most cases)
 }
 
 // Scale configuration for value transformation
@@ -42,6 +45,7 @@ export interface ModbusMappingResult {
     address: number;
     fc: number;
     value: number | boolean;
+    boardId?: string; // Optional: Board ID in multi-board mode (auto-detected)
 }
 
 // Manual override storage
@@ -110,6 +114,7 @@ export interface IConfigService {
     validateScaleConfigs(configs: ScaleConfig[]): void;
     validateConfigKeys(keys: ConfigKey): void;
     addConfigKey(key: string, value: any): void;
+    removeConfigKey(key: string): void;
 }
 
 // Validation service interface
@@ -123,7 +128,14 @@ export interface IModbusService {
     findModbusMapping(key: string): ModbusMappingResult | null;
     writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void>;
     readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean>;
-    checkConnection(): Promise<void>;
+    checkConnection(boardId?: string): Promise<void>;
+    getModbusHoldingRegisters(): Record<string, number>;
+    getModbusCoils(): Record<string, number>;
+    updateGlobalContextCacheAfterVerification(key: string, value: number | boolean, fc: number): void;
+    // HOLDING_SETML_BOM offset feature methods
+    isHoldingSetmlBomOffsetEnabled(): boolean;
+    getHoldingSetmlBomOffset(key: string): number | null;
+    getHoldingSetmlBomOffsetConfig(): any;
 }
 
 // MQTT service interface
@@ -131,6 +143,7 @@ export interface IMqttService {
     publishResult(key: string, value: number | boolean): void;
     publishResultImmediate(key: string, value: number | boolean): Promise<void>;
     publishConfigUpdate(key: string, value: any, note?: string): Promise<void>;
+    isConnected(): boolean;
     publishError(errorMessage: string): Promise<void>;
 }
 

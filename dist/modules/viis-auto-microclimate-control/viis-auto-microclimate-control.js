@@ -17,6 +17,7 @@ const curtainControlService_1 = require("./services/curtainControlService");
 const logger_1 = require("./utils/logger");
 const constants_1 = require("./constants");
 const fanControlService_1 = require("./services/fanControlService");
+const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     function ViisAutoMicroclimateControlNode(config) {
         RED.nodes.createNode(this, config);
@@ -36,35 +37,102 @@ module.exports = function (RED) {
                 // Get context references
                 const flowContext = node.context().flow;
                 const globalContext = node.context().global;
-                // Read environment configuration
-                const environmentConfig = {
-                    deviceId: process.env[constants_1.ENV_KEYS.DEVICE_ID] || "unknown",
-                    modbusCoils: JSON.parse(process.env[constants_1.ENV_KEYS.MODBUS_COILS] || "{}"),
-                    modbusInputRegisters: JSON.parse(process.env[constants_1.ENV_KEYS.MODBUS_INPUT_REGISTERS] || "{}"),
-                    modbusHoldingRegisters: JSON.parse(process.env[constants_1.ENV_KEYS.MODBUS_HOLDING_REGISTERS] || "{}")
+                // Initialize GlobalContextHelper for environment variables
+                const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+                // Multi-board state variables
+                let currentBoardId = config.boardId;
+                let isMultiBoardMode = false;
+                let currentModbusConfig;
+                // Helper function to read fresh config from global context (for hot-reload)
+                const readEnvironmentConfig = () => {
+                    return {
+                        deviceId: globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ID, "unknown"),
+                        modbusCoils: globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_COILS, {}),
+                        modbusInputRegisters: globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_INPUT_REGISTERS, {}),
+                        modbusHoldingRegisters: globalHelper.getJsonEnvVar(constants_1.ENV_KEYS.MODBUS_HOLDING_REGISTERS, {})
+                    };
                 };
+                const readModbusConfig = () => {
+                    const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
+                    if (boardsConfig) {
+                        try {
+                            let boards;
+                            // Handle both already-parsed array and JSON string
+                            if (Array.isArray(boardsConfig)) {
+                                boards = boardsConfig;
+                            }
+                            else if (typeof boardsConfig === 'string') {
+                                boards = JSON.parse(boardsConfig);
+                            }
+                            else {
+                                logger.error(`Invalid MODBUS_BOARDS type: ${typeof boardsConfig}`);
+                                boards = null;
+                            }
+                            if (Array.isArray(boards) && boards.length > 0) {
+                                return {
+                                    mode: 'multi',
+                                    boards: boards,
+                                    defaultBoard: globalHelper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id)
+                                };
+                            }
+                        }
+                        catch (e) {
+                            logger.error(`Failed to parse MODBUS_BOARDS: ${e}`);
+                        }
+                    }
+                    return {
+                        mode: 'single',
+                        config: {
+                            type: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_TYPE, constants_1.MODBUS_CONFIG.DEFAULT_TYPE),
+                            host: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_HOST, constants_1.MODBUS_CONFIG.DEFAULT_HOST),
+                            tcpPort: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_TCP_PORT, constants_1.MODBUS_CONFIG.DEFAULT_TCP_PORT),
+                            serialPort: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_SERIAL_PORT, constants_1.MODBUS_CONFIG.DEFAULT_SERIAL_PORT),
+                            baudRate: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_BAUD_RATE, constants_1.MODBUS_CONFIG.DEFAULT_BAUD_RATE),
+                            parity: globalHelper.getEnvVar(constants_1.ENV_KEYS.MODBUS_PARITY, constants_1.MODBUS_CONFIG.DEFAULT_PARITY),
+                            unitId: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_UNIT_ID, constants_1.MODBUS_CONFIG.DEFAULT_UNIT_ID),
+                            timeout: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_TIMEOUT, constants_1.MODBUS_CONFIG.DEFAULT_TIMEOUT),
+                            reconnectInterval: globalHelper.getNumericEnvVar(constants_1.ENV_KEYS.MODBUS_RECONNECT_INTERVAL, constants_1.MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL)
+                        }
+                    };
+                };
+                // Read initial configuration
+                let environmentConfig = readEnvironmentConfig();
+                const configData = readModbusConfig();
+                currentModbusConfig = Object.assign({}, configData);
+                // Auto-detect mode
+                if (configData.mode === 'multi') {
+                    isMultiBoardMode = true;
+                    logger.log(`Multi-board mode detected with ${configData.boards.length} boards`);
+                    const multiConfig = {
+                        mode: 'multi',
+                        defaultBoard: configData.defaultBoard,
+                        boards: configData.boards
+                    };
+                    client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
+                }
+                else {
+                    isMultiBoardMode = false;
+                    logger.log(`Single-board mode`);
+                }
                 logger.log(`Environment config loaded: device=${environmentConfig.deviceId}`);
-                // Initialize Modbus client configuration
-                const modbusConfig = {
-                    type: process.env[constants_1.ENV_KEYS.MODBUS_TYPE] || constants_1.MODBUS_CONFIG.DEFAULT_TYPE,
-                    host: process.env[constants_1.ENV_KEYS.MODBUS_HOST] || constants_1.MODBUS_CONFIG.DEFAULT_HOST,
-                    tcpPort: parseInt(process.env[constants_1.ENV_KEYS.MODBUS_TCP_PORT] || constants_1.MODBUS_CONFIG.DEFAULT_TCP_PORT.toString(), 10),
-                    serialPort: process.env[constants_1.ENV_KEYS.MODBUS_SERIAL_PORT] || constants_1.MODBUS_CONFIG.DEFAULT_SERIAL_PORT,
-                    baudRate: parseInt(process.env[constants_1.ENV_KEYS.MODBUS_BAUD_RATE] || constants_1.MODBUS_CONFIG.DEFAULT_BAUD_RATE.toString(), 10),
-                    parity: process.env[constants_1.ENV_KEYS.MODBUS_PARITY] || constants_1.MODBUS_CONFIG.DEFAULT_PARITY,
-                    unitId: parseInt(process.env[constants_1.ENV_KEYS.MODBUS_UNIT_ID] || constants_1.MODBUS_CONFIG.DEFAULT_UNIT_ID.toString(), 10),
-                    timeout: parseInt(process.env[constants_1.ENV_KEYS.MODBUS_TIMEOUT] || constants_1.MODBUS_CONFIG.DEFAULT_TIMEOUT.toString(), 10),
-                    reconnectInterval: parseInt(process.env[constants_1.ENV_KEYS.MODBUS_RECONNECT_INTERVAL] || constants_1.MODBUS_CONFIG.DEFAULT_RECONNECT_INTERVAL.toString(), 10)
-                };
                 // Get or create Modbus client
                 logger.log(`[AUTO-CONTROL-INIT] Node ID: ${node.id} - Initializing Modbus client...`);
                 // Log current client registry state before getting Modbus client
                 client_registry_1.default.logConnectionCounts(node);
-                const modbusClient = client_registry_1.default.getModbusClient(modbusConfig, node);
+                // Get Modbus client
+                let modbusClient;
+                if (isMultiBoardMode) {
+                    const boardToUse = currentBoardId || configData.defaultBoard;
+                    logger.log(`Getting client for board: ${boardToUse}`);
+                    modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+                }
+                else {
+                    modbusClient = await client_registry_1.default.getModbusClientV2(configData.config, node);
+                }
                 if (!modbusClient) {
                     throw new Error("Failed to initialize Modbus client");
                 }
-                logger.log(`[AUTO-CONTROL-INIT] Modbus client initialized: ${modbusConfig.type} ${modbusConfig.host}:${modbusConfig.tcpPort}`);
+                logger.log(`[AUTO-CONTROL-INIT] Modbus client initialized: ${currentModbusConfig.type} ${currentModbusConfig.host}:${currentModbusConfig.tcpPort}`);
                 // Log final client registry state after getting Modbus client
                 client_registry_1.default.logConnectionCounts(node);
                 // Create service options
@@ -89,6 +157,72 @@ module.exports = function (RED) {
                 // Start control loop
                 autoControlHandler.startControlLoop();
                 logger.log("Auto control loop started");
+                // Hot-reload: Check for config changes every 30 seconds
+                const configCheckInterval = setInterval(async () => {
+                    try {
+                        const newEnvConfig = readEnvironmentConfig();
+                        const newConfig = readModbusConfig();
+                        // Check if mode has changed or if critical config has changed
+                        let hasChanged = false;
+                        let changeDescription = "";
+                        if (currentModbusConfig.mode !== newConfig.mode) {
+                            hasChanged = true;
+                            changeDescription = `mode changed`;
+                        }
+                        else if (newConfig.mode === 'single' && currentModbusConfig.mode === 'single') {
+                            const oldCfg = currentModbusConfig.config;
+                            const newCfg = newConfig.config;
+                            hasChanged =
+                                oldCfg.host !== newCfg.host ||
+                                    oldCfg.tcpPort !== newCfg.tcpPort ||
+                                    oldCfg.type !== newCfg.type;
+                            if (hasChanged) {
+                                changeDescription = `${newCfg.host}:${newCfg.tcpPort}`;
+                            }
+                        }
+                        else if (newConfig.mode === 'multi' && currentModbusConfig.mode === 'multi') {
+                            hasChanged = JSON.stringify(currentModbusConfig.boards) !== JSON.stringify(newConfig.boards);
+                            if (hasChanged) {
+                                changeDescription = `boards updated`;
+                            }
+                        }
+                        if (hasChanged) {
+                            logger.warn(`[HOT-RELOAD] Config change detected: ${changeDescription}`);
+                            if (newConfig.mode === 'multi') {
+                                client_registry_1.default.initializeMultiBoardConfig({
+                                    mode: 'multi',
+                                    defaultBoard: newConfig.defaultBoard,
+                                    boards: newConfig.boards
+                                }, node);
+                                const boardToUse = currentBoardId || newConfig.defaultBoard;
+                                modbusClient = await client_registry_1.default.getModbusClientV2(boardToUse, node);
+                            }
+                            else {
+                                const reloaded = await client_registry_1.default.reloadModbusConfig(newConfig.config, node);
+                                if (reloaded) {
+                                    modbusClient = await client_registry_1.default.getModbusClientV2(newConfig.config, node);
+                                }
+                            }
+                            modbusService.modbusClient = modbusClient;
+                            currentModbusConfig = Object.assign({}, newConfig);
+                            isMultiBoardMode = newConfig.mode === 'multi';
+                            logger.warn(`[HOT-RELOAD] Modbus reloaded: ${changeDescription}`);
+                            node.status({ fill: "green", shape: "dot", text: `Reloaded` });
+                            setTimeout(() => {
+                                node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.READY });
+                            }, 3000);
+                        }
+                        // Update environment config (mapping changes etc)
+                        if (environmentConfig.deviceId !== newEnvConfig.deviceId) {
+                            logger.warn(`[HOT-RELOAD] Device ID changed: ${environmentConfig.deviceId} -> ${newEnvConfig.deviceId}`);
+                        }
+                        environmentConfig = newEnvConfig;
+                    }
+                    catch (error) {
+                        logger.error(`[HOT-RELOAD] Config check error: ${error.message}`);
+                    }
+                }, 30000); // Check every 30 seconds
+                logger.log("[HOT-RELOAD] Config monitoring enabled (30s interval)");
                 // Handle input messages for manual control or configuration updates
                 node.on('input', (msg) => {
                     try {
@@ -157,12 +291,22 @@ module.exports = function (RED) {
                 node.on('close', (done) => {
                     try {
                         logger.log("Shutting down auto control node");
+                        // Stop config check interval
+                        if (configCheckInterval) {
+                            clearInterval(configCheckInterval);
+                            logger.log("[CLEANUP] Config check interval stopped");
+                        }
                         // Stop control loop
                         if (autoControlHandler.isControlActive()) {
                             autoControlHandler.stopControlLoop();
                         }
-                        // Release Modbus client
-                        client_registry_1.default.releaseClient("modbus", node);
+                        // Release Modbus client (multi-board aware)
+                        if (isMultiBoardMode && currentBoardId) {
+                            client_registry_1.default.releaseClientV2("modbus-board", node, currentBoardId);
+                        }
+                        else {
+                            client_registry_1.default.releaseClientV2("modbus", node);
+                        }
                         logger.log("Auto control node shutdown complete");
                         done();
                     }

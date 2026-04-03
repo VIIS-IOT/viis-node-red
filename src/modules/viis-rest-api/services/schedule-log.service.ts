@@ -50,6 +50,8 @@ export interface Schedule {
         user_name: string;
         email: string;
         full_name: string;
+        first_name: string;
+        last_name: string;
     } | null;
 }
 
@@ -286,13 +288,22 @@ export class ScheduleLogService extends BaseService {
                     }
                 }
 
-                // Apply time range filters
+                // Apply time range filters based on creation date since start_time/end_time are only time fields
                 if (queryParams.start_date) {
-                    qb.andWhere('DATE(iot_schedule_log.start_time) >= :start_date', { start_date: queryParams.start_date });
+                    qb.andWhere('DATE(iot_schedule_log.creation) >= :start_date', { start_date: queryParams.start_date });
                 }
 
                 if (queryParams.end_date) {
-                    qb.andWhere('DATE(iot_schedule_log.end_time) <= :end_date', { end_date: queryParams.end_date });
+                    qb.andWhere('DATE(iot_schedule_log.creation) <= :end_date', { end_date: queryParams.end_date });
+                }
+                
+                // Apply time filters if provided (for time-only comparisons)
+                if (queryParams.start_time) {
+                    qb.andWhere('iot_schedule_log.start_time >= :start_time', { start_time: queryParams.start_time });
+                }
+                
+                if (queryParams.end_time) {
+                    qb.andWhere('iot_schedule_log.end_time <= :end_time', { end_time: queryParams.end_time });
                 }
 
                 const total = await qb.getCount();
@@ -358,7 +369,9 @@ export class ScheduleLogService extends BaseService {
                             name: log.customerUser.name || '',
                             user_name: log.customerUser.user_name || '',
                             email: log.customerUser.email || '',
-                            full_name: log.customerUser.full_name || ''
+                            full_name: log.customerUser.full_name || '',
+                            first_name: log.customerUser.first_name || '',
+                            last_name: log.customerUser.last_name || ''
                         } : null
                     };
 

@@ -10,15 +10,29 @@ module.exports = function (RED) {
     function ViisCrudScheduleNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
-        node.warn("start to 1");
         const dbService = new databaseService_1.DatabaseService();
-        node.warn("start to 2");
+        let isInitialized = false;
+        // Register close handler OUTSIDE async IIFE to ensure it's always registered
+        node.on('close', async (done) => {
+            try {
+                logger_1.logger.info(node, 'Node closing');
+                if (isInitialized) {
+                    await dbService.destroy();
+                }
+            }
+            catch (error) {
+                logger_1.logger.error(node, `Error during cleanup: ${error.message}`);
+            }
+            if (typeof done === 'function') {
+                done();
+            }
+        });
         // Khởi tạo database đồng bộ
         (async () => {
             try {
-                node.warn("start to init DB");
                 await dbService.initialize();
-                node.warn("Database initialized successfully");
+                isInitialized = true;
+                logger_1.logger.info(node, "Database initialized successfully");
                 const scheduleHandler = new scheduleHandler_1.ScheduleHandler(dbService, node);
                 const schedulePlanHandler = new schedulePlanHandler_1.SchedulePlanHandler(dbService, node);
                 node.on('input', async (msg) => {
@@ -27,7 +41,6 @@ module.exports = function (RED) {
                         const url = ((_a = msg.req) === null || _a === void 0 ? void 0 : _a.url) || '';
                         const method = ((_b = msg.req) === null || _b === void 0 ? void 0 : _b.method) || 'GET';
                         const path = (0, urlParser_1.parseUrl)(url);
-                        node.warn("Processing input");
                         logger_1.logger.info(node, `Received request: ${method} ${path}`);
                         let responseMsg;
                         if (path.startsWith(constants_1.API_PATHS.SCHEDULE_PLAN)) {
@@ -46,10 +59,6 @@ module.exports = function (RED) {
                         msg.payload = { error: error.message };
                         node.send(msg);
                     }
-                });
-                node.on('close', async () => {
-                    logger_1.logger.info(node, 'Node closing');
-                    await dbService.destroy();
                 });
             }
             catch (err) {

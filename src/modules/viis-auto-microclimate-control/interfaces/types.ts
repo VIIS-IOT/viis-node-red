@@ -10,6 +10,8 @@ export interface ViisAutoMicroclimateControlNodeDef extends NodeDef {
     enableFanControl: boolean;
     enableWaterPumpControl: boolean;
     enableCurtainControl: boolean;
+    boardMode?: 'auto' | 'single' | 'multi';
+    boardId?: string;
 }
 
 // Configuration interface for all control settings
@@ -105,6 +107,8 @@ export interface DeviceStatus {
     luoi_2_dai?: boolean;
     luoi_1_thu?: boolean;
     luoi_1_dai?: boolean;
+    luoi_3_thu?: boolean;
+    luoi_3_dai?: boolean;
     // Index signature to allow string indexing
     [key: string]: boolean | number | undefined;
 }

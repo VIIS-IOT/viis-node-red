@@ -44,6 +44,23 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotDeviceTelemetryLatest.prototype, "string_value", void 0);
 __decorate([
+    (0, typeorm_1.Column)({
+        type: 'varchar',
+        length: 255,
+        nullable: true,
+        comment: 'Oil profile ID at time of last reading'
+    }),
+    __metadata("design:type", String)
+], TabiotDeviceTelemetryLatest.prototype, "oil_profile_id", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        type: 'float',
+        nullable: true,
+        comment: 'Density snapshot at time of last reading'
+    }),
+    __metadata("design:type", Number)
+], TabiotDeviceTelemetryLatest.prototype, "density_snapshot", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => TabiotDevice_1.TabiotDevice),
     (0, typeorm_1.JoinColumn)({ name: 'device_id' }),
     __metadata("design:type", TabiotDevice_1.TabiotDevice)

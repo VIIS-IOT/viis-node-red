@@ -21,8 +21,18 @@ module.exports = function (RED: NodeAPI) {
       return;
     }
 
-    // Lấy thông tin thiết bị được chọn
+    // Get device credentials (auto-loaded from config node)
     const selectedDevice = configNode.device;
+
+    // Validate credentials
+    if (!selectedDevice || !selectedDevice.id || !selectedDevice.accessToken) {
+      node.error("Device credentials not found. Configure viis-config-node or set device_id/device_access_token in env-loader");
+      node.status({ fill: "red", shape: "ring", text: "No credentials" });
+      return;
+    }
+
+    node.log(`Using device: ${selectedDevice.id} for telemetry upload`);
+    // Lấy thông tin thiết bị được chọn
 
     node.on("input", async function (msg: any) {
       if (!selectedDevice) {
@@ -72,7 +82,8 @@ module.exports = function (RED: NodeAPI) {
       } else if (config.protocol === "HTTP") {
         const status = await sendTelemetryByHttp(
           configNode.device.accessToken,
-          msg.payload
+          msg.payload,
+          node.context()
         );
         if (status) {
           node.send({
