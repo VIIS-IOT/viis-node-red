@@ -1,0 +1,100 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-config-loader', {
+        category: 'VIIS IoT',
+        color: '#4CAF50',
+        defaults: {
+            name: { value: "" }
+        },
+        inputs: 0,
+        outputs: 0,
+        icon: "font-awesome/fa-cogs",
+        label: function() {
+            return this.name || "VIIS Config Loader";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function() {
+            // No config needed - auto-loads from device1.json
+            console.log('VIIS Config Loader: Will auto-load config from device1.json via env-loader');
+        },
+        oneditsave: function() {
+            // Nothing to save
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-config-loader">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Auto Config Loader">
+    </div>
+    <div class="form-row" style="margin-top: 10px;">
+        <div style="background: #f0f0f0; padding: 10px; border-radius: 5px; border-left: 4px solid #4CAF50;">
+            <h4 style="margin: 0 0 10px 0; color: #4CAF50;">📋 Auto Config Loader</h4>
+            <p style="margin: 5px 0; font-size: 13px;">
+                This node automatically loads polling configuration and thresholds from 
+                <code>device1.json</code> via the env-loader node.
+            </p>
+            <p style="margin: 5px 0; font-size: 13px;">
+                <strong>No configuration needed!</strong> Just deploy and it will:
+            </p>
+            <ul style="margin: 5px 0; padding-left: 20px; font-size: 13px;">
+                <li>Load <code>modbusPollGroups</code> from global context</li>
+                <li>Load <code>modbusPublishThresholds</code> from global context</li>
+                <li>Validate all keys have thresholds defined</li>
+                <li>Save to <code>pollingConfig</code> and <code>modbusThresholds</code></li>
+            </ul>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">
+                ℹ️ Make sure your <code>device1.json</code> includes 
+                <code>modbusMappings</code> (required), and optionally 
+                <code>modbusPollGroups</code> and <code>modbusPublishThresholds</code> 
+                (auto-generated if missing).
+            </p>
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-config-loader">
+    <h3>VIIS Auto Config Loader</h3>
+    
+    <p>Automatically loads Modbus polling configuration and publish thresholds from <code>device1.json</code>.</p>
+    
+    <h4>How it works</h4>
+    <ol>
+        <li>On deploy, reads <code>modbusPollGroups</code> and <code>modbusPublishThresholds</code> from global context</li>
+        <li>These values are loaded by the <strong>env-loader</strong> node from your <code>device1.json</code> file</li>
+        <li>Validates that all keys in polling groups have corresponding thresholds</li>
+        <li>Saves to global context as <code>pollingConfig</code> and <code>modbusThresholds</code> for flow nodes to use</li>
+    </ol>
+    
+    <h4>device1.json format</h4>
+    <pre><code>{
+  "modbusMappings": {
+    "board1": {
+      "coils": { "power": 30, "pump": 31 },
+      "holdingRegisters": { "temp": 100, "ec": 101 }
+    }
+  },
+  "modbusPollGroups": {
+    "realtime": {
+      "interval": 2000,
+      "coils": ["power", "pump"],
+      "holding": ["temp", "ec"]
+    }
+  },
+  "modbusPublishThresholds": {
+    "power": 0,
+    "pump": 0,
+    "temp": 0.3,
+    "ec": 0.1
+  }
+}</code></pre>
+    
+    <h4>Status indicators</h4>
+    <ul>
+        <li><span style="color: green;">🟢 Green</span>: Config loaded successfully with full coverage</li>
+        <li><span style="color: orange;">🟡 Yellow</span>: Config loaded but some warnings (missing mappings or thresholds)</li>
+        <li><span style="color: red;">🔴 Red</span>: Error - missing required config in device1.json</li>
+    </ul>
+</script>
