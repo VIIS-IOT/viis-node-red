@@ -409,7 +409,8 @@ let ScheduleService = class ScheduleService {
                 }
             }
             // Kiểm tra xem giờ hiện tại có nằm trong khoảng startDateTime và endDateTime không
-            const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[]");
+            // Sử dụng [start, end) - exclusive end boundary để tránh overlap khi 2 schedule liên tiếp nhau
+            const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[)");
             this.debugLog(JSON.stringify({
                 now: now.format(),
                 startDateTime: startDateTime.format(),

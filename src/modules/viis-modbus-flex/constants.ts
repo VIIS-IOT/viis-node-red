@@ -25,8 +25,8 @@ export const DEFAULT_CONFIG = {
     MODBUS_BAUD_RATE: 9600,
     MODBUS_PARITY: "none" as const,
     MODBUS_UNIT_ID: 1,
-    MODBUS_TIMEOUT: 5000,
-    MODBUS_RECONNECT_INTERVAL: 5000
+    MODBUS_TIMEOUT: 8000,              // 5000 → 8000ms
+    MODBUS_RECONNECT_INTERVAL: 30000   // 5000 → 30000ms (30s)
 } as const;
 
 // Environment Variable Keys
