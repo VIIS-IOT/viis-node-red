@@ -7,6 +7,78 @@ import { Logger } from "./utils/logger";
 import { DEFAULT_CONFIG, ENV_KEYS, STATUS_MESSAGES } from "./constants";
 
 /**
+ * 🆕 MỚI: Helper function để gọi notification API
+ */
+async function sendNotification(
+    node: Node,
+    logger: Logger,
+    globalHelper: GlobalContextHelper,
+    boardId: string | undefined,
+    alertData: any
+) {
+    try {
+        const deviceId = globalHelper.getEnvVar('DEVICE_ID', null) || node.context().global.get('device_id') || 'unknown_device';
+        const deviceAccessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', null) || node.context().global.get('device_access_token');
+        const backendUrl = globalHelper.getEnvVar('BACKEND_URL', null) || node.context().global.get('BACKEND_URL') || 'https://nodered.viis.tech';
+        
+        if (!deviceAccessToken) {
+            logger.warn('[NOTIFICATION] device_access_token not found, skipping alert');
+            return;
+        }
+        
+        // Construct alarm payload matching ThingsboardAlarm interface
+        const alarmPayload = {
+            alarm_name: `MODBUS_CONNECTION_ALERT_${boardId || 'UNKNOWN'}`,
+            alarm_type: 'ModbusConnectionAlert',
+            severity: alertData.status === 'circuit-breaker-open' ? 'CRITICAL' : 'MAJOR',
+            entity_type: 'DEVICE',
+            entity_id: deviceId,
+            start_ts: Date.now(),
+            end_ts: alertData.status === 'connected' ? Date.now() : undefined,
+            ack_ts: undefined,
+            clear_ts: undefined,
+            status: alertData.status === 'connected' ? 'CLEARED' : 'ACTIVE',
+            details: {
+                boardId: boardId,
+                deviceId: deviceId,
+                status: alertData.status,
+                error: alertData.error,
+                recoveryAt: alertData.recoveryAt,
+                failedCount: alertData.failedCount,
+                disconnectDuration: alertData.disconnectStartTime ? 
+                    Date.now() - alertData.disconnectStartTime : 0,
+                timestamp: Date.now()
+            },
+            propagate: false
+        };
+        
+        // Append device_access_token to URL
+        const urlWithToken = `${backendUrl}/api/v2/notification-by-token?device_access_token=${encodeURIComponent(deviceAccessToken)}`;
+        
+        logger.log(`[NOTIFICATION] Sending alert to: ${urlWithToken}`);
+        
+        const response = await fetch(urlWithToken, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(alarmPayload)
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            logger.log(`[NOTIFICATION] Alert sent successfully: ${alertData.status}`);
+            return result;
+        } else {
+            const errorText = await response.text();
+            logger.error(`[NOTIFICATION] Failed to send alert: ${response.status} - ${errorText}`);
+        }
+    } catch (error) {
+        logger.error(`[NOTIFICATION] Error sending alert: ${(error as Error).message}`);
+    }
+}
+
+/**
  * VIIS Modbus Flex Node
  * A custom Node-RED node for reading data from Modbus devices using shared connection resources
  */
@@ -147,6 +219,54 @@ module.exports = function (RED: NodeAPI) {
 
                     // Set ready status
                     node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
+
+                    // 🆕 MỚI: Lắng nghe events từ modbus client và gửi notification
+                    (modbusClient as any).on("modbus-status", async (event: any) => {
+                        logger.log(`[EVENT] Board ${config.boardId}: ${event.status} - ${event.error || ''}`);
+                        
+                        // Handle alert events
+                        if (event.status === 'circuit-breaker-open' || 
+                            event.status === 'prolonged-disconnect') {
+                            
+                            await sendNotification(
+                                node,
+                                logger,
+                                globalHelper,
+                                config.boardId,
+                                {
+                                    status: event.status,
+                                    error: event.error,
+                                    recoveryAt: event.recoveryAt,
+                                    failedCount: event.failedCount,
+                                    disconnectStartTime: event.disconnectStartTime
+                                }
+                            );
+                        }
+                        
+                        // Update node status
+                        switch (event.status) {
+                            case 'connected':
+                                node.status({ fill: "green", shape: "dot", text: "Connected" });
+                                break;
+                            case 'disconnected':
+                                node.status({ fill: "red", shape: "ring", text: `Disconnected: ${event.error}` });
+                                break;
+                            case 'circuit-breaker-open':
+                                const recoveryMin = event.recoveryAt ? 
+                                    Math.round((event.recoveryAt - Date.now()) / 60000) : 5;
+                                node.status({ 
+                                    fill: "yellow", 
+                                    shape: "ring", 
+                                    text: `Circuit Breaker (retry in ${recoveryMin}m)` 
+                                });
+                                break;
+                            case 'error':
+                                node.status({ fill: "yellow", shape: "ring", text: `Error: ${event.error}` });
+                                break;
+                        }
+                    });
+
+                    logger.log("Modbus status event listener registered");
 
             // Auto-detect config changes every 30 seconds
             configCheckInterval = setInterval(async () => {

@@ -417,7 +417,8 @@ export class ScheduleService {
             }
 
             // Kiểm tra xem giờ hiện tại có nằm trong khoảng startDateTime và endDateTime không
-            const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[]");
+            // Sử dụng [start, end) - exclusive end boundary để tránh overlap khi 2 schedule liên tiếp nhau
+            const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[)");
             this.debugLog(JSON.stringify({
                 now: now.format(),
                 startDateTime: startDateTime.format(),
@@ -1975,27 +1976,42 @@ export class ScheduleService {
         const severity = !success ? 'error' : 'notification';
         const alarmStatus = isStart ? 'Pending' : 'Clear';
 
-        // Build notification message - clearly indicate success/failure for both start and end
+        // Build notification message with i18n support
         let message: string;
+        let messageKey: string | null = null;
+        let messageParams: Record<string, any> | null = null;
+        const retryCount = this.globalHelper?.getEnvVar('MODBUS_MAX_RETRIES', 3) || 3;
+        
         if (isStart) {
             if (success) {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy thành công`;
+                messageKey = 'iot.notification.schedule.started';
+                messageParams = { scheduleName: schedule.label || schedule.name };
             } else {
-                message = `Lịch trình "${schedule.label || schedule.name}" không thể bắt đầu - Lỗi ghi Modbus sau ${this.globalHelper?.getEnvVar('MODBUS_MAX_RETRIES', 3) || 3} lần retry`;
+                message = `Lịch trình "${schedule.label || schedule.name}" không thể bắt đầu - Lỗi ghi Modbus sau ${retryCount} lần retry`;
+                messageKey = 'iot.notification.schedule.failed';
+                messageParams = { scheduleName: schedule.label || schedule.name, retryCount };
             }
         } else {
             if (success) {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`;
+                messageKey = 'iot.notification.schedule.completed';
+                messageParams = { scheduleName: schedule.label || schedule.name };
             } else {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã kết thúc nhưng KHÔNG THỂ TẮT thiết bị - Lỗi ghi Modbus sau retry`;
+                messageKey = 'iot.notification.schedule.failed';
+                messageParams = { scheduleName: schedule.label || schedule.name };
             }
         }
 
-        // Prepare request payload (ThingsboardAlarm format)
+        // Prepare request payload (ThingsboardAlarm format) with i18n support
         const payload = {
             alarm_name: schedule.label || schedule.name,
             id: deviceId,
             msg: message,
+            message_key: messageKey,
+            message_params: messageParams,
+            message_locale: 'vi-VN',
             severity: severity,
             trigger_time: new Date().toISOString(),
             tb_alarm_id: schedule.name,

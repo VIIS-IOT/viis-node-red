@@ -602,19 +602,35 @@ export class ErrorNotificationService {
         console.warn('[ErrorNotificationService] Failed to parse metadata:', error);
       }
 
-      // Build message with Vietnamese format
+      // Build message with Vietnamese format and i18n support
       let message: string;
+      let messageKey: string | null = null;
+      let messageParams: Record<string, any> | null = null;
+
       if (isResolve) {
         message = `Lỗi "${notification.err_code}" đã được khắc phục: ${notification.entity_label || notification.entity}`;
+        messageKey = 'iot.notification.error.resolved';
+        messageParams = {
+          errCode: notification.err_code || 'UNKNOWN',
+          entityName: notification.entity_label || notification.entity || 'Unknown'
+        };
       } else {
         message = notification.message || `Lỗi ${notification.err_code} phát hiện tại ${notification.entity_label || notification.entity}`;
+        messageKey = 'iot.notification.error.detected';
+        messageParams = {
+          errCode: notification.err_code || 'UNKNOWN',
+          entityName: notification.entity_label || notification.entity || 'Unknown'
+        };
       }
 
-      // Prepare request payload (ThingsboardAlarm format)
+      // Prepare request payload (ThingsboardAlarm format) with i18n support
       const payload = {
         alarm_name: notification.err_code || 'ERROR',
         id: deviceId,
         msg: message,
+        message_key: messageKey,
+        message_params: messageParams,
+        message_locale: 'vi-VN',
         severity: severity,
         trigger_time: notification.created_at?.toISOString() || new Date().toISOString(),
         tb_alarm_id: notification.name,

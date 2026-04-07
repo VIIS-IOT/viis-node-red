@@ -91,7 +91,8 @@
       "viis-flow-error-monitor": "dist/modules/viis-flow-error-monitor/viis-flow-error-monitor.js",
       "viis-ec-error-monitor": "dist/modules/viis-ec-error-monitor/viis-ec-error-monitor.js",
       "viis-fertilizer-ec-control": "dist/modules/viis-fertilizer-ec-control/viis-fertilizer-ec-control.js",
-      "viis-aqara-device": "dist/modules/viis-aqara-device/viis-aqara-device.js"
+      "viis-aqara-device": "dist/modules/viis-aqara-device/viis-aqara-device.js",
+      "viis-config-loader": "dist/modules/viis-config-loader/viis-config-loader.js"
     }
   },
   "dependencies": {
