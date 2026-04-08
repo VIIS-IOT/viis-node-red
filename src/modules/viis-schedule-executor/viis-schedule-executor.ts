@@ -595,29 +595,6 @@ module.exports = function (RED: NodeAPI) {
 
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
-                    const now = moment().utc().add(7, 'hours');
-                    const today = now.clone().startOf('day');
-                    const startTime = moment(schedule.start_time, "HH:mm:ss");
-                    const endTime = moment(schedule.end_time, "HH:mm:ss");
-
-                    let startDateTime = today.clone().set({
-                        hour: startTime.hour(),
-                        minute: startTime.minute(),
-                        second: startTime.second()
-                    });
-                    let endDateTime = today.clone().set({
-                        hour: endTime.hour(),
-                        minute: endTime.minute(),
-                        second: endTime.second()
-                    });
-
-                    if (startDateTime.isAfter(endDateTime)) {
-                        if (now.isBefore(endDateTime)) {
-                            startDateTime.subtract(1, 'day');
-                        } else {
-                            endDateTime.add(1, 'day');
-                        }
-                    }
 
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
                     // This happens after power outage when activeModbusCommands was cleared on startup
@@ -721,8 +698,8 @@ module.exports = function (RED: NodeAPI) {
                             lastCheckTimestamps[schedule.name] = now;
                             globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         }
-                    } else if (schedule.status === "running" && now.isAfter(endDateTime)) {
-                        debugLog("start finishing schedule");
+                    } else if (schedule.status === "running" && !isDue) {
+                        debugLog(`Schedule ${schedule.name} no longer due - stopping (was: running, isDue: ${isDue})`);
 
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];

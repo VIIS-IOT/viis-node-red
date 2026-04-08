@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("./viis-schedule-executor-service");
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
-const moment_1 = __importDefault(require("moment"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
     function ScheduleExecutorNode(config) {
@@ -508,28 +507,6 @@ module.exports = function (RED) {
                 cleanStaleStatusHistory();
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
-                    const now = (0, moment_1.default)().utc().add(7, 'hours');
-                    const today = now.clone().startOf('day');
-                    const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
-                    const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
-                    let startDateTime = today.clone().set({
-                        hour: startTime.hour(),
-                        minute: startTime.minute(),
-                        second: startTime.second()
-                    });
-                    let endDateTime = today.clone().set({
-                        hour: endTime.hour(),
-                        minute: endTime.minute(),
-                        second: endTime.second()
-                    });
-                    if (startDateTime.isAfter(endDateTime)) {
-                        if (now.isBefore(endDateTime)) {
-                            startDateTime.subtract(1, 'day');
-                        }
-                        else {
-                            endDateTime.add(1, 'day');
-                        }
-                    }
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
                     // This happens after power outage when activeModbusCommands was cleared on startup
                     const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
@@ -622,8 +599,8 @@ module.exports = function (RED) {
                             globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                         }
                     }
-                    else if (schedule.status === "running" && now.isAfter(endDateTime)) {
-                        debugLog("start finishing schedule");
+                    else if (schedule.status === "running" && !isDue) {
+                        debugLog(`Schedule ${schedule.name} no longer due - stopping (was: running, isDue: ${isDue})`);
                         const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
