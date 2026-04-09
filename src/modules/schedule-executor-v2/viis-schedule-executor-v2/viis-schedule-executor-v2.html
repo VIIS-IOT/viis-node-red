@@ -1,0 +1,168 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-schedule-executor-v2', {
+        category: 'VIIS V2',
+        color: '#3FADB5',
+        defaults: {
+            name: { value: "" },
+            description: { value: "" },
+            debugEnable: { value: false },
+            verifyAfterWrite: { value: true },
+            boardMode: { value: 'auto' },
+            boardId: { value: "" }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "font-awesome/fa-cog",
+        align: "right",
+        label: function () {
+            return this.name || "viis-schedule-executor-v2";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function () {
+            // Initialize board mode select
+            if (!this.boardMode) {
+                this.boardMode = 'auto';
+            }
+            
+            // Show/hide boardId field based on boardMode
+            const updateBoardIdVisibility = () => {
+                const mode = $("#node-input-boardMode").val();
+                if (mode === 'multi') {
+                    $("#node-input-boardId-row").show();
+                } else {
+                    $("#node-input-boardId-row").hide();
+                }
+            };
+            
+            $("#node-input-boardMode").on("change", updateBoardIdVisibility);
+            updateBoardIdVisibility();
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-schedule-executor-v2">
+    <div class="form-row">
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i> Name
+        </label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-description">
+            <i class="fa fa-info-circle"></i> Description
+        </label>
+        <input type="text" id="node-input-description" placeholder="Description">
+    </div>
+    <div class="form-row">
+        <label for="node-input-boardMode">
+            <i class="fa fa-server"></i> Board Mode
+        </label>
+        <select id="node-input-boardMode" style="width: 150px;">
+            <option value="auto">Auto</option>
+            <option value="single">Single</option>
+            <option value="multi">Multi</option>
+        </select>
+    </div>
+    <div class="form-row" id="node-input-boardId-row">
+        <label for="node-input-boardId">
+            <i class="fa fa-plug"></i> Board ID
+        </label>
+        <input type="text" id="node-input-boardId" placeholder="board1">
+    </div>
+    <div class="form-row">
+        <label for="node-input-verifyAfterWrite">
+            <i class="fa fa-check-square"></i> Verify
+        </label>
+        <input type="checkbox" id="node-input-verifyAfterWrite" style="width: auto;">
+        <span>Verify writes after execution</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-debugEnable">
+            <i class="fa fa-bug"></i> Debug
+        </label>
+        <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+        <span>Enable debug logging</span>
+    </div>
+    <div class="form-tips">
+        <i class="fa fa-info-circle"></i>
+        <strong>viis-schedule-executor-v2</strong> executes Modbus commands.
+        Input: <code>msg.payload = { allowed: bool, commands: [] }</code>
+        Output: <code>msg.payload = { success: bool, executedCommands: number }</code>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-schedule-executor-v2">
+    <h3>viis-schedule-executor-v2</h3>
+    <p>Executes Modbus commands and verifies writes for schedule control.</p>
+    
+    <h4>Responsibilities</h4>
+    <ul>
+        <li>Execute holding register commands (FC 6)</li>
+        <li>Execute coil commands (FC 5) with proper sequencing</li>
+        <li>Verify writes by reading back values</li>
+        <li>Track active commands per schedule</li>
+        <li>Reset commands to safe state</li>
+        <li>Handle valve/pump sequencing (valves first on start, pumps first on stop)</li>
+    </ul>
+    
+    <h4>Input</h4>
+    <dl class="message-properties">
+        <dt>msg.payload<span class="property-type">object</span></dt>
+        <dd>
+            <ul>
+                <li><code>allowed</code>: Boolean - execution permission</li>
+                <li><code>commands</code>: Array of Modbus commands</li>
+                <li><code>schedule</code>: Optional schedule object</li>
+            </ul>
+        </dd>
+    </dl>
+    
+    <h4>Output</h4>
+    <dl class="message-properties">
+        <dt>msg.payload<span class="property-type">object</span></dt>
+        <dd>
+            <ul>
+                <li><code>success</code>: Boolean - execution result</li>
+                <li><code>executedCommands</code>: Number of commands executed</li>
+                <li><code>failedCommands</code>: Number of failed commands</li>
+                <li><code>errorMessage</code>: Error details if failed</li>
+            </ul>
+        </dd>
+        <dt>msg.topic<span class="property-type">string</span></dt>
+        <dd>Always "schedule-executor-v2" or "schedule-executor-v2-error"</dd>
+    </dl>
+    
+    <h4>Configuration</h4>
+    <dl class="message-properties">
+        <dt>Board Mode<span class="property-type">string</span></dt>
+        <dd>Auto/Single/Multi board mode selection</dd>
+        <dt>Board ID<span class="property-type">string</span></dt>
+        <dd>Specific board ID for multi-board setups</dd>
+        <dt>Verify<span class="property-type">boolean</span></dt>
+        <dd>Enable write verification (reads back after writing)</dd>
+        <dt>Debug<span class="property-type">boolean</span></dt>
+        <dd>Enable debug logging</dd>
+    </dl>
+    
+    <h4>Details</h4>
+    <p>This node is the THIRD (final) in the V2 chain. It:</p>
+    <ul>
+        <li><strong>Start Sequence</strong>: Valves first → 5s delay → Pumps/Power</li>
+        <li><strong>Finish Sequence</strong>: Pumps/Power first → 5s delay → Valves</li>
+        <li><strong>Verification</strong>: Reads back values after writing to confirm</li>
+        <li><strong>Tracking</strong>: Keeps track of active commands per schedule</li>
+    </ul>
+    <p>Connect this after <strong>viis-schedule-logic-v2</strong>.</p>
+    
+    <h4>RPC Commands</h4>
+    <p>Supports remote reset:</p>
+    <pre><code>{
+  "method": "reset_schedule",
+  "params": { "scheduleId": "schedule-name" }
+}</code></pre>
+    
+    <h4>Wiring Example</h4>
+    <pre>inject → trigger-v2 → logic-v2 → executor-v2 → debug</pre>
+</script>

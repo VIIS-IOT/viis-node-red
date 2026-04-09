@@ -1,0 +1,111 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-schedule-logic-v2', {
+        category: 'VIIS V2',
+        color: '#3FADB5',
+        defaults: {
+            name: { value: "" },
+            description: { value: "" },
+            debugEnable: { value: false }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "font-awesome/fa-shield",
+        align: "right",
+        label: function () {
+            return this.name || "viis-schedule-logic-v2";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function () {
+            // Initialization if needed
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-schedule-logic-v2">
+    <div class="form-row">
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i> Name
+        </label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-description">
+            <i class="fa fa-info-circle"></i> Description
+        </label>
+        <input type="text" id="node-input-description" placeholder="Description">
+    </div>
+    <div class="form-row">
+        <label for="node-input-debugEnable">
+            <i class="fa fa-bug"></i> Debug
+        </label>
+        <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+        <span>Enable debug logging</span>
+    </div>
+    <div class="form-tips">
+        <i class="fa fa-info-circle"></i>
+        <strong>viis-schedule-logic-v2</strong> checks control modes and safety conditions.
+        Input: <code>msg.payload.schedules = []</code>
+        Output: <code>msg.payload = { allowed: bool, commands: [], mode, conditions }</code>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-schedule-logic-v2">
+    <h3>viis-schedule-logic-v2</h3>
+    <p>Checks control modes and safety conditions before allowing schedule execution.</p>
+    
+    <h4>Responsibilities</h4>
+    <ul>
+        <li>Read control mode (AUTO/MANUAL/OFF)</li>
+        <li>Check safety conditions (water level, emergency stop, errors)</li>
+        <li>Detect command overlaps</li>
+        <li>Apply manual overrides</li>
+        <li>Handle RPC commands for mode changes</li>
+    </ul>
+    
+    <h4>Input</h4>
+    <dl class="message-properties">
+        <dt>msg.payload.schedules<span class="property-type">array</span></dt>
+        <dd>Array of schedules from viis-schedule-trigger-v2</dd>
+    </dl>
+    
+    <h4>Output</h4>
+    <dl class="message-properties">
+        <dt>msg.payload<span class="property-type">object</span></dt>
+        <dd>
+            <ul>
+                <li><code>allowed</code>: Boolean - execution allowed?</li>
+                <li><code>commands</code>: Array of Modbus commands</li>
+                <li><code>mode</code>: Control mode (AUTO/MANUAL/OFF)</li>
+                <li><code>conditions</code>: Safety conditions object</li>
+                <li><code>blockedReason</code>: Reason if blocked (optional)</li>
+            </ul>
+        </dd>
+        <dt>msg.topic<span class="property-type">string</span></dt>
+        <dd>Always "schedule-logic-v2"</dd>
+    </dl>
+    
+    <h4>Configuration</h4>
+    <dl class="message-properties">
+        <dt>Debug<span class="property-type">boolean</span></dt>
+        <dd>Enable debug logging to Node-RED debug panel</dd>
+    </dl>
+    
+    <h4>Details</h4>
+    <p>This node is the SECOND in the V2 chain. It checks:</p>
+    <ul>
+        <li><strong>Control Mode</strong>: Blocks if OFF, allows AUTO/MANUAL</li>
+        <li><strong>Safety Conditions</strong>: Blocks on emergency_stop, water_level_low, pump_error, flow_error</li>
+        <li><strong>Command Overlaps</strong>: Warns if commands conflict with active schedules</li>
+        <li><strong>Manual Overrides</strong>: Applies user overrides to commands</li>
+    </ul>
+    <p>Connect this between <strong>viis-schedule-trigger-v2</strong> and <strong>viis-schedule-executor-v2</strong>.</p>
+    
+    <h4>RPC Commands</h4>
+    <p>Supports remote mode changes:</p>
+    <pre><code>{
+  "method": "set_control_mode",
+  "params": { "mode": "AUTO" }
+}</code></pre>
+</script>

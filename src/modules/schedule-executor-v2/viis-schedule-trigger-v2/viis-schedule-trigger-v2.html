@@ -1,0 +1,118 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-schedule-trigger-v2', {
+        category: 'VIIS V2',
+        color: '#3FADB5',
+        defaults: {
+            name: { value: "" },
+            description: { value: "" },
+            debugEnable: { value: false },
+            cleanupInterval: { value: 1, required: true, validate: RED.validators.number() }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "font-awesome/fa-clock-o",
+        align: "right",
+        label: function () {
+            return this.name || "viis-schedule-trigger-v2";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function () {
+            // Initialize spinbox for cleanupInterval
+            $("#node-input-cleanupInterval").spinner({
+                min: 1,
+                max: 60
+            });
+        },
+        oneditsave: function () {
+            // Ensure cleanupInterval is a number
+            this.cleanupInterval = parseInt($("#node-input-cleanupInterval").val(), 10);
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-schedule-trigger-v2">
+    <div class="form-row">
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i> Name
+        </label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-description">
+            <i class="fa fa-info-circle"></i> Description
+        </label>
+        <input type="text" id="node-input-description" placeholder="Description">
+    </div>
+    <div class="form-row">
+        <label for="node-input-cleanupInterval">
+            <i class="fa fa-clock-o"></i> Check Interval
+        </label>
+        <input type="text" id="node-input-cleanupInterval" placeholder="1" style="width: 80px;"> minutes
+    </div>
+    <div class="form-row">
+        <label for="node-input-debugEnable">
+            <i class="fa fa-bug"></i> Debug
+        </label>
+        <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+        <span>Enable debug logging</span>
+    </div>
+    <div class="form-tips">
+        <i class="fa fa-info-circle"></i>
+        <strong>viis-schedule-trigger-v2</strong> checks which schedules are due based on time.
+        Output: <code>msg.payload = { schedules: [], timestamp: number }</code>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-schedule-trigger-v2">
+    <h3>viis-schedule-trigger-v2</h3>
+    <p>Checks which schedules are currently due based on time, date, and interval settings.</p>
+    
+    <h4>Responsibilities</h4>
+    <ul>
+        <li>Query enabled schedules from database</li>
+        <li>Check current time against schedule start/end times</li>
+        <li>Handle date ranges and day-of-week intervals</li>
+        <li>Prevent duplicate triggers with timestamp tracking</li>
+    </ul>
+    
+    <h4>Input</h4>
+    <dl class="message-properties">
+        <dt>msg<span class="property-type">object</span></dt>
+        <dd>Any message to trigger a check (msg.payload is ignored)</dd>
+    </dl>
+    
+    <h4>Output</h4>
+    <dl class="message-properties">
+        <dt>msg.payload<span class="property-type">object</span></dt>
+        <dd>
+            <ul>
+                <li><code>schedules</code>: Array of due schedules</li>
+                <li><code>timestamp</code>: Check timestamp (ms)</li>
+                <li><code>checkInterval</code>: Configured interval (minutes)</li>
+            </ul>
+        </dd>
+        <dt>msg.scheduleCount<span class="property-type">number</span></dt>
+        <dd>Number of due schedules</dd>
+        <dt>msg.topic<span class="property-type">string</span></dt>
+        <dd>Always "schedule-trigger-v2"</dd>
+    </dl>
+    
+    <h4>Configuration</h4>
+    <dl class="message-properties">
+        <dt>Check Interval<span class="property-type">number</span></dt>
+        <dd>Minimum interval between checks (default: 1 minute)</dd>
+        <dt>Debug<span class="property-type">boolean</span></dt>
+        <dd>Enable debug logging to Node-RED debug panel</dd>
+    </dl>
+    
+    <h4>Details</h4>
+    <p>This node is the FIRST in the V2 chain. It only handles timing checks and does NOT:</p>
+    <ul>
+        <li>Check control modes (AUTO/MANUAL/OFF)</li>
+        <li>Check safety conditions</li>
+        <li>Execute Modbus commands</li>
+    </ul>
+    <p>Connect this to <strong>viis-schedule-logic-v2</strong> for mode/condition checks.</p>
+</script>
