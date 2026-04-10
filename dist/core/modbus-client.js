@@ -20,6 +20,19 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.failedConnectionCount = 0;
         this.circuitBreakerOpen = false;
         this.disconnectStartTime = null;
+        // USB Serial Port Recovery (URB -32 / EPIPE errors)
+        this.consecutiveErrors = 0;
+        this.MAX_CONSECUTIVE_ERRORS = 5; // Trigger recovery after 5 consecutive errors
+        this.isRecovering = false; // Prevent concurrent recovery attempts
+        this.USB_SERIAL_ERRORS = [
+            "EPIPE", // USB broken pipe (URB -32)
+            "urb stopped: -32", // Linux kernel USB error
+            "Resource temporarily unavailable", // Port locked after USB error
+            "Cannot lock port", // Port lock after USB failure
+            "Input/output error", // Generic USB I/O error
+            "EBUSY", // USB device busy
+            "ENODEV" // USB device disconnected
+        ];
         this.node = node; // Set node first before calling other methods
         this.config = Object.assign({ tcpPort: 502, baudRate: 9600, parity: "none", unitId: 1, timeout: 8000, reconnectInterval: 30000, 
             // Board-specific defaults
@@ -213,6 +226,23 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.node.error(`Modbus Error: ${error.message}`);
         this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
         this.emit("modbus-status", { status: "error", error: error.message });
+        // Check if this is a USB serial error that might need port recovery
+        const isUsbError = this.isUsbSerialError(error.message);
+        if (isUsbError) {
+            this.consecutiveErrors++;
+            this.node.warn(`[USB-ERROR] Consecutive USB errors: ${this.consecutiveErrors}/${this.MAX_CONSECUTIVE_ERRORS} - "${error.message}"`);
+            // Trigger auto-recovery if threshold reached
+            if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS && !this.isRecovering) {
+                this.node.warn(`[USB-RECOVERY] Threshold reached! Attempting automatic port recovery...`);
+                this.attemptPortRecovery().catch(recoveryError => {
+                    this.node.error(`[USB-RECOVERY] Recovery failed: ${recoveryError.message}`);
+                });
+            }
+        }
+        else {
+            // Reset counter on non-USB errors (might be normal timeouts)
+            this.consecutiveErrors = 0;
+        }
         // Danh sách các lỗi liên quan đến kết nối
         const connectionErrors = [
             "Timed out",
@@ -254,6 +284,115 @@ class ModbusClientCore extends events_1.EventEmitter {
                 }
             }
         }
+    }
+    /**
+     * Check if error is related to USB serial port failure (URB -32 / EPIPE)
+     */
+    isUsbSerialError(message) {
+        return this.USB_SERIAL_ERRORS.some(err => message.includes(err));
+    }
+    /**
+     * Force-close and recreate the serial port connection
+     * This simulates the effect of `docker restart nodered1` without restarting the container
+     */
+    async attemptPortRecovery() {
+        if (this.isRecovering) {
+            this.node.warn("[USB-RECOVERY] Recovery already in progress, skipping");
+            return;
+        }
+        this.isRecovering = true;
+        const startTime = Date.now();
+        try {
+            this.node.warn("[USB-RECOVERY] Starting port recovery sequence...");
+            this.node.status({ fill: "yellow", shape: "dot", text: "Recovering..." });
+            // Step 1: Force close existing connection
+            this.node.warn("[USB-RECOVERY] Step 1/4: Force-closing serial port...");
+            await this.forceClosePort();
+            // Step 2: Wait for USB stack to settle (critical for FTDI chips)
+            this.node.warn("[USB-RECOVERY] Step 2/4: Waiting 3s for USB stack to settle...");
+            await this.sleep(3000);
+            // Step 3: Create completely new Modbus client
+            this.node.warn("[USB-RECOVERY] Step 3/4: Creating new Modbus client instance...");
+            this.client = new modbus_serial_1.default();
+            // Step 4: Attempt fresh connection
+            this.node.warn("[USB-RECOVERY] Step 4/4: Attempting fresh connection...");
+            await this.initializeClient();
+            // Verify connection is actually working
+            await this.sleep(1000); // Give connection time to stabilize
+            if (this.isConnected && this.client.isOpen) {
+                const recoveryTime = Date.now() - startTime;
+                this.node.warn(`[USB-RECOVERY] ✅ SUCCESS! Port recovered in ${recoveryTime}ms`);
+                this.node.status({ fill: "green", shape: "dot", text: "Recovered" });
+                // Reset error counters
+                this.consecutiveErrors = 0;
+                this.failedConnectionCount = 0;
+                // Emit recovery event
+                this.emit("modbus-status", {
+                    status: "recovered",
+                    recoveryTimeMs: recoveryTime
+                });
+            }
+            else {
+                throw new Error("Connection not established after recovery");
+            }
+        }
+        catch (error) {
+            const recoveryTime = Date.now() - startTime;
+            this.node.error(`[USB-RECOVERY] ❌ FAILED after ${recoveryTime}ms: ${error.message}`);
+            this.node.status({ fill: "red", shape: "ring", text: "Recovery failed" });
+            // Emit recovery failure event
+            this.emit("modbus-status", {
+                status: "recovery-failed",
+                error: error.message,
+                recoveryTimeMs: recoveryTime
+            });
+            // Schedule another recovery attempt after delay
+            this.node.warn("[USB-RECOVERY] Will retry in 10 seconds...");
+            setTimeout(() => {
+                this.isRecovering = false;
+                this.attemptPortRecovery().catch(err => {
+                    this.node.error(`[USB-RECOVERY] Retry also failed: ${err.message}`);
+                });
+            }, 10000);
+            throw error;
+        }
+        finally {
+            this.isRecovering = false;
+        }
+    }
+    /**
+     * Force close the serial port with aggressive cleanup
+     * Ensures all resources are released (similar to container restart effect)
+     */
+    async forceClosePort() {
+        try {
+            // Mark as disconnected
+            this.isConnected = false;
+            // Close client if open
+            if (this.client && this.client.isOpen) {
+                try {
+                    this.client.close();
+                }
+                catch (closeError) {
+                    // Ignore close errors - we're forcing anyway
+                    this.node.warn(`[USB-RECOVERY] Close error (ignored): ${closeError.message}`);
+                }
+            }
+            // Wait a bit to ensure OS releases the file descriptor
+            await this.sleep(500);
+            // Remove all event listeners to prevent stale callbacks
+            this.removeAllListeners();
+            this.node.warn("[USB-RECOVERY] Port force-closed and listeners cleared");
+        }
+        catch (error) {
+            this.node.warn(`[USB-RECOVERY] Force close error (continuing): ${error.message}`);
+        }
+    }
+    /**
+     * Sleep utility function
+     */
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
     scheduleReconnect() {
         // Don't schedule reconnect if shutting down
@@ -525,6 +664,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                     setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read coils timeout after ${readTimeout}ms`)), readTimeout);
                 });
                 const { data } = await Promise.race([readPromise, timeoutPromise]);
+                // Reset consecutive error counter on successful read
+                this.consecutiveErrors = 0;
                 //this.node.debug(`[${boardType}-READ] Successfully read coils at ${address}: ${data.length} values`);
                 return { address, data };
             }
@@ -549,6 +690,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                     setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read input registers timeout after ${readTimeout}ms`)), readTimeout);
                 });
                 const { data } = await Promise.race([readPromise, timeoutPromise]);
+                // Reset consecutive error counter on successful read
+                this.consecutiveErrors = 0;
                 return { address, data };
             }
             catch (error) {
@@ -572,6 +715,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                     setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read holding registers timeout after ${readTimeout}ms`)), readTimeout);
                 });
                 const { data } = await Promise.race([readPromise, timeoutPromise]);
+                // Reset consecutive error counter on successful read
+                this.consecutiveErrors = 0;
                 return { address, data };
             }
             catch (error) {

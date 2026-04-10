@@ -65,6 +65,7 @@ export class ModbusGetterService {
 
     /**
      * Execute operation with retry logic for serial port errors
+     * Enhanced to detect USB serial failures that need port recovery
      */
     private async executeWithRetry<T>(
         operation: () => Promise<T>,
@@ -83,17 +84,29 @@ export class ModbusGetterService {
                 // Check if this is a retryable serial port error
                 if (this.isSerialPortError(errorMessage)) {
                     const isLastAttempt = attempt === this.MAX_RETRY_ATTEMPTS - 1;
-                    
+
                     if (!isLastAttempt) {
                         const retryDelay = this.calculateRetryDelay(attempt);
                         this.logger.warn(
                             `[RETRY] ${operationName} failed at addr ${address}: ${errorMessage}. ` +
                             `Retrying in ${retryDelay}ms (attempt ${attempt + 1}/${this.MAX_RETRY_ATTEMPTS})`
                         );
-                        
+
                         // Wait before retry
                         await new Promise(resolve => setTimeout(resolve, retryDelay));
                         continue;
+                    } else {
+                        // Last attempt failed - check if this might be a USB error needing recovery
+                        const isUsbError = errorMessage.includes("EPIPE") ||
+                                          errorMessage.includes("Resource temporarily unavailable") ||
+                                          errorMessage.includes("Cannot lock port");
+                        
+                        if (isUsbError) {
+                            this.logger.warn(
+                                `[USB-ERROR] ${operationName} at addr ${address}: All retries exhausted. ` +
+                                `This appears to be a USB serial port failure. The ModbusClientCore will trigger automatic recovery.`
+                            );
+                        }
                     }
                 }
 

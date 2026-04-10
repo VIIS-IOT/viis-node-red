@@ -60,6 +60,19 @@ class DH6400SerialClient extends events_1.EventEmitter {
         this.pendingTimeouts = new Set(); // Track pending timeouts for cleanup
         this.maxOpenRetries = 5; // Max retries for port open (lock issues)
         this.openRetryDelay = 2000; // 2 seconds between retries
+        // USB Serial Port Recovery (URB -32 / EPIPE errors)
+        this.consecutiveErrors = 0;
+        this.MAX_CONSECUTIVE_ERRORS = 5;
+        this.isRecovering = false;
+        this.USB_SERIAL_ERRORS = [
+            "EPIPE",
+            "urb stopped: -32",
+            "Resource temporarily unavailable",
+            "Cannot lock port",
+            "Input/output error",
+            "EBUSY",
+            "ENODEV"
+        ];
         /**
          * Schedule reconnection with exponential backoff
          */
@@ -262,6 +275,119 @@ class DH6400SerialClient extends events_1.EventEmitter {
     handleError(error) {
         this.log(`Serial error: ${error.message}`, 'error');
         this.emit('error', error);
+        // Check if this is a USB serial error
+        if (this.isUsbSerialError(error.message)) {
+            this.consecutiveErrors++;
+            this.log(`[USB-ERROR] Consecutive USB errors: ${this.consecutiveErrors}/${this.MAX_CONSECUTIVE_ERRORS} - "${error.message}"`, 'warn');
+            // Trigger auto-recovery if threshold reached
+            if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS && !this.isRecovering) {
+                this.log(`[USB-RECOVERY] Threshold reached! Attempting automatic port recovery...`, 'warn');
+                this.attemptPortRecovery().catch(recoveryError => {
+                    this.log(`[USB-RECOVERY] Recovery failed: ${recoveryError.message}`, 'error');
+                });
+            }
+        }
+        else {
+            // Reset counter on non-USB errors
+            this.consecutiveErrors = 0;
+        }
+    }
+    /**
+     * Check if error is related to USB serial port failure
+     */
+    isUsbSerialError(message) {
+        return this.USB_SERIAL_ERRORS.some(err => message.includes(err));
+    }
+    /**
+     * Force-close and recreate the serial port connection
+     */
+    async attemptPortRecovery() {
+        var _a;
+        if (this.isRecovering) {
+            this.log('[USB-RECOVERY] Recovery already in progress, skipping', 'warn');
+            return;
+        }
+        this.isRecovering = true;
+        const startTime = Date.now();
+        try {
+            this.log('[USB-RECOVERY] Starting port recovery sequence...', 'warn');
+            // Step 1: Force close existing connection
+            this.log('[USB-RECOVERY] Step 1/4: Force-closing serial port...', 'warn');
+            await this.forceClosePort();
+            // Step 2: Wait for USB stack to settle
+            this.log('[USB-RECOVERY] Step 2/4: Waiting 3s for USB stack to settle...', 'warn');
+            await this.sleep(3000);
+            // Step 3: Attempt fresh connection
+            this.log('[USB-RECOVERY] Step 3/4: Creating new serial port instance...', 'warn');
+            await this.initializePort();
+            // Step 4: Verify connection
+            this.log('[USB-RECOVERY] Step 4/4: Verifying connection...', 'warn');
+            await this.sleep(1000);
+            if (this.isConnected && ((_a = this.port) === null || _a === void 0 ? void 0 : _a.isOpen)) {
+                const recoveryTime = Date.now() - startTime;
+                this.log(`[USB-RECOVERY] ✅ SUCCESS! Port recovered in ${recoveryTime}ms`, 'info');
+                // Reset error counters
+                this.consecutiveErrors = 0;
+                this.reconnectAttemptCount = 0;
+                this.emit('recovered', { recoveryTimeMs: recoveryTime });
+            }
+            else {
+                throw new Error('Connection not established after recovery');
+            }
+        }
+        catch (error) {
+            const recoveryTime = Date.now() - startTime;
+            this.log(`[USB-RECOVERY] ❌ FAILED after ${recoveryTime}ms: ${error.message}`, 'error');
+            // Schedule another recovery attempt after delay
+            this.log('[USB-RECOVERY] Will retry in 10 seconds...', 'warn');
+            setTimeout(() => {
+                this.isRecovering = false;
+                this.attemptPortRecovery().catch(err => {
+                    this.log(`[USB-RECOVERY] Retry also failed: ${err.message}`, 'error');
+                });
+            }, 10000);
+            throw error;
+        }
+        finally {
+            this.isRecovering = false;
+        }
+    }
+    /**
+     * Force close the serial port with aggressive cleanup
+     */
+    async forceClosePort() {
+        try {
+            // Mark as disconnected
+            this.isConnected = false;
+            // Close port if exists
+            if (this.port) {
+                try {
+                    if (this.port.isOpen) {
+                        this.port.close();
+                    }
+                }
+                catch (closeError) {
+                    this.log(`[USB-RECOVERY] Close error (ignored): ${closeError.message}`, 'warn');
+                }
+            }
+            // Wait to ensure OS releases the file descriptor
+            await this.sleep(500);
+            // Remove all event listeners
+            if (this.port) {
+                this.port.removeAllListeners();
+                this.port = null;
+            }
+            this.log('[USB-RECOVERY] Port force-closed and listeners cleared', 'info');
+        }
+        catch (error) {
+            this.log(`[USB-RECOVERY] Force close error (continuing): ${error.message}`, 'warn');
+        }
+    }
+    /**
+     * Sleep utility function
+     */
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
     /**
      * Handle port close
@@ -404,6 +530,10 @@ class DH6400SerialClient extends events_1.EventEmitter {
             this.once(`response-${request.slaveId}`, (data) => {
                 this.pendingTimeouts.delete(timeout);
                 clearTimeout(timeout);
+                // Reset error counter on successful response
+                if (data) {
+                    this.consecutiveErrors = 0;
+                }
                 request.callback(data);
                 // Small delay before next request
                 const delayTimeout = setTimeout(() => {
