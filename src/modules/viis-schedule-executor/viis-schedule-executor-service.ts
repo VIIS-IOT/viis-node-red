@@ -1100,6 +1100,7 @@ export class ScheduleService {
                 }
 
                 this.clearActiveCommands(schedule.name);
+                this.clearScheduleConfigValues(schedule.name);
                 this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
@@ -1119,6 +1120,7 @@ export class ScheduleService {
                     const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
+                        this.clearScheduleConfigValues(schedule.name);
                         this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                         await this.updateScheduleStatus(schedule, 'finished');
                         await this.sendNotificationToBackend(schedule, 'end', true);
@@ -1496,6 +1498,7 @@ export class ScheduleService {
 
     /**
      * Store configuration parameter (for schedule execution)
+     * Also tracks which keys belong to which schedule for cleanup on finish
      */
     private storeConfigParameter(key: string, value: any, scheduleId: string): ConfigParameter | null {
         // Skip all falsy values: 0, "0", false, "false", null, undefined, ""
@@ -1520,8 +1523,73 @@ export class ScheduleService {
         currentConfig[key] = validatedValue;
         this.setScheduleConfigValues(currentConfig);
 
+        // Track which keys belong to this schedule for cleanup on finish
+        this.addScheduleConfigKey(scheduleId, key);
+
         this.debugLog(`Stored config parameter: ${key}=${validatedValue} (type: ${type}) for schedule ${scheduleId}`);
         return configParam;
+    }
+
+    /**
+     * Track a config key as belonging to a specific schedule
+     */
+    private addScheduleConfigKey(scheduleId: string, key: string): void {
+        const scheduleConfigKeys: Record<string, string[]> = this.getScheduleConfigKeys();
+        if (!scheduleConfigKeys[scheduleId]) {
+            scheduleConfigKeys[scheduleId] = [];
+        }
+        if (!scheduleConfigKeys[scheduleId].includes(key)) {
+            scheduleConfigKeys[scheduleId].push(key);
+            this.debugLog(`Tracked config key ${key} for schedule ${scheduleId}`);
+        }
+        this.setScheduleConfigKeys(scheduleConfigKeys);
+    }
+
+    /**
+     * Get tracked config keys for all schedules
+     */
+    private getScheduleConfigKeys(): Record<string, string[]> {
+        return this.node?.context().global.get("scheduleConfigKeys") as Record<string, string[]> || {};
+    }
+
+    /**
+     * Set tracked config keys for all schedules
+     */
+    private setScheduleConfigKeys(keys: Record<string, string[]>): void {
+        this.node?.context().global.set("scheduleConfigKeys", keys);
+    }
+
+    /**
+     * Reset configKeyValues that were set by a specific schedule when it finishes.
+     * Keeps the keys in configKeyValues but sets their values to 0 (falsy).
+     * Does NOT remove keys or clear tracking - preserves key structure.
+     */
+    clearScheduleConfigValues(scheduleId: string): void {
+        const scheduleConfigKeys = this.getScheduleConfigKeys();
+        const keysForThisSchedule = scheduleConfigKeys[scheduleId] || [];
+
+        if (keysForThisSchedule.length === 0) {
+            this.debugLog(`No config keys to clear for schedule ${scheduleId}`);
+            return;
+        }
+
+        const currentConfig = this.getConfigKeyValues();
+
+        for (const key of keysForThisSchedule) {
+            // Reset value to 0 but KEEP the key in configKeyValues
+            currentConfig[key] = 0;
+            this.debugLog(`Reset config key ${key} to 0 for schedule ${scheduleId}`);
+        }
+
+        this.setConfigKeyValues(currentConfig);
+
+        // Keep tracking intact - do NOT delete scheduleConfigKeys[scheduleId]
+
+        if (this.node) {
+            this.node.warn(`🧹 RESET ${keysForThisSchedule.length} config values to 0 for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
+        }
+
+        this.debugLog(`Reset ${keysForThisSchedule.length} config values to 0 for schedule ${scheduleId}`);
     }
 
     /**
