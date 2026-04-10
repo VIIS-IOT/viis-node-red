@@ -39,6 +39,8 @@ module.exports = function (RED) {
                 globalContext.set("scheduleStatusHistory", {});
                 globalContext.set("scheduleLastCheckTimestamps", {});
                 globalContext.set("manualModbusOverrides", {});
+                globalContext.set("scheduleConfigKeys", {});
+                globalContext.set("configKeyValues", {});
                 node.warn(`✅ STARTUP RECOVERY: Cleared stale global state - schedules will start fresh`);
             }
             else {
@@ -62,6 +64,12 @@ module.exports = function (RED) {
             }
             if (!globalContext.get("scheduleStatusHistory")) {
                 globalContext.set("scheduleStatusHistory", {});
+            }
+            if (!globalContext.get("scheduleConfigKeys")) {
+                globalContext.set("scheduleConfigKeys", {});
+            }
+            if (!globalContext.get("configKeyValues")) {
+                globalContext.set("configKeyValues", {});
             }
         }
         node.name = config.name;
@@ -334,6 +342,8 @@ module.exports = function (RED) {
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
                             schedule.status = "finished";
                             schedule.enable = 0;
+                            // Clear all function keys: modbus coils/holdings AND config key values
+                            scheduleService.clearScheduleConfigValues(schedule.name);
                             await scheduleService.updateScheduleStatus(schedule, "finished");
                             // Clear status history after successful finish so next run will trigger notification
                             clearStatusHistory(schedule.name);
@@ -451,6 +461,8 @@ module.exports = function (RED) {
                         schedule.status = "finished";
                         schedule.enable = 0;
                         scheduleService.clearActiveCommands(schedule.name);
+                        // Clear all function keys: modbus coils/holdings AND config key values
+                        scheduleService.clearScheduleConfigValues(schedule.name);
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         // Clear status history after successful finish so next run will trigger notification
                         clearStatusHistory(schedule.name);
@@ -630,6 +642,8 @@ module.exports = function (RED) {
                         // If reset failed, keep status as "running" so users know devices are still ON
                         if (resetSuccess) {
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            // Clear all function keys: modbus coils/holdings AND config key values
+                            scheduleService.clearScheduleConfigValues(schedule.name);
                             await scheduleService.updateScheduleStatus(schedule, "finished");
                             // Clear status history after successful finish so next day's run will trigger notification
                             clearStatusHistory(schedule.name);
