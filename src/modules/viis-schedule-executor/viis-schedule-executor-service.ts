@@ -1563,6 +1563,9 @@ export class ScheduleService {
      * Reset configKeyValues that were set by a specific schedule when it finishes.
      * Keeps the keys in configKeyValues but sets their values to 0 (falsy).
      * Does NOT remove keys or clear tracking - preserves key structure.
+     * 
+     * IMPORTANT: This ensures config keys persist across schedule executions.
+     * When another schedule runs, it will override these values if needed.
      */
     clearScheduleConfigValues(scheduleId: string): void {
         const scheduleConfigKeys = this.getScheduleConfigKeys();
@@ -1577,13 +1580,16 @@ export class ScheduleService {
 
         for (const key of keysForThisSchedule) {
             // Reset value to 0 but KEEP the key in configKeyValues
+            // This preserves the key structure for other schedules to override
             currentConfig[key] = 0;
             this.debugLog(`Reset config key ${key} to 0 for schedule ${scheduleId}`);
         }
 
         this.setConfigKeyValues(currentConfig);
 
-        // Keep tracking intact - do NOT delete scheduleConfigKeys[scheduleId]
+        // IMPORTANT: Do NOT delete scheduleConfigKeys[scheduleId]
+        // This preserves the tracking so we know which keys belonged to which schedule
+        // and can properly reset them when needed
 
         if (this.node) {
             this.node.warn(`🧹 RESET ${keysForThisSchedule.length} config values to 0 for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);

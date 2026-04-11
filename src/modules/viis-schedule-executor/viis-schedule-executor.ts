@@ -45,20 +45,28 @@ module.exports = function (RED: NodeAPI) {
                 node.warn(`   - scheduleLastCheckTimestamps: ${staleTimestampCount} entries (clearing)`);
 
                 // Clear all stale state - schedules will be re-evaluated fresh
+                // NOTE: Do NOT clear configKeyValues and scheduleConfigKeys - these preserve config structure
+                // and should only be updated by schedule execution, not cleared on startup
                 globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
                 globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
                 globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
                 globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
-                globalContext.set("scheduleConfigKeys", {} as Record<string, string[]>);
-                globalContext.set("configKeyValues", {} as Record<string, any>);
 
-                node.warn(`✅ STARTUP RECOVERY: Cleared stale global state - schedules will start fresh`);
+                node.warn(`✅ STARTUP RECOVERY: Cleared stale active state - schedules will start fresh`);
+                node.warn(`ℹ️ Preserved configKeyValues and scheduleConfigKeys (config structure maintained)`);
             } else {
-                // Initialize empty objects
+                // Initialize empty objects for fresh startup
                 globalContext.set("activeModbusCommands", {} as ActiveModbusCommands);
                 globalContext.set("manualModbusOverrides", {} as ManualModbusOverrides);
                 globalContext.set("scheduleLastCheckTimestamps", {} as Record<string, number>);
                 globalContext.set("scheduleStatusHistory", {} as Record<string, string>);
+                // Initialize config tracking but don't clear if exists (preserve structure)
+                if (!globalContext.get("scheduleConfigKeys")) {
+                    globalContext.set("scheduleConfigKeys", {} as Record<string, string[]>);
+                }
+                if (!globalContext.get("configKeyValues")) {
+                    globalContext.set("configKeyValues", {} as Record<string, any>);
+                }
             }
         } else {
             // Not a fresh startup, just ensure variables exist

@@ -35,20 +35,28 @@ module.exports = function (RED) {
                 node.warn(`   - scheduleStatusHistory: ${staleStatusCount} entries (clearing)`);
                 node.warn(`   - scheduleLastCheckTimestamps: ${staleTimestampCount} entries (clearing)`);
                 // Clear all stale state - schedules will be re-evaluated fresh
+                // NOTE: Do NOT clear configKeyValues and scheduleConfigKeys - these preserve config structure
+                // and should only be updated by schedule execution, not cleared on startup
                 globalContext.set("activeModbusCommands", {});
                 globalContext.set("scheduleStatusHistory", {});
                 globalContext.set("scheduleLastCheckTimestamps", {});
                 globalContext.set("manualModbusOverrides", {});
-                globalContext.set("scheduleConfigKeys", {});
-                globalContext.set("configKeyValues", {});
-                node.warn(`✅ STARTUP RECOVERY: Cleared stale global state - schedules will start fresh`);
+                node.warn(`✅ STARTUP RECOVERY: Cleared stale active state - schedules will start fresh`);
+                node.warn(`ℹ️ Preserved configKeyValues and scheduleConfigKeys (config structure maintained)`);
             }
             else {
-                // Initialize empty objects
+                // Initialize empty objects for fresh startup
                 globalContext.set("activeModbusCommands", {});
                 globalContext.set("manualModbusOverrides", {});
                 globalContext.set("scheduleLastCheckTimestamps", {});
                 globalContext.set("scheduleStatusHistory", {});
+                // Initialize config tracking but don't clear if exists (preserve structure)
+                if (!globalContext.get("scheduleConfigKeys")) {
+                    globalContext.set("scheduleConfigKeys", {});
+                }
+                if (!globalContext.get("configKeyValues")) {
+                    globalContext.set("configKeyValues", {});
+                }
             }
         }
         else {
