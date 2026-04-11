@@ -467,64 +467,158 @@ export class ModbusClientCore extends EventEmitter {
 
     /**
      * Attempt to reset USB device by unbinding and rebinding the driver
-     * This requires root access or proper udev rules
+     * Uses the same logic as the working bash script (scripts/usb-serial-recovery.sh)
      * Returns true if successful, false if not available
      */
     private async tryUsbDriverReset(): Promise<boolean> {
         const { exec } = require('child_process');
         const { promisify } = require('util');
         const execAsync = promisify(exec);
+        const fs = require('fs');
 
         try {
             // Only works for RTU connections with serial port
             if (!this.config.serialPort) {
+                this.node.warn("[USB-RECOVERY] Not an RTU connection, skipping USB reset");
                 return false;
             }
 
             // Extract device name (e.g., ttyUSB0 from /dev/ttyUSB0)
             const deviceName = this.config.serialPort.split('/').pop();
             if (!deviceName) {
+                this.node.warn("[USB-RECOVERY] Could not extract device name");
                 return false;
             }
 
-            // Find the USB device in sysfs
-            const sysfsPath = `/sys/class/tty/${deviceName}/device/../../../uevent`;
-            const fs = require('fs');
-            
-            if (!fs.existsSync(sysfsPath)) {
-                this.node.warn("[USB-RECOVERY] sysfs path not available for USB reset");
-                return false;
+            this.node.warn(`[USB-RECOVERY] Detecting USB bus ID for ${deviceName}...`);
+
+            let busId = '';
+
+            // Method 1: Try multiple sysfs path patterns (same as bash script)
+            const sysfsPaths = [
+                `/sys/class/tty/${deviceName}/device/../../../uevent`,
+                `/sys/class/tty/${deviceName}/device/../uevent`,
+                `/sys/class/tty/${deviceName}/device/uevent`,
+                `/sys/bus/usb-serial/devices/${deviceName}/../uevent`
+            ];
+
+            for (const sysfsPath of sysfsPaths) {
+                try {
+                    if (fs.existsSync(sysfsPath)) {
+                        this.node.warn(`[USB-RECOVERY] Found sysfs path: ${sysfsPath}`);
+                        const uevent = fs.readFileSync(sysfsPath, 'utf8');
+                        const devPathMatch = uevent.match(/DEVPATH=(.+)/);
+
+                        if (devPathMatch) {
+                            const devPath = devPathMatch[1];
+                            // Handle both "1-1.1:1.0" and "1-1.1" formats
+                            const pathParts = devPath.split('/');
+                            busId = pathParts[pathParts.length - 1];
+
+                            // Clean up interface suffix if present (e.g., "1-1.1:1.0" -> "1-1.1")
+                            if (busId.includes(':')) {
+                                busId = busId.split(':')[0];
+                            }
+
+                            if (busId && /^\d+-\d+(\.\d+)*$/.test(busId)) {
+                                this.node.warn(`[USB-RECOVERY] Detected USB bus ID: ${busId}`);
+                                break;
+                            } else {
+                                busId = ''; // Reset if invalid
+                            }
+                        }
+                    }
+                } catch (err) {
+                    // Continue to next path
+                }
             }
 
-            // Read USB device info
-            const uevent = fs.readFileSync(sysfsPath, 'utf8');
-            const devPathMatch = uevent.match(/DEVPATH=(.+)/);
-            
-            if (!devPathMatch) {
-                this.node.warn("[USB-RECOVERY] Could not parse USB device path");
-                return false;
-            }
-
-            const devPath = devPathMatch[1];
-            const busId = devPath.split('/').pop();
-            
+            // Method 2: If sysfs failed, scan sysfs directly for FTDI devices
             if (!busId) {
-                this.node.warn("[USB-RECOVERY] Could not extract USB bus ID");
+                this.node.warn("[USB-RECOVERY] Trying sysfs driver scan...");
+                try {
+                    const ftdiDir = '/sys/bus/usb/drivers/ftdi_sio';
+                    if (fs.existsSync(ftdiDir)) {
+                        const entries = fs.readdirSync(ftdiDir);
+                        for (const entry of entries) {
+                            // Match patterns like "1-1.1" or "1-1.1:1.0"
+                            if (/^\d+-\d+(\.\d+)*(:\d+\.\d+)?$/.test(entry)) {
+                                busId = entry.split(':')[0];
+                                this.node.warn(`[USB-RECOVERY] Found FTDI device via sysfs scan: ${busId}`);
+                                break;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    this.node.warn("[USB-RECOVERY] Sysfs scan failed: " + (err as Error).message);
+                }
+            }
+
+            if (!busId) {
+                this.node.warn("[USB-RECOVERY] Could not detect USB bus ID - USB driver reset skipped");
+                this.node.warn("[USB-RECOVERY] Hint: Run 'sudo ./scripts/usb-serial-recovery.sh /dev/ttyUSB0' on host");
                 return false;
             }
 
             this.node.warn(`[USB-RECOVERY] Resetting USB device: ${busId}`);
 
-            // Unbind driver
-            await execAsync(`echo -n '${busId}' > /sys/bus/usb/drivers/ftdi_sio/unbind 2>/dev/null || echo -n '${busId}' > /sys/bus/usb/drivers/usb/unbind 2>/dev/null`);
-            await this.sleep(500);
+            // Try multiple unbind paths
+            const unbindPaths = [
+                '/sys/bus/usb/drivers/ftdi_sio/unbind',
+                '/sys/bus/usb/drivers/usb/unbind',
+                '/sys/bus/usb-serial/drivers/generic/unbind'
+            ];
 
-            // Bind driver back
-            await execAsync(`echo -n '${busId}' > /sys/bus/usb/drivers/ftdi_sio/bind 2>/dev/null || echo -n '${busId}' > /sys/bus/usb/drivers/usb/bind 2>/dev/null`);
-            await this.sleep(500);
+            let unbindSuccess = false;
+            for (const unbindPath of unbindPaths) {
+                try {
+                    if (fs.existsSync(unbindPath)) {
+                        this.node.warn(`[USB-RECOVERY] Unbinding via: ${unbindPath}`);
+                        fs.writeFileSync(unbindPath, busId);
+                        unbindSuccess = true;
+                        this.node.warn("[USB-RECOVERY] ✅ Driver unbound successfully");
+                        break;
+                    }
+                } catch (err) {
+                    this.node.warn(`[USB-RECOVERY] Unbind failed via ${unbindPath}: ${(err as Error).message}`);
+                }
+            }
 
-            this.node.warn("[USB-RECOVERY] USB driver unbind/bind completed");
-            return true;
+            // Wait for USB stack to settle
+            await this.sleep(2000);
+
+            // Try multiple bind paths
+            const bindPaths = [
+                '/sys/bus/usb/drivers/ftdi_sio/bind',
+                '/sys/bus/usb/drivers/usb/bind',
+                '/sys/bus/usb-serial/drivers/generic/bind'
+            ];
+
+            let bindSuccess = false;
+            for (const bindPath of bindPaths) {
+                try {
+                    if (fs.existsSync(bindPath)) {
+                        this.node.warn(`[USB-RECOVERY] Binding via: ${bindPath}`);
+                        fs.writeFileSync(bindPath, busId);
+                        bindSuccess = true;
+                        this.node.warn("[USB-RECOVERY] ✅ Driver rebound successfully");
+                        break;
+                    }
+                } catch (err) {
+                    this.node.warn(`[USB-RECOVERY] Bind failed via ${bindPath}: ${(err as Error).message}`);
+                }
+            }
+
+            // Wait for device to reappear
+            await this.sleep(1000);
+
+            if (unbindSuccess && bindSuccess) {
+                this.node.warn("[USB-RECOVERY] ✅ USB driver unbind/bind completed");
+                return true;
+            } else {
+                this.node.warn("[USB-RECOVERY] ⚠️ USB driver reset partially successful");
+                return unbindSuccess || bindSuccess;
+            }
 
         } catch (error) {
             this.node.warn(`[USB-RECOVERY] USB driver reset failed (non-critical): ${(error as Error).message}`);
