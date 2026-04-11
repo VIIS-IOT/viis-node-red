@@ -24,6 +24,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.consecutiveErrors = 0;
         this.MAX_CONSECUTIVE_ERRORS = 5; // Trigger recovery after 5 consecutive errors
         this.isRecovering = false; // Prevent concurrent recovery attempts
+        this.recoveryLockPromise = null; // Atomic lock for recovery
         this.USB_SERIAL_ERRORS = [
             "EPIPE", // USB broken pipe (URB -32)
             "urb stopped: -32", // Linux kernel USB error
@@ -232,10 +233,15 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.consecutiveErrors++;
             this.node.warn(`[USB-ERROR] Consecutive USB errors: ${this.consecutiveErrors}/${this.MAX_CONSECUTIVE_ERRORS} - "${error.message}"`);
             // Trigger auto-recovery if threshold reached
-            if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS && !this.isRecovering) {
+            // Use atomic lock to prevent race conditions
+            if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS && !this.recoveryLockPromise) {
                 this.node.warn(`[USB-RECOVERY] Threshold reached! Attempting automatic port recovery...`);
-                this.attemptPortRecovery().catch(recoveryError => {
+                this.recoveryLockPromise = this.attemptPortRecovery()
+                    .catch(recoveryError => {
                     this.node.error(`[USB-RECOVERY] Recovery failed: ${recoveryError.message}`);
+                })
+                    .finally(() => {
+                    this.recoveryLockPromise = null; // Release lock
                 });
             }
         }
@@ -296,8 +302,8 @@ class ModbusClientCore extends events_1.EventEmitter {
      * This simulates the effect of `docker restart nodered1` without restarting the container
      */
     async attemptPortRecovery() {
-        if (this.isRecovering) {
-            this.node.warn("[USB-RECOVERY] Recovery already in progress, skipping");
+        if (this.recoveryLockPromise) {
+            this.node.warn("[USB-RECOVERY] Recovery already in progress (locked), skipping");
             return;
         }
         this.isRecovering = true;
@@ -306,16 +312,25 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.node.warn("[USB-RECOVERY] Starting port recovery sequence...");
             this.node.status({ fill: "yellow", shape: "dot", text: "Recovering..." });
             // Step 1: Force close existing connection
-            this.node.warn("[USB-RECOVERY] Step 1/4: Force-closing serial port...");
+            this.node.warn("[USB-RECOVERY] Step 1/5: Force-closing serial port...");
             await this.forceClosePort();
-            // Step 2: Wait for USB stack to settle (critical for FTDI chips)
-            this.node.warn("[USB-RECOVERY] Step 2/4: Waiting 3s for USB stack to settle...");
+            // Step 2: Try USB driver unbind/rebind (kernel-level reset)
+            this.node.warn("[USB-RECOVERY] Step 2/5: Attempting USB driver reset...");
+            const usbResetSuccess = await this.tryUsbDriverReset();
+            if (usbResetSuccess) {
+                this.node.warn("[USB-RECOVERY] USB driver reset successful");
+            }
+            else {
+                this.node.warn("[USB-RECOVERY] USB driver reset not available, continuing with standard recovery...");
+            }
+            // Step 3: Wait for USB stack to settle (critical for FTDI chips)
+            this.node.warn("[USB-RECOVERY] Step 3/5: Waiting 3s for USB stack to settle...");
             await this.sleep(3000);
-            // Step 3: Create completely new Modbus client
-            this.node.warn("[USB-RECOVERY] Step 3/4: Creating new Modbus client instance...");
+            // Step 4: Create completely new Modbus client
+            this.node.warn("[USB-RECOVERY] Step 4/5: Creating new Modbus client instance...");
             this.client = new modbus_serial_1.default();
-            // Step 4: Attempt fresh connection
-            this.node.warn("[USB-RECOVERY] Step 4/4: Attempting fresh connection...");
+            // Step 5: Attempt fresh connection
+            this.node.warn("[USB-RECOVERY] Step 5/5: Attempting fresh connection...");
             await this.initializeClient();
             // Verify connection is actually working
             await this.sleep(1000); // Give connection time to stabilize
@@ -350,6 +365,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.node.warn("[USB-RECOVERY] Will retry in 10 seconds...");
             setTimeout(() => {
                 this.isRecovering = false;
+                this.recoveryLockPromise = null; // Release lock
                 this.attemptPortRecovery().catch(err => {
                     this.node.error(`[USB-RECOVERY] Retry also failed: ${err.message}`);
                 });
@@ -361,6 +377,60 @@ class ModbusClientCore extends events_1.EventEmitter {
         }
     }
     /**
+     * Attempt to reset USB device by unbinding and rebinding the driver
+     * This requires root access or proper udev rules
+     * Returns true if successful, false if not available
+     */
+    async tryUsbDriverReset() {
+        const { exec } = require('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+        try {
+            // Only works for RTU connections with serial port
+            if (!this.config.serialPort) {
+                return false;
+            }
+            // Extract device name (e.g., ttyUSB0 from /dev/ttyUSB0)
+            const deviceName = this.config.serialPort.split('/').pop();
+            if (!deviceName) {
+                return false;
+            }
+            // Find the USB device in sysfs
+            const sysfsPath = `/sys/class/tty/${deviceName}/device/../../../uevent`;
+            const fs = require('fs');
+            if (!fs.existsSync(sysfsPath)) {
+                this.node.warn("[USB-RECOVERY] sysfs path not available for USB reset");
+                return false;
+            }
+            // Read USB device info
+            const uevent = fs.readFileSync(sysfsPath, 'utf8');
+            const devPathMatch = uevent.match(/DEVPATH=(.+)/);
+            if (!devPathMatch) {
+                this.node.warn("[USB-RECOVERY] Could not parse USB device path");
+                return false;
+            }
+            const devPath = devPathMatch[1];
+            const busId = devPath.split('/').pop();
+            if (!busId) {
+                this.node.warn("[USB-RECOVERY] Could not extract USB bus ID");
+                return false;
+            }
+            this.node.warn(`[USB-RECOVERY] Resetting USB device: ${busId}`);
+            // Unbind driver
+            await execAsync(`echo -n '${busId}' > /sys/bus/usb/drivers/ftdi_sio/unbind 2>/dev/null || echo -n '${busId}' > /sys/bus/usb/drivers/usb/unbind 2>/dev/null`);
+            await this.sleep(500);
+            // Bind driver back
+            await execAsync(`echo -n '${busId}' > /sys/bus/usb/drivers/ftdi_sio/bind 2>/dev/null || echo -n '${busId}' > /sys/bus/usb/drivers/usb/bind 2>/dev/null`);
+            await this.sleep(500);
+            this.node.warn("[USB-RECOVERY] USB driver unbind/bind completed");
+            return true;
+        }
+        catch (error) {
+            this.node.warn(`[USB-RECOVERY] USB driver reset failed (non-critical): ${error.message}`);
+            return false;
+        }
+    }
+    /**
      * Force close the serial port with aggressive cleanup
      * Ensures all resources are released (similar to container restart effect)
      */
@@ -368,21 +438,46 @@ class ModbusClientCore extends events_1.EventEmitter {
         try {
             // Mark as disconnected
             this.isConnected = false;
-            // Close client if open
+            // CRITICAL: Remove ALL event listeners FIRST to prevent stale callbacks
+            // This must happen BEFORE close() to avoid race conditions
+            this.removeAllListeners();
+            // Close client if open - with timeout protection
             if (this.client && this.client.isOpen) {
                 try {
-                    this.client.close();
+                    // Use timeout to prevent hanging on close
+                    const closePromise = new Promise((resolve, reject) => {
+                        try {
+                            this.client.close();
+                            resolve();
+                        }
+                        catch (err) {
+                            reject(err);
+                        }
+                    });
+                    await Promise.race([
+                        closePromise,
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 2000))
+                    ]);
                 }
                 catch (closeError) {
-                    // Ignore close errors - we're forcing anyway
-                    this.node.warn(`[USB-RECOVERY] Close error (ignored): ${closeError.message}`);
+                    this.node.warn(`[USB-RECOVERY] Close error (continuing): ${closeError.message}`);
                 }
             }
-            // Wait a bit to ensure OS releases the file descriptor
-            await this.sleep(500);
-            // Remove all event listeners to prevent stale callbacks
-            this.removeAllListeners();
-            this.node.warn("[USB-RECOVERY] Port force-closed and listeners cleared");
+            // CRITICAL: Wait for OS to release file descriptor
+            // FTDI chips need at least 500ms for kernel cleanup
+            await this.sleep(1000);
+            // Additional: Try to release any lingering file locks
+            // This helps with "Resource temporarily unavailable" errors
+            try {
+                // Force garbage collection hint (if available)
+                if (global.gc) {
+                    global.gc();
+                }
+            }
+            catch (gcError) {
+                // Ignore GC errors - not critical
+            }
+            this.node.warn("[USB-RECOVERY] Port force-closed and all listeners cleared");
         }
         catch (error) {
             this.node.warn(`[USB-RECOVERY] Force close error (continuing): ${error.message}`);
