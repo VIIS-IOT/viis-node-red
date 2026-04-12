@@ -350,6 +350,14 @@ module.exports = function (RED) {
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
                             schedule.status = "finished";
                             schedule.enable = 0;
+                            // Get configKeyValues before clearing (for telemetry)
+                            const configKeyValuesBeforeClear = globalContext.get("configKeyValues") || {};
+                            const scheduleConfigKeys = globalContext.get("scheduleConfigKeys") || {};
+                            const configKeysForThisSchedule = scheduleConfigKeys[schedule.name] || [];
+                            const configValuesForThisSchedule = {};
+                            for (const key of configKeysForThisSchedule) {
+                                configValuesForThisSchedule[key] = configKeyValuesBeforeClear[key];
+                            }
                             // Clear all function keys: modbus coils/holdings AND config key values
                             scheduleService.clearScheduleConfigValues(schedule.name);
                             await scheduleService.updateScheduleStatus(schedule, "finished");
@@ -359,6 +367,15 @@ module.exports = function (RED) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                                 await scheduleService.syncScheduleLog(schedule, true);
+                                // Publish telemetry with reset commands and cleared config values
+                                try {
+                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, configValuesForThisSchedule);
+                                }
+                                catch (telemetryError) {
+                                    debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
+                                }
                                 // Publish audit log for RPC disable (success)
                                 try {
                                     const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
@@ -468,15 +485,33 @@ module.exports = function (RED) {
                         // Update status to finished
                         schedule.status = "finished";
                         schedule.enable = 0;
-                        scheduleService.clearActiveCommands(schedule.name);
+                        // Get configKeyValues before clearing (for telemetry)
+                        const configKeyValuesBeforeClear = globalContext.get("configKeyValues") || {};
+                        const scheduleConfigKeys = globalContext.get("scheduleConfigKeys") || {};
+                        const configKeysForThisSchedule = scheduleConfigKeys[schedule.name] || [];
+                        const configValuesForThisSchedule = {};
+                        for (const key of configKeysForThisSchedule) {
+                            configValuesForThisSchedule[key] = configKeyValuesBeforeClear[key];
+                        }
                         // Clear all function keys: modbus coils/holdings AND config key values
                         scheduleService.clearScheduleConfigValues(schedule.name);
+                        scheduleService.clearActiveCommands(schedule.name);
                         await scheduleService.updateScheduleStatus(schedule, "finished");
                         // Clear status history after successful finish so next run will trigger notification
                         clearStatusHistory(schedule.name);
                         // Send success notification
                         await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                         await scheduleService.syncScheduleLog(schedule, true);
+                        // Publish telemetry for manual recovery (all config values cleared)
+                        try {
+                            const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                            const resetCoilCommands = activeCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                            const resetHoldingCommands = activeCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                            await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, configValuesForThisSchedule);
+                        }
+                        catch (telemetryError) {
+                            debugLog(`Failed to publish manual recovery telemetry: ${telemetryError.message}`);
+                        }
                         node.warn(`✅ MANUAL RECOVERY: Schedule ${schedule.name} confirmed OFF and set to finished`);
                         node.status({ fill: "green", shape: "dot", text: "Confirmed OFF" });
                     }
@@ -598,6 +633,13 @@ module.exports = function (RED) {
                                 // Send HTTP notification directly to backend when schedule starts
                                 await scheduleService.sendNotificationToBackend(schedule, 'start', writeSuccess);
                                 await scheduleService.syncScheduleLog(schedule, writeSuccess);
+                                // Publish telemetry with all Modbus keys written (matching viis-rpc-control format)
+                                try {
+                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands });
+                                }
+                                catch (telemetryError) {
+                                    debugLog(`Failed to publish schedule start telemetry: ${telemetryError.message}`);
+                                }
                                 // Publish audit log for schedule start
                                 try {
                                     await scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands }, writeSuccess, writeSuccess ? undefined : 'Không thể ghi dữ liệu Modbus sau 3 lần thử');
@@ -650,6 +692,14 @@ module.exports = function (RED) {
                         // If reset failed, keep status as "running" so users know devices are still ON
                         if (resetSuccess) {
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            // Get configKeyValues before clearing (for telemetry)
+                            const configKeyValuesBeforeClear = globalContext.get("configKeyValues") || {};
+                            const scheduleConfigKeys = globalContext.get("scheduleConfigKeys") || {};
+                            const configKeysForThisSchedule = scheduleConfigKeys[schedule.name] || [];
+                            const configValuesForThisSchedule = {};
+                            for (const key of configKeysForThisSchedule) {
+                                configValuesForThisSchedule[key] = configKeyValuesBeforeClear[key];
+                            }
                             // Clear all function keys: modbus coils/holdings AND config key values
                             scheduleService.clearScheduleConfigValues(schedule.name);
                             await scheduleService.updateScheduleStatus(schedule, "finished");
@@ -659,6 +709,15 @@ module.exports = function (RED) {
                                 // Send HTTP notification - success case
                                 await scheduleService.sendNotificationToBackend(schedule, 'end', true);
                                 await scheduleService.syncScheduleLog(schedule, true);
+                                // Publish telemetry with reset commands and cleared config values
+                                try {
+                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, configValuesForThisSchedule);
+                                }
+                                catch (telemetryError) {
+                                    debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
+                                }
                                 // Publish audit log for schedule end (success)
                                 try {
                                     const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));

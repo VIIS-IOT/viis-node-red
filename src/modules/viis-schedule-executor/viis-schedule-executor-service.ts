@@ -843,6 +843,88 @@ export class ScheduleService {
     }
 
     /**
+     * Publish schedule telemetry to MQTT (ThingsBoard + EMQX)
+     * Publishes all written Modbus keys in one object, matching viis-rpc-control format
+     * Includes deduplication to avoid redundant publishes
+     */
+    async publishScheduleTelemetry(
+        thingsboardClient: MqttClientCore,
+        emqxClient: MqttClientCore,
+        schedule: TabiotSchedule,
+        action: 'start' | 'end',
+        commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] },
+        configKeyValues?: Record<string, any>
+    ): Promise<void> {
+        try {
+            // Build telemetry payload matching viis-rpc-control format
+            const telemetryData: Record<string, any> = {
+                ts: Date.now(),
+                _schedule_action: action,
+                _schedule_id: schedule.name,
+                _schedule_label: schedule.label,
+            };
+
+            // Add all Modbus commands (both holding and coils)
+            for (const cmd of [...commands.holdingCommands, ...commands.coilCommands]) {
+                telemetryData[cmd.key] = cmd.value;
+            }
+
+            // Add configKeyValues if provided (for finish action, show cleared values)
+            if (configKeyValues && Object.keys(configKeyValues).length > 0) {
+                for (const [key, value] of Object.entries(configKeyValues)) {
+                    telemetryData[key] = value;
+                }
+            }
+
+            // Deduplication: Check if we already published the same data
+            const lastPublishedKey = `telemetryLastPublished_${schedule.name}_${action}`;
+            const lastPublished = this.node?.context().global.get(lastPublishedKey) as { hash: string; timestamp: number } | null;
+            
+            // Create hash from telemetry keys and values (excluding timestamp)
+            const hashData = { ...telemetryData };
+            delete hashData.ts;
+            const currentHash = JSON.stringify(hashData);
+            
+            // Skip if same data published within last 5 seconds (prevent duplicates from retries)
+            const now = Date.now();
+            if (lastPublished && lastPublished.hash === currentHash && (now - lastPublished.timestamp) < 5000) {
+                this.debugLog(`Skipping duplicate telemetry for ${schedule.name} (${action}) - last published ${now - lastPublished.timestamp}ms ago`);
+                return;
+            }
+
+            const payloadString = JSON.stringify(telemetryData);
+
+            // Publish to ThingsBoard
+            const thingsboardTopic = "v1/devices/me/telemetry";
+            await thingsboardClient.publish(thingsboardTopic, payloadString);
+            this.debugLog(`Published schedule telemetry to ThingsBoard for ${schedule.name} (${action})`);
+
+            // Publish to EMQX local
+            const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
+            const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
+            await emqxClient.publish(emqxTopic, payloadString);
+            this.debugLog(`Published schedule telemetry to EMQX local for ${schedule.name} (${action})`);
+
+            // Update last published tracking
+            this.node?.context().global.set(lastPublishedKey, { hash: currentHash, timestamp: now });
+
+            // Log published keys
+            const keyCount = Object.keys(telemetryData).length;
+            const modbusKeyCount = commands.holdingCommands.length + commands.coilCommands.length;
+            if (this.node) {
+                this.node.warn(`📊 SCHEDULE TELEMETRY: ${schedule.name} | Action: ${action} | Keys: ${modbusKeyCount} Modbus + ${Object.keys(configKeyValues || {}).length} Config = ${keyCount} total`);
+            }
+
+        } catch (error) {
+            // Log error but don't throw - telemetry failure should not break schedule execution
+            if (this.node) {
+                this.node.warn(`❌ SCHEDULE TELEMETRY ERROR: ${schedule.name} | ${(error as Error).message}`);
+            }
+            console.error(`Error publishing schedule telemetry for ${schedule.name}: ${(error as Error).message}`);
+        }
+    }
+
+    /**
      * Publish audit log for schedule execution
      * This logs which function keys were changed and why (schedule start/end)
      */
