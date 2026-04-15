@@ -39,27 +39,33 @@ export const CONTROL_CONFIG = {
 
 // Fan control constants
 export const FAN_CONFIG = {
-    // Fan grouping configurations - Updated for 5-fan system
+    // Fan grouping configurations - 6-fan topology
     GROUPS: {
         ONE_FAN: [
             ["quat_1"],
             ["quat_2"],
             ["quat_3"],
             ["quat_4"],
-            ["quat_5"]
+            ["quat_5"],
+            ["quat_6"]
         ],
         TWO_FANS: [
             ["quat_1", "quat_2"],
             ["quat_3", "quat_4"],
-            ["quat_5", "quat_1"]
+            ["quat_5", "quat_6"]
         ],
         FOUR_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4"],
-            ["quat_2", "quat_3", "quat_4", "quat_5"],
-            ["quat_3", "quat_4", "quat_5", "quat_1"]
+            ["quat_3", "quat_4", "quat_5", "quat_6"],
+            ["quat_5", "quat_6", "quat_1", "quat_2"]
         ],
         FIVE_FANS: [
-            ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5"]
+            ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5"],
+            ["quat_2", "quat_3", "quat_4", "quat_5", "quat_6"],
+            ["quat_3", "quat_4", "quat_5", "quat_6", "quat_1"],
+            ["quat_4", "quat_5", "quat_6", "quat_1", "quat_2"],
+            ["quat_5", "quat_6", "quat_1", "quat_2", "quat_3"],
+            ["quat_6", "quat_1", "quat_2", "quat_3", "quat_4"]
         ],
         SIX_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
@@ -82,13 +88,14 @@ export const FAN_CONFIG = {
         ENABLE_HUMIDITY_CHECK: false // Currently disabled
     },
 
-    // Modbus mapping for fans - Updated for 5-fan system
+    // Modbus mapping for fans - 6-fan topology
     COIL_MAPPING: {
         "quat_1": 0,
         "quat_2": 1,
         "quat_3": 2,
         "quat_4": 3,
-        "quat_5": 4
+        "quat_5": 4,
+        "quat_6": 5
     }
 } as const;
 

@@ -251,14 +251,14 @@ export class FanControlService implements IFanControlService {
             // For threshold mode, determine target group based on requirements
             let targetGroup: string[];
 
-            if (requiredGroupSize === 5) {
-                // K3 or K4: Use all 5 fans (no rotation needed)
-                targetGroup = getAllFanKeys().slice(0, 5); // Only use first 5 fans
-                this.logger.debug(`K3/K4 threshold: using all 5 fans [${targetGroup.join(', ')}]`);
-            } else if (requiredGroupSize === 6) {
-                // Legacy support: Use all 6 fans (no rotation needed)
+            if (requiredGroupSize === 6) {
+                // K3 or K4: Use all 6 fans (no rotation needed)
                 targetGroup = getAllFanKeys();
-                this.logger.debug(`Legacy K3/K4 threshold: using all 6 fans [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K3/K4 threshold: using all 6 fans [${targetGroup.join(', ')}]`);
+            } else if (requiredGroupSize === 5) {
+                // Backward-compatibility path: use rotation for 5-fan group configurations
+                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
+                this.logger.debug(`Compatibility threshold: using 5-fan group [${targetGroup.join(', ')}]`);
             } else if (requiredGroupSize === 4) {
                 // Legacy K2: Use rotation logic for 4-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
@@ -409,7 +409,7 @@ export class FanControlService implements IFanControlService {
         }
 
         let count = 0;
-        const fanKeys = ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'] as const;
+        const fanKeys = getAllFanKeys();
 
         for (const fanKey of fanKeys) {
             if (deviceStatus[fanKey] === true) {
@@ -565,6 +565,7 @@ export class FanControlService implements IFanControlService {
             `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_1`,
             `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_2`,
             `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_4`,
+            `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_5`,
             `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_6`
         ];
 

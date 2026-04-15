@@ -35,10 +35,33 @@ export function getNextGroupIndex(currentIndex: number, totalGroups: number): nu
 }
 
 /**
- * Get all fan keys
+ * Get all fan keys from the default fan mapping
  */
 export function getAllFanKeys(): string[] {
-    return Object.keys(FAN_CONFIG.COIL_MAPPING);
+    return getFanKeysFromCoilMapping(FAN_CONFIG.COIL_MAPPING);
+}
+
+/**
+ * Get all fan keys from effective coil mapping (supports env-extended keys)
+ */
+export function getFanKeysFromCoilMapping(coilMapping: Record<string, number>): string[] {
+    const combined = {
+        ...FAN_CONFIG.COIL_MAPPING,
+        ...coilMapping
+    };
+
+    return Object.keys(combined)
+        .filter(isFanKey)
+        .sort((a, b) => {
+            const aMatch = a.match(/^quat_(\d+)$/);
+            const bMatch = b.match(/^quat_(\d+)$/);
+
+            if (!aMatch || !bMatch) {
+                return a.localeCompare(b);
+            }
+
+            return Number(aMatch[1]) - Number(bMatch[1]);
+        });
 }
 
 /**
@@ -101,7 +124,7 @@ export function createFanGroupActions(
     coilMapping: Record<string, number>
 ): Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> {
     const actions: Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> = [];
-    const allFanKeys = getAllFanKeys();
+    const allFanKeys = getFanKeysFromCoilMapping(coilMapping);
 
     if (!turnOn) {
         // Turn off all fans when turnOn is false
@@ -163,7 +186,7 @@ export function createOptimizedFanGroupActions(
     currentDeviceStatus: Record<string, boolean>
 ): Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> {
     const actions: Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string }> = [];
-    const allFanKeys = getAllFanKeys();
+    const allFanKeys = getFanKeysFromCoilMapping(coilMapping);
 
     if (!turnOn) {
         // Turn off all fans that are currently on
@@ -243,7 +266,7 @@ export function createDelayedFanGroupActions(
     delayMs: number = 1000 // Default 1 second delay
 ): Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string, delay?: number }> {
     const actions: Array<{ deviceKey: string, value: boolean, address: number, fc: number, reason: string, delay?: number }> = [];
-    const allFanKeys = getAllFanKeys();
+    const allFanKeys = getFanKeysFromCoilMapping(coilMapping);
 
     if (turnOn) {
         // When turning on: first turn off fans not in target group, then turn on target group with delay
@@ -301,7 +324,7 @@ export function createDelayedFanGroupActions(
 
 /**
  * Validate fan group configuration
- * Updated to support 5-fan system
+ * Supports both legacy 5-fan and current 6-fan groups
  */
 export function isValidFanGroupSize(groupSize: number): boolean {
     return [1, 2, 4, 5, 6].includes(groupSize);
@@ -309,7 +332,7 @@ export function isValidFanGroupSize(groupSize: number): boolean {
 
 /**
  * Get recommended group size based on temperature thresholds with hysteresis
- * Updated for 5-fan system: K1-K2: 1 fan luân phiên, K2-K3: 2 fans luân phiên, K3-K4: 5 fans, >K4: 5 fans + tường nước
+ * 6-fan strategy: K1-K2: 1 fan luân phiên, K2-K3: 2 fans luân phiên, K3-K4: 6 fans, >K4: 6 fans + tường nước
  * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */
 export function getRecommendedGroupSize(
@@ -358,16 +381,16 @@ export function getRecommendedGroupSize(
         }
     };
 
-    // Updated logic for 5-fan system
-    const k4Threshold = getEffectiveThreshold(thresholds.k4, 5);
-    const k3Threshold = getEffectiveThreshold(thresholds.k3, 5);
+    // Updated logic for 6-fan system
+    const k4Threshold = getEffectiveThreshold(thresholds.k4, 6);
+    const k3Threshold = getEffectiveThreshold(thresholds.k3, 6);
     const k2Threshold = getEffectiveThreshold(thresholds.k2, 2);
     const k1Threshold = getEffectiveThreshold(thresholds.k1, 1);
 
     if (temperature >= k4Threshold) {
-        return 5; // 5 fans for K4 (+ water pump will be handled separately)
+        return 6; // 6 fans for K4 (+ water pump will be handled separately)
     } else if (temperature >= k3Threshold) {
-        return 5; // 5 fans for K3
+        return 6; // 6 fans for K3
     } else if (temperature >= k2Threshold) {
         return 2; // 2 fans luân phiên for K2
     } else if (temperature >= k1Threshold) {
@@ -377,9 +400,9 @@ export function getRecommendedGroupSize(
     // Future humidity logic (currently disabled)
     if (enableHumidity) {
         if (humidity < humidityThresholds.k4) {
-            return 5; // 5 fans for low humidity K4
+            return 6; // 6 fans for low humidity K4
         } else if (humidity < humidityThresholds.k3) {
-            return 5; // 5 fans for low humidity K3
+            return 6; // 6 fans for low humidity K3
         } else if (humidity < humidityThresholds.k2) {
             return 2; // 2 fans for low humidity K2
         }

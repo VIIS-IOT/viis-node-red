@@ -18,6 +18,7 @@ export class ConfigService implements IConfigService {
     private cachedConfig: AutoControlConfig | null = null;
     private lastConfigUpdate: number = 0;
     private readonly CONFIG_CACHE_TTL = 30000; // 30 seconds
+    private readonly CONFIG_UPDATED_AT_KEY = "configKeyValuesUpdatedAt";
 
     constructor(options: ServiceOptions) {
         this.globalContext = options.globalContext;
@@ -140,6 +141,11 @@ export class ConfigService implements IConfigService {
      * Check if cached config is still valid
      */
     private isCacheValid(): boolean {
+        const latestConfigUpdateMarker = Number(this.globalContext.get(this.CONFIG_UPDATED_AT_KEY) || 0);
+        if (latestConfigUpdateMarker > this.lastConfigUpdate) {
+            return false;
+        }
+
         const now = Date.now();
         return (now - this.lastConfigUpdate) < this.CONFIG_CACHE_TTL;
     }

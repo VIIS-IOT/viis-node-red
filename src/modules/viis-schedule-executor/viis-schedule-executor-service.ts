@@ -74,6 +74,7 @@ export class ScheduleService {
     private globalHelper: GlobalContextHelper; // Thêm GlobalContextHelper
     private debugEnable: boolean; // Thêm biến debugEnable
     private verifyAfterWrite: boolean; // Enable/disable write verification
+    private readonly CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
     constructor(node?: Node, verifyAfterWrite: boolean = true, debugEnable: boolean = false) {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
@@ -125,22 +126,22 @@ export class ScheduleService {
         if (value === null || value === undefined) {
             return true;
         }
-        
+
         // Empty string check
         if (value === "") {
             return true;
         }
-        
+
         // Boolean check (including string "false")
         if (value === false || value === "false") {
             return true;
         }
-        
+
         // Number check (including 0 and "0")
         if (value === 0 || value === "0") {
             return true;
         }
-        
+
         // For string numbers like "0.0", "0.00", etc.
         if (typeof value === 'string') {
             const trimmed = value.trim();
@@ -152,7 +153,7 @@ export class ScheduleService {
                 }
             }
         }
-        
+
         return false;
     }
 
@@ -879,12 +880,12 @@ export class ScheduleService {
             // Deduplication: Check if we already published the same data
             const lastPublishedKey = `telemetryLastPublished_${schedule.name}_${action}`;
             const lastPublished = this.node?.context().global.get(lastPublishedKey) as { hash: string; timestamp: number } | null;
-            
+
             // Create hash from telemetry keys and values (excluding timestamp)
             const hashData = { ...telemetryData };
             delete hashData.ts;
             const currentHash = JSON.stringify(hashData);
-            
+
             // Skip if same data published within last 5 seconds (prevent duplicates from retries)
             const now = Date.now();
             if (lastPublished && lastPublished.hash === currentHash && (now - lastPublished.timestamp) < 5000) {
@@ -1322,7 +1323,7 @@ export class ScheduleService {
             if (CONFIG_PARAMETER_KEYS.has(cmd.key)) {
                 continue;
             }
-            
+
             // Kiểm tra overlap với các schedule khác, bỏ qua schedule hiện tại
             for (const scheduleId in activeModbusCommands) {
                 if (scheduleId === currentScheduleId) continue;
@@ -1560,6 +1561,7 @@ export class ScheduleService {
      */
     private setScheduleConfigValues(values: ScheduleConfigValues): void {
         this.node?.context().global.set("configKeyValues", values);
+        this.markConfigKeyValuesUpdated();
         this.debugLog(`Updated schedule config values: ${JSON.stringify(values)}`);
     }
 
@@ -1575,7 +1577,15 @@ export class ScheduleService {
      */
     private setConfigKeyValues(values: Record<string, any>): void {
         this.node?.context().global.set("configKeyValues", values);
+        this.markConfigKeyValuesUpdated();
         this.debugLog(`Updated configKeyValues: ${JSON.stringify(values)}`);
+    }
+
+    /**
+     * Mark configKeyValues mutation time so dependent modules can invalidate cache.
+     */
+    private markConfigKeyValuesUpdated(): void {
+        this.node?.context().global.set(this.CONFIG_KEY_VALUES_UPDATED_AT, Date.now());
     }
 
     /**
@@ -1642,12 +1652,10 @@ export class ScheduleService {
     }
 
     /**
-     * Reset configKeyValues that were set by a specific schedule when it finishes.
-     * Keeps the keys in configKeyValues but sets their values to 0 (falsy).
-     * Does NOT remove keys or clear tracking - preserves key structure.
-     * 
-     * IMPORTANT: This ensures config keys persist across schedule executions.
-     * When another schedule runs, it will override these values if needed.
+     * Preserve configKeyValues when a schedule finishes.
+     *
+     * Rationale: resetting values to 0 at schedule boundaries can create a temporary
+     * mode flicker before the next schedule writes new values.
      */
     clearScheduleConfigValues(scheduleId: string): void {
         const scheduleConfigKeys = this.getScheduleConfigKeys();
@@ -1658,26 +1666,11 @@ export class ScheduleService {
             return;
         }
 
-        const currentConfig = this.getConfigKeyValues();
-
-        for (const key of keysForThisSchedule) {
-            // Reset value to 0 but KEEP the key in configKeyValues
-            // This preserves the key structure for other schedules to override
-            currentConfig[key] = 0;
-            this.debugLog(`Reset config key ${key} to 0 for schedule ${scheduleId}`);
-        }
-
-        this.setConfigKeyValues(currentConfig);
-
-        // IMPORTANT: Do NOT delete scheduleConfigKeys[scheduleId]
-        // This preserves the tracking so we know which keys belonged to which schedule
-        // and can properly reset them when needed
-
         if (this.node) {
-            this.node.warn(`🧹 RESET ${keysForThisSchedule.length} config values to 0 for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
+            this.node.warn(`🧹 PRESERVE ${keysForThisSchedule.length} config values for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
         }
 
-        this.debugLog(`Reset ${keysForThisSchedule.length} config values to 0 for schedule ${scheduleId}`);
+        this.debugLog(`Preserved ${keysForThisSchedule.length} config values for schedule ${scheduleId}`);
     }
 
     /**
@@ -2137,7 +2130,7 @@ export class ScheduleService {
         let messageKey: string | null = null;
         let messageParams: Record<string, any> | null = null;
         const retryCount = this.globalHelper?.getEnvVar('MODBUS_MAX_RETRIES', 3) || 3;
-        
+
         if (isStart) {
             if (success) {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy thành công`;
