@@ -155,10 +155,19 @@ class ClientRegistry {
     static validateModbusConfig(config) {
         if (!this.modbusConfig)
             return true;
-        return (this.modbusConfig.type === config.type &&
-            this.modbusConfig.host === config.host &&
-            this.modbusConfig.tcpPort === config.tcpPort &&
-            this.modbusConfig.unitId === config.unitId);
+        // Connection identity based on transport layer only (not unitId)
+        // This prevents creating multiple connections for same host:port with different unitIds
+        // which would exceed the ATmega/PLC max 4 connection limit
+        if (config.type === 'TCP') {
+            return (this.modbusConfig.type === config.type &&
+                this.modbusConfig.host === config.host &&
+                this.modbusConfig.tcpPort === config.tcpPort);
+        }
+        else {
+            // RTU - identity based on serial port
+            return (this.modbusConfig.type === config.type &&
+                this.modbusConfig.serialPort === config.serialPort);
+        }
     }
     static async getModbusClient(config, node) {
         await this.withLock('modbus', async () => {

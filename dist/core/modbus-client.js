@@ -3,9 +3,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ModbusClientCore = void 0;
+exports.ModbusClientCore = exports.ConnectionState = void 0;
 const modbus_serial_1 = __importDefault(require("modbus-serial"));
 const events_1 = require("events");
+// Connection state machine for managing connection lifecycle
+var ConnectionState;
+(function (ConnectionState) {
+    ConnectionState["DISCONNECTED"] = "disconnected";
+    ConnectionState["CONNECTING"] = "connecting";
+    ConnectionState["CONNECTED"] = "connected";
+    ConnectionState["RECONNECTING"] = "reconnecting";
+    ConnectionState["ERROR"] = "error";
+    ConnectionState["CIRCUIT_BREAKER_OPEN"] = "circuit_breaker_open";
+})(ConnectionState || (exports.ConnectionState = ConnectionState = {}));
 // Core Modbus Client
 class ModbusClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -20,6 +30,12 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.failedConnectionCount = 0;
         this.circuitBreakerOpen = false;
         this.disconnectStartTime = null;
+        // FSM state management
+        this.connectionState = ConnectionState.DISCONNECTED;
+        this.stateHistory = [];
+        this.lastStateChangeAt = 0;
+        this.MIN_RECONNECT_INTERVAL = 5000; // Minimum 5s between reconnects
+        this.SERVER_CLEANUP_TIME = 120000; // 120s for TCP TIME_WAIT cleanup
         // USB Serial Port Recovery (URB -32 / EPIPE errors)
         this.consecutiveErrors = 0;
         this.MAX_CONSECUTIVE_ERRORS = 5; // Trigger recovery after 5 consecutive errors
@@ -62,9 +78,10 @@ class ModbusClientCore extends events_1.EventEmitter {
                 if (waitTime > queueTimeout) {
                     throw new Error(`[QUEUE-TIMEOUT] Request timed out after waiting ${waitTime}ms in queue`);
                 }
-                // Add small delay between requests for STM32 stability
+                // Add inter-request delay to prevent overwhelming device
                 if (this.queueLength > 1) {
-                    await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+                    const interRequestDelay = this.config.boardType === 'ATMEGA' ? 100 : 50;
+                    await new Promise(resolve => setTimeout(resolve, interRequestDelay));
                 }
                 return await operation();
             }
@@ -114,9 +131,40 @@ class ModbusClientCore extends events_1.EventEmitter {
                 break;
         }
     }
+    /**
+     * FSM state transition method with logging and event emission
+     */
+    transitionTo(newState) {
+        const oldState = this.connectionState;
+        this.connectionState = newState;
+        this.lastStateChangeAt = Date.now();
+        this.stateHistory.push({ state: newState, timestamp: this.lastStateChangeAt });
+        // Keep only last 50 state changes
+        if (this.stateHistory.length > 50) {
+            this.stateHistory = this.stateHistory.slice(-50);
+        }
+        if (oldState !== newState) {
+            this.node.log(`[FSM] ${oldState} → ${newState}`);
+            this.emit('state-change', { from: oldState, to: newState, timestamp: this.lastStateChangeAt });
+        }
+    }
+    /**
+     * Get current connection state (for debugging/monitoring)
+     */
+    getConnectionState() {
+        return this.connectionState;
+    }
+    /**
+     * Get recent state history (for debugging)
+     */
+    getStateHistory() {
+        return [...this.stateHistory];
+    }
     // Khởi tạo client
     async initializeClient() {
         ////this.node.log(`Modbus: Attempting to connect type ${this.config.type}...`); // Log connection attempt
+        // FSM: Transition to CONNECTING
+        this.transitionTo(ConnectionState.CONNECTING);
         try {
             if (this.config.type === "TCP") {
                 await this.connectTCP();
@@ -129,7 +177,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.client.setID(this.config.unitId);
             const wasConnected = this.isConnected;
             this.isConnected = true;
-            // 🆕 Reset counters on successful connection
+            // FSM: Transition to CONNECTED
+            this.transitionTo(ConnectionState.CONNECTED);
+            // Reset counters on successful connection
             if (!wasConnected) {
                 this.failedConnectionCount = 0;
                 this.disconnectStartTime = null;
@@ -145,9 +195,10 @@ class ModbusClientCore extends events_1.EventEmitter {
         }
         catch (error) {
             ////this.node.log(`Modbus: Connection failed for type ${this.config.type}: ${(error as Error).message}`); // Log connection error
+            // FSM: Transition to ERROR (handleError does this)
             this.handleError(error);
             if (this.config.type === "TCP") {
-                // 🆕 Sử dụng circuit breaker thay vì scheduleReconnect trực tiếp
+                // Sử dụng circuit breaker thay vì scheduleReconnect trực tiếp
                 this.scheduleReconnectWithCircuitBreaker();
             }
         }
@@ -182,20 +233,23 @@ class ModbusClientCore extends events_1.EventEmitter {
     }
     /**
      * Get board-specific socket options
+     * TCP keepalive enabled to detect half-open connections before device hits max connection limit
      */
     getBoardSpecificSocketOptions(boardType) {
         switch (boardType) {
             case "ATMEGA":
                 return {
-                    keepAlive: true,
-                    timeout: 5000,
-                    noDelay: false, // ATmega may benefit from Nagle's algorithm
+                    keepAlive: true, // Enable to detect half-open connections
+                    keepAliveDelay: 60000, // 60s before sending keepalive probes
+                    timeout: 8000,
+                    noDelay: false, // Use Nagle's algorithm (reduce packet count)
                     family: 4,
                     connectTimeout: 5000
                 };
             case "STM32":
                 return {
-                    keepAlive: false,
+                    keepAlive: true, // Enable for all boards
+                    keepAliveDelay: 30000, // 30s for faster detection
                     timeout: 3000,
                     noDelay: true,
                     family: 4,
@@ -203,7 +257,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                 };
             default:
                 return {
-                    keepAlive: false,
+                    keepAlive: true,
+                    keepAliveDelay: 30000,
                     timeout: 3000,
                     noDelay: true,
                     family: 4,
@@ -223,6 +278,8 @@ class ModbusClientCore extends events_1.EventEmitter {
     }
     // Xử lý lỗi với cơ chế phục hồi nâng cao
     handleError(error) {
+        // FSM: Transition to ERROR
+        this.transitionTo(ConnectionState.ERROR);
         // Log lỗi chi tiết
         this.node.error(`Modbus Error: ${error.message}`);
         this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
@@ -268,6 +325,8 @@ class ModbusClientCore extends events_1.EventEmitter {
         if (isConnectionError) {
             this.wasConnected = this.isConnected; // Cập nhật trạng thái kết nối trước đó
             this.isConnected = false;
+            // FSM: Transition to DISCONNECTED
+            this.transitionTo(ConnectionState.DISCONNECTED);
             if (this.wasConnected) { // Chỉ log khi trạng thái thay đổi
                 //this.node.log(`Modbus connection lost due to: "${error.message}"`);
                 this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
@@ -283,10 +342,13 @@ class ModbusClientCore extends events_1.EventEmitter {
                 }
                 // Lên lịch kết nối lại ngay lập tức cho lỗi kết nối
                 if (this.config.type === "TCP") {
-                    // Tạo client mới để tránh vấn đề với client cũ
-                    this.client = new modbus_serial_1.default();
-                    // Lên lịch kết nối lại
-                    this.scheduleReconnect();
+                    // Ensure old connection is fully cleaned up before creating new one
+                    // Use IIFE to handle async operation in sync context
+                    (async () => {
+                        await this.ensureCleanConnection();
+                        // Lên lịch kết nối lại
+                        this.scheduleReconnect();
+                    })();
                 }
             }
         }
@@ -326,9 +388,9 @@ class ModbusClientCore extends events_1.EventEmitter {
             // Step 3: Wait for USB stack to settle (critical for FTDI chips)
             this.node.warn("[USB-RECOVERY] Step 3/5: Waiting 3s for USB stack to settle...");
             await this.sleep(3000);
-            // Step 4: Create completely new Modbus client
+            // Step 4: Create completely new Modbus client (ensureCleanConnection handles this)
             this.node.warn("[USB-RECOVERY] Step 4/5: Creating new Modbus client instance...");
-            this.client = new modbus_serial_1.default();
+            await this.ensureCleanConnection();
             // Step 5: Attempt fresh connection
             this.node.warn("[USB-RECOVERY] Step 5/5: Attempting fresh connection...");
             await this.initializeClient();
@@ -582,6 +644,40 @@ class ModbusClientCore extends events_1.EventEmitter {
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+    /**
+     * Ensure old connection is fully closed before creating a new one
+     * Prevents connection leaks and ensures OS releases file descriptors
+     */
+    async ensureCleanConnection() {
+        if (this.client && this.client.isOpen) {
+            this.node.log('[CLEANUP] Closing existing connection before creating new one');
+            try {
+                // Remove all listeners first to prevent stale callbacks
+                this.removeAllListeners();
+                // Close with timeout protection
+                await Promise.race([
+                    new Promise((resolve, reject) => {
+                        try {
+                            this.client.close(() => resolve());
+                        }
+                        catch (err) {
+                            reject(err);
+                        }
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 2000))
+                ]);
+                // Wait for OS to release file descriptor
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                this.node.log('[CLEANUP] Connection closed successfully');
+            }
+            catch (closeError) {
+                this.node.warn(`[CLEANUP] Close error (continuing): ${closeError.message}`);
+            }
+        }
+        // Create fresh client instance
+        this.client = new modbus_serial_1.default();
+        this.isConnected = false;
+    }
     scheduleReconnect() {
         // Don't schedule reconnect if shutting down
         if (this.isShuttingDown) {
@@ -592,6 +688,21 @@ class ModbusClientCore extends events_1.EventEmitter {
             //this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
             return;
         }
+        // FSM: Check minimum interval since last state change
+        const timeSinceLastChange = Date.now() - this.lastStateChangeAt;
+        if (timeSinceLastChange < this.MIN_RECONNECT_INTERVAL) {
+            const waitTime = this.MIN_RECONNECT_INTERVAL - timeSinceLastChange;
+            this.node.log(`[FSM] Waiting ${waitTime}ms before next reconnect attempt (enforcing minimum interval)`);
+            // Schedule after the minimum interval
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = undefined;
+                this.transitionTo(ConnectionState.RECONNECTING);
+                this.scheduleReconnect();
+            }, waitTime);
+            return;
+        }
+        // FSM: Transition to RECONNECTING state
+        this.transitionTo(ConnectionState.RECONNECTING);
         // STM32 cần thời gian recovery ngắn hơn nhưng ổn định
         const quickReconnectTime = 5000; // 5 giây cho STM32 (tăng từ 2s)
         const standardReconnectTime = Math.max(this.config.reconnectInterval || 30000, 30000); // 30s
@@ -599,10 +710,8 @@ class ModbusClientCore extends events_1.EventEmitter {
         // Thử kết nối lại nhanh
         this.reconnectTimer = setTimeout(async () => {
             try {
-                // 🆕 THEM: Delay để release socket hoàn toàn trước khi tạo client mới
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                // Tạo client mới để tránh vấn đề với client cũ
-                this.client = new modbus_serial_1.default();
+                // Ensure old connection is fully cleaned up before creating new one
+                await this.ensureCleanConnection();
                 // Thử kết nối lại
                 await this.initializeClient();
                 //this.node.log(`[STM32-RECONNECT] Quick reconnect successful`);
@@ -622,8 +731,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                 //this.node.log(`[STM32-RECONNECT] Scheduling standard reconnect in ${standardReconnectTime}ms`);
                 this.reconnectTimer = setTimeout(async () => {
                     try {
-                        // Tạo client mới lần nữa
-                        this.client = new modbus_serial_1.default();
+                        // Ensure clean connection before retry
+                        await this.ensureCleanConnection();
                         // Thử kết nối lại
                         await this.initializeClient();
                         //this.node.log(`[STM32-RECONNECT] Standard reconnect successful`);
@@ -652,6 +761,8 @@ class ModbusClientCore extends events_1.EventEmitter {
             // 🆕 Circuit Breaker Triggered
             this.circuitBreakerOpen = true;
             this.disconnectStartTime = Date.now();
+            // FSM: Transition to CIRCUIT_BREAKER_OPEN
+            this.transitionTo(ConnectionState.CIRCUIT_BREAKER_OPEN);
             this.node.error(`[CIRCUIT-BREAKER] Triggered! ${maxAttempts} failed attempts, waiting 5 minutes`);
             // Emit event cho alert handling
             this.emit("modbus-status", {
@@ -674,7 +785,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         //this.node.log(`[STM32-RECONNECT] Scheduling backoff reconnect attempt ${attempt}/${maxAttempts} in ${delay}ms`);
         this.reconnectTimer = setTimeout(async () => {
             try {
-                this.client = new modbus_serial_1.default();
+                await this.ensureCleanConnection();
                 await this.initializeClient();
                 //this.node.log(`[STM32-RECONNECT] Backoff reconnect successful on attempt ${attempt}`);
                 clearTimeout(this.reconnectTimer);
@@ -759,19 +870,8 @@ class ModbusClientCore extends events_1.EventEmitter {
         // Kiểm tra kết nối hiện tại
         if (!this.isConnected || !this.client.isOpen) {
             //this.node.log(" Connection lost or not initialized, attempting to reconnect...");
-            // Đóng kết nối hiện tại nếu còn mở
-            try {
-                if (this.client.isOpen) {
-                    this.client.close();
-                }
-            }
-            catch (closeErr) {
-                // Bỏ qua lỗi khi đóng kết nối
-            }
-            // 🆕 THEM: Delay 1s để release socket hoàn toàn
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            // Tạo client mới để tránh vấn đề với client cũ
-            this.client = new modbus_serial_1.default();
+            // Ensure old connection is fully cleaned up
+            await this.ensureCleanConnection();
             // Thử kết nối lại với retry logic tối ưu cho STM32
             let retryCount = 0;
             const maxRetries = 2; // Giảm số retry cho STM32
@@ -818,6 +918,8 @@ class ModbusClientCore extends events_1.EventEmitter {
             // Circuit breaker triggered
             this.circuitBreakerOpen = true;
             this.disconnectStartTime = Date.now();
+            // FSM: Transition to CIRCUIT_BREAKER_OPEN
+            this.transitionTo(ConnectionState.CIRCUIT_BREAKER_OPEN);
             this.node.error(`[CIRCUIT-BREAKER] Triggered! ${this.failedConnectionCount} failed attempts, waiting 5 minutes`);
             // Emit event cho alert handling
             this.emit("modbus-status", {
@@ -1057,19 +1159,8 @@ class ModbusClientCore extends events_1.EventEmitter {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
         }
-        // Mark as disconnected
-        this.isConnected = false;
-        // Close existing connection
-        try {
-            if (this.client.isOpen) {
-                this.client.close();
-            }
-        }
-        catch (closeErr) {
-            // Ignore close errors
-        }
-        // Create new client instance
-        this.client = new modbus_serial_1.default();
+        // Ensure clean connection before reconnecting
+        await this.ensureCleanConnection();
         // Attempt to reconnect
         await this.initializeClient();
     }
