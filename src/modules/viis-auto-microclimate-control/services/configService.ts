@@ -77,9 +77,9 @@ export class ConfigService implements IConfigService {
 
             // Check critical configuration values
             const criticalChecks = [
-                // Fan control modes should be 0 or 1
+                // Fan control mode should be 1 (threshold) or 2 (rotation)
                 config.set_mode_fan === undefined || [0, 1].includes(config.set_mode_fan),
-                config.set_auto_mode_fan === undefined || [0, 1].includes(config.set_auto_mode_fan),
+                config.set_auto_mode_fan === undefined || [1, 2].includes(config.set_auto_mode_fan),
 
                 // Water pump mode should be 0 or 1
                 config.set_mode_tuong_nuoc === undefined || [0, 1].includes(config.set_mode_tuong_nuoc),
@@ -156,7 +156,7 @@ export class ConfigService implements IConfigService {
     private applyDefaults(config: AutoControlConfig): void {
         // Fan control defaults
         if (config.set_mode_fan === undefined) config.set_mode_fan = 0;
-        if (config.set_auto_mode_fan === undefined) config.set_auto_mode_fan = 0;
+        if (config.set_auto_mode_fan === undefined) config.set_auto_mode_fan = 1;
         if (config.set_k1_fan === undefined) config.set_k1_fan = 25;
         if (config.set_k2_fan === undefined) config.set_k2_fan = 30;
         if (config.set_k3_fan === undefined) config.set_k3_fan = 35;

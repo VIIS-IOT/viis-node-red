@@ -152,7 +152,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
             const k4TempCondition = tempIndoor >= k4Threshold;
             const k4HumiCondition = humiIndoor < 75;
 
-            if ((k4TempCondition || k4HumiCondition) && currentSetModeFan && !currentSetAutoModeFan) {
+            if ((k4TempCondition || k4HumiCondition) && currentSetModeFan && currentSetAutoModeFan === 1) {
                 const reason = `K4 priority override: temp=${tempIndoor}°C${k4TempCondition ? ` (≥${k4Threshold})` : ''}, humidity=${humiIndoor}%${k4HumiCondition ? ' (<75%)' : ''}`;
                 this.logger.warn(`Water pump K4 override: ON - ${reason}`);
 

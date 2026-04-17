@@ -240,7 +240,7 @@ export class EnhancedFanControlService implements IFanControlService {
 
         if (config.set_mode_fan !== 1) {
             targetMode = FanControlMode.DISABLED;
-        } else if (config.set_auto_mode_fan === 1) {
+        } else if (config.set_auto_mode_fan === 2) {
             targetMode = FanControlMode.ROTATION;
         } else {
             targetMode = FanControlMode.THRESHOLD;

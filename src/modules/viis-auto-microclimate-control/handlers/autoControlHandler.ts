@@ -344,7 +344,7 @@ export class AutoControlHandler implements IAutoControlHandler {
 
             return {
                 enabled: true,
-                mode: config.set_auto_mode_fan === 1 ? "ROTATION" : "THRESHOLD",
+                mode: config.set_auto_mode_fan === 2 ? "ROTATION" : "THRESHOLD",
                 temperature: temperature,
                 humidity: humidity,
                 thresholds: thresholds,
@@ -371,7 +371,7 @@ export class AutoControlHandler implements IAutoControlHandler {
      */
     private getRotationStateInfo(config: any, requiredFanCount: number): any {
         try {
-            if (config.set_auto_mode_fan === 1) {
+            if (config.set_auto_mode_fan === 2) {
                 // Rotation mode
                 const rotationState = this.flowContext.get('fanRotationState');
                 return {

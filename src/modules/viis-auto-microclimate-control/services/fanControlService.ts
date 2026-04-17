@@ -87,7 +87,7 @@ export class FanControlService implements IFanControlService {
             const useTransitions = transitionDelayMs > 0 || offDelayMs > 0;
 
             // Process based on auto mode
-            if (config.set_auto_mode_fan === 1) {
+            if (config.set_auto_mode_fan === 2) {
                 // Rotation mode
                 if (useTransitions) {
                     const rotationActions = await this.processRotationModeWithTransition(config);
