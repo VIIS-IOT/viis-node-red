@@ -213,8 +213,20 @@ export class FanControlService implements IFanControlService {
                 const fanGroups = this.getFanGroups(requiredGroupSize);
                 if (fanGroups.length > 1) {
                     // Multiple groups available for this size - check if rotation is needed
-                    const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
-                    const rotationState = this.flowContext.get(contextKey);
+                    const contextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold`;
+                    let rotationState = this.flowContext.get(contextKey);
+                    const legacyContextKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+
+                    // Backward compatibility: migrate legacy key if present
+                    if (!rotationState) {
+                        const legacyState = this.flowContext.get(legacyContextKey);
+                        if (legacyState) {
+                            rotationState = legacyState;
+                            this.flowContext.set(contextKey, legacyState);
+                            this.flowContext.set(legacyContextKey, null);
+                        }
+                    }
+
                     const rotationInterval = minutesToMs(config.set_time_alternate_fan || 15);
 
                     if (rotationState && hasTimeElapsed(rotationState.lastRotationTime, rotationInterval)) {

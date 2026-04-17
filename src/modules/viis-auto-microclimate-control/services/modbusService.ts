@@ -180,6 +180,12 @@ export class ModbusService implements IModbusService {
             let success = false;
             let lastError: string = "";
 
+            // Optional per-action delay (used by fan transition/rotation sequencing)
+            if (typeof action.delay === "number" && action.delay > 0) {
+                this.logger.debug(`Applying action delay: ${action.delay}ms for ${action.deviceKey}`);
+                await delay(action.delay);
+            }
+
             // Retry logic for each action
             for (let attempt = 1; attempt <= CONTROL_CONFIG.RETRY_ATTEMPTS; attempt++) {
                 try {

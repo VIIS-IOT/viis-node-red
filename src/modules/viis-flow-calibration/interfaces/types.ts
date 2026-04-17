@@ -25,6 +25,7 @@ export interface CalibrationInput {
     currentKFactor: number;      // Current K-Factor from board2
     currentFlowrate: number;     // Current expected pump flowrate (mL/s)
     reportedVolume: number;      // Volume reported by flow sensor (V_reported)
+    hasBoard2Data?: boolean;     // True when board2 data is valid for K-Factor calibration
 }
 
 /**

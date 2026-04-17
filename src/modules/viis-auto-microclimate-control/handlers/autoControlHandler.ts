@@ -321,10 +321,10 @@ export class AutoControlHandler implements IAutoControlHandler {
                 requiredFanCount = 6;
             } else if (temperature >= thresholds.k2) {
                 currentThreshold = "K2";
-                requiredFanCount = 4;
+                requiredFanCount = 2;
             } else if (temperature >= thresholds.k1) {
                 currentThreshold = "K1";
-                requiredFanCount = 2;
+                requiredFanCount = 1;
             }
 
             // Get current device status

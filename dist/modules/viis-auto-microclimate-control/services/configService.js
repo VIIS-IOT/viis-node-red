@@ -12,6 +12,7 @@ class ConfigService {
         this.cachedConfig = null;
         this.lastConfigUpdate = 0;
         this.CONFIG_CACHE_TTL = 30000; // 30 seconds
+        this.CONFIG_UPDATED_AT_KEY = "configKeyValuesUpdatedAt";
         this.globalContext = options.globalContext;
         this.logger = new logger_1.Logger(options.node, options.nodeId);
     }
@@ -109,6 +110,10 @@ class ConfigService {
      * Check if cached config is still valid
      */
     isCacheValid() {
+        const latestConfigUpdateMarker = Number(this.globalContext.get(this.CONFIG_UPDATED_AT_KEY) || 0);
+        if (latestConfigUpdateMarker > this.lastConfigUpdate) {
+            return false;
+        }
         const now = Date.now();
         return (now - this.lastConfigUpdate) < this.CONFIG_CACHE_TTL;
     }

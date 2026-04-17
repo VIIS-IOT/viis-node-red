@@ -101,6 +101,7 @@ const CONFIG_PARAMETER_KEYS = new Set([
 ]);
 let ScheduleService = class ScheduleService {
     constructor(node, verifyAfterWrite = true, debugEnable = false) {
+        this.CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
@@ -1449,6 +1450,7 @@ let ScheduleService = class ScheduleService {
     setScheduleConfigValues(values) {
         var _a;
         (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("configKeyValues", values);
+        this.markConfigKeyValuesUpdated();
         this.debugLog(`Updated schedule config values: ${JSON.stringify(values)}`);
     }
     /**
@@ -1464,7 +1466,15 @@ let ScheduleService = class ScheduleService {
     setConfigKeyValues(values) {
         var _a;
         (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("configKeyValues", values);
+        this.markConfigKeyValuesUpdated();
         this.debugLog(`Updated configKeyValues: ${JSON.stringify(values)}`);
+    }
+    /**
+     * Mark configKeyValues mutation time so dependent modules can invalidate cache.
+     */
+    markConfigKeyValuesUpdated() {
+        var _a;
+        (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set(this.CONFIG_KEY_VALUES_UPDATED_AT, Date.now());
     }
     /**
      * Store configuration parameter (for schedule execution)
@@ -1523,12 +1533,10 @@ let ScheduleService = class ScheduleService {
         (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("scheduleConfigKeys", keys);
     }
     /**
-     * Reset configKeyValues that were set by a specific schedule when it finishes.
-     * Keeps the keys in configKeyValues but sets their values to 0 (falsy).
-     * Does NOT remove keys or clear tracking - preserves key structure.
+     * Preserve configKeyValues when a schedule finishes.
      *
-     * IMPORTANT: This ensures config keys persist across schedule executions.
-     * When another schedule runs, it will override these values if needed.
+     * Rationale: resetting values to 0 at schedule boundaries can create a temporary
+     * mode flicker before the next schedule writes new values.
      */
     clearScheduleConfigValues(scheduleId) {
         const scheduleConfigKeys = this.getScheduleConfigKeys();
@@ -1537,21 +1545,10 @@ let ScheduleService = class ScheduleService {
             this.debugLog(`No config keys to clear for schedule ${scheduleId}`);
             return;
         }
-        const currentConfig = this.getConfigKeyValues();
-        for (const key of keysForThisSchedule) {
-            // Reset value to 0 but KEEP the key in configKeyValues
-            // This preserves the key structure for other schedules to override
-            currentConfig[key] = 0;
-            this.debugLog(`Reset config key ${key} to 0 for schedule ${scheduleId}`);
-        }
-        this.setConfigKeyValues(currentConfig);
-        // IMPORTANT: Do NOT delete scheduleConfigKeys[scheduleId]
-        // This preserves the tracking so we know which keys belonged to which schedule
-        // and can properly reset them when needed
         if (this.node) {
-            this.node.warn(`🧹 RESET ${keysForThisSchedule.length} config values to 0 for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
+            this.node.warn(`🧹 PRESERVE ${keysForThisSchedule.length} config values for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
         }
-        this.debugLog(`Reset ${keysForThisSchedule.length} config values to 0 for schedule ${scheduleId}`);
+        this.debugLog(`Preserved ${keysForThisSchedule.length} config values for schedule ${scheduleId}`);
     }
     /**
      * Process RPC control command - write to configKeyValues if not found in modbus mapping
