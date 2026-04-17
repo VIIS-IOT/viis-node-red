@@ -155,7 +155,7 @@ class EnhancedFanControlService {
         if (config.set_mode_fan !== 1) {
             targetMode = types_1.FanControlMode.DISABLED;
         }
-        else if (config.set_auto_mode_fan === 1) {
+        else if (config.set_auto_mode_fan === 2) {
             targetMode = types_1.FanControlMode.ROTATION;
         }
         else {

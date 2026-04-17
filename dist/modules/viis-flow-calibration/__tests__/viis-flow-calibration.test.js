@@ -331,37 +331,36 @@ describe("viis-flow-calibration - Board2 Global Context Reading", () => {
             HOLDING_K_FACTOR_BOM_1: 0,
             HOLDING_FLOWRATE_BOM_1: 20,
         };
-        it("should use actual K-Factor value from board2Registers (not default 450)", () => {
+        it("should compute pump K-Factor from runtime-based calibration", () => {
             const input = {
                 pumpIndex: 1,
                 actualMl: 950,
                 setMl: 1000,
                 currentCalibBoard1: 10,
-                currentKFactor: 500, // Actual value from global context
+                currentKFactor: 500, // No longer used as base formula for new K_FACTOR_BOM
                 currentFlowrate: 10,
                 reportedVolume: 1000,
             };
             const result = service.calculate(input, board1Registers, board2Registers, true, true);
             expect(result.success).toBe(true);
             expect(result.board2).not.toBeNull();
-            // K_new = 500 * (950 / 1000) = 475 (NOT 450 * 0.95 = 428)
-            expect(result.board2.newKFactor).toBe(475);
+            // K_new (pump coeff) = 950 / 100 * 100 = 950
+            expect(result.board2.newKFactor).toBe(950);
         });
-        it("should handle case where currentKFactor is 0 (needs special handling)", () => {
+        it("should not depend on currentKFactor when computing new pump K-Factor", () => {
             const input = {
                 pumpIndex: 1,
                 actualMl: 950,
                 setMl: 1000,
                 currentCalibBoard1: 10,
-                currentKFactor: 0, // K-Factor is 0 (needs calibration)
+                currentKFactor: 0, // Ignored by new K_FACTOR_BOM formula
                 currentFlowrate: 10,
                 reportedVolume: 1000,
             };
             const result = service.calculate(input, board1Registers, board2Registers, true, true);
             expect(result.success).toBe(true);
-            // When currentKFactor is 0, the formula K_new = 0 * (actual/report) = 0
-            // This might need special handling in production
-            expect(result.board2.newKFactor).toBe(0);
+            // K_new (pump coeff) still derives from runtime and actual volume
+            expect(result.board2.newKFactor).toBe(950);
         });
     });
 });

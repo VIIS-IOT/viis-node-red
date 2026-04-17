@@ -38,7 +38,7 @@ class CalibrationService {
         }
         this.log(`Calculating calibration for pump ${pumpIndex}`);
         this.log(`  actualMl=${actualMl}, setMl=${setMl}, currentCalibBoard1=${currentCalibBoard1}`);
-        this.log(`  currentKFactor=${currentKFactor}, reportedVolume=${reportedVolume}`);
+        this.log(`  currentKFactor=${currentKFactor}, currentFlowrate=${currentFlowrate}, reportedVolume=${reportedVolume}`);
         // Calculate run time: RUN_TIME = setMl / currentCalibBoard1
         // IMPORTANT: currentCalibBoard1 is read from global context (holding_register_data_1)
         // Node-RED "Map Holding Data" function already unscaled the value (divided by 100)
@@ -72,23 +72,25 @@ class CalibrationService {
                 this.warn(`  Board1: Register ${calibKey} not found in mapping`);
             }
         }
-        // Calculate Board2: K_new = K_old × (V_actual / V_reported)
-        // Calculate Board2: Q_new = actualMl / runTime
+        // Calculate Board2 with updated semantics:
+        // - K_FACTOR_BOM: pump calibration coefficient (from runTime/actual volume)
+        // - FLOWRATE_BOM: flow sensor coefficient (scaled from measured/entered ratio)
         if (calibrateBoard2) {
             const kFactorKey = constants_1.BOARD2_KEYS.K_FACTOR(pumpIndex);
             const flowrateKey = constants_1.BOARD2_KEYS.FLOWRATE(pumpIndex);
             const kFactorAddress = board2Registers[kFactorKey];
             const flowrateAddress = board2Registers[flowrateKey];
             if (kFactorAddress !== undefined && flowrateAddress !== undefined) {
-                // K-Factor calculation: K_new = K_old × (V_actual / V_reported)
-                // Logic: If sensor over-reports (reported > actual), K-Factor should decrease
-                //        If sensor under-reports (reported < actual), K-Factor should increase
-                let newKFactor = currentKFactor;
-                if (reportedVolume > 0 && actualMl > 0 && currentKFactor > 0) {
-                    newKFactor = Math.round(currentKFactor * (actualMl / reportedVolume));
+                // Pump calibration coefficient (K_FACTOR_BOM):
+                // K_new = actualMl / runTime (scaled x100)
+                const newKFactor = Math.round((actualMl / runTime) * constants_1.DEFAULTS.SCALE_FACTOR);
+                // Flow sensor coefficient (FLOWRATE_BOM):
+                // FlowCoeff_new = FlowCoeff_old × (V_reported / V_entered)
+                // currentFlowrate is unscaled in global context, write as scaled x100.
+                let newFlowrate = Math.round(currentFlowrate * constants_1.DEFAULTS.SCALE_FACTOR);
+                if (reportedVolume > 0 && actualMl > 0 && currentFlowrate > 0) {
+                    newFlowrate = Math.round(currentFlowrate * (reportedVolume / actualMl) * constants_1.DEFAULTS.SCALE_FACTOR);
                 }
-                // Flowrate calculation: Q_new = V_actual / T_run (mL/s, scaled by 100)
-                const newFlowrate = Math.round((actualMl / runTime) * constants_1.DEFAULTS.SCALE_FACTOR);
                 result.board2 = {
                     newKFactor,
                     kFactorAddress,

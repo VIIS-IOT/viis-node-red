@@ -166,7 +166,7 @@ module.exports = function (RED) {
                     // Calculate calibration values
                     const shouldCalibrateBoard2 = config.calibrateBoard2 !== false && input.hasBoard2Data;
                     if (config.calibrateBoard2 !== false && !input.hasBoard2Data) {
-                        node.warn(`Skipping Board2 calibration for pump ${i}: missing/invalid K-Factor data`);
+                        node.warn(`Skipping Board2 calibration for pump ${i}: missing/invalid FLOWRATE sensor coefficient`);
                     }
                     const result = calibrationService.calculate(input, board1Registers, board2HoldingRegisters, config.calibrateBoard1 !== false, shouldCalibrateBoard2);
                     if (result.success) {
@@ -269,23 +269,23 @@ module.exports = function (RED) {
             const normalizedKFactor = Number(currentKFactor);
             const normalizedFlowrate = Number(currentFlowrate);
             const normalizedReportedVolume = Number(reportedVolume);
-            const hasValidKFactor = Number.isFinite(normalizedKFactor) && normalizedKFactor > 0;
+            const hasValidFlowrate = Number.isFinite(normalizedFlowrate) && normalizedFlowrate > 0;
             const flowrateValue = Number.isFinite(normalizedFlowrate) ? normalizedFlowrate : 0;
             const reportedVolumeValue = Number.isFinite(normalizedReportedVolume) && normalizedReportedVolume > 0
                 ? normalizedReportedVolume
                 : Number(setMl);
-            if (!hasValidKFactor) {
-                node.warn(`⚠️ K-Factor missing/invalid for pump ${pumpIndex} in holding_register_data_2. Board2 calibration will be skipped.`);
+            if (!hasValidFlowrate) {
+                node.warn(`⚠️ FLOWRATE missing/invalid for pump ${pumpIndex} in holding_register_data_2. Board2 calibration will be skipped.`);
             }
             return {
                 pumpIndex,
                 actualMl: Number(actualMl),
                 setMl: Number(setMl),
                 currentCalibBoard1: Number(currentCalibBoard1),
-                currentKFactor: hasValidKFactor ? normalizedKFactor : 0,
+                currentKFactor: Number.isFinite(normalizedKFactor) ? normalizedKFactor : 0,
                 currentFlowrate: Number(flowrateValue),
                 reportedVolume: Number(reportedVolumeValue),
-                hasBoard2Data: hasValidKFactor,
+                hasBoard2Data: hasValidFlowrate,
             };
         }
         /**
@@ -399,10 +399,10 @@ module.exports = function (RED) {
             const currentKFactor = Number(holdingRegisterData2[kFactorKey]);
             const currentFlowrate = Number(holdingRegisterData2[flowrateKey]);
             const reportedVolume = Number(inputRegisterData2[totalFlowKey]);
-            const hasValidKFactor = Number.isFinite(currentKFactor) && currentKFactor > 0;
-            const shouldCalibrateBoard2 = config.calibrateBoard2 !== false && hasValidKFactor;
-            if (config.calibrateBoard2 !== false && !hasValidKFactor) {
-                node.warn(`Skipping Board2 calibration for pump ${pumpIndex}: missing/invalid K-Factor in holding_register_data_2`);
+            const hasValidFlowrate = Number.isFinite(currentFlowrate) && currentFlowrate > 0;
+            const shouldCalibrateBoard2 = config.calibrateBoard2 !== false && hasValidFlowrate;
+            if (config.calibrateBoard2 !== false && !hasValidFlowrate) {
+                node.warn(`Skipping Board2 calibration for pump ${pumpIndex}: missing/invalid FLOWRATE in holding_register_data_2`);
             }
             // Build calibration input from global context values
             const input = {
@@ -410,10 +410,10 @@ module.exports = function (RED) {
                 actualMl: Number(actualMl),
                 setMl: Number(setMl),
                 currentCalibBoard1: Number(holdingRegisterData[`HOLDING_CALIB_BOM_${pumpIndex}`]) || 1000,
-                currentKFactor: hasValidKFactor ? currentKFactor : 0,
+                currentKFactor: Number.isFinite(currentKFactor) ? currentKFactor : 0,
                 currentFlowrate: Number.isFinite(currentFlowrate) ? currentFlowrate : 0,
                 reportedVolume: Number.isFinite(reportedVolume) && reportedVolume > 0 ? reportedVolume : Number(setMl),
-                hasBoard2Data: hasValidKFactor,
+                hasBoard2Data: hasValidFlowrate,
             };
             const result = calibrationService.calculate(input, board1Registers, board2HoldingRegisters, config.calibrateBoard1 !== false, shouldCalibrateBoard2);
             if (result.success) {

@@ -59,9 +59,9 @@ class ConfigService {
             const config = this.getConfig();
             // Check critical configuration values
             const criticalChecks = [
-                // Fan control modes should be 0 or 1
+                // Fan control mode should be 1 (threshold) or 2 (rotation)
                 config.set_mode_fan === undefined || [0, 1].includes(config.set_mode_fan),
-                config.set_auto_mode_fan === undefined || [0, 1].includes(config.set_auto_mode_fan),
+                config.set_auto_mode_fan === undefined || [1, 2].includes(config.set_auto_mode_fan),
                 // Water pump mode should be 0 or 1
                 config.set_mode_tuong_nuoc === undefined || [0, 1].includes(config.set_mode_tuong_nuoc),
                 // Curtain mode should be 0 or 1
@@ -125,7 +125,7 @@ class ConfigService {
         if (config.set_mode_fan === undefined)
             config.set_mode_fan = 0;
         if (config.set_auto_mode_fan === undefined)
-            config.set_auto_mode_fan = 0;
+            config.set_auto_mode_fan = 1;
         if (config.set_k1_fan === undefined)
             config.set_k1_fan = 25;
         if (config.set_k2_fan === undefined)

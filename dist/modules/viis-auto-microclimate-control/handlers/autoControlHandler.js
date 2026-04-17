@@ -247,11 +247,11 @@ class AutoControlHandler {
             }
             else if (temperature >= thresholds.k2) {
                 currentThreshold = "K2";
-                requiredFanCount = 4;
+                requiredFanCount = 2;
             }
             else if (temperature >= thresholds.k1) {
                 currentThreshold = "K1";
-                requiredFanCount = 2;
+                requiredFanCount = 1;
             }
             // Get current device status
             const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
@@ -264,7 +264,7 @@ class AutoControlHandler {
             const fanGroupInfo = this.getFanGroupInfo(requiredFanCount, currentActiveFans);
             return {
                 enabled: true,
-                mode: config.set_auto_mode_fan === 1 ? "ROTATION" : "THRESHOLD",
+                mode: config.set_auto_mode_fan === 2 ? "ROTATION" : "THRESHOLD",
                 temperature: temperature,
                 humidity: humidity,
                 thresholds: thresholds,
@@ -290,7 +290,7 @@ class AutoControlHandler {
      */
     getRotationStateInfo(config, requiredFanCount) {
         try {
-            if (config.set_auto_mode_fan === 1) {
+            if (config.set_auto_mode_fan === 2) {
                 // Rotation mode
                 const rotationState = this.flowContext.get('fanRotationState');
                 return {

@@ -46,7 +46,7 @@ class FanControlService {
             const offDelayMs = this.getFanGroupOffDelayMs(config);
             const useTransitions = transitionDelayMs > 0 || offDelayMs > 0;
             // Process based on auto mode
-            if (config.set_auto_mode_fan === 1) {
+            if (config.set_auto_mode_fan === 2) {
                 // Rotation mode
                 if (useTransitions) {
                     const rotationActions = await this.processRotationModeWithTransition(config);
@@ -150,8 +150,18 @@ class FanControlService {
                 const fanGroups = this.getFanGroups(requiredGroupSize);
                 if (fanGroups.length > 1) {
                     // Multiple groups available for this size - check if rotation is needed
-                    const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
-                    const rotationState = this.flowContext.get(contextKey);
+                    const contextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold`;
+                    let rotationState = this.flowContext.get(contextKey);
+                    const legacyContextKey = `${constants_1.CONTEXT_KEYS.FAN_ROTATION_STATE}_threshold_mode`;
+                    // Backward compatibility: migrate legacy key if present
+                    if (!rotationState) {
+                        const legacyState = this.flowContext.get(legacyContextKey);
+                        if (legacyState) {
+                            rotationState = legacyState;
+                            this.flowContext.set(contextKey, legacyState);
+                            this.flowContext.set(legacyContextKey, null);
+                        }
+                    }
                     const rotationInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan || 15);
                     if (rotationState && (0, timeUtils_1.hasTimeElapsed)(rotationState.lastRotationTime, rotationInterval)) {
                         this.logger.debug(`Fan count matches but rotation is due: proceeding with rotation logic`);

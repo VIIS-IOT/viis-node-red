@@ -47,11 +47,11 @@ describe("CalibrationService", () => {
             expect(result.board1!.address).toBe(17);
             expect(result.board1!.newCalibValue).toBe(950);
 
-            // Board2 K-Factor: K_new = 450 * (950 / 1000) ≈ 428 (sensor over-reported, K decreases)
-            expect(result.board2!.newKFactor).toBe(428);
+            // Board2 K-Factor (pump coeff): K_new = 950 / 100 * 100 = 950
+            expect(result.board2!.newKFactor).toBe(950);
 
-            // Board2 Flowrate: Q_new = 950 / 100 = 9.5 (scaled = 950)
-            expect(result.board2!.newFlowrate).toBe(950);
+            // Board2 Flowrate (sensor coeff): F_new = 10 * (1000/950) * 100 ≈ 1053
+            expect(result.board2!.newFlowrate).toBe(1053);
         });
 
         it("should handle division by zero when actualMl is 0", () => {
@@ -155,9 +155,12 @@ describe("CalibrationService", () => {
             const result = service.calculate(input, board1Registers, board2Registers, true, true);
 
             expect(result.success).toBe(true);
-            // K-Factor should DECREASE when sensor over-reports
-            // K_new = 450 * (950 / 1100) ≈ 389
-            expect(result.board2!.newKFactor).toBe(389);
+            // K-Factor is pump coeff based on runtime, independent from sensor ratio
+            // K_new = 950 / 100 * 100 = 950
+            expect(result.board2!.newKFactor).toBe(950);
+            // Flowrate sensor coeff increases when sensor over-reports
+            // F_new = 10 * (1100/950) * 100 ≈ 1158
+            expect(result.board2!.newFlowrate).toBe(1158);
         });
 
         it("should handle case where sensor reported less than actual", () => {
@@ -174,9 +177,11 @@ describe("CalibrationService", () => {
             const result = service.calculate(input, board1Registers, board2Registers, true, true);
 
             expect(result.success).toBe(true);
-            // K-Factor should INCREASE when sensor under-reports
-            // K_new = 450 * (1050 / 1000) ≈ 473
-            expect(result.board2!.newKFactor).toBe(473);
+            // K-Factor (pump coeff): K_new = 1050 / 100 * 100 = 1050
+            expect(result.board2!.newKFactor).toBe(1050);
+            // Flowrate sensor coeff decreases when sensor under-reports
+            // F_new = 10 * (1000/1050) * 100 ≈ 952
+            expect(result.board2!.newFlowrate).toBe(952);
         });
 
         it("should keep K-Factor unchanged when reported equals actual", () => {
@@ -193,9 +198,10 @@ describe("CalibrationService", () => {
             const result = service.calculate(input, board1Registers, board2Registers, true, true);
 
             expect(result.success).toBe(true);
-            // K-Factor should remain unchanged
-            // K_new = 450 * (1000 / 1000) = 450
-            expect(result.board2!.newKFactor).toBe(450);
+            // K-Factor (pump coeff): K_new = 1000 / 100 * 100 = 1000
+            expect(result.board2!.newKFactor).toBe(1000);
+            // Flowrate sensor coeff unchanged ratio 1.0 => 10 * 100 = 1000
+            expect(result.board2!.newFlowrate).toBe(1000);
         });
 
         it("should handle multiple pumps", () => {

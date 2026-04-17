@@ -136,6 +136,11 @@ class ModbusService {
         for (const action of actions) {
             let success = false;
             let lastError = "";
+            // Optional per-action delay (used by fan transition/rotation sequencing)
+            if (typeof action.delay === "number" && action.delay > 0) {
+                this.logger.debug(`Applying action delay: ${action.delay}ms for ${action.deviceKey}`);
+                await (0, timeUtils_1.delay)(action.delay);
+            }
             // Retry logic for each action
             for (let attempt = 1; attempt <= constants_1.CONTROL_CONFIG.RETRY_ATTEMPTS; attempt++) {
                 try {
