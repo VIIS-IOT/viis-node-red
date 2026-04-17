@@ -48,7 +48,7 @@ export const BOARD1_KEYS = {
 } as const;
 
 // Modbus register keys for board2 (flow sensor)
-// Note: Addresses follow formula: K_FACTOR = i-1, FLOWRATE = 19+i, INPUT_TOTAL_FLOW = 19+i
+// Note: Current mapping uses FLOWRATE = 0-15, K_FACTOR = 20-35, INPUT_TOTAL_FLOW = 20-35
 export const BOARD2_KEYS = {
     K_FACTOR: (i: number) => `HOLDING_K_FACTOR_BOM_${i}`,
     FLOWRATE: (i: number) => `HOLDING_FLOWRATE_BOM_${i}`,
@@ -63,22 +63,22 @@ export const BOARD2_KEYS = {
  * to avoid hard-coding and support flexible configuration.
  *
  * Holding Registers (write):
- * - K_FACTOR: addresses 0-15 (pump 1-16)
- * - FLOWRATE: addresses 20-35 (pump 1-16)
+ * - FLOWRATE: addresses 0-15 (pump 1-16)
+ * - K_FACTOR: addresses 20-35 (pump 1-16)
  *
  * Input Registers (read-only):
  * - CURRENT_FLOW: addresses 0-15 (pump 1-16)
  * - TOTAL_FLOW: addresses 20-35 (pump 1-16)
  *
  * Coils:
- * - PUMP_STATUS: 161-176 (pump 1-16)
- * - RESET_TOTAL_VOLUME: 201-216 (pump 1-16)
+ * - PUMP_STATUS: 160-175 (pump 1-16)
+ * - RESET_TOTAL_VOLUME: 200-215 (pump 1-16)
  */
 export const BOARD2_ADDRESSES_DEPRECATED = {
-    K_FACTOR_BASE: 0,           // K_FACTOR_BOM_1 = 0, K_FACTOR_BOM_2 = 1, ...
-    FLOWRATE_BASE: 20,          // FLOWRATE_BOM_1 = 20, FLOWRATE_BOM_2 = 21, ...
+    K_FACTOR_BASE: 20,          // K_FACTOR_BOM_1 = 20, K_FACTOR_BOM_2 = 21, ...
+    FLOWRATE_BASE: 0,           // FLOWRATE_BOM_1 = 0, FLOWRATE_BOM_2 = 1, ...
     INPUT_CURRENT_FLOW_BASE: 0, // INPUT_CURRENT_FLOW_BOM_1 = 0, ...
     INPUT_TOTAL_FLOW_BASE: 20,  // INPUT_TOTAL_FLOW_BOM_1 = 20, ...
-    COIL_PUMP_STATUS_BASE: 161, // PUMP_STATUS_BOM_1 = 161, ...
-    COIL_RESET_BASE: 201,       // RESET_TOTAL_VOLUME_BOM_1 = 201, ...
+    COIL_PUMP_STATUS_BASE: 160, // PUMP_STATUS_BOM_1 = 160, ...
+    COIL_RESET_BASE: 200,       // RESET_TOTAL_VOLUME_BOM_1 = 200, ...
 } as const;
