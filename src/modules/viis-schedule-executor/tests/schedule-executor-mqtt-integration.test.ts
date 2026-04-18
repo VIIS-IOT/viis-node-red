@@ -163,7 +163,7 @@ describe('ScheduleService - MQTT Integration for Config Parameters', () => {
                     mockMqttClient as any,
                     configParam
                 )
-            ).rejects.toThrow('MQTT connection failed');
+            ).resolves.toBeUndefined();
         });
     });
 
