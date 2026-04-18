@@ -272,17 +272,13 @@ export class FanControlService implements IFanControlService {
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
                 this.logger.debug(`Compatibility threshold: using 5-fan group [${targetGroup.join(', ')}]`);
             } else if (requiredGroupSize === 4) {
-                // Legacy K2: Use rotation logic for 4-fan groups
+                // K2: Use rotation logic for 4-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`Legacy K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
             } else if (requiredGroupSize === 2) {
-                // K2: Use rotation logic for 2-fan groups
+                // K1: Use rotation logic for 2-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`K2 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
-            } else if (requiredGroupSize === 1) {
-                // K1: Use rotation logic for 1-fan groups
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`K1 threshold: using 1-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K1 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
             } else {
                 // Fallback: use rotation logic for any other group size
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
@@ -767,8 +763,13 @@ export class FanControlService implements IFanControlService {
                 this.logger.warn(`📊 Rotation State: No saved state found`);
             }
 
-            // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling
-            const isThresholdLevelChange = rotationState && rotationState.requiredGroupSize !== requiredGroupSize;
+            // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling.
+            // IMPORTANT: Do not trigger OFF/ON transition loop for K3/K4 (6-fan mode).
+            // In 6-fan mode we apply delayed direct control instead of transition.
+            const isThresholdLevelChange =
+                rotationState &&
+                rotationState.requiredGroupSize !== requiredGroupSize &&
+                requiredGroupSize !== 6;
 
             if (isThresholdLevelChange) {
                 // Threshold level changed - use transition for smooth change

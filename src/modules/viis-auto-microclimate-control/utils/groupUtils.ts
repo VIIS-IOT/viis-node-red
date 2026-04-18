@@ -332,7 +332,7 @@ export function isValidFanGroupSize(groupSize: number): boolean {
 
 /**
  * Get recommended group size based on temperature thresholds with hysteresis
- * 6-fan strategy: K1-K2: 1 fan luân phiên, K2-K3: 2 fans luân phiên, K3-K4: 6 fans, >K4: 6 fans + tường nước
+ * 6-fan strategy: K1-K2: 2 fans luân phiên, K2-K3: 4 fans luân phiên, K3-K4: 6 fans, >K4: 6 fans + tường nước
  * Note: Humidity conditions are temporarily disabled but can be re-enabled via config
  */
 export function getRecommendedGroupSize(
@@ -384,17 +384,17 @@ export function getRecommendedGroupSize(
     // Updated logic for 6-fan system
     const k4Threshold = getEffectiveThreshold(thresholds.k4, 6);
     const k3Threshold = getEffectiveThreshold(thresholds.k3, 6);
-    const k2Threshold = getEffectiveThreshold(thresholds.k2, 2);
-    const k1Threshold = getEffectiveThreshold(thresholds.k1, 1);
+    const k2Threshold = getEffectiveThreshold(thresholds.k2, 4);
+    const k1Threshold = getEffectiveThreshold(thresholds.k1, 2);
 
     if (temperature >= k4Threshold) {
         return 6; // 6 fans for K4 (+ water pump will be handled separately)
     } else if (temperature >= k3Threshold) {
         return 6; // 6 fans for K3
     } else if (temperature >= k2Threshold) {
-        return 2; // 2 fans luân phiên for K2
+        return 4; // 4 fans luân phiên for K2
     } else if (temperature >= k1Threshold) {
-        return 1; // 1 fan luân phiên for K1
+        return 2; // 2 fans luân phiên for K1
     }
 
     // Future humidity logic (currently disabled)
@@ -404,7 +404,7 @@ export function getRecommendedGroupSize(
         } else if (humidity < humidityThresholds.k3) {
             return 6; // 6 fans for low humidity K3
         } else if (humidity < humidityThresholds.k2) {
-            return 2; // 2 fans for low humidity K2
+            return 4; // 4 fans for low humidity K2
         }
     }
 

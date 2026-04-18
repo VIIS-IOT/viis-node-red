@@ -49,4 +49,19 @@ describe("groupUtils - fan6 support", () => {
         expect(getRecommendedGroupSize(27, 70, thresholds)).toBe(6);
         expect(getRecommendedGroupSize(30, 70, thresholds)).toBe(6);
     });
+
+    it("recommends correct fan counts for K1-K4 thresholds", () => {
+        const thresholds = {
+            k1: 25,
+            k2: 30,
+            k3: 35,
+            k4: 40
+        };
+
+        expect(getRecommendedGroupSize(24, 70, thresholds)).toBe(0);
+        expect(getRecommendedGroupSize(26, 70, thresholds)).toBe(2); // K1
+        expect(getRecommendedGroupSize(31, 70, thresholds)).toBe(4); // K2
+        expect(getRecommendedGroupSize(36, 70, thresholds)).toBe(6); // K3
+        expect(getRecommendedGroupSize(41, 70, thresholds)).toBe(6); // K4
+    });
 });

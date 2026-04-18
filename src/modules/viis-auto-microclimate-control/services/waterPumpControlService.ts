@@ -136,7 +136,6 @@ export class WaterPumpControlService implements IWaterPumpControlService {
         sensorData: SensorData
     ): ControlAction[] {
         try {
-            return []
             const tempIndoor = sensorData.temp_indoor;
             const humiIndoor = sensorData.humi_indoor;
 
@@ -152,7 +151,10 @@ export class WaterPumpControlService implements IWaterPumpControlService {
             const k4TempCondition = tempIndoor >= k4Threshold;
             const k4HumiCondition = humiIndoor < 75;
 
-            if ((k4TempCondition || k4HumiCondition) && currentSetModeFan && currentSetAutoModeFan === 1) {
+            // Threshold mode is treated as any mode other than explicit rotation mode (2)
+            const isThresholdMode = currentSetAutoModeFan !== 2;
+
+            if ((k4TempCondition || k4HumiCondition) && currentSetModeFan === 1 && isThresholdMode) {
                 const reason = `K4 priority override: temp=${tempIndoor}°C${k4TempCondition ? ` (≥${k4Threshold})` : ''}, humidity=${humiIndoor}%${k4HumiCondition ? ' (<75%)' : ''}`;
                 this.logger.warn(`Water pump K4 override: ON - ${reason}`);
 

@@ -612,8 +612,12 @@ class FanControlService {
             else {
                 this.logger.warn(`📊 Rotation State: No saved state found`);
             }
-            // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling
-            const isThresholdLevelChange = rotationState && rotationState.requiredGroupSize !== requiredGroupSize;
+            // Check if this is a threshold level change (K1↔K2↔K3↔K4) that requires special handling.
+            // IMPORTANT: Do not trigger OFF/ON transition loop for K3/K4 (6-fan mode).
+            // In 6-fan mode we apply delayed direct control instead of transition.
+            const isThresholdLevelChange = rotationState &&
+                rotationState.requiredGroupSize !== requiredGroupSize &&
+                requiredGroupSize !== 6;
             if (isThresholdLevelChange) {
                 // Threshold level changed - use transition for smooth change
                 this.logger.warn(`🔄 Threshold level change: ${rotationState.requiredGroupSize} → ${requiredGroupSize} fans, using transition`);

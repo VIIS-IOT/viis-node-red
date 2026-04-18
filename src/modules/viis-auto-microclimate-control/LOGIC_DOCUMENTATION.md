@@ -1,363 +1,159 @@
 # VIIS Auto Microclimate Control Node - Logic Documentation
 
-## Overview
+This document describes the current runtime logic based on the actual TypeScript source.
 
-The `viis-auto-microclimate-control` node is a custom Node-RED node that provides **automatic environmental control** for greenhouse systems. It monitors sensor data (temperature, humidity, light) and automatically controls fans, water pumps, and curtains based on configurable thresholds and modes.
+## Node Runtime Model
 
----
+Main orchestrator: handlers/autoControlHandler.ts
 
-## Node Configuration
+Execution order in each cycle:
 
-### Basic Properties
+1. Read config via ConfigService
+2. Read sensor/device state via SensorService
+3. Process water pump (K4 override check first)
+4. Process fan control
+5. Process curtain control
+6. Execute merged Modbus actions
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `name` | String | `""` | Node name |
-| `pollingInterval` | Number | `10000` | Control cycle interval in milliseconds (min: 1000ms) |
-| `enableFanControl` | Boolean | `true` | Enable/disable fan control *(UI only, not yet implemented in logic)* |
-| `enableWaterPumpControl` | Boolean | `true` | Enable/disable water pump control *(UI only, not yet implemented in logic)* |
-| `enableCurtainControl` | Boolean | `true` | Enable/disable curtain control *(UI only, not yet implemented in logic)* |
+Control loop starts immediately, then runs on interval.
 
-### Example Node Configuration
+## Node Configuration (Editor)
 
-```json
-{
-    "id": "798a8e7d096714a6",
-    "type": "viis-auto-microclimate-control",
-    "z": "547ba825d69085e6",
-    "name": "",
-    "pollingInterval": 10000,
-    "enableFanControl": true,
-    "enableWaterPumpControl": true,
-    "enableCurtainControl": true,
-    "x": 290,
-    "y": 720,
-    "wires": [
-        [
-            "804a567bc109bcfa"
-        ]
-    ]
-}
-```
+UI properties:
 
----
+- name
+- pollingInterval (default 10000, min 1000)
+- enableFanControl
+- enableWaterPumpControl
+- enableCurtainControl
 
-## Architecture
+Important: the three enable* checkboxes are UI-only and are not used by service logic.
+Actual enable/disable comes from configKeyValues (set_mode_* keys).
 
-### Service Components
+## Global Context Keys Used
 
-```
-viis-auto-microclimate-control/
-├── viis-auto-microclimate-control.ts    # Main node implementation
-├── viis-auto-microclimate-control.html  # Node-RED UI configuration
-├── interfaces/
-│   └── types.ts                         # TypeScript interfaces
-├── handlers/
-│   └── autoControlHandler.ts            # Main control loop handler
-├── services/
-│   ├── configService.ts                 # Configuration management
-│   ├── sensorService.ts                 # Sensor data reading
-│   ├── modbusService.ts                 # Modbus communication
-│   ├── fanControlService.ts             # Fan control logic
-│   ├── enhancedFanControlService.ts     # Advanced fan features
-│   ├── waterPumpControlService.ts       # Water pump logic
-│   └── curtainControlService.ts         # Curtain control logic
-├── utils/
-│   ├── logger.ts                        # Logging utility
-│   └── groupUtils.ts                    # Fan group utilities
-└── constants/
-    └── index.ts                         # Configuration constants
-```
+- configKeyValues
+- holdingRegisterData
+- coilRegisterData
+- modbusCoils
+- modbusHoldingRegisters
 
-### Initialization Flow
+Flow context keys include fan rotation state, transition state, curtain tolerance timers, and last execution timestamp.
 
-```mermaid
-graph TD
-    A[Node Created] --> B[Initialize Logger]
-    B --> C[3-4s Delay for RPC Control]
-    C --> D[Get Context References]
-    D --> E[Detect Multi-Board Mode]
-    E --> F[Initialize Modbus Client]
-    F --> G[Create Services]
-    G --> H[Start Control Loop]
-    H --> I[Enable Hot-Reload Monitoring]
-```
+## Fan Control Logic
 
----
+Source: services/fanControlService.ts, utils/groupUtils.ts
 
-## Control Logic
+Enable and mode:
 
-### 1. Fan Control
+- set_mode_fan: 0 off, 1 on
+- set_auto_mode_fan: 2 rotation mode, otherwise threshold mode
 
-#### Operating Modes
+### Threshold Mode
 
-**Threshold Mode** (`set_auto_mode_fan = 0`):
-- Fans activate based on temperature thresholds K1-K4
-- Each threshold corresponds to a different fan activation level
+Required fan count is determined by getRecommendedGroupSize with hysteresis:
 
-**Rotation Mode** (`set_auto_mode_fan = 1`):
-- Fan groups rotate at specified intervals
-- Prevents wear on individual fans
-- Group size configured via `set_gr_alternate_fan`
+- >= k4 => 6
+- >= k3 => 6
+- >= k2 => 2
+- >= k1 => 1
+- below k1 => 0
 
-#### Temperature Thresholds
+When multiple groups exist for a required size, rotation state for threshold mode is persisted in flow context and rotated by set_time_alternate_fan interval.
 
-| Threshold | Key | Description |
-|-----------|-----|-------------|
-| K1 | `set_k1_fan` | Lowest temperature threshold |
-| K2 | `set_k2_fan` | Medium-low temperature threshold |
-| K3 | `set_k3_fan` | Medium-high temperature threshold |
-| K4 | `set_k4_fan` | Highest priority - activates all fans |
+### Rotation Mode
 
-#### Configuration Keys
+Uses set_gr_alternate_fan and set_time_alternate_fan.
+Supported group sizes in utility code: 1, 2, 4, 5, 6.
 
-```javascript
-{
-    "set_mode_fan": 1,              // Enable fan control (0=off, 1=on)
-    "set_auto_mode_fan": 0,         // 0=threshold, 1=rotation
-    "set_k1_fan": 25,               // Temperature threshold K1 (°C)
-    "set_k2_fan": 28,               // Temperature threshold K2 (°C)
-    "set_k3_fan": 31,               // Temperature threshold K3 (°C)
-    "set_k4_fan": 35,               // Temperature threshold K4 (°C)
-    "set_gr_alternate_fan": 2,      // Group size (1, 2, 4, 6)
-    "set_time_alternate_fan": 30    // Rotation interval (minutes)
-}
-```
+### Fan Transition Delay
 
----
+When transition delays are enabled, group changes use a phased state machine:
 
-### 2. Water Pump Control
+- OFF: switch off all fans
+- DELAY: wait set_fan_group_off_delay
+- ON: turn on target group
+- COMPLETE
 
-#### Control Logic
+Transition config keys:
 
-The water pump activates based on humidity thresholds:
+- set_fan_group_transition_delay
+- set_fan_group_off_delay
 
-- **Activate**: When humidity < `set_threshold_low_water_bump`
-- **Deactivate**: When humidity > `set_threshold_high_water_bump`
-- **K4 Override**: Pump activates during extreme conditions
+## Fan Dao Logic
 
-#### Configuration Keys
+Source: services/fanControlService.ts
 
-```javascript
-{
-    "set_mode_tuong_nuoc": 1,              // Enable water pump (0=off, 1=on)
-    "set_threshold_low_water_bump": 60,    // Low humidity threshold (%)
-    "set_threshold_high_water_bump": 80    // High humidity threshold (%)
-}
-```
+- set_mode_fan_dao: enable/disable
+- set_time_alternate_fan_dao: toggle interval (minutes)
 
----
+Fan dao runs independently from main fan threshold/rotation path.
 
-### 3. Curtain Control
+## Water Pump Logic
 
-#### Control Logic
+Source: services/waterPumpControlService.ts
 
-Each curtain (`luoi 1` and `luoi 2`) has two coils:
-- **Thu coil**: Retracts the curtain
-- **Dai coil**: Extends the curtain
+Normal hysteresis behavior:
 
-#### Light Thresholds
+- humidity <= low threshold => ON
+- humidity >= high threshold => OFF
+- otherwise hold current state
 
-| Action | Condition |
-|--------|-----------|
-| **Extend (dai)** | Outdoor light ≥ `set_light_dai_luoi_X` |
-| **Retract (thu)** | Outdoor light ≤ `set_light_thu_luoi_X` |
-| **Retract (indoor)** | Indoor light ≤ `set_light_indoor_thu_luoi_X` |
+K4 override check is executed before normal water pump logic inside autoControlHandler.
 
-#### Tolerance Timer
+## Curtain Logic
 
-Prevents rapid switching when light levels fluctuate near thresholds:
-- Configured via `set_tolerance_light_luoi_X` (minutes)
-- Only one coil can be active at a time per curtain
+Source: services/curtainControlService.ts
 
-#### Configuration Keys
+Curtains handled: luoi_1, luoi_2, luoi_3
 
-```javascript
-{
-    "set_mode_luoi": 1,                        // Enable curtain control (0=off, 1=on)
-    "set_light_dai_luoi_1": 5000,              // Extend threshold (lux)
-    "set_light_thu_luoi_1": 2000,              // Retract threshold (lux)
-    "set_light_indoor_thu_luoi_1": 1000,       // Indoor retract threshold (lux)
-    "set_tolerance_light_luoi_1": 10,          // Tolerance time (minutes)
-    "set_light_dai_luoi_2": 5000,
-    "set_light_thu_luoi_2": 2000,
-    "set_light_indoor_thu_luoi_2": 1000,
-    "set_tolerance_light_luoi_2": 10
-}
-```
+Decision branch per curtain:
 
----
+- light_outdoor >= dai threshold => target action dai
+- else if light_outdoor <= thu threshold => target action thu
+
+Tolerance timer is required before action execution.
+
+Each curtain action writes two coils with mutual exclusion:
+
+- dai: thu OFF, dai ON
+- thu: dai OFF, thu ON
+
+Indoor light thresholds are read from config and passed through function parameters, but current branch condition is dominated by outdoor light checks.
 
 ## Input Commands
 
-Send commands to control the node programmatically:
+Supported payload.command values:
 
-```javascript
-{
-    "payload": {
-        "command": "start|stop|execute|status|updateInterval",
-        "params": { /* optional parameters */ }
-    }
-}
-```
+- start
+- stop
+- execute
+- status
+- updateInterval
 
-### Available Commands
+Unsupported command examples in old docs (such as emergencyStop) are not present in current switch-case.
 
-| Command | Description | Parameters |
-|---------|-------------|------------|
-| `start` | Start the control loop | None |
-| `stop` | Stop the control loop | None |
-| `execute` | Execute one control cycle manually | None |
-| `status` | Get current control status | None |
-| `updateInterval` | Change polling interval | `{ interval: 5000 }` |
+## Multi-Board And Hot Reload
 
----
+Source: viis-auto-microclimate-control.ts
 
-## Output Format
+- Detects MODBUS_BOARDS for multi-board mode
+- Initializes ClientRegistry with default board
+- Polls configuration every 30 seconds for hot-reload
+- Reloads Modbus client when board list or connection config changes
 
-The node outputs control execution results:
+## Timing And Cache
 
-```javascript
-{
-    "payload": {
-        "timestamp": 1234567890,
-        "success": true,
-        "actionsExecuted": 3,
-        "errors": 0,
-        "sensorData": {
-            "temperature": 28.5,
-            "humidity": 65,
-            "light": 3500
-        },
-        "controlStatus": {
-            "fans": { "active": true, "mode": "threshold" },
-            "waterPump": { "active": false },
-            "curtains": { "luoi1": "extended", "luoi2": "retracted" }
-        },
-        "actions": [
-            { "device": "fan_1", "action": "on", "reason": "temperature > K2" }
-        ]
-    }
-}
-```
+- default polling interval: 10000 ms
+- sensor/device cache TTL: 15000 ms
+- config cache TTL: 30000 ms
+- hot-reload check: 30000 ms
 
----
+## Notes For Maintainers
 
-## Multi-Board Support
-
-### Detection
-
-The node automatically detects multi-board mode by checking for the `MODBUS_BOARDS` environment variable.
-
-### Configuration
-
-```javascript
-// Single-board mode
-MODBUS_TYPE=TCP
-MODBUS_HOST=192.168.1.100
-MODBUS_TCP_PORT=502
-MODBUS_UNIT_ID=1
-
-// Multi-board mode
-MODBUS_BOARDS=[
-    {"id": "board1", "host": "192.168.1.101", "unitId": 1},
-    {"id": "board2", "host": "192.168.1.102", "unitId": 1}
-]
-MODBUS_DEFAULT_BOARD=board1
-```
-
-### Hot-Reload
-
-The node monitors configuration changes every **30 seconds** and automatically:
-- Detects mode changes (single ↔ multi)
-- Reloads Modbus configuration
-- Reinitializes clients without restart
-
----
-
-## Environment Variables
-
-### Required Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MODBUS_TYPE` | Connection type (TCP/RTU) | `TCP` |
-| `MODBUS_HOST` | Modbus server host | `localhost` |
-| `MODBUS_TCP_PORT` | TCP port | `502` |
-| `MODBUS_UNIT_ID` | Modbus unit ID | `1` |
-| `MODBUS_COILS` | JSON mapping of coils | `{}` |
-| `MODBUS_HOLDING_REGISTERS` | JSON mapping of registers | `{}` |
-
-### Global Context Variables
-
-The node reads from global context:
-- `configKeyValues`: Configuration key-value pairs
-- `holdingRegisterData`: Sensor data (temperature, humidity, light)
-- `coilRegisterData`: Device status
-
----
-
-## Control Loop
-
-### Execution Flow
-
-```mermaid
-graph TD
-    A[Start Loop] --> B[Read Sensor Data]
-    B --> C[Read Configuration]
-    C --> D{Fan Control Enabled?}
-    D -->|Yes| E[Execute Fan Logic]
-    D -->|No| F
-    E --> F{Water Pump Enabled?}
-    F -->|Yes| G[Execute Water Pump Logic]
-    F -->|No| H
-    G --> H{Curtain Enabled?}
-    H -->|Yes| I[Execute Curtain Logic]
-    H -->|No| J
-    I --> J[Send Output]
-    J --> K{Loop Active?}
-    K -->|Yes| L[Wait pollingInterval]
-    L --> A
-    K -->|No| M[Stop]
-```
-
-### Polling Interval
-
-- **Default**: 10,000ms (10 seconds)
-- **Minimum**: 1,000ms (1 second)
-- **Recommended**: 5,000-30,000ms for stable operation
-
----
-
-## Error Handling
-
-### Status Indicators
-
-| Status | Color | Shape | Description |
-|--------|-------|-------|-------------|
-| Initializing | Yellow | Ring | Node is starting up |
-| Ready | Green | Dot | Normal operation |
-| Error | Red | Ring | Critical error occurred |
-| Reloading | Blue | Dot | Configuration reload in progress |
-
-### Common Errors
-
-- **Modbus Client Failure**: Cannot connect to Modbus server
-- **Configuration Error**: Invalid configuration values
-- **Sensor Read Error**: Unable to read sensor data
-- **Control Logic Error**: Error during control execution
-
----
-
-## Best Practices
-
-### 1. Threshold Configuration
-
-- Set K1-K4 with at least 2-3°C separation to prevent oscillation
-- Use rotation mode for even wear distribution
-- Configure appropriate group sizes based on total fan count
-
-### 2. Water Pump Hysteresis
+- Keep this document aligned with fanControlService threshold mapping and mode values.
+- If set_auto_mode_fan semantics change, update this doc and README together.
+- If indoor-light curtain trigger is re-enabled, update the curtain section accordingly.
 
 - Set low/high thresholds with 10-20% gap to prevent rapid cycling
 - Example: Low=60%, High=80%
