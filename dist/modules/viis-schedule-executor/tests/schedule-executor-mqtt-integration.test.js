@@ -114,7 +114,7 @@ describe('ScheduleService - MQTT Integration for Config Parameters', () => {
                 scheduleId: 'test-schedule-error'
             };
             mockMqttClient.publish.mockRejectedValueOnce(new Error('MQTT connection failed'));
-            await expect(scheduleService.publishConfigUpdate(mockMqttClient, mockMqttClient, configParam)).rejects.toThrow('MQTT connection failed');
+            await expect(scheduleService.publishConfigUpdate(mockMqttClient, mockMqttClient, configParam)).resolves.toBeUndefined();
         });
     });
     describe('Config parameter payload structure', () => {

@@ -37,4 +37,17 @@ const groupUtils_1 = require("../utils/groupUtils");
         (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(27, 70, thresholds)).toBe(6);
         (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(30, 70, thresholds)).toBe(6);
     });
+    (0, globals_1.it)("recommends correct fan counts for K1-K4 thresholds", () => {
+        const thresholds = {
+            k1: 25,
+            k2: 30,
+            k3: 35,
+            k4: 40
+        };
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(24, 70, thresholds)).toBe(0);
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(26, 70, thresholds)).toBe(2); // K1
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(31, 70, thresholds)).toBe(4); // K2
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(36, 70, thresholds)).toBe(6); // K3
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(41, 70, thresholds)).toBe(6); // K4
+    });
 });

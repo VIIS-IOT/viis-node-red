@@ -200,7 +200,7 @@ describe('ScheduleService - Telemetry Publishing', () => {
             // Should still be 1 (deduplicated)
             expect(mockThingsboardClient.publish).toHaveBeenCalledTimes(1);
         });
-        it('should allow publish after 5 seconds even with same data', async () => {
+        it('should skip unchanged data even after 5 seconds', async () => {
             const schedule = createMockSchedule('sch-1', 'running');
             const commands = {
                 holdingCommands: [
@@ -215,8 +215,8 @@ describe('ScheduleService - Telemetry Publishing', () => {
             jest.advanceTimersByTime(6000);
             // Second publish with same data after timeout
             await service.publishScheduleTelemetry(mockThingsboardClient, mockEmqxClient, schedule, 'start', commands);
-            // Should be 2 (not deduplicated after timeout)
-            expect(mockThingsboardClient.publish).toHaveBeenCalledTimes(2);
+            // Should still be 1 (unchanged key/value should not be republished)
+            expect(mockThingsboardClient.publish).toHaveBeenCalledTimes(1);
         });
         it('should allow different data to be published immediately', async () => {
             const schedule = createMockSchedule('sch-1', 'running');
@@ -238,7 +238,7 @@ describe('ScheduleService - Telemetry Publishing', () => {
             // Should be 2 (different data, not deduplicated)
             expect(mockThingsboardClient.publish).toHaveBeenCalledTimes(2);
         });
-        it('should track deduplication per schedule and action', async () => {
+        it('should deduplicate by key/value across schedules', async () => {
             const schedule1 = createMockSchedule('sch-1', 'running');
             const schedule2 = createMockSchedule('sch-2', 'running');
             const commands = {
@@ -249,10 +249,10 @@ describe('ScheduleService - Telemetry Publishing', () => {
             };
             // Publish start for sch-1
             await service.publishScheduleTelemetry(mockThingsboardClient, mockEmqxClient, schedule1, 'start', commands);
-            // Publish start for sch-2 (different schedule, should not be deduplicated)
+            // Publish start for sch-2 with same key/value (should be deduplicated)
             await service.publishScheduleTelemetry(mockThingsboardClient, mockEmqxClient, schedule2, 'start', commands);
-            // Should be 2 (different schedules)
-            expect(mockThingsboardClient.publish).toHaveBeenCalledTimes(2);
+            // Should still be 1 (same key/value payload already published)
+            expect(mockThingsboardClient.publish).toHaveBeenCalledTimes(1);
         });
     });
     describe('telemetry error handling', () => {

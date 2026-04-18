@@ -206,19 +206,14 @@ class FanControlService {
                 this.logger.debug(`Compatibility threshold: using 5-fan group [${targetGroup.join(', ')}]`);
             }
             else if (requiredGroupSize === 4) {
-                // Legacy K2: Use rotation logic for 4-fan groups
+                // K2: Use rotation logic for 4-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`Legacy K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K2 threshold: using 4-fan group [${targetGroup.join(', ')}]`);
             }
             else if (requiredGroupSize === 2) {
-                // K2: Use rotation logic for 2-fan groups
+                // K1: Use rotation logic for 2-fan groups
                 targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`K2 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
-            }
-            else if (requiredGroupSize === 1) {
-                // K1: Use rotation logic for 1-fan groups
-                targetGroup = this.getRotationTargetGroup(fanGroups, requiredGroupSize, config);
-                this.logger.debug(`K1 threshold: using 1-fan group [${targetGroup.join(', ')}]`);
+                this.logger.debug(`K1 threshold: using 2-fan group [${targetGroup.join(', ')}]`);
             }
             else {
                 // Fallback: use rotation logic for any other group size

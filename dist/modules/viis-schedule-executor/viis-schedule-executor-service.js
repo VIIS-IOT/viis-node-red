@@ -102,6 +102,7 @@ const CONFIG_PARAMETER_KEYS = new Set([
 let ScheduleService = class ScheduleService {
     constructor(node, verifyAfterWrite = true, debugEnable = false) {
         this.CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
+        this.PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
@@ -126,6 +127,35 @@ let ScheduleService = class ScheduleService {
                 this.node.warn(message); // Also log to Node-RED debug panel
             }
         }
+    }
+    getPublishedValueCache() {
+        var _a;
+        return ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get(this.PUBLISHED_VALUE_CACHE_KEY)) || {};
+    }
+    setPublishedValueCache(cache) {
+        var _a;
+        (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set(this.PUBLISHED_VALUE_CACHE_KEY, cache);
+    }
+    valueHash(value) {
+        try {
+            return JSON.stringify(value);
+        }
+        catch (_a) {
+            return String(value);
+        }
+    }
+    hasPublishedValueChanged(cacheKey, value) {
+        const cache = this.getPublishedValueCache();
+        return cache[cacheKey] !== this.valueHash(value);
+    }
+    updatePublishedValueCache(entries) {
+        if (!this.node)
+            return;
+        const cache = this.getPublishedValueCache();
+        for (const [key, value] of Object.entries(entries)) {
+            cache[key] = this.valueHash(value);
+        }
+        this.setPublishedValueCache(cache);
     }
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
     scaleValue(key, value, direction) {
@@ -817,6 +847,25 @@ let ScheduleService = class ScheduleService {
     async publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, action, commands, configKeyValues) {
         var _a, _b;
         try {
+            const changedValues = {};
+            for (const cmd of [...commands.holdingCommands, ...commands.coilCommands]) {
+                const cacheKey = `telemetry:${cmd.key}`;
+                if (this.hasPublishedValueChanged(cacheKey, cmd.value)) {
+                    changedValues[cmd.key] = cmd.value;
+                }
+            }
+            if (configKeyValues && Object.keys(configKeyValues).length > 0) {
+                for (const [key, value] of Object.entries(configKeyValues)) {
+                    const cacheKey = `telemetry:${key}`;
+                    if (this.hasPublishedValueChanged(cacheKey, value)) {
+                        changedValues[key] = value;
+                    }
+                }
+            }
+            if (Object.keys(changedValues).length === 0) {
+                this.debugLog(`Skipping unchanged schedule telemetry for ${schedule.name} (${action})`);
+                return;
+            }
             // Build telemetry payload matching viis-rpc-control format
             const telemetryData = {
                 ts: Date.now(),
@@ -824,16 +873,7 @@ let ScheduleService = class ScheduleService {
                 _schedule_id: schedule.name,
                 _schedule_label: schedule.label,
             };
-            // Add all Modbus commands (both holding and coils)
-            for (const cmd of [...commands.holdingCommands, ...commands.coilCommands]) {
-                telemetryData[cmd.key] = cmd.value;
-            }
-            // Add configKeyValues if provided (for finish action, show cleared values)
-            if (configKeyValues && Object.keys(configKeyValues).length > 0) {
-                for (const [key, value] of Object.entries(configKeyValues)) {
-                    telemetryData[key] = value;
-                }
-            }
+            Object.assign(telemetryData, changedValues);
             // Deduplication: Check if we already published the same data
             const lastPublishedKey = `telemetryLastPublished_${schedule.name}_${action}`;
             const lastPublished = (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get(lastPublishedKey);
@@ -859,6 +899,7 @@ let ScheduleService = class ScheduleService {
             this.debugLog(`Published schedule telemetry to EMQX local for ${schedule.name} (${action})`);
             // Update last published tracking
             (_b = this.node) === null || _b === void 0 ? void 0 : _b.context().global.set(lastPublishedKey, { hash: currentHash, timestamp: now });
+            this.updatePublishedValueCache(Object.fromEntries(Object.entries(changedValues).map(([key, value]) => [`telemetry:${key}`, value])));
             // Log published keys
             const keyCount = Object.keys(telemetryData).length;
             const modbusKeyCount = commands.holdingCommands.length + commands.coilCommands.length;
@@ -1607,6 +1648,11 @@ let ScheduleService = class ScheduleService {
      */
     async publishConfigUpdate(thingsboardClient, emqxClient, configParam) {
         try {
+            const cacheKey = `config:${configParam.key}`;
+            if (!this.hasPublishedValueChanged(cacheKey, configParam.value)) {
+                this.debugLog(`Skipping unchanged config publish: ${configParam.key}=${configParam.value}`);
+                return;
+            }
             const payload = {
                 ts: configParam.timestamp,
                 [configParam.key]: configParam.value,
@@ -1624,10 +1670,11 @@ let ScheduleService = class ScheduleService {
             const emqxTopic = `viis/things/v2/${deviceId}/telemetry`;
             await emqxClient.publish(emqxTopic, payloadString);
             this.debugLog(`Published config update to EMQX local: ${configParam.key}=${configParam.value}`);
+            this.updatePublishedValueCache({ [cacheKey]: configParam.value });
         }
         catch (error) {
             console.error(`Error publishing config update for ${configParam.key}: ${error.message}`);
-            if (this.node) {
+            if (this.node && typeof this.node.warn === "function") {
                 this.node.warn(`⚠️  Continuing local operations despite MQTT publish failure for ${configParam.key}`);
             }
             // Don't throw - let local services continue even if MQTT fails
@@ -1776,6 +1823,11 @@ let ScheduleService = class ScheduleService {
      */
     async publishConfigUpdateWithRetry(thingsboardClient, emqxClient, configParam, options) {
         const { maxRetries = 2, baseDelay = 500 } = options || {};
+        const cacheKey = `config:${configParam.key}`;
+        if (!this.hasPublishedValueChanged(cacheKey, configParam.value)) {
+            this.debugLog(`Skipping unchanged config publish with retry: ${configParam.key}=${configParam.value}`);
+            return;
+        }
         const payload = {
             ts: configParam.timestamp,
             [configParam.key]: configParam.value,
@@ -1806,6 +1858,9 @@ let ScheduleService = class ScheduleService {
         }
         if (!success && this.node) {
             this.node.warn(`⚠️ CONFIG PUBLISH FAILED: ${configParam.key} for schedule ${configParam.scheduleId}`);
+        }
+        if (success) {
+            this.updatePublishedValueCache({ [cacheKey]: configParam.value });
         }
     }
     /**

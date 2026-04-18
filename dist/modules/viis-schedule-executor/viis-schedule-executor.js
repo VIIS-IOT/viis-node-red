@@ -560,12 +560,46 @@ module.exports = function (RED) {
                 debugLog(`Found ${schedules.length} schedule(s).`);
                 // Run hourly cleanup of stale status history entries
                 cleanStaleStatusHistory();
+                const allModbusCoils = scheduleService.getAllModbusCoils();
+                const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
+                const isFalsyScheduleValue = (value) => {
+                    if (value === null || value === undefined || value === "" || value === false || value === "false" || value === 0 || value === "0") {
+                        return true;
+                    }
+                    if (typeof value === 'string') {
+                        const trimmed = value.trim();
+                        if (/^-?\d+(\.\d+)?$/.test(trimmed) && parseFloat(trimmed) === 0) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                const hasMappedModbusCommands = (schedule) => {
+                    let actionObj = {};
+                    if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
+                        try {
+                            actionObj = JSON.parse(schedule.action);
+                        }
+                        catch (_a) {
+                            return false;
+                        }
+                    }
+                    else if (typeof schedule.action === 'object' && schedule.action !== null) {
+                        actionObj = schedule.action;
+                    }
+                    else {
+                        return false;
+                    }
+                    return Object.entries(actionObj).some(([key, value]) => !isFalsyScheduleValue(value) && (Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key)));
+                };
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
                     // This happens after power outage when activeModbusCommands was cleared on startup
                     const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
-                    const isStaleRunningStatus = schedule.status === "running" && existingActiveCommands.length === 0;
+                    const isStaleRunningStatus = schedule.status === "running" &&
+                        existingActiveCommands.length === 0 &&
+                        hasMappedModbusCommands(schedule);
                     if (isStaleRunningStatus && isDue) {
                         node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
                     }
