@@ -1,6 +1,6 @@
 /**
  * Test for Bug Fix: Startup Recovery should NOT clear configKeyValues and scheduleConfigKeys
- * 
+ *
  * Previously, when the node restarted after power outage, it would clear ALL global state
  * including configKeyValues and scheduleConfigKeys. This was wrong because:
  * - configKeyValues should persist across restarts (preserve config structure)
@@ -85,7 +85,7 @@ const createMockSchedule = (name: string, actionObj?: Record<string, any>): Tabi
 };
 
 describe('Startup Recovery - Config Preservation', () => {
-    
+
     beforeEach(() => {
         resetGlobalStore();
         jest.clearAllMocks();
@@ -101,14 +101,14 @@ describe('Startup Recovery - Config Preservation', () => {
                 custom_param: 'test_value',
             };
             globalStore.configKeyValues = existingConfigValues;
-            
+
             // Simulate pre-existing schedule config keys tracking
             const existingScheduleConfigKeys = {
                 'schedule-1': ['irrigation_mode', 'user_id'],
                 'schedule-2': ['max_duration', 'custom_param'],
             };
             globalStore.scheduleConfigKeys = existingScheduleConfigKeys;
-            
+
             // Simulate stale active state (should be cleared)
             globalStore.activeModbusCommands = {
                 'schedule-1': [{ key: 'valve_1', fc: 5, address: 0, value: true, unitid: 1, quantity: 1 }],
@@ -117,14 +117,14 @@ describe('Startup Recovery - Config Preservation', () => {
                 'schedule-1': 'running',
                 'schedule-2': 'running',
             };
-            
+
             // Simulate startup recovery logic (from viis-schedule-executor.ts)
             const existingActiveCommands = globalStore.activeModbusCommands || {};
             const existingStatusHistory = globalStore.scheduleStatusHistory || {};
-            
+
             const staleCommandCount = Object.keys(existingActiveCommands).length;
             const staleStatusCount = Object.keys(existingStatusHistory).length;
-            
+
             // This is the fix: DO NOT clear configKeyValues and scheduleConfigKeys
             if (staleCommandCount > 0 || staleStatusCount > 0) {
                 globalStore.activeModbusCommands = {};
@@ -133,34 +133,34 @@ describe('Startup Recovery - Config Preservation', () => {
                 globalStore.manualModbusOverrides = {};
                 // NOTE: We do NOT clear configKeyValues or scheduleConfigKeys
             }
-            
+
             // Verify: Active state should be cleared
             expect(globalStore.activeModbusCommands).toEqual({});
             expect(globalStore.scheduleStatusHistory).toEqual({});
             expect(globalStore.manualModbusOverrides).toEqual({});
-            
+
             // Verify: Config state should be PRESERVED
             expect(globalStore.configKeyValues).toEqual(existingConfigValues);
             expect(globalStore.configKeyValues.irrigation_mode).toBe(true);
             expect(globalStore.configKeyValues.user_id).toBe(12345);
             expect(globalStore.configKeyValues.max_duration).toBe(3600);
             expect(globalStore.configKeyValues.custom_param).toBe('test_value');
-            
+
             expect(globalStore.scheduleConfigKeys).toEqual(existingScheduleConfigKeys);
             expect(globalStore.scheduleConfigKeys['schedule-1']).toContain('irrigation_mode');
             expect(globalStore.scheduleConfigKeys['schedule-2']).toContain('custom_param');
         });
-        
+
         it('should allow schedule execution to override preserved config values', () => {
             const service = createService();
-            
+
             // Pre-existing config values (from before restart)
             globalStore.configKeyValues = {
                 irrigation_mode: true,
                 user_id: 12345,
             };
             globalStore.scheduleConfigKeys = {};
-            
+
             // Execute a schedule that overrides these values
             // Note: false is a falsy value, so it will be skipped. Use a truthy value instead.
             const schedule = createMockSchedule('schedule-new', {
@@ -169,19 +169,19 @@ describe('Startup Recovery - Config Preservation', () => {
                 irrigation_mode: 'drip', // Override to a different truthy value
                 new_param: 'new_value', // Add new param
             });
-            
-            const { holdingCommands, coilCommands, configParameters } = 
+
+            const { holdingCommands, coilCommands, configParameters } =
                 service.mapScheduleToModbus(schedule);
-            
+
             // Verify: Config values should be updated
             expect(globalStore.configKeyValues.irrigation_mode).toBe('drip'); // Overridden
             expect(globalStore.configKeyValues.user_id).toBe(12345); // Preserved
             expect(globalStore.configKeyValues.new_param).toBe('new_value'); // Added
         });
-        
-        it('should reset config values to 0 when schedule finishes, but keep keys', () => {
+
+        it('should preserve config values when schedule finishes, and keep keys', () => {
             const service = createService();
-            
+
             // Setup: Schedule has been running with config values
             globalStore.configKeyValues = {
                 irrigation_mode: true,
@@ -191,20 +191,20 @@ describe('Startup Recovery - Config Preservation', () => {
             globalStore.scheduleConfigKeys = {
                 'schedule-1': ['irrigation_mode', 'user_id', 'max_duration'],
             };
-            
+
             // Schedule finishes - clear config values
             service.clearScheduleConfigValues('schedule-1');
-            
-            // Verify: Values reset to 0, keys preserved
-            expect(globalStore.configKeyValues.irrigation_mode).toBe(0);
-            expect(globalStore.configKeyValues.user_id).toBe(0);
-            expect(globalStore.configKeyValues.max_duration).toBe(0);
-            
+
+            // Verify: Values are preserved, keys preserved
+            expect(globalStore.configKeyValues.irrigation_mode).toBe(true);
+            expect(globalStore.configKeyValues.user_id).toBe(12345);
+            expect(globalStore.configKeyValues.max_duration).toBe(3600);
+
             // Keys still exist in configKeyValues
             expect(globalStore.configKeyValues).toHaveProperty('irrigation_mode');
             expect(globalStore.configKeyValues).toHaveProperty('user_id');
             expect(globalStore.configKeyValues).toHaveProperty('max_duration');
-            
+
             // Tracking also preserved
             expect(globalStore.scheduleConfigKeys['schedule-1']).toContain('irrigation_mode');
             expect(globalStore.scheduleConfigKeys['schedule-1']).toContain('user_id');

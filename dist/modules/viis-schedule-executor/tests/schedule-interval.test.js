@@ -47,7 +47,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
         mockNode.context().global.set.mockImplementation((key, value) => {
             mockGlobalContext.set(key, value);
         });
-        scheduleService = new viis_schedule_executor_service_1.ScheduleService(mockNode, true); // Enable debug
+        scheduleService = new viis_schedule_executor_service_1.ScheduleService(mockNode, true, true); // Enable debug
         // Setup environment mocks
         Object.defineProperty(scheduleService, 'globalHelper', {
             value: {

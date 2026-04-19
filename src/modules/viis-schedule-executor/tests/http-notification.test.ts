@@ -26,7 +26,7 @@ describe('HTTP Notification to Backend', () => {
         mockGlobalContext = {
             get: jest.fn((key: string) => {
                 const envVars: Record<string, string> = {
-                    'VIIS_BACKEND': 'https://iot.viis.tech',
+                    'server_url': 'https://iot.viis.tech',
                     'device_access_token': 'test-token-123',
                     'device_id': 'device-001'
                 };
@@ -41,7 +41,7 @@ describe('HTTP Notification to Backend', () => {
             error: jest.fn()
         } as unknown as Node;
 
-        scheduleService = new ScheduleService(mockNode, true);
+        scheduleService = new ScheduleService(mockNode, true, true);
     });
 
     afterEach(() => {
@@ -211,7 +211,7 @@ describe('HTTP Notification to Backend', () => {
 
             mockGlobalContext.get.mockImplementation((key: string) => {
                 const envVars: Record<string, string> = {
-                    'VIIS_BACKEND': '',
+                    'server_url': '',
                     'device_access_token': 'test-token-123',
                     'device_id': 'device-001'
                 };
@@ -238,7 +238,7 @@ describe('HTTP Notification to Backend', () => {
         test('should return false when missing DEVICE_ACCESS_TOKEN', async () => {
             mockGlobalContext.get.mockImplementation((key: string) => {
                 const envVars: Record<string, string> = {
-                    'VIIS_BACKEND': 'https://iot.viis.tech',
+                    'server_url': 'https://iot.viis.tech',
                     'device_access_token': '',
                     'device_id': 'device-001'
                 };
@@ -349,7 +349,7 @@ describe('HTTP Notification to Backend', () => {
 
             const schedule = createTestSchedule();
             schedule.label = 'Lịch trình tưới chiều';
-            
+
             await (scheduleService as any).sendNotificationToBackend(
                 schedule,
                 'start',

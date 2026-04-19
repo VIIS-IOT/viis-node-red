@@ -100,31 +100,31 @@ The node is triggered by an **Inject Node** at regular intervals (typically ever
 ```mermaid
 graph TD
     A[Inject Node Trigger] --> B{Check Message Type}
-    
+
     B -->|Schedule Check| C[Fetch Due Schedules from DB]
     B -->|RPC: schedule-disable| D[Disable Schedule via RPC]
     B -->|RPC: confirm-devices-off| E[Manual Recovery Confirmation]
     B -->|RPC: control| F[RPC Control Command]
-    
+
     C --> G[Run Stale Status Cleanup]
     G --> H{For Each Schedule}
-    
+
     H --> I{Is Schedule Due?}
     I -->|No| H
     I -->|Yes| J{Status = Running?}
-    
+
     J -->|Yes, Still Due| K[1-min Check Interval]
     J -->|Yes, Not Due| L[Execute Finish Sequence]
     J -->|No, Due Now| M[Execute Start Sequence]
-    
+
     K --> H
     L --> H
     M --> H
-    
+
     H --> N{All Schedules Processed?}
     N -->|No| H
     N -->|Yes| O[Send Output Message]
-    
+
     style A fill:#e1f5ff
     style O fill:#e1f5ff
     style D fill:#ffe1e1
@@ -145,52 +145,52 @@ sequenceDiagram
     participant Modbus as Modbus Device
     participant MQTT as MQTT Brokers
     participant HTTP as Backend API
-    
+
     Trigger->>Node: Input Message
     Node->>Service: getDueSchedules()
     Service->>DB: Query enabled schedules
     DB-->>Service: Return schedule list
-    
+
     loop For Each Schedule
         Node->>Service: isScheduleDue(schedule)
         Service-->>Node: true/false
-        
+
         alt Schedule is Due and Not Running
             Node->>Node: Check Power Recovery<br/>(stale running status)
-            
+
             Node->>Service: Update Status to "running"
             Service->>DB: UPDATE schedule SET status='running'
-            
+
             Node->>Service: mapScheduleToModbus(schedule)
             Service-->>Node: holdingCommands, coilCommands, configParams
-            
+
             Node->>Node: Add Reset Keys<br/>(time_valve_*, set_flow_*)
-            
+
             Node->>Service: canExecuteCommands()
             Note over Service: Check for command<br/>overlap with active schedules
-            
+
             alt No Overlap
                 Node->>Service: executeModbusCommands()
-                
+
                 Note over Service,Modbus: START SEQUENCE
                 Service->>Modbus: Write Valve Coils (FC=5)
                 loop For Each Valve
                     Modbus-->>Service: Acknowledge
                 end
-                
+
                 Service->>Service: Delay 5 seconds
                 Note over Service: Allow valves to stabilize
-                
+
                 Service->>Modbus: Write Pump/Power Coils (FC=5)
                 loop For Each Control Coil
                     Modbus-->>Service: Acknowledge
                 end
-                
+
                 Service->>Modbus: Write Holding Registers (FC=6)
                 loop For Each Register
                     Modbus-->>Service: Acknowledge
                 end
-                
+
                 Node->>Service: verifyModbusWrite()
                 Service->>Modbus: Read Back All Commands
                 loop Verify Each Command
@@ -198,22 +198,22 @@ sequenceDiagram
                     Service->>Service: Compare with Expected
                 end
                 Service-->>Node: Verification Success/Fail
-                
+
                 alt Verification Success
                     Node->>Service: storeActiveCommands()
-                    
+
                     Node->>Service: publishScheduleTelemetry()
                     Service->>MQTT: Publish to ThingsBoard
                     Service->>MQTT: Publish to EMQX
                     Note over MQTT: All Modbus keys +<br/>schedule metadata
-                    
+
                     Node->>Service: publishAuditLog()
                     Service->>MQTT: Publish audit trail
-                    
+
                     Node->>Service: sendNotificationToBackend()
                     Service->>HTTP: POST /api/v2/alarm/notification-by-token
                     Note over HTTP: Schedule started notification
-                    
+
                     Node->>Service: syncScheduleLog()
                     Service->>DB: Log schedule execution
                 else Verification Failed
@@ -223,12 +223,12 @@ sequenceDiagram
                 Node->>Node: Skip Execution
                 Note over Node: Prevent conflicts with<br/>other running schedules
             end
-            
+
             Node->>Node: Publish Config Parameters
             Note over Node: For unmapped keys<br/>(iri_time, set_ec, etc.)
         end
     end
-    
+
     Node-->>Trigger: Output Message
 ```
 
@@ -242,68 +242,68 @@ sequenceDiagram
     participant Context as Global Context
     participant MQTT as MQTT Brokers
     participant HTTP as Backend API
-    
+
     Note over Node: Schedule no longer due<br/>(past end_time)
-    
+
     Node->>Service: Get Active Commands
     Service-->>Node: List of executed commands
-    
+
     Node->>Service: resetModbusCommands()
-    
+
     Note over Service,Modbus: FINISH SEQUENCE
     Service->>Modbus: Reset Holding Registers (FC=6)
     Note over Modbus: Set all to 0
-    
+
     Service->>Modbus: Turn OFF Pump/Power Coils (FC=5)
     loop For Each Control Coil
         Modbus-->>Service: Acknowledge
     end
-    
+
     Service->>Service: Delay 5 seconds
     Note over Service: Allow pumps to stop completely
-    
+
     Service->>Modbus: Turn OFF Valve Coils (FC=5)
     loop For Each Valve
         Modbus-->>Service: Acknowledge
     end
-    
+
     alt Reset Success
         Node->>Context: Get configKeyValues
         Context-->>Node: Current config values
-        
+
         Node->>Service: clearScheduleConfigValues()
-        Note over Service: Set tracked keys to 0<br/>(preserve key structure)
-        
+        Note over Service: Preserve tracked config values<br/>(avoid mode flicker between schedules)
+
         Node->>Service: clearActiveCommands()
-        
+
         Node->>Service: Update Status to "finished"
         Service->>DB: UPDATE schedule SET status='finished'
-        
+
         Node->>Service: clearStatusHistory()
         Note over Context: Clear for next run notification
-        
+
         Node->>Service: publishScheduleTelemetry('end')
-        Service->>MQTT: Publish reset commands +<br/>cleared config values
-        
+        Service->>MQTT: Publish reset commands +<br/>current tracked config values
+
         Node->>Service: publishAuditLog('end')
         Service->>MQTT: Publish finish audit trail
-        
+
         Node->>Service: sendNotificationToBackend('end', true)
         Service->>HTTP: POST schedule completed
-        
+
         Node->>Service: syncScheduleLog()
         Service->>DB: Log schedule completion
-        
+
     else Reset Failed
         Node->>Node: Keep status as "running"
         Note over Node: Devices still ON!<br/>Manual intervention required
-        
+
         Node->>Service: sendNotificationToBackend('end', false)
         Service->>HTTP: POST error notification
-        
+
         Node->>Service: publishAuditLog('end', false)
         Service->>MQTT: Publish failure audit log
-        
+
         Node->>Node: CRITICAL WARNING
     end
 ```
@@ -317,7 +317,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Idle: Schedule created<br/>(enable=1)
-    
+
     Idle --> Running: Time window matches<br/>(isScheduleDue=true)
     Note right of Running
         - Modbus commands executed
@@ -325,42 +325,42 @@ stateDiagram-v2
         - Telemetry published
         - HTTP notification sent
     end Note
-    
+
     Running --> Running: Still within time window
     Note right of Running
         - 1-min check interval
         - No command re-execution
     end Note
-    
+
     Running --> Finished: Time window passed<br/>(isScheduleDue=false)
     Note left of Finished
         - All commands reset
-        - Config values cleared
+      - Config values preserved
         - Telemetry published
         - HTTP notification sent
     end Note
-    
+
     Finished --> Idle: Ready for next run
     Note left of Idle
         - Status history cleared
         - Active commands cleared
     end Note
-    
+
     Running --> Finished: RPC disable command
     Note right of Finished
         - Manual disable
         - Same reset sequence
     end Note
-    
+
     Running --> Finished: confirm-devices-off
     Note left of Finished
         - Manual recovery
         - Verify devices OFF
     end Note
-    
+
     state "Power Outage" as PO
     PO --> Idle: Startup recovery<br/>clears stale state
-    
+
     Idle --> PO: Power loss
     Running --> PO: Power loss
     Finished --> PO: Power loss
@@ -390,26 +390,30 @@ graph LR
     B --> C[Add iri_time if missing]
     C --> D[Normalize string numbers]
     D --> E{For Each Key}
-    
+
     E --> F{Key in Holding Registers?}
     F -->|Yes| G[Create FC=6 Command]
     F -->|No| H{Key in Coils?}
-    
+
     H -->|Yes| I[Create FC=5 Command]
     H -->|No| J{Value is Falsy?}
-    
-    J -->|Yes| K[Skip Key]
+
+    J -->|Yes| K[Skip Config Key]
     J -->|No| L[Store as Config Parameter]
-    
+
     G --> M[Commands List]
     I --> M
     L --> N[Config Parameters]
     K --> O[Ignored]
-    
+
     style A fill:#e1f5ff
     style M fill:#e1ffe1
     style N fill:#fff5e1
     style K fill:#ffe1e1
+
+  %% Actual runtime rule:
+  %% - If key has valid Modbus mapping: 0, "0", false, "false" are executed.
+  %% - If key is unmapped: falsy values are skipped in config storage.
 ```
 
 ### Start vs Finish Execution Order
@@ -517,35 +521,35 @@ If verification fails:
 ```mermaid
 graph TD
     A[Schedule Event] --> B{Event Type?}
-    
+
     B -->|Start| C[Collect All Written Commands]
     B -->|Finish| D[Collect All Reset Commands]
     B -->|RPC Disable| D
     B -->|Manual Recovery| D
-    
+
     C --> E[Add Schedule Metadata]
     D --> E
-    
+
     E --> F{Config Values Provided?}
-    F -->|Yes| G[Add Cleared Config Values]
+    F -->|Yes| G[Add Current Config Values]
     F -->|No| H[Skip Config]
-    
+
     G --> I[Build Telemetry Object]
     H --> I
-    
+
     I --> J{Deduplication Check}
     J -->|Same data < 5s| K[Skip Publish]
     J -->|New data or > 5s| L[Hash & Timestamp]
-    
+
     L --> M[Publish to ThingsBoard]
     L --> N[Publish to EMQX]
-    
+
     M --> O[v1/devices/me/telemetry]
     N --> P[viis/things/v2/{deviceId}/telemetry]
-    
+
     O --> Q[Update Last Published]
     P --> Q
-    
+
     style A fill:#e1f5ff
     style K fill:#ffe1e1
     style O fill:#e1ffe1
@@ -621,29 +625,29 @@ sequenceDiagram
     participant Service as ScheduleService
     participant Modbus as Modbus Device
     participant MQTT as MQTT
-    
+
     TB->>Node: RPC: schedule-disable-by-backend
     Node->>Service: Find schedule by ID
-    
+
     alt Schedule Found & Running
         Node->>Service: Get Active Commands
         Node->>Service: Get Reset Keys<br/>(time_valve_*, set_flow_*)
         Node->>Service: Get Config Values
-        
+
         Node->>Service: resetModbusCommands()
         Service->>Modbus: Turn OFF all devices
-        
+
         alt Reset Success
             Node->>Service: Clear Active Commands
-            Node->>Service: Clear Config Values (set to 0)
+            Node->>Service: Preserve Config Values
             Node->>Service: Update Status to "finished"
-            
+
             Node->>Service: Publish Telemetry (end)
             Service->>MQTT: Publish reset state
-            
+
             Node->>Service: Publish Audit Log (end, success)
             Service->>MQTT: Publish audit
-            
+
             Node->>Service: Send HTTP Notification
             Node->>Service: Sync Schedule Log
         else Reset Failed
@@ -682,10 +686,10 @@ sequenceDiagram
     participant Node as Schedule Executor
     participant Modbus as Modbus Device
     participant Service as ScheduleService
-    
+
     User->>Node: RPC: confirm-devices-off
     Node->>Node: Find Schedule
-    
+
     alt Schedule Found & Running
         alt verifyDevices = true
             Node->>Service: Get Active Commands
@@ -694,17 +698,17 @@ sequenceDiagram
                 Modbus-->>Node: Return Value
                 Node->>Node: Verify = OFF/0?
             end
-            
+
             alt All Devices Confirmed OFF
                 Node->>Service: Update Status to "finished"
                 Node->>Service: Clear Active Commands
-                Node->>Service: Clear Config Values
+                Node->>Service: Preserve Config Values
                 Node->>Service: Clear Status History
-                
+
                 Node->>Service: Publish Telemetry (end)
                 Node->>Service: Send HTTP Notification
                 Node->>Service: Sync Schedule Log
-                
+
                 Node-->>User: Status: "Confirmed OFF"
             else Some Devices Still ON
                 Node-->>User: Status: "Devices still ON"
@@ -742,25 +746,25 @@ sequenceDiagram
 ```mermaid
 graph TD
     A[RPC Control Command] --> B{For Each Param}
-    
+
     B --> C{Key in Modbus Mapping?}
     C -->|Yes - Coil| D[Return: action=modbus,<br/>type=coil, address]
     C -->|Yes - Holding| E[Return: action=modbus,<br/>type=holding, address]
     C -->|No| F{Value is Falsy?}
-    
+
     F -->|Yes| G[Reject: Falsy value]
     F -->|No| H[Store in configKeyValues]
-    
+
     H --> I[Validate & Convert Type]
     I --> J[Return: action=config,<br/>key, value]
-    
+
     D --> K[Results Array]
     E --> K
     J --> K
     G --> K
-    
+
     K --> L[Send Response Message]
-    
+
     style A fill:#e1f5ff
     style L fill:#e1ffe1
     style G fill:#ffe1e1
@@ -778,23 +782,23 @@ When the node starts, it detects potential stale state from power outage:
 graph TD
     A[Node Startup] --> B[Generate Startup ID]
     B --> C{Last Startup ID<br/>Matches Current?}
-    
+
     C -->|No - Fresh Startup| D[Detect Stale State]
     C -->|Yes - Normal Restart| E[Ensure Global Vars Exist]
-    
+
     D --> F{Stale Commands/Status<br/>Found?}
     F -->|Yes| G[Clear Active Commands]
     F -->|No| E
-    
+
     G --> H[Clear Status History]
     H --> I[Clear Timestamps]
     I --> J[Clear Manual Overrides]
     J --> K[Preserve Config Structure]
     K --> L[Log Recovery Message]
     L --> E
-    
+
     E --> M[Initialize Services]
-    
+
     style A fill:#e1f5ff
     style G fill:#ffe1e1
     style K fill:#e1ffe1
@@ -818,27 +822,27 @@ Runs periodically (default: every 15 minutes) to clean stuck "running" entries:
 ```mermaid
 graph TD
     A[Cleanup Interval Trigger] --> B{Time Since Last Cleanup<br/>> cleanupInterval?}
-    
+
     B -->|No| C[Skip Cleanup]
     B -->|Yes| D[Get Active Commands]
-    
+
     D --> E{For Each Status History Entry}
     E --> F{Status = 'running'<br/>& NOT in Active Commands?}
-    
+
     F -->|Yes| G[Delete Stale Entry]
     F -->|No| E
-    
+
     G --> E
     E --> H{All Entries Checked?}
     H -->|No| E
     H -->|Yes| I{Cleaned Count > 0?}
-    
+
     I -->|Yes| J[Log Cleanup Message]
     I -->|No| K[Skip Log]
-    
+
     J --> L[Update Last Cleanup Timestamp]
     K --> L
-    
+
     style A fill:#e1f5ff
     style C fill:#fff5e1
     style G fill:#ffe1e1
@@ -853,18 +857,18 @@ Detects schedules marked "running" but with no active commands:
 sequenceDiagram
     participant Node as Schedule Executor
     participant Service as ScheduleService
-    
+
     Node->>Node: Check Schedule Due
     Node->>Service: Get Active Commands
     Service-->>Node: Empty List
-    
+
     alt Status = "running" && No Active Commands
         Note over Node: POWER OUTAGE DETECTED
         Node->>Node: Log Recovery Warning
-        
+
         Node->>Service: Execute Start Sequence
         Note over Service: Re-execute commands<br/>as fresh start
-        
+
         Service->>Service: Map Commands
         Service->>Service: Execute Modbus
         Service->>Service: Verify Write
@@ -882,30 +886,30 @@ Prevents two schedules from writing to the same Modbus address:
 graph TD
     A[Schedule Ready to Execute] --> B[Get Commands to Execute]
     B --> C[Get Active Commands from Context]
-    
+
     C --> D{For Each New Command}
     D --> E{Skip Config Keys?<br/>(CONFIG_PARAMETER_KEYS)}
-    
+
     E -->|Yes| F[Skip Overlap Check]
     E -->|No| G{Check Active Schedules}
-    
+
     G --> H{For Each Active Schedule}
     H --> I{Same Schedule ID?}
-    
+
     I -->|Yes| H
     I -->|No| J{Same Address &&<br/>Same Function Code?}
-    
+
     J -->|Yes| K[OVERLAP DETECTED]
     J -->|No| H
-    
+
     H --> L{All Active Schedules<br/>Checked?}
     L -->|No| H
     L -->|Yes| M[No Overlap]
-    
+
     K --> N[SKIP EXECUTION]
     M --> O[EXECUTE COMMANDS]
     F --> M
-    
+
     style A fill:#e1f5ff
     style K fill:#ffe1e1
     style N fill:#ffe1e1
@@ -965,12 +969,12 @@ executeWithCircuitBreaker<T>(
 ```mermaid
 stateDiagram-v2
     [*] --> Closed
-    
+
     Closed --> Open: Failures >= Threshold
     Open --> HalfOpen: Time >= Reset Timeout
     HalfOpen --> Closed: Test Request Succeeds
     HalfOpen --> Open: Test Request Fails
-    
+
     Closed --> Closed: Success (reset failures)
     Closed --> Closed: Failure (increment counter)
 ```
@@ -1032,25 +1036,25 @@ The node uses Node-RED global context to persist state across executions:
 ```mermaid
 graph TD
     A[Schedule Execution] --> B{Key Type?}
-    
+
     B -->|Modbus Mapped| C[Execute Modbus Command]
     B -->|Not Mapped| D[Store as Config Parameter]
-    
+
     C --> E[Store in activeModbusCommands]
     D --> F[Add to configKeyValues]
-    
+
     F --> G[Track in scheduleConfigKeys]
     G --> H[Schedule Runs...]
-    
+
     H --> I[Schedule Finishes]
     I --> J[Get Config Keys for This Schedule]
-    J --> K[Set Values to 0]
+    J --> K[Preserve Current Values]
     K --> L[Keep Keys in configKeyValues]
     L --> M[Clear activeModbusCommands]
-    
+
     E --> N{Schedule Finishes?}
     N -->|Yes| M
-    
+
     style A fill:#e1f5ff
     style D fill:#fff5e1
     style E fill:#e1ffe1
@@ -1058,7 +1062,7 @@ graph TD
     style K fill:#ffe1e1
 ```
 
-**Key Design Decision**: Config keys are **reset to 0** but **not removed**. This preserves the key structure so other schedules can override them.
+**Key Design Decision**: Config keys are **preserved** and **not removed** at schedule finish. This avoids temporary mode flicker between schedules.
 
 ---
 
@@ -1071,13 +1075,13 @@ graph TB
     subgraph "1. Trigger"
         A[Inject Node] -->|Every 10-30s| B[viis-schedule-executor]
     end
-    
+
     subgraph "2. Initialization"
         B --> C{Message Type?}
         C -->|Schedule Check| D[Fetch Schedules from DB]
         C -->|RPC Command| E[Process RPC]
     end
-    
+
     subgraph "3. Schedule Evaluation"
         D --> F[Run Stale Cleanup]
         F --> G{For Each Schedule}
@@ -1085,7 +1089,7 @@ graph TB
         H -->|No| G
         H -->|Yes| I{Already Running?}
     end
-    
+
     subgraph "4. Start Execution"
         I -->|No| J[Update Status to 'running']
         J --> K[Map Schedule to Modbus]
@@ -1103,14 +1107,14 @@ graph TB
         T --> U[Sync Schedule Log]
         U --> V[Publish Config Parameters]
     end
-    
+
     subgraph "5. Finish Execution"
         I -->|Yes, Not Due| W[Get Active Commands]
         W --> X[Reset All Commands to 0/false]
         X --> Y{Reset Success?}
         Y -->|Yes| Z[Clear Active Commands]
         Z --> AA[Get Config Values]
-        AA --> AB[Clear Config Values to 0]
+        AA --> AB[Preserve Config Values]
         AB --> AC[Update Status to 'finished']
         AC --> AD[Clear Status History]
         AD --> AE[Publish Telemetry]
@@ -1121,7 +1125,7 @@ graph TB
         AI --> AJ[Send Error Notification]
         AJ --> AK[Publish Failure Audit]
     end
-    
+
     subgraph "6. Output"
         V --> AL[Send Output Message]
         AH --> AL
@@ -1129,7 +1133,7 @@ graph TB
         E --> AL
         P --> AL
     end
-    
+
     style A fill:#e1f5ff
     style B fill:#e1f5ff
     style J fill:#e1ffe1
@@ -1145,51 +1149,51 @@ graph TB
 ```mermaid
 graph TD
     A[Execute Modbus Commands] --> B{Command Type?}
-    
+
     B -->|Holding Registers FC=6| C[Write All Registers]
     B -->|Valve Coils FC=5| D[Write Valve Coils]
     B -->|Other Coils FC=5| E[Write Other Coils]
     B -->|Control Coils FC=5| F[Write Pump/Power Coils]
-    
+
     C --> G{Start or Finish?}
     G -->|Start| D
     G -->|Finish| F
-    
+
     D --> H[Delay 100ms]
     E --> H
     F --> H
-    
+
     H --> I{All Written?}
     I -->|No| D
     I -->|Yes| J[Delay 5 Seconds]
-    
+
     J --> K{Start Sequence?}
     K -->|Yes| L[Write Control Coils]
     K -->|No| M[Write Valve Coils]
-    
+
     L --> N[Verification Phase]
     M --> N
-    
+
     N --> O{verifyAfterWrite Enabled<br/>OR Command is Coil?}
     O -->|No| P[Skip Verification]
     O -->|Yes| Q[Read Back All Commands]
-    
+
     Q --> R{For Each Command}
     R --> S[Read Current Value from Modbus]
     S --> T[Scale Value if Configured]
     T --> U{Value Matches Expected?}
-    
+
     U -->|No| V[VERIFICATION FAILED]
     U -->|Yes| R
-    
+
     R --> W{All Checked?}
     W -->|No| R
     W -->|Yes| X[VERIFICATION SUCCESS]
-    
+
     V --> Y[Return False]
     P --> Z[Return True]
     X --> AA[Return True]
-    
+
     style A fill:#e1f5ff
     style V fill:#ffe1e1
     style Y fill:#ffe1e1
@@ -1203,26 +1207,26 @@ graph TD
 ```mermaid
 graph LR
     A[Schedule Action JSON] --> B{Key in Modbus Mapping?}
-    
+
     B -->|Yes| C[Create Modbus Command]
     B -->|No| D{Value is Falsy?}
-    
+
     D -->|Yes| E[Skip - Not Stored]
     D -->|No| F[Validate & Convert Type]
-    
+
     F --> G[Detect Parameter Type]
     G --> H[Store in configKeyValues]
     H --> I[Track in scheduleConfigKeys]
-    
+
     I --> J[Schedule Runs...]
     J --> K[Schedule Finishes]
-    
+
     K --> L[Get Keys for This Schedule]
     L --> M[Set Values to 0]
     M --> N[Keys Preserved in configKeyValues]
-    
+
     N --> O[Next Schedule Can Override]
-    
+
     style A fill:#e1f5ff
     style C fill:#e1ffe1
     style E fill:#ffe1e1
@@ -1273,8 +1277,8 @@ graph LR
 - **Why**: Prevents water hammer and protects equipment
 
 ### 2. **Config Values Preserved, Not Deleted**
-- Config keys reset to 0 but structure preserved
-- **Why**: Allows other schedules to override, prevents key loss
+- Config keys and values are preserved at schedule finish
+- **Why**: Prevents transient mode flicker and preserves continuity across schedules
 
 ### 3. **Dual MQTT Publishing**
 - Publishes to both ThingsBoard and EMQX
@@ -1473,7 +1477,7 @@ erDiagram
         string device_id FK
         datetime modified
     }
-    
+
     TabiotScheduleLog {
         int id PK
         string schedule_id FK
@@ -1481,12 +1485,12 @@ erDiagram
         datetime end_time
         int deleted
     }
-    
+
     TabiotDevice {
         string name PK
         string label
     }
-    
+
     TabiotSchedule ||--o{ TabiotScheduleLog : "has many"
     TabiotDevice ||--o{ TabiotSchedule : "has many"
 ```

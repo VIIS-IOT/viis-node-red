@@ -1,7 +1,7 @@
 /**
  * Unit tests for schedule interval (day of week) validation
  * Tests the isScheduleDue() method's interval checking logic
- * 
+ *
  * Interval format: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday
  * Supported formats: "3", "1,3,5", "[1,3,5]"
  */
@@ -61,7 +61,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        
+
         // Clear any previous Date mocks
         if (dateNowSpy) {
             dateNowSpy.mockRestore();
@@ -76,7 +76,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
             mockGlobalContext.set(key, value);
         });
 
-        scheduleService = new ScheduleService(mockNode, true); // Enable debug
+        scheduleService = new ScheduleService(mockNode, true, true); // Enable debug
 
         // Setup environment mocks
         Object.defineProperty(scheduleService, 'globalHelper', {
@@ -96,7 +96,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
     const setSystemTime = (dateString: string) => {
         const mockDate = new Date(dateString);
         const mockTime = mockDate.getTime();
-        
+
         // Mock Date.now() which moment() uses internally
         dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(mockTime);
     };
@@ -295,7 +295,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
     describe('Invalid Interval Format', () => {
         test('should fallback to allowing schedule on invalid JSON format', () => {
             setSystemTime('2025-01-08T03:00:00.000Z');
-            
+
             // Mock console.error
             const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 

@@ -76,7 +76,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
             expect(result).toBe(true);
             expect(attemptCount).toBe(3);
-            
+
             // Verify exponential delays: ~1s, ~2s
             // First retry after ~1000ms, second retry after ~2000ms more
             expect(mockModbusClient.writeRegister).toHaveBeenCalledTimes(3);
@@ -108,7 +108,7 @@ describe('Exponential Backoff Retry Logic', () => {
                 }
                 lastTime = currentTime;
                 attemptCount++;
-                
+
                 if (attemptCount < 5) {
                     throw new Error('Still failing');
                 }
@@ -119,7 +119,8 @@ describe('Exponential Backoff Retry Logic', () => {
                 () => mockModbusClient.writeRegister(10, 100),
                 5,
                 1000,
-                5000 // Max delay cap at 5 seconds
+                5000, // Max delay cap at 5 seconds
+                false // Disable jitter for deterministic cap assertion
             );
 
             expect(result).toBe(true);
@@ -131,7 +132,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
         test('should use jitter to prevent thundering herd', async () => {
             const delays: number[] = [];
-            
+
             // Run multiple retry operations in parallel
             const operations = Array(10).fill(null).map(async (_, index) => {
                 let attemptTime = 0;
@@ -166,7 +167,7 @@ describe('Exponential Backoff Retry Logic', () => {
             mockModbusClient.writeRegister.mockRejectedValue(new Error('Service down'));
 
             const circuitKey = 'modbus-write-failures-test';
-            
+
             // Try 5 operations - should fail and open circuit
             for (let i = 0; i < 5; i++) {
                 try {
@@ -188,7 +189,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
         test('should reject fast when circuit is open', async () => {
             const circuitKey = 'modbus-write-open-test';
-            
+
             // Manually set circuit to open state
             (scheduleService as any).updateCircuitBreakerState(circuitKey, {
                 failures: 10,
@@ -198,7 +199,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
             mockModbusClient.writeRegister.mockClear();
             const startTime = Date.now();
-            
+
             await expect(
                 (scheduleService as any).executeWithCircuitBreaker(
                     () => mockModbusClient.writeRegister(10, 100),
@@ -209,8 +210,8 @@ describe('Exponential Backoff Retry Logic', () => {
             ).rejects.toThrow('Circuit breaker is OPEN');
 
             const executionTime = Date.now() - startTime;
-            
-            // Should fail immediately, not attempt operation  
+
+            // Should fail immediately, not attempt operation
             // Allow for some overhead in test execution
             expect(executionTime).toBeLessThan(200);
             expect(mockModbusClient.writeRegister).not.toHaveBeenCalled();
@@ -218,7 +219,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
         test('should transition to half-open after timeout period', async () => {
             const circuitKey = 'modbus-write-halfopen-test';
-            
+
             // Set circuit to open state with old failure time
             (scheduleService as any).updateCircuitBreakerState(circuitKey, {
                 failures: 10,
@@ -242,7 +243,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
         test('should close circuit after successful half-open test', async () => {
             const circuitKey = 'modbus-write-close-test';
-            
+
             // Set circuit to half-open state
             (scheduleService as any).updateCircuitBreakerState(circuitKey, {
                 failures: 5,
@@ -268,7 +269,7 @@ describe('Exponential Backoff Retry Logic', () => {
     describe('Timeout Protection', () => {
         test('should timeout long-running operations', async () => {
             jest.useRealTimers(); // Use real timers for this test
-            
+
             mockModbusClient.writeRegister.mockImplementation(
                 () => new Promise(resolve => setTimeout(resolve, 10000))
             );
@@ -283,7 +284,7 @@ describe('Exponential Backoff Retry Logic', () => {
             ).rejects.toThrow('Operation timed out');
 
             const executionTime = Date.now() - startTime;
-            
+
             // Should timeout around 2 seconds, not wait full 10 seconds
             expect(executionTime).toBeGreaterThanOrEqual(1900);
             expect(executionTime).toBeLessThan(3000);
@@ -302,7 +303,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
         test('should support custom timeout messages', async () => {
             jest.useRealTimers(); // Use real timers for this test
-            
+
             mockModbusClient.writeRegister.mockImplementation(
                 () => new Promise(resolve => setTimeout(resolve, 10000))
             );
@@ -320,7 +321,7 @@ describe('Exponential Backoff Retry Logic', () => {
     describe('Combined Resilience Patterns', () => {
         test('should combine timeout, retry with backoff, and circuit breaker', async () => {
             jest.useRealTimers(); // Use real timers for this test
-            
+
             let attemptCount = 0;
             mockModbusClient.writeRegister.mockImplementation(async () => {
                 attemptCount++;
@@ -350,7 +351,7 @@ describe('Exponential Backoff Retry Logic', () => {
 
         test('should fail fast when circuit is open even with retries configured', async () => {
             const circuitKey = 'modbus-write-reject-test';
-            
+
             // Set circuit to open state
             (scheduleService as any).updateCircuitBreakerState(circuitKey, {
                 failures: 10,

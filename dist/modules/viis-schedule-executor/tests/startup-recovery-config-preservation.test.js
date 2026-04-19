@@ -155,7 +155,7 @@ describe('Startup Recovery - Config Preservation', () => {
             expect(globalStore.configKeyValues.user_id).toBe(12345); // Preserved
             expect(globalStore.configKeyValues.new_param).toBe('new_value'); // Added
         });
-        it('should reset config values to 0 when schedule finishes, but keep keys', () => {
+        it('should preserve config values when schedule finishes, and keep keys', () => {
             const service = createService();
             // Setup: Schedule has been running with config values
             globalStore.configKeyValues = {
@@ -168,10 +168,10 @@ describe('Startup Recovery - Config Preservation', () => {
             };
             // Schedule finishes - clear config values
             service.clearScheduleConfigValues('schedule-1');
-            // Verify: Values reset to 0, keys preserved
-            expect(globalStore.configKeyValues.irrigation_mode).toBe(0);
-            expect(globalStore.configKeyValues.user_id).toBe(0);
-            expect(globalStore.configKeyValues.max_duration).toBe(0);
+            // Verify: Values are preserved, keys preserved
+            expect(globalStore.configKeyValues.irrigation_mode).toBe(true);
+            expect(globalStore.configKeyValues.user_id).toBe(12345);
+            expect(globalStore.configKeyValues.max_duration).toBe(3600);
             // Keys still exist in configKeyValues
             expect(globalStore.configKeyValues).toHaveProperty('irrigation_mode');
             expect(globalStore.configKeyValues).toHaveProperty('user_id');

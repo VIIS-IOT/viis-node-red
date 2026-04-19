@@ -89,7 +89,8 @@ describe('Exponential Backoff Retry Logic', () => {
                 }
                 return true;
             });
-            const result = await scheduleService.executeWithExponentialBackoff(() => mockModbusClient.writeRegister(10, 100), 5, 1000, 5000 // Max delay cap at 5 seconds
+            const result = await scheduleService.executeWithExponentialBackoff(() => mockModbusClient.writeRegister(10, 100), 5, 1000, 5000, // Max delay cap at 5 seconds
+            false // Disable jitter for deterministic cap assertion
             );
             expect(result).toBe(true);
             // Delays should not exceed 5000ms
@@ -150,7 +151,7 @@ describe('Exponential Backoff Retry Logic', () => {
             const startTime = Date.now();
             await expect(scheduleService.executeWithCircuitBreaker(() => mockModbusClient.writeRegister(10, 100), circuitKey, 5, 30000)).rejects.toThrow('Circuit breaker is OPEN');
             const executionTime = Date.now() - startTime;
-            // Should fail immediately, not attempt operation  
+            // Should fail immediately, not attempt operation
             // Allow for some overhead in test execution
             expect(executionTime).toBeLessThan(200);
             expect(mockModbusClient.writeRegister).not.toHaveBeenCalled();

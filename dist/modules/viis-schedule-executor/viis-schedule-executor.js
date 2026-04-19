@@ -562,18 +562,6 @@ module.exports = function (RED) {
                 cleanStaleStatusHistory();
                 const allModbusCoils = scheduleService.getAllModbusCoils();
                 const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
-                const isFalsyScheduleValue = (value) => {
-                    if (value === null || value === undefined || value === "" || value === false || value === "false" || value === 0 || value === "0") {
-                        return true;
-                    }
-                    if (typeof value === 'string') {
-                        const trimmed = value.trim();
-                        if (/^-?\d+(\.\d+)?$/.test(trimmed) && parseFloat(trimmed) === 0) {
-                            return true;
-                        }
-                    }
-                    return false;
-                };
                 const hasMappedModbusCommands = (schedule) => {
                     let actionObj = {};
                     if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
@@ -590,7 +578,7 @@ module.exports = function (RED) {
                     else {
                         return false;
                     }
-                    return Object.entries(actionObj).some(([key, value]) => !isFalsyScheduleValue(value) && (Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key)));
+                    return Object.entries(actionObj).some(([key, value]) => Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key));
                 };
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);

@@ -150,19 +150,19 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
         });
     });
     describe('mapScheduleToModbus with mixed mapped and unmapped keys', () => {
-        it('should process only truthy values, skip falsy values', () => {
+        it('should process mapped falsy values but skip unmapped falsy values', () => {
             const schedule = createMockSchedule('test-mixed', JSON.stringify({
                 pump_1: true, // Mapped to coil - truthy, include
                 set_flow_A1: 200, // Mapped to holding - truthy, include
                 custom_timeout: 30, // Unmapped - truthy, include
                 enable_logging: false, // Unmapped - falsy, SKIP
-                valve_A1: false, // Mapped to coil - falsy, SKIP
+                valve_A1: false, // Mapped to coil - falsy, INCLUDE
                 user_notes: 'test run' // Unmapped - truthy, include
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
             // Check Modbus commands
             expect(result.holdingCommands).toHaveLength(1);
-            expect(result.coilCommands).toHaveLength(1); // valve_A1 is false, so skipped
+            expect(result.coilCommands).toHaveLength(2); // valve_A1 false is valid mapped command
             // Note: iri_time is automatically added, so we expect 3 config parameters (custom_timeout, user_notes, iri_time)
             expect(result.configParameters).toHaveLength(3);
             // Verify Modbus commands
@@ -171,11 +171,10 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                 value: 200,
                 fc: 6
             });
-            expect(result.coilCommands[0]).toMatchObject({
-                key: 'pump_1',
-                value: true,
-                fc: 5
-            });
+            expect(result.coilCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'pump_1', value: true, fc: 5 }),
+                expect.objectContaining({ key: 'valve_A1', value: false, fc: 5 })
+            ]));
             // Verify config parameters
             expect(result.configParameters).toEqual(expect.arrayContaining([
                 expect.objectContaining({

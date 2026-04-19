@@ -24,7 +24,7 @@ describe('HTTP Notification to Backend', () => {
         mockGlobalContext = {
             get: jest.fn((key) => {
                 const envVars = {
-                    'VIIS_BACKEND': 'https://iot.viis.tech',
+                    'server_url': 'https://iot.viis.tech',
                     'device_access_token': 'test-token-123',
                     'device_id': 'device-001'
                 };
@@ -37,7 +37,7 @@ describe('HTTP Notification to Backend', () => {
             warn: jest.fn(),
             error: jest.fn()
         };
-        scheduleService = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+        scheduleService = new viis_schedule_executor_service_1.ScheduleService(mockNode, true, true);
     });
     afterEach(() => {
         // Reset circuit breaker state to prevent test interference
@@ -153,7 +153,7 @@ describe('HTTP Notification to Backend', () => {
             process.env.VIIS_BACKEND = '';
             mockGlobalContext.get.mockImplementation((key) => {
                 const envVars = {
-                    'VIIS_BACKEND': '',
+                    'server_url': '',
                     'device_access_token': 'test-token-123',
                     'device_id': 'device-001'
                 };
@@ -170,7 +170,7 @@ describe('HTTP Notification to Backend', () => {
         test('should return false when missing DEVICE_ACCESS_TOKEN', async () => {
             mockGlobalContext.get.mockImplementation((key) => {
                 const envVars = {
-                    'VIIS_BACKEND': 'https://iot.viis.tech',
+                    'server_url': 'https://iot.viis.tech',
                     'device_access_token': '',
                     'device_id': 'device-001'
                 };

@@ -2,11 +2,12 @@
 /**
  * Test cases for VIIS Schedule Executor Falsy Value Handling
  *
- * This test suite verifies that falsy values (0, "0", false, null, undefined, "")
- * are properly skipped for both Modbus-mapped keys and config parameters.
+ * This test suite verifies that falsy values are handled with split rules:
+ * - Modbus-mapped keys: 0, "0", false, "false" are valid and should be executed.
+ * - Unmapped config keys: all falsy values are skipped.
  *
- * Business Rule: All falsy values should be ignored during schedule execution
- * to prevent unintended device control or configuration updates.
+ * Business Rule: Only config parameters ignore falsy values by default.
+ * For valid Modbus mappings, 0/false can represent explicit OFF/reset commands.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("../viis-schedule-executor-service");
@@ -86,44 +87,56 @@ describe('ScheduleService - Falsy Value Handling', () => {
         });
     });
     describe('mapScheduleToModbus - Falsy values for Modbus-mapped keys', () => {
-        it('should skip holding register with value 0', () => {
+        it('should execute holding register with value 0', () => {
             const schedule = createMockSchedule('test-zero-holding', JSON.stringify({
                 set_flow_A1: 0, // Falsy - should be skipped
                 temperature: 25 // Truthy - should be included
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.holdingCommands).toHaveLength(1);
-            expect(result.holdingCommands[0].key).toBe('temperature');
+            expect(result.holdingCommands).toHaveLength(2);
+            expect(result.holdingCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'set_flow_A1', value: 0 }),
+                expect.objectContaining({ key: 'temperature', value: 25 })
+            ]));
             expect(result.configParameters).toHaveLength(1); // Only iri_time
         });
-        it('should skip holding register with value "0" (string)', () => {
+        it('should execute holding register with value "0" (string)', () => {
             const schedule = createMockSchedule('test-string-zero-holding', JSON.stringify({
                 set_flow_A1: "0", // Falsy - should be skipped
                 temperature: 25
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.holdingCommands).toHaveLength(1);
-            expect(result.holdingCommands[0].key).toBe('temperature');
+            expect(result.holdingCommands).toHaveLength(2);
+            expect(result.holdingCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'set_flow_A1', value: 0 }),
+                expect.objectContaining({ key: 'temperature', value: 25 })
+            ]));
         });
-        it('should skip coil with value false', () => {
+        it('should execute coil with value false', () => {
             const schedule = createMockSchedule('test-false-coil', JSON.stringify({
                 pump_1: false, // Falsy - should be skipped
                 valve_A1: true // Truthy - should be included
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.coilCommands).toHaveLength(1);
-            expect(result.coilCommands[0].key).toBe('valve_A1');
+            expect(result.coilCommands).toHaveLength(2);
+            expect(result.coilCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'pump_1', value: false }),
+                expect.objectContaining({ key: 'valve_A1', value: true })
+            ]));
         });
-        it('should skip coil with value "false" (string)', () => {
+        it('should execute coil with value "false" (string)', () => {
             const schedule = createMockSchedule('test-string-false-coil', JSON.stringify({
                 pump_1: "false", // Falsy - should be skipped
                 valve_A1: "true"
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.coilCommands).toHaveLength(1);
-            expect(result.coilCommands[0].key).toBe('valve_A1');
+            expect(result.coilCommands).toHaveLength(2);
+            expect(result.coilCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'pump_1', value: false }),
+                expect.objectContaining({ key: 'valve_A1', value: true })
+            ]));
         });
-        it('should skip all falsy values: 0, false, null, undefined, ""', () => {
+        it('should execute mapped 0/false but skip null/undefined/empty', () => {
             const schedule = createMockSchedule('test-all-falsy', JSON.stringify({
                 set_flow_A1: 0, // Falsy
                 temperature: null, // Falsy
@@ -134,26 +147,38 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 power: false // Falsy
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.holdingCommands).toHaveLength(0);
-            expect(result.coilCommands).toHaveLength(0);
+            expect(result.holdingCommands).toHaveLength(1);
+            expect(result.holdingCommands[0]).toMatchObject({ key: 'set_flow_A1', value: 0 });
+            expect(result.coilCommands).toHaveLength(3);
+            expect(result.coilCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'pump_1', value: false }),
+                expect.objectContaining({ key: 'valve_A1', value: false }),
+                expect.objectContaining({ key: 'power', value: false })
+            ]));
             expect(result.configParameters).toHaveLength(1); // Only iri_time
         });
         it('should include truthy values alongside falsy values', () => {
             const schedule = createMockSchedule('test-mixed-truthy-falsy', JSON.stringify({
-                set_flow_A1: 0, // Falsy - skip
+                set_flow_A1: 0, // Mapped falsy - include
                 temperature: 25, // Truthy - include
-                pressure: 0, // Falsy - skip
-                pump_1: false, // Falsy - skip
+                pressure: 0, // Mapped falsy - include
+                pump_1: false, // Mapped falsy - include
                 valve_A1: true, // Truthy - include
-                power: 0, // Falsy - skip
+                power: 0, // Mapped falsy - include
                 main_pump: true // Truthy - include
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.holdingCommands).toHaveLength(1);
-            expect(result.holdingCommands[0].key).toBe('temperature');
-            expect(result.coilCommands).toHaveLength(2);
+            expect(result.holdingCommands).toHaveLength(3);
+            expect(result.holdingCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'set_flow_A1', value: 0 }),
+                expect.objectContaining({ key: 'temperature', value: 25 }),
+                expect.objectContaining({ key: 'pressure', value: 0 })
+            ]));
+            expect(result.coilCommands).toHaveLength(4);
             expect(result.coilCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'pump_1', value: false }),
                 expect.objectContaining({ key: 'valve_A1', value: true }),
+                expect.objectContaining({ key: 'power', value: false }),
                 expect.objectContaining({ key: 'main_pump', value: true })
             ]));
         });
@@ -329,7 +354,7 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 main_pump: true,
                 valve_A1: true,
                 set_flow_A1: 150,
-                // Modbus mapped - falsy (should be skipped)
+                // Modbus mapped - falsy (should still be executed)
                 pump_1: false,
                 set_temp: 0,
                 temperature: 0,
@@ -343,9 +368,9 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 max_duration: "0"
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            // Modbus commands: 3 truthy values
-            expect(result.holdingCommands).toHaveLength(1); // set_flow_A1 only
-            expect(result.coilCommands).toHaveLength(2); // main_pump, valve_A1
+            // Modbus commands: truthy + mapped falsy values
+            expect(result.holdingCommands).toHaveLength(3); // set_flow_A1 + set_temp + temperature
+            expect(result.coilCommands).toHaveLength(3); // main_pump + valve_A1 + pump_1(false)
             // Config parameters: iri_time + 2 truthy unmapped
             expect(result.configParameters).toHaveLength(3);
             expect(result.configParameters.map(p => p.key)).toEqual(expect.arrayContaining(['iri_time', 'irrigation_mode', 'user_id']));
@@ -360,9 +385,14 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 notes: ""
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            // No Modbus commands, only iri_time as config
-            expect(result.holdingCommands).toHaveLength(0);
-            expect(result.coilCommands).toHaveLength(0);
+            // Mapped falsy values should still produce Modbus commands
+            expect(result.holdingCommands).toHaveLength(1);
+            expect(result.holdingCommands[0]).toMatchObject({ key: 'set_flow_A1', value: 0 });
+            expect(result.coilCommands).toHaveLength(2);
+            expect(result.coilCommands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'pump_1', value: false }),
+                expect.objectContaining({ key: 'valve_A1', value: false })
+            ]));
             expect(result.configParameters).toHaveLength(1); // Only iri_time
             expect(result.configParameters[0].key).toBe('iri_time');
         });

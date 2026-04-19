@@ -529,15 +529,20 @@ export class ScheduleService {
                         }
                     }
 
-                    // Skip falsy values for all keys (Modbus-mapped and unmapped)
-                    // Falsy values: 0, "0", false, "false", null, undefined, ""
-                    if (this.isFalsyValue(value)) {
+                    const isMappedHolding = modbusHolding.hasOwnProperty(key);
+                    const isMappedCoil = modbusCoils.hasOwnProperty(key);
+                    const isValidModbusMapping = isMappedHolding || isMappedCoil;
+                    const isAllowedMappedFalsyValue = value === 0 || value === "0" || value === false || value === "false";
+
+                    // Skip falsy values only for unmapped keys (config parameters)
+                    // For valid Modbus mappings, only keep 0/"0"/false/"false".
+                    if (this.isFalsyValue(value) && (!isValidModbusMapping || !isAllowedMappedFalsyValue)) {
                         this.debugLog(`Skipping falsy value for key "${key}": ${JSON.stringify(value)} in schedule ${schedule.name}`);
                         continue;
                     }
 
                     // Process Modbus-mapped keys
-                    if (modbusHolding.hasOwnProperty(key)) {
+                    if (isMappedHolding) {
                         holdingCommands.push({
                             key,
                             value: Number(value),
@@ -547,7 +552,7 @@ export class ScheduleService {
                             quantity: 1,
                         });
                         this.debugLog(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
-                    } else if (modbusCoils.hasOwnProperty(key)) {
+                    } else if (isMappedCoil) {
                         coilCommands.push({
                             key,
                             value: Boolean(value),

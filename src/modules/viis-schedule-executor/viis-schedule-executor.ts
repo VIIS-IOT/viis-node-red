@@ -670,18 +670,6 @@ module.exports = function (RED: NodeAPI) {
 
                 const allModbusCoils = scheduleService.getAllModbusCoils();
                 const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
-                const isFalsyScheduleValue = (value: any): boolean => {
-                    if (value === null || value === undefined || value === "" || value === false || value === "false" || value === 0 || value === "0") {
-                        return true;
-                    }
-                    if (typeof value === 'string') {
-                        const trimmed = value.trim();
-                        if (/^-?\d+(\.\d+)?$/.test(trimmed) && parseFloat(trimmed) === 0) {
-                            return true;
-                        }
-                    }
-                    return false;
-                };
                 const hasMappedModbusCommands = (schedule: TabiotSchedule): boolean => {
                     let actionObj: Record<string, any> = {};
                     if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
@@ -697,7 +685,7 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     return Object.entries(actionObj).some(([key, value]) =>
-                        !isFalsyScheduleValue(value) && (Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key))
+                        Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key)
                     );
                 };
 
