@@ -32,7 +32,6 @@ class LuoiMappingHandler {
     async processRpcBody(rpcBody) {
         this.logger.debug("Processing RPC body for luoi mapping only");
         this.flowContext.set("rpcBody", rpcBody);
-        const modbusCoils = this.globalContext.get("modbusCoils") || {};
         let hasLuoiMapping = false;
         // Only process luoi_1, luoi_2, luoi_3 parameters
         for (let key in rpcBody) {
@@ -41,7 +40,7 @@ class LuoiMappingHandler {
             // Only handle luoi mapping - let standard processing handle everything else
             if (this.luoiMapping[key]) {
                 let rawValue = rpcBody[key];
-                await this.handleLuoiMappingWithModbusWrite(key, rawValue, modbusCoils);
+                await this.handleLuoiMappingWithModbusWrite(key, rawValue);
                 hasLuoiMapping = true;
             }
         }
@@ -50,7 +49,7 @@ class LuoiMappingHandler {
     /**
      * Handle luoi mapping with actual Modbus write operations
      */
-    async handleLuoiMappingWithModbusWrite(key, rawValue, modbusCoils) {
+    async handleLuoiMappingWithModbusWrite(key, rawValue) {
         const mapping = this.luoiMapping[key];
         const thuKey = mapping.thu;
         const daiKey = mapping.dai;
@@ -69,10 +68,18 @@ class LuoiMappingHandler {
                 return;
         }
         try {
+            const thuMapping = this.modbusService.findModbusMapping(thuKey);
+            const daiMapping = this.modbusService.findModbusMapping(daiKey);
+            if (!thuMapping || thuMapping.address === undefined) {
+                throw new Error(`Missing Modbus mapping for ${thuKey}`);
+            }
+            if (!daiMapping || daiMapping.address === undefined) {
+                throw new Error(`Missing Modbus mapping for ${daiKey}`);
+            }
             // Write thu coil
-            await this.writeToModbusAndPublish(thuKey, modbusCoils[thuKey], thuValue, 5);
+            await this.writeToModbusAndPublish(thuKey, thuMapping, thuValue);
             // Write dai coil
-            await this.writeToModbusAndPublish(daiKey, modbusCoils[daiKey], daiValue, 5);
+            await this.writeToModbusAndPublish(daiKey, daiMapping, daiValue);
             this.logger.log(`Successfully processed luoi mapping: ${key}=${rawValue} -> ${thuKey}=${thuValue}, ${daiKey}=${daiValue}`);
         }
         catch (error) {
@@ -83,21 +90,16 @@ class LuoiMappingHandler {
     /**
      * Write to Modbus and publish result
      */
-    async writeToModbusAndPublish(key, address, value, fc) {
+    async writeToModbusAndPublish(key, mapping, value) {
         try {
-            // Create mapping object for modbusService
-            const mapping = {
-                address: address,
-                fc: fc,
-                value: value
-            };
+            const writeMapping = Object.assign(Object.assign({}, mapping), { fc: 5, value: value });
             // Validate and convert value
             const validatedValue = this.validationService.validateAndConvertValue(key, value);
             // Write to Modbus
-            this.logger.debug(`Writing to Modbus: key=${key}, address=${address}, value=${validatedValue}, fc=${fc}`);
-            await this.modbusService.writeToModbus(key, mapping, validatedValue);
+            this.logger.debug(`Writing to Modbus: key=${key}, address=${writeMapping.address}, value=${validatedValue}, fc=${writeMapping.fc}`);
+            await this.modbusService.writeToModbus(key, writeMapping, validatedValue);
             // Read back the value to confirm
-            const readValue = await this.modbusService.readFromModbus(key, mapping);
+            const readValue = await this.modbusService.readFromModbus(key, writeMapping);
             // Publish the result
             this.mqttService.publishResult(key, readValue);
             this.logger.debug(`Successfully processed parameter: ${key}=${readValue}`);

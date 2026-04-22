@@ -101,6 +101,11 @@ const CONFIG_PARAMETER_KEYS = new Set([
 ]);
 let ScheduleService = class ScheduleService {
     constructor(node, verifyAfterWrite = true, debugEnable = false) {
+        this.luoiMapping = {
+            luoi_1: { thu: "luoi_1_thu", dai: "luoi_1_dai" },
+            luoi_2: { thu: "luoi_2_thu", dai: "luoi_2_dai" },
+            luoi_3: { thu: "luoi_3_thu", dai: "luoi_3_dai" },
+        };
         this.CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
         this.PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
         this.node = node;
@@ -204,6 +209,45 @@ let ScheduleService = class ScheduleService {
             }
         }
         return false;
+    }
+    /**
+     * Normalize luoi command value to binary mode.
+     * Returns:
+     * - 0: thu=true, dai=false
+     * - 1: thu=false, dai=true
+     * - null: invalid value
+     */
+    normalizeLuoiValue(value) {
+        if (value === 0 || value === "0" || value === false || value === "false") {
+            return 0;
+        }
+        if (value === 1 || value === "1" || value === true || value === "true") {
+            return 1;
+        }
+        return null;
+    }
+    /**
+     * Expand abstract luoi keys (luoi_1/2/3) into concrete coil keys
+     * (luoi_X_thu/luoi_X_dai) so schedule execution can write Modbus coils directly.
+     */
+    expandLuoiActionParams(actionObj, scheduleName) {
+        const expanded = Object.assign({}, actionObj);
+        for (const [luoiKey, mapping] of Object.entries(this.luoiMapping)) {
+            if (!Object.prototype.hasOwnProperty.call(expanded, luoiKey)) {
+                continue;
+            }
+            const mode = this.normalizeLuoiValue(expanded[luoiKey]);
+            if (mode === null) {
+                console.warn(`Invalid ${luoiKey} value in schedule ${scheduleName}: ${JSON.stringify(expanded[luoiKey])}`);
+                delete expanded[luoiKey];
+                continue;
+            }
+            expanded[mapping.thu] = mode === 0;
+            expanded[mapping.dai] = mode === 1;
+            delete expanded[luoiKey];
+            this.debugLog(`Expanded ${luoiKey}=${mode} -> ${mapping.thu}=${expanded[mapping.thu]}, ${mapping.dai}=${expanded[mapping.dai]}`);
+        }
+        return expanded;
     }
     /**
      * Load all Modbus coils from both legacy single-board and multi-board configurations
@@ -502,12 +546,14 @@ let ScheduleService = class ScheduleService {
                     }
                 }
             }
+            // Expand abstract luoi keys before Modbus mapping
+            const expandedActionObj = this.expandLuoiActionParams(actionObj, schedule.name);
             // Load Modbus mappings with multi-board support
             const modbusCoils = this.loadAllModbusCoils();
             const modbusHolding = this.loadAllModbusHoldingRegisters();
-            for (const key in actionObj) {
-                if (actionObj.hasOwnProperty(key)) {
-                    let value = actionObj[key];
+            for (const key in expandedActionObj) {
+                if (expandedActionObj.hasOwnProperty(key)) {
+                    let value = expandedActionObj[key];
                     // Chuyển đổi chuỗi boolean thành kiểu boolean
                     if (typeof value === "string") {
                         if (value.toLowerCase() === "true") {
