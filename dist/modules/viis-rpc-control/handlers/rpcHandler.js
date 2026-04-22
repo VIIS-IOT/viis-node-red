@@ -9,6 +9,15 @@ const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 class RpcHandler {
     constructor(options, configService, validationService, modbusService, mqttService, luoiHandler) {
+        this.maxBatchSize = 20;
+        this.requestQueue = Promise.resolve();
+        this.defaultBatchOptions = {
+            sequential: true,
+            modbus_delay_ms: 150,
+            timeout_per_cmd: 5000,
+            rollback_on_fail: false,
+            continue_on_error: false,
+        };
         this.configService = configService;
         this.validationService = validationService;
         this.modbusService = modbusService;
@@ -21,6 +30,14 @@ class RpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody, maxRetries = 3) {
+        const execution = this.requestQueue.then(() => this.handleRpcRequestInternal(rpcBody, maxRetries));
+        this.requestQueue = execution.catch(() => { });
+        return execution;
+    }
+    /**
+     * Internal request processor executed in serialized queue
+     */
+    async handleRpcRequestInternal(rpcBody, maxRetries = 3) {
         let lastError = null;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -28,6 +45,11 @@ class RpcHandler {
                     this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
                     await this.handleSetStateRequest(rpcBody.params);
                     return; // Success
+                }
+                else if (rpcBody.method === "set_state_batch" && rpcBody.params) {
+                    this.logger.log(`Processing batch RPC request (attempt ${attempt}/${maxRetries})`);
+                    await this.handleSetStateBatchRequest(rpcBody.params);
+                    return;
                 }
                 else {
                     this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
@@ -50,6 +72,143 @@ class RpcHandler {
         if (lastError) {
             await this.handleRpcError(lastError);
         }
+    }
+    /**
+     * Handle set_state_batch RPC request
+     */
+    async handleSetStateBatchRequest(params) {
+        const commands = Array.isArray(params.commands) ? params.commands : [];
+        const options = Object.assign(Object.assign({}, this.defaultBatchOptions), (params.options || {}));
+        if (commands.length === 0) {
+            throw new Error("Invalid set_state_batch payload: commands must be a non-empty array");
+        }
+        if (commands.length > this.maxBatchSize) {
+            throw new Error(`Batch size exceeds limit: ${commands.length}/${this.maxBatchSize}`);
+        }
+        if (!options.sequential) {
+            this.logger.warn("set_state_batch received with sequential=false; forcing sequential execution");
+            options.sequential = true;
+        }
+        const batchId = params.batch_id || params.batchId || `batch_${Date.now()}`;
+        const sortedCommands = [...commands].sort((a, b) => {
+            const aOrder = typeof (a === null || a === void 0 ? void 0 : a.order) === "number" ? a.order : Number.MAX_SAFE_INTEGER;
+            const bOrder = typeof (b === null || b === void 0 ? void 0 : b.order) === "number" ? b.order : Number.MAX_SAFE_INTEGER;
+            return aOrder - bOrder;
+        });
+        const results = [];
+        const successfulCommands = [];
+        for (let i = 0; i < sortedCommands.length; i++) {
+            const cmd = sortedCommands[i] || {};
+            const key = String(cmd.key || "");
+            const order = typeof cmd.order === "number" ? cmd.order : i;
+            if (!key) {
+                results.push({
+                    order,
+                    key: "",
+                    status: "failed",
+                    error: "Missing command key",
+                    timestamp: new Date().toISOString(),
+                });
+                if (options.sequential && !options.continue_on_error) {
+                    break;
+                }
+                continue;
+            }
+            try {
+                await this.withTimeout(this.handleSetStateRequest({ [key]: cmd.value }), Number(options.timeout_per_cmd) || this.defaultBatchOptions.timeout_per_cmd, `Command timeout for ${key}`);
+                successfulCommands.push({ key, value: cmd.value, order });
+                results.push({
+                    order,
+                    key,
+                    status: "success",
+                    timestamp: new Date().toISOString(),
+                });
+            }
+            catch (error) {
+                const errorMessage = error.message;
+                results.push({
+                    order,
+                    key,
+                    status: "failed",
+                    error: errorMessage,
+                    timestamp: new Date().toISOString(),
+                });
+                this.logger.error(`Batch command failed [${batchId}] ${key}: ${errorMessage}`);
+                if (options.rollback_on_fail && successfulCommands.length > 0) {
+                    await this.rollbackBatch(successfulCommands, batchId);
+                }
+                if (options.sequential && !options.continue_on_error) {
+                    break;
+                }
+            }
+            if (i < sortedCommands.length - 1 && Number(options.modbus_delay_ms) > 0) {
+                await new Promise(resolve => setTimeout(resolve, Number(options.modbus_delay_ms)));
+            }
+        }
+        const successCount = results.filter(r => r.status === "success").length;
+        const overallStatus = successCount === results.length
+            ? "success"
+            : successCount > 0
+                ? "partial"
+                : "failed";
+        await this.mqttService.publishConfigUpdate("rpc_batch_result", {
+            batch_id: batchId,
+            status: overallStatus,
+            total: sortedCommands.length,
+            success_count: successCount,
+            failed_count: results.length - successCount,
+            results,
+            completed_at: new Date().toISOString(),
+        }, "set_state_batch completed");
+        this.node.status({ fill: overallStatus === "success" ? "green" : "yellow", shape: "dot", text: `batch ${overallStatus}` });
+        this.logger.log(`Batch ${batchId} completed: ${overallStatus} (${successCount}/${sortedCommands.length})`);
+    }
+    /**
+     * Best-effort rollback for commands that were already applied.
+     * Supports boolean and binary numeric commands only.
+     */
+    async rollbackBatch(successfulCommands, batchId) {
+        this.logger.warn(`Starting rollback for batch ${batchId} (${successfulCommands.length} commands)`);
+        for (const cmd of [...successfulCommands].reverse()) {
+            const rollbackValue = this.getRollbackValue(cmd.value);
+            if (rollbackValue === null) {
+                this.logger.warn(`Skipping rollback for ${cmd.key}: unsupported value ${JSON.stringify(cmd.value)}`);
+                continue;
+            }
+            try {
+                await this.handleSetStateRequest({ [cmd.key]: rollbackValue });
+            }
+            catch (error) {
+                this.logger.error(`Rollback failed for ${cmd.key}: ${error.message}`);
+            }
+        }
+    }
+    getRollbackValue(value) {
+        if (value === true)
+            return false;
+        if (value === false)
+            return true;
+        if (value === 1)
+            return 0;
+        if (value === 0)
+            return 1;
+        if (value === "1")
+            return "0";
+        if (value === "0")
+            return "1";
+        if (value === "true")
+            return "false";
+        if (value === "false")
+            return "true";
+        return null;
+    }
+    async withTimeout(promise, timeoutMs, timeoutMessage) {
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+            }),
+        ]);
     }
     /**
      * Check if an error is retryable
@@ -327,6 +486,12 @@ class RpcHandler {
         if (rpcBody.method === "set_state" && !rpcBody.params) {
             this.logger.warn("Invalid RPC body: set_state method requires params");
             return false;
+        }
+        if (rpcBody.method === "set_state_batch") {
+            if (!rpcBody.params || !Array.isArray(rpcBody.params.commands)) {
+                this.logger.warn("Invalid RPC body: set_state_batch method requires params.commands array");
+                return false;
+            }
         }
         return true;
     }

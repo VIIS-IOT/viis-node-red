@@ -450,14 +450,14 @@ module.exports = function (RED) {
                         return;
                     }
                     // Handle RPC commands from input
-                    if ((msg.payload && typeof msg.payload === 'object' && msg.payload.method === 'set_state') ||
-                        (typeof msg.method === 'string' && msg.method === 'set_state')) {
+                    if ((msg.payload && typeof msg.payload === 'object' && (msg.payload.method === 'set_state' || msg.payload.method === 'set_state_batch')) ||
+                        (typeof msg.method === 'string' && (msg.method === 'set_state' || msg.method === 'set_state_batch'))) {
                         try {
                             let rpcBody;
-                            if (typeof msg.payload === 'object' && msg.payload.method === 'set_state') {
+                            if (typeof msg.payload === 'object' && (msg.payload.method === 'set_state' || msg.payload.method === 'set_state_batch')) {
                                 rpcBody = msg.payload;
                             }
-                            else if (typeof msg.method === 'string' && msg.method === 'set_state' && msg.params) {
+                            else if (typeof msg.method === 'string' && (msg.method === 'set_state' || msg.method === 'set_state_batch') && msg.params) {
                                 rpcBody = {
                                     method: msg.method,
                                     params: msg.params,
