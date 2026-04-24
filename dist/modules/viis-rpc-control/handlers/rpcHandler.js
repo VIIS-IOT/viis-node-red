@@ -9,7 +9,7 @@ const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 class RpcHandler {
     constructor(options, configService, validationService, modbusService, mqttService, luoiHandler) {
-        this.maxBatchSize = 20;
+        this.maxBatchSize = 100;
         this.requestQueue = Promise.resolve();
         this.defaultBatchOptions = {
             sequential: true,

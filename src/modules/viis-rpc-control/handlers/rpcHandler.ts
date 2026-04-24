@@ -17,7 +17,7 @@ import { ERROR_MESSAGES, STATUS_MESSAGES } from "../constants";
 import { Logger } from "../utils/logger";
 
 export class RpcHandler implements IRpcHandler {
-    private readonly maxBatchSize = 20;
+    private readonly maxBatchSize = 100;
     private configService: IConfigService;
     private validationService: IValidationService;
     private modbusService: IModbusService;
