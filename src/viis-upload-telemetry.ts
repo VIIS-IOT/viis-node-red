@@ -1,13 +1,28 @@
 import { NodeAPI, NodeDef, Node } from "node-red";
 import { sendTelemetryByHttp } from "./core/device";
+import ClientRegistry from "./core/client-registry";
+import { MqttConfig } from "./core/mqtt-client";
+import { GlobalContextHelper } from "./ultils/global-context-helper";
 import dayjs from "dayjs";
 
 interface MyNodeDef extends NodeDef {
   configNode: string;
   protocol: "MQTT" | "HTTP";
+  mode: "publish" | "subscribe";
+  topic: string;
   enableBackup: boolean;
   backupLimit: number;
 }
+
+const MQTT_CONFIG = {
+  THINGSBOARD: {
+    DEFAULT_HOST: "mqtt.viis.tech",
+    DEFAULT_PORT: "1883",
+    QOS: 1 as 0 | 1 | 2,
+    PUBLISH_TOPIC: "v1/devices/me/telemetry",
+    SUBSCRIBE_TOPIC: "v1/devices/me/rpc/request/+"
+  }
+};
 
 module.exports = function (RED: NodeAPI) {
   function ViisUploadTelemetry(this: Node, config: MyNodeDef) {
@@ -15,9 +30,11 @@ module.exports = function (RED: NodeAPI) {
 
     const node = this;
     const configNode = RED.nodes.getNode(config.configNode) as any;
+    const globalHelper = new GlobalContextHelper(node.context());
 
     if (!configNode) {
       node.error("Configuration node not found");
+      node.status({ fill: "red", shape: "ring", text: "No config node" });
       return;
     }
 
@@ -31,9 +48,98 @@ module.exports = function (RED: NodeAPI) {
       return;
     }
 
-    node.log(`Using device: ${selectedDevice.id} for telemetry upload`);
-    // Lấy thông tin thiết bị được chọn
+    node.log(`Using device: ${selectedDevice.id} for telemetry ${config.mode}`);
 
+    // Determine topic based on mode and configuration
+    let topic: string;
+    if (config.mode === "publish") {
+      topic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
+    } else {
+      topic = config.topic || MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC;
+    }
+
+    // Initialize MQTT client if protocol is MQTT
+    let mqttClient: any = null;
+    let isSubscribed = false;
+
+    if (config.protocol === "MQTT") {
+      const mqttConfig: MqttConfig = {
+        broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar('THINGSBOARD_PORT', MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+        clientId: `node-red-upload-${config.mode}-${Math.random().toString(16).substring(2, 10)}`,
+        username: selectedDevice.accessToken,
+        password: "",
+        qos: MQTT_CONFIG.THINGSBOARD.QOS,
+      };
+
+      // Initialize MQTT client
+      (async () => {
+        try {
+          mqttClient = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
+          
+          if (config.mode === "subscribe") {
+            // Subscribe to topic
+            await mqttClient.subscribe(topic);
+            isSubscribed = true;
+            node.log(`Subscribed to topic: ${topic}`);
+            node.status({ fill: "green", shape: "dot", text: "Subscribed" });
+          } else {
+            node.status({ fill: "green", shape: "dot", text: "Ready" });
+          }
+        } catch (error) {
+          const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
+          node.error(errorMsg);
+          node.status({ fill: "red", shape: "ring", text: "MQTT failed" });
+        }
+      })();
+
+      // Handle incoming MQTT messages (for subscribe mode)
+      if (config.mode === "subscribe") {
+        const handleMessage = (event: any) => {
+          try {
+            const { topic: msgTopic, message } = event.message || event;
+            
+            // Check if message is for this node's topic
+            if (msgTopic === topic || msgTopic.startsWith(topic.replace('+', '').replace('#', ''))) {
+              let payload: any;
+              
+              // Parse message
+              if (typeof message === 'string') {
+                try {
+                  payload = JSON.parse(message);
+                } catch {
+                  payload = message;
+                }
+              } else if (message.message) {
+                payload = message.message;
+              } else {
+                payload = message;
+              }
+
+              // Send output message
+              const outputMsg: any = {
+                topic: msgTopic,
+                payload: payload
+              };
+              outputMsg.receivedAt = dayjs().valueOf();
+              node.send(outputMsg);
+            }
+          } catch (error) {
+            node.error(`Error handling MQTT message: ${(error as Error).message}`);
+          }
+        };
+
+        // Register message handler immediately
+        // The handler will be called when messages arrive after subscription
+        const checkClient = setInterval(() => {
+          if (mqttClient) {
+            mqttClient.on("mqtt-message", handleMessage);
+            clearInterval(checkClient);
+          }
+        }, 100);
+      }
+    }
+
+    // Handle input messages (for publish mode)
     node.on("input", async function (msg: any) {
       if (!selectedDevice) {
         node.error("Device not found");
@@ -43,48 +149,55 @@ module.exports = function (RED: NodeAPI) {
       }
 
       if (config.protocol === "MQTT") {
-        if (
-          configNode.device.clientMQtt &&
-          configNode.device.clientMQtt.connected
-        ) {
-          configNode.device.clientMQtt.publish(
-            "v1/devices/me/telemetry",
-            JSON.stringify(msg.payload)
-          );
+        if (!mqttClient) {
+          node.warn("MQTT client not initialized yet");
+          return;
+        }
 
+        try {
+          const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
+          await mqttClient.publish(publishTopic, JSON.stringify(msg.payload));
+          
           node.send({
             payload: {
               ts: dayjs().valueOf(),
               data: msg.payload,
+              topic: publishTopic,
               success: true,
             },
           });
-        } else if (config.enableBackup) {
-          node.warn("MQTT disconnected. Storing message for backup.");
-          node.send({
-            payload: {
-              ts: dayjs().valueOf(),
-              data: msg.payload,
-              success: false,
-            },
-          });
-          // Backup logic here (store in a queue or database)
-        } else {
-          node.warn("MQTT disconnected");
-          node.send({
-            payload: {
-              ts: dayjs().valueOf(),
-              data: msg.payload,
-              success: false,
-            },
-          });
+        } catch (error) {
+          const errorMsg = `MQTT publish failed: ${(error as Error).message}`;
+          node.error(errorMsg);
+          
+          if (config.enableBackup) {
+            node.warn("MQTT disconnected. Storing message for backup.");
+            node.send({
+              payload: {
+                ts: dayjs().valueOf(),
+                data: msg.payload,
+                success: false,
+                error: errorMsg,
+              },
+            });
+          } else {
+            node.send({
+              payload: {
+                ts: dayjs().valueOf(),
+                data: msg.payload,
+                success: false,
+                error: errorMsg,
+              },
+            });
+          }
         }
       } else if (config.protocol === "HTTP") {
         const status = await sendTelemetryByHttp(
-          configNode.device.accessToken,
+          selectedDevice.accessToken,
           msg.payload,
           node.context()
         );
+        
         if (status) {
           node.send({
             payload: {
@@ -94,22 +207,25 @@ module.exports = function (RED: NodeAPI) {
             },
           });
         } else {
+          const errorMsg = "HTTP upload error";
           if (config.enableBackup) {
-            node.warn("HTTP upload error. Storing message for backup.");
+            node.warn(`${errorMsg}. Storing message for backup.`);
             node.send({
               payload: {
                 ts: dayjs().valueOf(),
                 data: msg.payload,
                 success: false,
+                error: errorMsg,
               },
             });
           } else {
-            node.warn("HTTP upload error.");
+            node.warn(errorMsg);
             node.send({
               payload: {
                 ts: dayjs().valueOf(),
                 data: msg.payload,
                 success: false,
+                error: errorMsg,
               },
             });
           }
@@ -117,6 +233,7 @@ module.exports = function (RED: NodeAPI) {
       }
     });
 
+    // Handle connection status changes
     configNode.on("mqtt-status", (data: { status: string; error?: string }) => {
       if (data.status === "connected") {
         node.status({ fill: "green", shape: "dot", text: "Connected" });
@@ -130,7 +247,29 @@ module.exports = function (RED: NodeAPI) {
         });
       }
     });
+
+    // Cleanup on node close
+    node.on("close", async (done: () => void) => {
+      try {
+        if (mqttClient && isSubscribed) {
+          // Unsubscribe from topic before releasing
+          try {
+            await mqttClient.unsubscribe(topic);
+            node.log(`Unsubscribed from topic: ${topic}`);
+          } catch (error) {
+            node.warn(`Failed to unsubscribe from ${topic}: ${(error as Error).message}`);
+          }
+          
+          // Release the client
+          ClientRegistry.releaseClient("thingsboard", node);
+        }
+      } catch (error) {
+        node.error(`Cleanup error: ${(error as Error).message}`);
+      } finally {
+        done();
+      }
+    });
   }
 
-  RED.nodes.registerType("viis-upload-telemetry", ViisUploadTelemetry); // Đổi tên ở đây
+  RED.nodes.registerType("viis-upload-telemetry", ViisUploadTelemetry);
 };

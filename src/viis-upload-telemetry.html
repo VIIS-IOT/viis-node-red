@@ -6,6 +6,8 @@
       name: { value: "" },
       configNode: { value: "", type: "viis-config-node", required: true },
       protocol: { value: "MQTT" },
+      mode: { value: "publish" },
+      topic: { value: "" },
       enableBackup: { value: false },
       backupLimit: { value: -1, validate: RED.validators.number() },
     },
@@ -18,15 +20,35 @@
     oneditprepare: function () {
       $("#node-input-name").val(this.name || "");
       $("#node-input-protocol").val(this.protocol || "MQTT");
+      $("#node-input-mode").val(this.mode || "publish");
+      $("#node-input-topic").val(this.topic || "");
       $("#node-input-enableBackup").prop("checked", this.enableBackup);
       $("#node-input-backupLimit").val(this.backupLimit);
+      
+      // Toggle topic field based on mode
+      toggleTopicField();
     },
     oneditsave: function () {
       this.name = $("#node-input-name").val().trim();
       this.protocol = $("#node-input-protocol").val();
+      this.mode = $("#node-input-mode").val();
+      this.topic = $("#node-input-topic").val().trim();
       this.enableBackup = $("#node-input-enableBackup").is(":checked");
       this.backupLimit = parseInt($("#node-input-backupLimit").val(), 10);
     },
+  });
+
+  function toggleTopicField() {
+    const mode = $("#node-input-mode").val();
+    if (mode === "subscribe") {
+      $("#node-input-topic").attr("placeholder", "v1/devices/me/rpc/request/+ (default)");
+    } else {
+      $("#node-input-topic").attr("placeholder", "v1/devices/me/telemetry (default)");
+    }
+  }
+
+  $(document).on("change", "#node-input-mode", function() {
+    toggleTopicField();
   });
 </script>
 
@@ -49,8 +71,30 @@
     >
     <select id="node-input-protocol">
       <option value="MQTT">MQTT</option>
-      <option value="HTTP">HTTP</option>
+      <option value="HTTP">HTTP (publish only)</option>
     </select>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-mode"
+      ><i class="fa fa-arrows-alt"></i> Mode</label
+    >
+    <select id="node-input-mode">
+      <option value="publish">Publish (send data)</option>
+      <option value="subscribe">Subscribe (receive data)</option>
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-topic"
+      ><i class="fa fa-map-marker"></i> Topic</label
+    >
+    <input type="text" id="node-input-topic" placeholder="Auto-detected based on mode" />
+    <div class="form-tips" style="margin-top: 5px;">
+      <small style="color: #666;">
+        Leave empty to use default topic based on mode
+      </small>
+    </div>
   </div>
 
   <div class="form-row">
@@ -66,4 +110,66 @@
     >
     <input type="number" id="node-input-backupLimit" value="-1" />
   </div>
+</script>
+
+<script type="text/html" data-help-name="viis-upload-telemetry">
+  <p>Node for publishing and subscribing to ThingsBoard MQTT broker.</p>
+
+  <h3>Configuration</h3>
+  <dl class="message-properties">
+    <dt>Device <span class="property-type">viis-config-node</span></dt>
+    <dd>Device configuration node with auto-loaded credentials from device1.json</dd>
+
+    <dt>Protocol <span class="property-type">MQTT | HTTP</span></dt>
+    <dd>Choose MQTT for bidirectional communication or HTTP for publish-only</dd>
+
+    <dt>Mode <span class="property-type">publish | subscribe</span></dt>
+    <dd>
+      <ul>
+        <li><b>Publish</b>: Send telemetry data to ThingsBoard</li>
+        <li><b>Subscribe</b>: Receive RPC commands from ThingsBoard</li>
+      </ul>
+    </dd>
+
+    <dt>Topic <span class="property-type">string</span></dt>
+    <dd>
+      MQTT topic to publish/subscribe to. Leave empty for defaults:
+      <ul>
+        <li>Publish: <code>v1/devices/me/telemetry</code></li>
+        <li>Subscribe: <code>v1/devices/me/rpc/request/+</code></li>
+      </ul>
+    </dd>
+  </dl>
+
+  <h3>Inputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">object</span></dt>
+    <dd>Data to publish (in publish mode)</dd>
+  </dl>
+
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>Publish mode</dt>
+    <dd>
+      <ul>
+        <li><code>payload.success</code> - Boolean: Whether publish succeeded</li>
+        <li><code>payload.data</code> - The data that was sent</li>
+        <li><code>payload.ts</code> - Timestamp of publish</li>
+      </ul>
+    </dd>
+    <dt>Subscribe mode</dt>
+    <dd>
+      <ul>
+        <li><code>topic</code> - MQTT topic the message was received on</li>
+        <li><code>payload</code> - The received message payload</li>
+        <li><code>receivedAt</code> - Timestamp when message was received</li>
+      </ul>
+    </dd>
+  </dl>
+
+  <h3>Status Indicators</h3>
+  <ul>
+    <li><b>Green dot</b>: Connected and ready</li>
+    <li><b>Red ring</b>: Disconnected or error</li>
+  </ul>
 </script>
