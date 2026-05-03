@@ -107,7 +107,7 @@ describe('ModbusExecutorService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -170,7 +170,7 @@ describe('ModbusExecutorService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -208,7 +208,7 @@ describe('ModbusExecutorService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null

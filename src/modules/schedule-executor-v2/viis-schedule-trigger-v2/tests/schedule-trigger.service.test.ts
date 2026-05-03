@@ -104,7 +104,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -128,7 +128,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 0,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -146,7 +146,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -170,7 +170,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -194,7 +194,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -215,7 +215,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -236,7 +236,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -257,7 +257,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -292,7 +292,7 @@ describe('ScheduleTriggerService', () => {
                     enable: 1,
                     is_deleted: 0,
                     device_id: 'test-device-001',
-                    created: new Date(),
+                    creation: new Date(),
                     modified: new Date(),
                     type: 'fixed',
                     deleted: null
@@ -306,7 +306,7 @@ describe('ScheduleTriggerService', () => {
                     enable: 1,
                     is_deleted: 0,
                     device_id: 'test-device-001',
-                    created: new Date(),
+                    creation: new Date(),
                     modified: new Date(),
                     type: 'fixed',
                     deleted: null
@@ -362,7 +362,7 @@ describe('ScheduleTriggerService', () => {
                     enable: 1,
                     is_deleted: 0,
                     device_id: 'test-device-001',
-                    created: new Date(),
+                    creation: new Date(),
                     modified: new Date(),
                     type: 'fixed',
                     deleted: null
@@ -376,7 +376,7 @@ describe('ScheduleTriggerService', () => {
                     enable: 0,
                     is_deleted: 0,
                     device_id: 'test-device-001',
-                    created: new Date(),
+                    creation: new Date(),
                     modified: new Date(),
                     type: 'fixed',
                     deleted: null
@@ -475,7 +475,7 @@ describe('ScheduleTriggerService', () => {
                     enable: 1,
                     is_deleted: 0,
                     device_id: 'test-device-001',
-                    created: new Date(),
+                    creation: new Date(),
                     modified: new Date(),
                     type: 'fixed',
                     deleted: null
@@ -525,7 +525,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null
@@ -548,7 +548,7 @@ describe('ScheduleTriggerService', () => {
                 enable: 1,
                 is_deleted: 0,
                 device_id: 'test-device-001',
-                created: new Date(),
+                creation: new Date(),
                 modified: new Date(),
                 type: 'fixed',
                 deleted: null

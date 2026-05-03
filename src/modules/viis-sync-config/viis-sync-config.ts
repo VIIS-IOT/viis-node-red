@@ -1,0 +1,338 @@
+/**
+ * @fileoverview Sync Config Node for VIIS IoT system
+ * Receives RPC "sync-full-config" signal from backend, fetches full device config,
+ * and writes to device*.json file. env-loader's FileWatcher auto-detects the change
+ * and reloads into global context.
+ *
+ * @author VIIS Team
+ * @version 1.0.1
+ */
+
+import { Node, NodeAPI, NodeDef, NodeStatus } from 'node-red';
+import { GlobalContextHelper } from '../../ultils/global-context-helper';
+import ClientRegistry from '../../core/client-registry';
+import { MqttConfig } from '../../core/mqtt-client';
+import * as fs from 'fs';
+import * as path from 'path';
+import axios, { AxiosError } from 'axios';
+
+interface ViisSyncConfigNodeDef extends NodeDef {
+    configFile: string;
+    backendUrl: string;
+}
+
+const RPC_METHOD = 'sync-full-config';
+const TOPIC_RPC_REQUEST = 'v1/devices/me/rpc/request/+';
+const TB_DEFAULT_HOST = 'mqtt.viis.tech';
+const TB_DEFAULT_PORT = '1883';
+const MAX_RETRIES = 3;
+const BACKOFF_BASE_MS = 1000;
+const CONFIGS_DIR = '/usr/src/app/env/configs';
+
+const log = {
+    info: (node: Node, msg: string) => {
+        console.info(`[VIIS-SYNC-CONFIG] INFO: ${msg}`);
+        node.log(msg);
+    },
+    warn: (node: Node, msg: string) => {
+        console.warn(`[VIIS-SYNC-CONFIG] WARN: ${msg}`);
+        node.warn(msg);
+    },
+    error: (node: Node, msg: string) => {
+        console.error(`[VIIS-SYNC-CONFIG] ERROR: ${msg}`);
+        node.error(msg);
+    },
+};
+
+export = function (RED: NodeAPI) {
+    function ViisSyncConfigNode(this: Node, config: ViisSyncConfigNodeDef) {
+        RED.nodes.createNode(this, config);
+        const node = this;
+
+        const configFile = config.configFile || 'device1.json';
+        const configPath = path.join(CONFIGS_DIR, configFile);
+
+        const globalHelper = new GlobalContextHelper(node.context());
+        const deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+        const accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+
+        if (!deviceId) {
+            log.error(node, 'DEVICE_ID not found. Ensure env-loader node is configured.');
+            node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ID' });
+            return;
+        }
+
+        if (!accessToken) {
+            log.error(node, 'DEVICE_ACCESS_TOKEN not found. Ensure env-loader node is configured.');
+            node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ACCESS_TOKEN' });
+            return;
+        }
+
+        const backendUrl =
+            config.backendUrl ||
+            globalHelper.getEnvVar('VIIS_BACKEND', '') ||
+            globalHelper.getEnvVar('BACKEND_URL', '') ||
+            'https://iot.viis.tech';
+
+        let isSyncing = false;
+        let mqttClient: any = null;
+
+        log.info(node, `Initialized. Config file: ${configPath}`);
+        log.info(node, `Backend URL resolved: ${backendUrl}`);
+        log.info(node, `  config.backendUrl: "${config.backendUrl}"`);
+        log.info(node, `  VIIS_BACKEND: "${globalHelper.getEnvVar('VIIS_BACKEND', '')}"`);
+        log.info(node, `  BACKEND_URL: "${globalHelper.getEnvVar('BACKEND_URL', '')}"`);
+        log.info(node, `  server_url (global): "${globalHelper.getGlobalVar('server_url', '')}"`);
+        log.info(node, `  backend_url (global): "${globalHelper.getGlobalVar('backend_url', '')}"`);
+        log.info(node, `Device ID: ${deviceId}`);
+
+        // ── Initialize MQTT subscription ──────────────────────────────────────
+        (async () => {
+            try {
+                const tbHost = globalHelper.getEnvVar('THINGSBOARD_HOST', TB_DEFAULT_HOST);
+                const tbPort = globalHelper.getEnvVar('THINGSBOARD_PORT', TB_DEFAULT_PORT);
+                const mqttConfig: MqttConfig = {
+                    broker: `mqtt://${tbHost}:${tbPort}`,
+                    clientId: `node-red-sync-config-${Math.random().toString(16).substring(2, 10)}`,
+                    username: accessToken,
+                    password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
+                    qos: 1,
+                };
+
+                log.info(node, `Connecting to MQTT: mqtt://${tbHost}:${tbPort}`);
+                mqttClient = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
+
+                // Wait for connection
+                if (!mqttClient.isConnected()) {
+                    log.info(node, 'Waiting for MQTT connection...');
+                    await mqttClient.waitForConnection(10000);
+                }
+
+                // Subscribe to RPC topic
+                await mqttClient.subscribe(TOPIC_RPC_REQUEST);
+                log.info(node, `Subscribed to ${TOPIC_RPC_REQUEST}`);
+
+                // Listen for messages
+                mqttClient.on('mqtt-message', handleMqttMessage);
+
+                node.status({ fill: 'green', shape: 'ring', text: 'Ready' });
+                log.info(node, 'Ready - listening for sync-full-config RPC');
+            } catch (error) {
+                const errMsg = (error as Error).message;
+                log.error(node, `MQTT initialization failed: ${errMsg}`);
+                node.status({ fill: 'red', shape: 'ring', text: 'MQTT failed' });
+            }
+        })();
+
+        // ── MQTT message handler ──────────────────────────────────────────────
+        function handleMqttMessage(event: any) {
+            try {
+                const { topic, message } = event.message || event;
+                if (!topic || !topic.includes('rpc/request/')) return;
+
+                const rawMsg = typeof message === 'string' ? message : message.toString();
+                const parsed = JSON.parse(rawMsg);
+                if (parsed.method !== RPC_METHOD) return;
+
+                log.info(node, `Received ${RPC_METHOD} RPC from topic: ${topic}`);
+                log.info(node, `RPC params: ${JSON.stringify(parsed.params || {})}`);
+                handleSync(parsed.params);
+            } catch (err) {
+                // Ignore non-JSON or unrelated messages
+            }
+        }
+
+        // ── Core sync logic ───────────────────────────────────────────────────
+        async function handleSync(params?: any) {
+            if (isSyncing) {
+                log.warn(node, 'Sync already in progress, skipping');
+                return;
+            }
+
+            isSyncing = true;
+            node.status({ fill: 'blue', shape: 'dot', text: 'Syncing...' });
+
+            try {
+                // Step 1: Build config URL
+                // Prefer local backendUrl (from config/env) over RPC configUrl
+                // RPC configUrl may be wrong if backend BACKEND_URL env var is misconfigured
+                const configUrl = `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
+
+                log.info(node, `Config URL: ${configUrl}`);
+                log.info(node, `Device ID in URL: ${deviceId}`);
+
+                // Step 2: Fetch config from backend
+                const fetchedConfig = await fetchWithRetry(configUrl);
+
+                // Log raw response for debugging
+                log.info(node, `Response type: ${typeof fetchedConfig}`);
+                log.info(node, `Response keys: ${fetchedConfig ? Object.keys(fetchedConfig).join(', ') : 'null'}`);
+
+                // Unwrap { result: { ... } } wrapper if present (backend API response format)
+                const config = fetchedConfig?.result || fetchedConfig;
+
+                log.info(node, `Config deviceIdentity.DEVICE_ID: ${config?.deviceIdentity?.DEVICE_ID || 'MISSING'}`);
+
+                // Step 3: Validate
+                if (!config?.deviceIdentity?.DEVICE_ID) {
+                    throw new Error('Invalid config: missing deviceIdentity.DEVICE_ID');
+                }
+                if (!config?.deviceIdentity?.DEVICE_ACCESS_TOKEN) {
+                    throw new Error('Invalid config: missing deviceIdentity.DEVICE_ACCESS_TOKEN');
+                }
+
+                log.info(node, `Config fetched for device: ${config.deviceIdentity.DEVICE_ID}`);
+
+                // Step 4: Check if config actually changed
+                let configChanged = true;
+                if (fs.existsSync(configPath)) {
+                    try {
+                        const currentContent = fs.readFileSync(configPath, 'utf8');
+                        const currentConfig = JSON.parse(currentContent);
+                        if (JSON.stringify(currentConfig) === JSON.stringify(config)) {
+                            configChanged = false;
+                            log.info(node, 'Config unchanged, skipping write');
+                        }
+                    } catch {
+                        // If current file is invalid, we'll overwrite it
+                    }
+                }
+
+                if (configChanged) {
+                    // Step 5: Backup current file
+                    if (fs.existsSync(configPath)) {
+                        const backupPath = `${configPath}.bak`;
+                        fs.copyFileSync(configPath, backupPath);
+                        log.info(node, `Backed up to ${backupPath}`);
+                    }
+
+                    // Step 6: Write new config
+                    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+                    log.info(node, `Config written to ${configPath}`);
+                }
+
+                // Step 7: Update global context directly (backup plan for FileWatcher)
+                updateGlobalContext(config);
+
+                // Done
+                node.status({ fill: 'green', shape: 'dot', text: configChanged ? 'Synced' : 'Up to date' });
+                setTimeout(() => {
+                    node.status({ fill: 'green', shape: 'ring', text: 'Ready' });
+                }, 5000);
+
+                node.send({
+                    payload: {
+                        synced: true,
+                        configChanged,
+                        configFile,
+                        timestamp: new Date().toISOString(),
+                    },
+                });
+            } catch (error) {
+                const errMsg = (error as Error).message;
+                log.error(node, `Sync failed: ${errMsg}`);
+                node.status({ fill: 'red', shape: 'ring', text: `Error: ${errMsg.substring(0, 30)}` });
+                node.send({ payload: { synced: false, error: errMsg } });
+            } finally {
+                isSyncing = false;
+            }
+        }
+
+        // ── Fetch with retry + detailed error logging ────────────────────────
+        async function fetchWithRetry(url: string): Promise<any> {
+            let lastError: Error | null = null;
+            for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    log.info(node, `HTTP GET ${url} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+                    const response = await axios.get(url, { timeout: 30000 });
+                    log.info(node, `HTTP ${response.status} OK - ${response.data ? JSON.stringify(response.data).length : 0} bytes`);
+                    return response.data;
+                } catch (error) {
+                    const axiosErr = error as AxiosError;
+                    const status = axiosErr.response?.status || 'N/A';
+                    const statusText = axiosErr.response?.statusText || 'N/A';
+                    const responseData = axiosErr.response?.data
+                        ? JSON.stringify(axiosErr.response.data).substring(0, 200)
+                        : 'no response body';
+                    const requestUrl = axiosErr.config?.url || url;
+
+                    lastError = error as Error;
+
+                    log.warn(
+                        node,
+                        `HTTP ${status} ${statusText} | URL: ${requestUrl} | Response: ${responseData}`,
+                    );
+
+                    if (attempt < MAX_RETRIES) {
+                        const delay = Math.min(BACKOFF_BASE_MS * Math.pow(2, attempt), 10000);
+                        log.warn(node, `Retrying in ${delay}ms...`);
+                        await new Promise((r) => setTimeout(r, delay));
+                    }
+                }
+            }
+            throw lastError || new Error('Fetch failed after retries');
+        }
+
+        // ── Update global context ─────────────────────────────────────────────
+        function updateGlobalContext(config: any) {
+            const ctx = node.context().global;
+            const identity = config.deviceIdentity || {};
+
+            ctx.set('device_id', identity.DEVICE_ID || '');
+            ctx.set('device_access_token', identity.DEVICE_ACCESS_TOKEN || '');
+            ctx.set('device_serial', identity.DEVICE_SERIAL || '');
+            ctx.set('device_label', identity.DEVICE_LABEL || '');
+            ctx.set('device_profile_id', identity.DEVICE_PROFILE_ID || '');
+            ctx.set('device_profile_label', identity.DEVICE_PROFILE_LABEL || '');
+
+            if (config.modbusBoards) {
+                ctx.set('modbus_boards', config.modbusBoards);
+                ctx.set('MODBUS_BOARDS', JSON.stringify(config.modbusBoards));
+            }
+            if (config.modbusDefaultBoard !== undefined) {
+                ctx.set('modbus_default_board', config.modbusDefaultBoard);
+            }
+            if (config.modbusMappings) {
+                ctx.set('modbusMappings', config.modbusMappings);
+                for (const [boardId, mappings] of Object.entries(config.modbusMappings)) {
+                    const m = mappings as any;
+                    if (m.coils) ctx.set(`modbus_${boardId}_coils`, m.coils);
+                    if (m.holdingRegisters) ctx.set(`modbus_${boardId}_holding_registers`, m.holdingRegisters);
+                    if (m.inputRegisters) ctx.set(`modbus_${boardId}_input_registers`, m.inputRegisters);
+                }
+            }
+            if (config.modbusPollGroups) {
+                ctx.set('modbusPollGroups', config.modbusPollGroups);
+                ctx.set('modbus_poll_groups', config.modbusPollGroups);
+                ctx.set('pollingConfig', config.modbusPollGroups);
+            }
+            if (config.modbusPublishThresholds) {
+                ctx.set('modbusPublishThresholds', config.modbusPublishThresholds);
+                ctx.set('modbus_publish_thresholds', config.modbusPublishThresholds);
+                ctx.set('modbusThresholds', config.modbusPublishThresholds);
+            }
+            if (config.scaleConfigs !== undefined) {
+                ctx.set('scaleConfigs', config.scaleConfigs);
+            }
+
+            log.info(node, 'Global context updated');
+        }
+
+        // ── Manual trigger via input ──────────────────────────────────────────
+        node.on('input', async () => {
+            await handleSync({});
+        });
+
+        // ── Cleanup ───────────────────────────────────────────────────────────
+        node.on('close', async (done: () => void) => {
+            log.info(node, 'Node closing');
+            if (mqttClient) {
+                mqttClient.removeListener('mqtt-message', handleMqttMessage);
+                ClientRegistry.releaseClient('thingsboard', node);
+            }
+            done();
+        });
+    }
+
+    RED.nodes.registerType('viis-sync-config', ViisSyncConfigNode);
+};

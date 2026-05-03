@@ -95,7 +95,7 @@
 
 <script type="text/html" data-help-name="viis-schedule-executor-v2">
     <h3>viis-schedule-executor-v2</h3>
-    <p>Executes Modbus commands and verifies writes for schedule control.</p>
+    <p>Executes Modbus commands, verifies writes, publishes MQTT telemetry, and syncs schedule status.</p>
     
     <h4>Responsibilities</h4>
     <ul>
@@ -105,6 +105,11 @@
         <li>Track active commands per schedule</li>
         <li>Reset commands to safe state</li>
         <li>Handle valve/pump sequencing (valves first on start, pumps first on stop)</li>
+        <li><strong>Publish MQTT telemetry</strong> to ThingsBoard + EMQX</li>
+        <li><strong>Publish audit logs</strong> for schedule execution events</li>
+        <li><strong>Send HTTP notifications</strong> to backend on status changes</li>
+        <li><strong>Sync schedule log</strong> to backend database</li>
+        <li><strong>Update schedule status</strong> in local DB and sync to server</li>
     </ul>
     
     <h4>Input</h4>
@@ -115,6 +120,7 @@
                 <li><code>allowed</code>: Boolean - execution permission</li>
                 <li><code>commands</code>: Array of Modbus commands</li>
                 <li><code>schedule</code>: Optional schedule object</li>
+                <li><code>configParameters</code>: Optional config parameters (unmapped keys)</li>
             </ul>
         </dd>
     </dl>
@@ -153,6 +159,11 @@
         <li><strong>Finish Sequence</strong>: Pumps/Power first → 5s delay → Valves</li>
         <li><strong>Verification</strong>: Reads back values after writing to confirm</li>
         <li><strong>Tracking</strong>: Keeps track of active commands per schedule</li>
+        <li><strong>MQTT Telemetry</strong>: Publishes written keys to ThingsBoard + EMQX (deduplicated)</li>
+        <li><strong>Audit Logs</strong>: Publishes execution audit with metadata (from DEVICE_EXE_SCHEDULE)</li>
+        <li><strong>HTTP Notification</strong>: Sends alarm notification to backend on start/end</li>
+        <li><strong>DB Sync</strong>: Updates schedule status in DB and syncs to server</li>
+        <li><strong>Schedule Log</strong>: Logs execution to backend schedule_log table</li>
     </ul>
     <p>Connect this after <strong>viis-schedule-logic-v2</strong>.</p>
     

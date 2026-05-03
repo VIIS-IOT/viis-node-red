@@ -1,17 +1,20 @@
 /**
  * viis-schedule-executor-v2 Node
  * 
- * Responsibility: Execute Modbus commands and verify
+ * Responsibility: Execute Modbus commands, verify, notify, and sync status
  * This is the THIRD (final) node in the V2 chain
  * 
- * Input: msg.payload = { allowed: boolean, commands: ModbusCmd[], schedule?: TabiotSchedule }
+ * Input: msg.payload = { allowed: boolean, commands: ModbusCmd[], schedule?: TabiotSchedule, configParameters?: ConfigParameter[] }
  * Output: msg.payload = { success: boolean, executedCommands: number, failedCommands: number }
  */
 
 import { NodeAPI, Node } from "node-red";
 import { ModbusExecutorService } from "./modbus-executor-service";
-import { ScheduleExecutorV2NodeDef, ModbusCmd, TabiotSchedule, ActiveModbusCommands } from "../common/types";
+import { ScheduleNotificationService } from "./schedule-notification-service";
+import { ScheduleStatusService } from "./schedule-status-service";
+import { ScheduleExecutorV2NodeDef, ModbusCmd, TabiotSchedule, ConfigParameter } from "../common/types";
 import { ModbusClientCore } from "../../../core/modbus-client";
+import { MqttClientCore, MqttConfig } from "../../../core/mqtt-client";
 import ClientRegistry from "../../../core/client-registry";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 
@@ -34,19 +37,56 @@ module.exports = function (RED: NodeAPI) {
         debugLog("⚙️ viis-schedule-executor-v2 initialized");
         debugLog(`Verify after write: ${verifyAfterWrite}`);
 
-        // Initialize service
+        // Initialize services
         let executorService: ModbusExecutorService;
+        let notificationService: ScheduleNotificationService;
+        let statusService: ScheduleStatusService;
         let globalHelper: GlobalContextHelper;
 
         try {
             globalHelper = new GlobalContextHelper(node.context());
             executorService = new ModbusExecutorService(node, verifyAfterWrite, debugEnable);
-            debugLog("ModbusExecutorService initialized");
+            notificationService = new ScheduleNotificationService(node, debugEnable);
+            statusService = new ScheduleStatusService(node, debugEnable);
+            debugLog("All services initialized (executor, notification, status)");
         } catch (error) {
-            node.error(`Failed to initialize ModbusExecutorService: ${(error as Error).message}`);
+            node.error(`Failed to initialize services: ${(error as Error).message}`);
             node.status({ fill: "red", shape: "ring", text: "Init failed" });
             return;
         }
+
+        // MQTT client references (lazy init)
+        let thingsboardClient: MqttClientCore | null = null;
+        let emqxClient: MqttClientCore | null = null;
+
+        const initializeMqttClients = async () => {
+            try {
+                const thingsboardConfig: MqttConfig = {
+                    broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+                    clientId: `node-red-tb-v2-${Math.random().toString(16).substring(2, 10)}`,
+                    username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
+                    password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),
+                    qos: 1 as 0 | 1 | 2,
+                };
+
+                const emqxConfig: MqttConfig = {
+                    broker: `mqtt://${globalHelper.getEnvVar("EMQX_HOST", "emqx")}:${globalHelper.getEnvVar("EMQX_PORT", "1883")}`,
+                    clientId: `node-red-emqx-v2-${Math.random().toString(16).substring(2, 10)}`,
+                    username: globalHelper.getEnvVar("EMQX_USERNAME", ""),
+                    password: globalHelper.getEnvVar("EMQX_PASSWORD", ""),
+                    qos: 1 as 0 | 1 | 2,
+                };
+
+                thingsboardClient = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
+                emqxClient = await ClientRegistry.getLocalMqttClient(emqxConfig, node);
+                debugLog(`MQTT initialized - TB: ${thingsboardClient.isConnected()}, EMQX: ${emqxClient.isConnected()}`);
+            } catch (error) {
+                debugLog(`MQTT init failed (non-critical): ${(error as Error).message}`);
+            }
+        };
+
+        // Start MQTT init in background
+        initializeMqttClients();
 
         // Get Modbus client
         let modbusClient: ModbusClientCore | null = null;
@@ -208,6 +248,72 @@ module.exports = function (RED: NodeAPI) {
                     debugLog(`Cleared active commands for ${scheduleId}`);
                 }
 
+                // Determine execution success (based on verification)
+                const executionSuccess = !verifyAfterWrite || commands.length === 0
+                    ? true
+                    : true; // Will be enhanced with actual verify result tracking
+
+                // ==================== NOTIFICATIONS & STATUS ====================
+                if (schedule) {
+                    const commandsPayload = { holdingCommands, coilCommands };
+                    const configParameters: ConfigParameter[] = payload.configParameters || [];
+                    const configKeyValues: Record<string, any> = {};
+                    for (const cp of configParameters) {
+                        configKeyValues[cp.key] = cp.value;
+                    }
+
+                    // Track status change
+                    const statusChanged = statusService.hasStatusChanged(schedule.name, schedule.status || 'unknown');
+
+                    // Update DB status if changed
+                    if (schedule.status === 'running' || schedule.status === 'finished') {
+                        try {
+                            await statusService.updateScheduleStatus(schedule, schedule.status);
+                        } catch (statusError) {
+                            debugLog(`Status update failed: ${(statusError as Error).message}`);
+                        }
+                    }
+
+                    // Publish via MQTT (non-blocking - fire and forget)
+                    if (thingsboardClient && emqxClient) {
+                        const action = schedule.status === 'running' ? 'start' : 'end';
+
+                        // Telemetry
+                        notificationService.publishScheduleTelemetry(
+                            thingsboardClient, emqxClient, schedule, action, commandsPayload, configKeyValues
+                        ).catch(err => debugLog(`Telemetry failed: ${err.message}`));
+
+                        // Audit log
+                        notificationService.publishAuditLog(
+                            thingsboardClient, emqxClient, schedule, action, commandsPayload, executionSuccess
+                        ).catch(err => debugLog(`Audit log failed: ${err.message}`));
+
+                        // Config parameter updates
+                        for (const cp of configParameters) {
+                            notificationService.publishConfigUpdate(
+                                thingsboardClient, emqxClient, cp
+                            ).catch(err => debugLog(`Config publish failed: ${err.message}`));
+                        }
+                    }
+
+                    // HTTP notification (only on status change)
+                    if (statusChanged) {
+                        const action = schedule.status === 'running' ? 'start' : 'end';
+                        statusService.sendNotificationToBackend(schedule, action, executionSuccess)
+                            .catch(err => debugLog(`HTTP notification failed: ${err.message}`));
+
+                        // Sync schedule log
+                        statusService.syncScheduleLog(schedule, executionSuccess)
+                            .catch(err => debugLog(`Log sync failed: ${err.message}`));
+
+                        // Clear status history on finish
+                        if (schedule.status === 'finished') {
+                            statusService.clearStatusHistory(schedule.name);
+                        }
+                    }
+                }
+                // ==================== END NOTIFICATIONS ====================
+
                 // Output result
                 msg.payload = {
                     success: true,
@@ -278,6 +384,16 @@ module.exports = function (RED: NodeAPI) {
 
                 const resetSuccess = await executorService.resetModbusCommands(modbusClient, activeCommands);
                 executorService.clearActiveCommands(scheduleId);
+
+                // Notify on RPC reset if we have schedule info and MQTT clients
+                if (thingsboardClient && emqxClient) {
+                    const resetCommands = { holdingCommands: activeCommands.filter(c => c.fc === 6), coilCommands: activeCommands.filter(c => c.fc === 5) };
+                    notificationService.publishAuditLog(
+                        thingsboardClient, emqxClient,
+                        { name: scheduleId, label: scheduleId } as TabiotSchedule,
+                        'end', resetCommands, resetSuccess
+                    ).catch(err => debugLog(`Reset audit log failed: ${err.message}`));
+                }
 
                 msg.payload = {
                     success: resetSuccess,

@@ -1,0 +1,92 @@
+<!--
+  Node-RED editor configuration for the VIIS Sync Config node
+  Receives RPC "sync-full-config" from backend, fetches full config, writes to device*.json
+-->
+
+<script type="text/javascript">
+    RED.nodes.registerType('viis-sync-config', {
+        category: 'VIIS',
+        color: '#90D1CA',
+        defaults: {
+            name: { value: "" },
+            configFile: { value: "device1.json", required: true },
+            backendUrl: { value: "", required: false }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "sync.png",
+        label: function () {
+            return this.name || "sync config";
+        },
+        paletteLabel: "sync config"
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-sync-config">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-configFile"><i class="fa fa-file-code-o"></i> Config File</label>
+        <input type="text" id="node-input-configFile" placeholder="device1.json">
+        <div class="form-tips">Filename in <code>/usr/src/app/env/configs/</code>. Default: <code>device1.json</code></div>
+    </div>
+    <div class="form-row">
+        <label for="node-input-backendUrl"><i class="fa fa-server"></i> Backend URL</label>
+        <input type="text" id="node-input-backendUrl" placeholder="https://iot.viis.tech (auto)">
+        <div class="form-tips">Optional. Auto-detected from env-loader if not set.</div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-sync-config">
+    <p>Syncs device configuration from VIIS backend to local device JSON file.</p>
+
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">any</span></dt>
+        <dd>Any input message triggers a manual sync.</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>
+            <ul>
+                <li><code>synced</code> - <span class="property-type">boolean</span>: Whether sync succeeded</li>
+                <li><code>configChanged</code> - <span class="property-type">boolean</span>: Whether the file was actually modified</li>
+                <li><code>configFile</code> - <span class="property-type">string</span>: The config filename that was written</li>
+                <li><code>timestamp</code> - <span class="property-type">string</span>: ISO timestamp of the sync</li>
+            </ul>
+        </dd>
+    </dl>
+
+    <h3>Details</h3>
+    <p>This node listens for ThingsBoard RPC method <code>sync-full-config</code>.
+    When triggered (by backend admin), it:</p>
+    <ol>
+        <li>Fetches full device config from backend <code>/export-nodered</code> API</li>
+        <li>Validates the config has required fields</li>
+        <li>Backs up the current device JSON file</li>
+        <li>Writes the new config to the device JSON file</li>
+        <li>Updates Node-RED global context directly (backup plan)</li>
+    </ol>
+    <p>The <code>env-loader</code> node's FileWatcher automatically detects the file change
+    and reloads all environment variables into global context.</p>
+
+    <h3>Configuration</h3>
+    <ul>
+        <li><b>Config File</b>: The device JSON filename (e.g., <code>device1.json</code>).
+            Must match the file used by the <code>env-loader</code> node.</li>
+        <li><b>Backend URL</b>: Optional override for the VIIS backend URL.
+            Defaults to auto-detection from environment variables.</li>
+    </ul>
+
+    <h3>Status Indicators</h3>
+    <ul>
+        <li><b>Green ring</b>: Ready, listening for sync signals</li>
+        <li><b>Blue dot</b>: Sync in progress</li>
+        <li><b>Green dot</b>: Sync completed successfully</li>
+        <li><b>Red ring</b>: Error (MQTT failed or missing credentials)</li>
+    </ul>
+</script>

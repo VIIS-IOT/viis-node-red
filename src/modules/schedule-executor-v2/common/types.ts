@@ -4,6 +4,7 @@
  */
 
 import { NodeDef } from "node-red";
+import { TabiotSchedule as TabiotScheduleEntity } from "../../../orm/entities/schedule/TabiotSchedule";
 
 /**
  * Modbus command interface for executing Modbus operations
@@ -163,31 +164,9 @@ export interface ScheduleExecutorV2NodeDef extends NodeDef {
 }
 
 /**
- * Tabiot Schedule interface (from ORM entity)
+ * Tabiot Schedule type (re-exported from ORM entity for type compatibility)
  */
-export interface TabiotSchedule {
-    name: string;
-    label: string;
-    device_label?: string;
-    status: string;
-    start_time: string;
-    end_time: string;
-    start_date?: string;
-    end_date?: string;
-    interval?: string;
-    enable: number;
-    is_deleted: number;
-    device_id: string;
-    machine_type?: string;
-    action?: string;
-    created: Date;
-    modified: Date;
-    type: 'fixed' | 'dynamic';
-    deleted: number | null;
-    schedulePlan?: {
-        enable: number;
-    };
-}
+export type TabiotSchedule = TabiotScheduleEntity;
 
 /**
  * Schedule status history
