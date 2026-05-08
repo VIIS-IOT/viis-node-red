@@ -612,6 +612,11 @@ export class ScheduleService {
                         });
                         this.debugLog(`Mapped ${key} to holding register at address ${modbusHolding[key]}`);
                     } else if (isMappedCoil) {
+                        // Skip falsy coil values - only write coils that should be ON
+                        if (value === false || value === 0 || value === "false" || value === "0") {
+                            this.debugLog(`Skipping falsy coil "${key}": ${JSON.stringify(value)}`);
+                            continue;
+                        }
                         coilCommands.push({
                             key,
                             value: Boolean(value),
@@ -1639,6 +1644,32 @@ export class ScheduleService {
     }
 
     /**
+     * Coerce a value to match the declared type from configKeys.
+     * Allows flexible cross-type values: 1/0 as boolean, true/false as number.
+     */
+    private coerceToDeclaredType(value: any, declaredType: string): any {
+        if (declaredType === 'boolean') {
+            if (value === 1 || value === '1') return true;
+            if (value === 0 || value === '0') return false;
+            if (typeof value === 'boolean') return value;
+            if (typeof value === 'string') {
+                const lower = value.toLowerCase().trim();
+                if (lower === 'true') return true;
+                if (lower === 'false') return false;
+            }
+        } else if (declaredType === 'number') {
+            if (value === true) return 1;
+            if (value === false) return 0;
+            if (typeof value === 'number') return value;
+            if (typeof value === 'string') {
+                const num = Number(value);
+                if (!isNaN(num)) return num;
+            }
+        }
+        return value;
+    }
+
+    /**
      * Get schedule configuration values from global context
      * Note: For RPC control commands, use configKeyValues instead
      */
@@ -1684,14 +1715,23 @@ export class ScheduleService {
      * Also tracks which keys belong to which schedule for cleanup on finish
      */
     private storeConfigParameter(key: string, value: any, scheduleId: string): ConfigParameter | null {
-        // Skip all falsy values: 0, "0", false, "false", null, undefined, ""
-        if (this.isFalsyValue(value)) {
+        // Coerce value to declared type from configKeys before validation
+        // e.g. 1 for boolean key → true, false for number key → 0
+        let coercedValue = value;
+        const configKeys = this.node?.context().global.get("configKeys") as Record<string, string> || {};
+        const declaredType = configKeys[key];
+        if (declaredType) {
+            coercedValue = this.coerceToDeclaredType(value, declaredType);
+        }
+
+        // Skip all falsy values AFTER type coercion
+        if (this.isFalsyValue(coercedValue)) {
             console.warn(`Skipping config parameter storage for ${key}: value is falsy (schedule: ${scheduleId})`);
             return null;
         }
 
-        const validatedValue = this.validateAndConvertValue(key, value);
-        const type = this.detectParameterType(validatedValue);
+        const validatedValue = this.validateAndConvertValue(key, coercedValue);
+        const type = (declaredType as 'number' | 'boolean' | 'string') || this.detectParameterType(validatedValue);
 
         const configParam: ConfigParameter = {
             key,

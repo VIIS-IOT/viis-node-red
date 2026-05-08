@@ -3,21 +3,23 @@
  * Test cases for VIIS Schedule Executor Falsy Value Handling
  *
  * This test suite verifies that falsy values are handled with split rules:
- * - Modbus-mapped keys: 0, "0", false, "false" are valid and should be executed.
- * - Unmapped config keys: all falsy values are skipped.
+ * - Holding registers: 0, "0" are valid and should be executed.
+ * - Coils: false, "false", 0, "0" are SKIPPED (only write truthy coils).
+ * - Unmapped config keys: all falsy values are skipped (after type coercion).
  *
- * Business Rule: Only config parameters ignore falsy values by default.
- * For valid Modbus mappings, 0/false can represent explicit OFF/reset commands.
+ * Business Rule: Coils with falsy values are not written to Modbus at schedule start.
+ * Holding registers with 0 are still written (explicit reset commands).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("../viis-schedule-executor-service");
 // Mock dependencies
+const mockGlobalContextObj = {
+    get: jest.fn(),
+    set: jest.fn()
+};
 const mockNode = {
     context: () => ({
-        global: {
-            get: jest.fn(),
-            set: jest.fn()
-        }
+        global: mockGlobalContextObj
     }),
     warn: jest.fn(),
     error: jest.fn()
@@ -47,10 +49,10 @@ describe('ScheduleService - Falsy Value Handling', () => {
         jest.clearAllMocks();
         // Mock global context
         mockGlobalContext = new Map();
-        mockNode.context().global.get.mockImplementation((key) => {
+        mockGlobalContextObj.get.mockImplementation((key) => {
             return mockGlobalContext.get(key) || {};
         });
-        mockNode.context().global.set.mockImplementation((key, value) => {
+        mockGlobalContextObj.set.mockImplementation((key, value) => {
             mockGlobalContext.set(key, value);
         });
         scheduleService = new viis_schedule_executor_service_1.ScheduleService(mockNode);
@@ -112,59 +114,52 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 expect.objectContaining({ key: 'temperature', value: 25 })
             ]));
         });
-        it('should execute coil with value false', () => {
+        it('should skip coil with value false', () => {
             const schedule = createMockSchedule('test-false-coil', JSON.stringify({
-                pump_1: false, // Falsy - should be skipped
+                pump_1: false, // Falsy coil - should be SKIPPED
                 valve_A1: true // Truthy - should be included
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.coilCommands).toHaveLength(2);
+            expect(result.coilCommands).toHaveLength(1);
             expect(result.coilCommands).toEqual(expect.arrayContaining([
-                expect.objectContaining({ key: 'pump_1', value: false }),
                 expect.objectContaining({ key: 'valve_A1', value: true })
             ]));
         });
-        it('should execute coil with value "false" (string)', () => {
+        it('should skip coil with value "false" (string)', () => {
             const schedule = createMockSchedule('test-string-false-coil', JSON.stringify({
-                pump_1: "false", // Falsy - should be skipped
+                pump_1: "false", // Falsy coil - should be SKIPPED
                 valve_A1: "true"
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            expect(result.coilCommands).toHaveLength(2);
+            expect(result.coilCommands).toHaveLength(1);
             expect(result.coilCommands).toEqual(expect.arrayContaining([
-                expect.objectContaining({ key: 'pump_1', value: false }),
                 expect.objectContaining({ key: 'valve_A1', value: true })
             ]));
         });
-        it('should execute mapped 0/false but skip null/undefined/empty', () => {
+        it('should execute holding 0 but skip falsy coils and null/undefined/empty', () => {
             const schedule = createMockSchedule('test-all-falsy', JSON.stringify({
-                set_flow_A1: 0, // Falsy
+                set_flow_A1: 0, // Holding falsy - include (explicit reset)
                 temperature: null, // Falsy
                 pressure: undefined, // Falsy
                 set_temp: "", // Falsy
-                pump_1: false, // Falsy
-                valve_A1: 0, // Falsy
-                power: false // Falsy
+                pump_1: false, // Coil falsy - SKIP
+                valve_A1: 0, // Coil falsy - SKIP
+                power: false // Coil falsy - SKIP
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
             expect(result.holdingCommands).toHaveLength(1);
             expect(result.holdingCommands[0]).toMatchObject({ key: 'set_flow_A1', value: 0 });
-            expect(result.coilCommands).toHaveLength(3);
-            expect(result.coilCommands).toEqual(expect.arrayContaining([
-                expect.objectContaining({ key: 'pump_1', value: false }),
-                expect.objectContaining({ key: 'valve_A1', value: false }),
-                expect.objectContaining({ key: 'power', value: false })
-            ]));
+            expect(result.coilCommands).toHaveLength(0); // All falsy coils skipped
             expect(result.configParameters).toHaveLength(1); // Only iri_time
         });
-        it('should include truthy values alongside falsy values', () => {
+        it('should include truthy values and skip falsy coils', () => {
             const schedule = createMockSchedule('test-mixed-truthy-falsy', JSON.stringify({
-                set_flow_A1: 0, // Mapped falsy - include
+                set_flow_A1: 0, // Holding falsy - include (explicit reset)
                 temperature: 25, // Truthy - include
-                pressure: 0, // Mapped falsy - include
-                pump_1: false, // Mapped falsy - include
+                pressure: 0, // Holding falsy - include (explicit reset)
+                pump_1: false, // Coil falsy - SKIP
                 valve_A1: true, // Truthy - include
-                power: 0, // Mapped falsy - include
+                power: 0, // Coil falsy - SKIP
                 main_pump: true // Truthy - include
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
@@ -174,11 +169,9 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 expect.objectContaining({ key: 'temperature', value: 25 }),
                 expect.objectContaining({ key: 'pressure', value: 0 })
             ]));
-            expect(result.coilCommands).toHaveLength(4);
+            expect(result.coilCommands).toHaveLength(2); // Only truthy coils
             expect(result.coilCommands).toEqual(expect.arrayContaining([
-                expect.objectContaining({ key: 'pump_1', value: false }),
                 expect.objectContaining({ key: 'valve_A1', value: true }),
-                expect.objectContaining({ key: 'power', value: false }),
                 expect.objectContaining({ key: 'main_pump', value: true })
             ]));
         });
@@ -254,20 +247,41 @@ describe('ScheduleService - Falsy Value Handling', () => {
         });
     });
     describe('storeConfigParameter - Falsy value handling', () => {
-        it('should return null for value 0', () => {
-            const result = scheduleService.storeConfigParameter('test_key', 0, 'test-schedule');
+        beforeEach(() => {
+            // Mock configKeys for type coercion
+            mockGlobalContext.set("configKeys", {
+                'test_key_boolean': 'boolean',
+                'test_key_number': 'number',
+                'test_key_string': 'string'
+            });
+        });
+        it('should return null for value 0 on number key', () => {
+            const result = scheduleService.storeConfigParameter('test_key_number', 0, 'test-schedule');
             expect(result).toBeNull();
         });
-        it('should return null for value "0" (string)', () => {
-            const result = scheduleService.storeConfigParameter('test_key', "0", 'test-schedule');
+        it('should coerce 0 to false for boolean key and return null', () => {
+            const result = scheduleService.storeConfigParameter('test_key_boolean', 0, 'test-schedule');
             expect(result).toBeNull();
         });
-        it('should return null for value false', () => {
-            const result = scheduleService.storeConfigParameter('test_key', false, 'test-schedule');
+        it('should coerce 1 to true for boolean key and store', () => {
+            const result = scheduleService.storeConfigParameter('test_key_boolean', 1, 'test-schedule');
+            expect(result).not.toBeNull();
+            expect(result).toMatchObject({
+                key: 'test_key_boolean',
+                value: true,
+                type: 'boolean'
+            });
+        });
+        it('should return null for value "0" (string) on number key', () => {
+            const result = scheduleService.storeConfigParameter('test_key_number', "0", 'test-schedule');
             expect(result).toBeNull();
         });
-        it('should return null for value "false" (string)', () => {
-            const result = scheduleService.storeConfigParameter('test_key', "false", 'test-schedule');
+        it('should return null for value false on boolean key', () => {
+            const result = scheduleService.storeConfigParameter('test_key_boolean', false, 'test-schedule');
+            expect(result).toBeNull();
+        });
+        it('should return null for value "false" (string) on boolean key', () => {
+            const result = scheduleService.storeConfigParameter('test_key_boolean', "false", 'test-schedule');
             expect(result).toBeNull();
         });
         it('should return null for null value', () => {
@@ -283,30 +297,30 @@ describe('ScheduleService - Falsy Value Handling', () => {
             expect(result).toBeNull();
         });
         it('should store truthy number values', () => {
-            const result = scheduleService.storeConfigParameter('test_key', 42, 'test-schedule');
+            const result = scheduleService.storeConfigParameter('test_key_number', 42, 'test-schedule');
             expect(result).not.toBeNull();
             expect(result).toMatchObject({
-                key: 'test_key',
+                key: 'test_key_number',
                 value: 42,
                 type: 'number',
                 scheduleId: 'test-schedule'
             });
         });
         it('should store truthy boolean values', () => {
-            const result = scheduleService.storeConfigParameter('test_key', true, 'test-schedule');
+            const result = scheduleService.storeConfigParameter('test_key_boolean', true, 'test-schedule');
             expect(result).not.toBeNull();
             expect(result).toMatchObject({
-                key: 'test_key',
+                key: 'test_key_boolean',
                 value: true,
                 type: 'boolean',
                 scheduleId: 'test-schedule'
             });
         });
         it('should store truthy string values', () => {
-            const result = scheduleService.storeConfigParameter('test_key', "valid_value", 'test-schedule');
+            const result = scheduleService.storeConfigParameter('test_key_string', "valid_value", 'test-schedule');
             expect(result).not.toBeNull();
             expect(result).toMatchObject({
-                key: 'test_key',
+                key: 'test_key_string',
                 value: "valid_value",
                 type: 'string',
                 scheduleId: 'test-schedule'
@@ -354,8 +368,9 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 main_pump: true,
                 valve_A1: true,
                 set_flow_A1: 150,
-                // Modbus mapped - falsy (should still be executed)
+                // Modbus mapped - falsy coils (should be SKIPPED)
                 pump_1: false,
+                // Modbus mapped - falsy holding (should be included)
                 set_temp: 0,
                 temperature: 0,
                 // Unmapped config - truthy
@@ -368,32 +383,31 @@ describe('ScheduleService - Falsy Value Handling', () => {
                 max_duration: "0"
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            // Modbus commands: truthy + mapped falsy values
+            // Holding commands: truthy + holding falsy (0)
             expect(result.holdingCommands).toHaveLength(3); // set_flow_A1 + set_temp + temperature
-            expect(result.coilCommands).toHaveLength(3); // main_pump + valve_A1 + pump_1(false)
+            // Coil commands: only truthy coils (pump_1 false is skipped)
+            expect(result.coilCommands).toHaveLength(2); // main_pump + valve_A1
             // Config parameters: iri_time + 2 truthy unmapped
             expect(result.configParameters).toHaveLength(3);
             expect(result.configParameters.map(p => p.key)).toEqual(expect.arrayContaining(['iri_time', 'irrigation_mode', 'user_id']));
         });
         it('should handle schedule with all falsy action values', () => {
             const schedule = createMockSchedule('all-falsy-schedule', JSON.stringify({
-                pump_1: 0,
-                valve_A1: false,
-                set_flow_A1: 0,
-                custom_setting: null,
-                debug_mode: false,
-                notes: ""
+                pump_1: 0, // Coil falsy - SKIP
+                valve_A1: false, // Coil falsy - SKIP
+                set_flow_A1: 0, // Holding falsy - include
+                custom_setting: null, // Unmapped falsy - skip
+                debug_mode: false, // Unmapped falsy - skip
+                notes: "" // Unmapped falsy - skip
             }));
             const result = scheduleService.mapScheduleToModbus(schedule);
-            // Mapped falsy values should still produce Modbus commands
+            // Holding commands: only set_flow_A1
             expect(result.holdingCommands).toHaveLength(1);
             expect(result.holdingCommands[0]).toMatchObject({ key: 'set_flow_A1', value: 0 });
-            expect(result.coilCommands).toHaveLength(2);
-            expect(result.coilCommands).toEqual(expect.arrayContaining([
-                expect.objectContaining({ key: 'pump_1', value: false }),
-                expect.objectContaining({ key: 'valve_A1', value: false })
-            ]));
-            expect(result.configParameters).toHaveLength(1); // Only iri_time
+            // Coil commands: all falsy coils skipped
+            expect(result.coilCommands).toHaveLength(0);
+            // Config: only iri_time
+            expect(result.configParameters).toHaveLength(1);
             expect(result.configParameters[0].key).toBe('iri_time');
         });
     });

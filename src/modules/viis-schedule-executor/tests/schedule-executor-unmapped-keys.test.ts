@@ -180,7 +180,7 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
                 set_flow_A1: 200,         // Mapped to holding - truthy, include
                 custom_timeout: 30,       // Unmapped - truthy, include
                 enable_logging: false,    // Unmapped - falsy, SKIP
-                valve_A1: false,          // Mapped to coil - falsy, INCLUDE
+                valve_A1: false,          // Mapped to coil - falsy, SKIP (don't write false coils)
                 user_notes: 'test run'    // Unmapped - truthy, include
             }));
 
@@ -188,7 +188,7 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
 
             // Check Modbus commands
             expect(result.holdingCommands).toHaveLength(1);
-            expect(result.coilCommands).toHaveLength(2); // valve_A1 false is valid mapped command
+            expect(result.coilCommands).toHaveLength(1); // Only pump_1 (valve_A1 false is skipped)
             // Note: iri_time is automatically added, so we expect 3 config parameters (custom_timeout, user_notes, iri_time)
             expect(result.configParameters).toHaveLength(3);
 
@@ -201,8 +201,7 @@ describe('ScheduleService - Unmapped Keys Handling', () => {
 
             expect(result.coilCommands).toEqual(
                 expect.arrayContaining([
-                    expect.objectContaining({ key: 'pump_1', value: true, fc: 5 }),
-                    expect.objectContaining({ key: 'valve_A1', value: false, fc: 5 })
+                    expect.objectContaining({ key: 'pump_1', value: true, fc: 5 })
                 ])
             );
 

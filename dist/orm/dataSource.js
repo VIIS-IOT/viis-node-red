@@ -42,8 +42,10 @@ const path = __importStar(require("path"));
 function resolveCommonJsonPath() {
     const containerPath = path.resolve(__dirname, "../../../../app/env/configs/common.json");
     const hostPath = path.resolve(__dirname, "../../../../../env/configs/common.json");
-    if (fs.existsSync(containerPath)) return containerPath;
-    if (fs.existsSync(hostPath)) return hostPath;
+    if (fs.existsSync(containerPath))
+        return containerPath;
+    if (fs.existsSync(hostPath))
+        return hostPath;
     return containerPath;
 }
 const COMMON_JSON_PATH = resolveCommonJsonPath();
