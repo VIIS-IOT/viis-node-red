@@ -5,7 +5,7 @@ import { GlobalContextHelper } from "../ultils/global-context-helper";
 import * as fs from "fs";
 import * as path from "path";
 
-const COMMON_JSON_PATH = path.resolve(__dirname, "../../../../../env/configs/common.json");
+const COMMON_JSON_PATH = path.resolve(__dirname, "../../../../app/env/configs/common.json");
 
 function readDbConfigFromJson() {
     try {

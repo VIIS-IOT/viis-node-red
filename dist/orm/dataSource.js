@@ -39,7 +39,7 @@ const typeorm_1 = require("typeorm");
 const global_context_helper_1 = require("../ultils/global-context-helper");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const COMMON_JSON_PATH = path.resolve(__dirname, "../../../../../env/configs/common.json");
+const COMMON_JSON_PATH = path.resolve(__dirname, "../../../../app/env/configs/common.json");
 function readDbConfigFromJson() {
     var _a;
     try {
