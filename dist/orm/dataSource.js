@@ -39,16 +39,31 @@ const typeorm_1 = require("typeorm");
 const global_context_helper_1 = require("../ultils/global-context-helper");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const COMMON_JSON_PATH = path.resolve(__dirname, "../../../../app/env/configs/common.json");
+function resolveCommonJsonPath() {
+    const containerPath = path.resolve(__dirname, "../../../../app/env/configs/common.json");
+    const hostPath = path.resolve(__dirname, "../../../../../env/configs/common.json");
+    if (fs.existsSync(containerPath)) return containerPath;
+    if (fs.existsSync(hostPath)) return hostPath;
+    return containerPath;
+}
+const COMMON_JSON_PATH = resolveCommonJsonPath();
+function isRunningInDocker() {
+    return fs.existsSync("/.dockerenv") || !!process.env.DOCKER_CONTAINER;
+}
 function readDbConfigFromJson() {
     var _a;
     try {
         const raw = fs.readFileSync(COMMON_JSON_PATH, "utf8");
         const json = JSON.parse(raw);
         const db = ((_a = json.result) === null || _a === void 0 ? void 0 : _a.databaseHost) || json.databaseHost || {};
+        let host = db.DB_HOST || "localhost";
+        const port = parseInt(db.DB_PORT || "3308", 10);
+        if (isRunningInDocker() && (host === "localhost" || host === "127.0.0.1")) {
+            host = "viis-local-mysql";
+        }
         return {
-            host: db.DB_HOST || "localhost",
-            port: parseInt(db.DB_PORT || "3308", 10),
+            host,
+            port: isRunningInDocker() && host === "viis-local-mysql" ? 3306 : port,
             username: db.DB_USERNAME || "root",
             password: db.DB_PASSWORD || "admin@123",
             database: db.DB_DATABASE || "viis_local",
