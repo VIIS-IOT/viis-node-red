@@ -35,11 +35,29 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppDataSource = exports.getDataSourceRefCount = exports.releaseDataSource = exports.createDataSource = exports.DataSourceManager = void 0;
 require("reflect-metadata");
-const dotenv_1 = require("dotenv");
 const typeorm_1 = require("typeorm");
 const global_context_helper_1 = require("../ultils/global-context-helper");
+const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-(0, dotenv_1.config)({ path: path.resolve(__dirname, "../../../../../env/common.env") });
+const COMMON_JSON_PATH = path.resolve(__dirname, "../../../../../env/configs/common.json");
+function readDbConfigFromJson() {
+    var _a;
+    try {
+        const raw = fs.readFileSync(COMMON_JSON_PATH, "utf8");
+        const json = JSON.parse(raw);
+        const db = ((_a = json.result) === null || _a === void 0 ? void 0 : _a.databaseHost) || json.databaseHost || {};
+        return {
+            host: db.DB_HOST || "localhost",
+            port: parseInt(db.DB_PORT || "3308", 10),
+            username: db.DB_USERNAME || "root",
+            password: db.DB_PASSWORD || "admin@123",
+            database: db.DB_DATABASE || "viis_local",
+        };
+    }
+    catch (e) {
+        throw new Error(`Failed to read DB config from ${COMMON_JSON_PATH}: ${e.message}`);
+    }
+}
 /**
  * DataSource Manager - Thread-safe singleton with reference counting
  *
@@ -102,22 +120,15 @@ class DataSourceManager {
         const helper = nodeContext ? new global_context_helper_1.GlobalContextHelper(nodeContext) : null;
         const get = (key, fallback) => { var _a; return (_a = helper === null || helper === void 0 ? void 0 : helper.getEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : fallback; };
         const getNum = (key, fallback) => { var _a; return (_a = helper === null || helper === void 0 ? void 0 : helper.getNumericEnvVar(key, fallback)) !== null && _a !== void 0 ? _a : fallback; };
-        // When nodeContext is provided, use global context (JSON configs)
-        // When nodeContext is undefined (AppDataSource), use process.env (container env vars)
+        // When nodeContext is provided, use global context (JSON configs loaded by env-loader)
+        // When nodeContext is undefined (CLI/AppDataSource), read directly from common.json
         return helper ? {
             host: get('DATABASE_HOST', 'viis-local-mysql'),
             port: getNum('DATABASE_PORT', 3306),
             username: get('DATABASE_USERNAME', 'root'),
             password: get('DATABASE_PASSWORD', 'admin@123'),
             database: get('DATABASE_NAME', 'viis_local'),
-        } : {
-            // For AppDataSource (no nodeContext), read from process.env directly
-            host: process.env.DB_HOST || 'viis-local-mysql',
-            port: parseInt(process.env.DB_PORT || '3306', 10),
-            username: process.env.DB_USERNAME || 'root',
-            password: process.env.DB_PASSWORD || 'admin@123',
-            database: process.env.DB_DATABASE || 'viis_local',
-        };
+        } : readDbConfigFromJson();
     }
 }
 exports.DataSourceManager = DataSourceManager;

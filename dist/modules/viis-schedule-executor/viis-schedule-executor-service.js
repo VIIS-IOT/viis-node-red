@@ -1315,30 +1315,9 @@ let ScheduleService = class ScheduleService {
     }
     /**
      * Check if commands can be executed without overlapping with active commands
+     * TODO: Re-enable overlap check - temporarily disabled
      */
     async canExecuteCommands(currentScheduleId, holdingCommands, coilCommands) {
-        const activeModbusCommands = this.node.context().global.get("activeModbusCommands") || {};
-        const allCommands = [...holdingCommands, ...coilCommands];
-        for (const cmd of allCommands) {
-            // Skip config parameters - they don't need overlap checking
-            if (CONFIG_PARAMETER_KEYS.has(cmd.key)) {
-                continue;
-            }
-            // Kiểm tra overlap với các schedule khác, bỏ qua schedule hiện tại
-            for (const scheduleId in activeModbusCommands) {
-                if (scheduleId === currentScheduleId)
-                    continue;
-                const activeCmds = activeModbusCommands[scheduleId];
-                if (activeCmds.some(ac => ac.address === cmd.address && ac.fc === cmd.fc)) {
-                    // CRITICAL LOG: Command overlap detected
-                    if (this.node) {
-                        this.node.warn(`⚠️ COMMAND OVERLAP: Schedule ${currentScheduleId} conflicts with ${scheduleId} | Address: ${cmd.address} (FC: ${cmd.fc}) | Key: ${cmd.key}`);
-                    }
-                    console.warn(`Command overlap detected with schedule ${scheduleId} at address ${cmd.address} (fc: ${cmd.fc})`);
-                    return false;
-                }
-            }
-        }
         return true;
     }
     /**
