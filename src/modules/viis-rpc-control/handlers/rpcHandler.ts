@@ -18,6 +18,7 @@ import { Logger } from "../utils/logger";
 
 export class RpcHandler implements IRpcHandler {
     private readonly maxBatchSize = 100;
+    private readonly RPC_REQUEST_TIMEOUT = 30000; // 30s overall timeout per RPC request
     private configService: IConfigService;
     private validationService: IValidationService;
     private modbusService: IModbusService;
@@ -26,6 +27,7 @@ export class RpcHandler implements IRpcHandler {
     private node: any;
     private logger: Logger;
     private requestQueue: Promise<void> = Promise.resolve();
+    private queueLength: number = 0;
 
     private readonly defaultBatchOptions = {
         sequential: true,
@@ -56,8 +58,22 @@ export class RpcHandler implements IRpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody: RpcMessage, maxRetries: number = 3): Promise<void> {
-        const execution = this.requestQueue.then(() => this.handleRpcRequestInternal(rpcBody, maxRetries));
-        this.requestQueue = execution.catch(() => { /* keep queue alive */ });
+        this.queueLength++;
+        this.logger.log(`[QUEUE] RPC request queued (queue: ${this.queueLength})`);
+
+        const execution = this.requestQueue.then(async () => {
+            this.logger.log(`[QUEUE] RPC request dequeued, starting execution (remaining: ${this.queueLength - 1})`);
+            return this.withTimeout(
+                this.handleRpcRequestInternal(rpcBody, maxRetries),
+                this.RPC_REQUEST_TIMEOUT,
+                `RPC request timeout after ${this.RPC_REQUEST_TIMEOUT}ms`
+            );
+        });
+
+        this.requestQueue = execution.catch(() => { /* keep queue alive */ }).finally(() => {
+            this.queueLength--;
+        });
+
         return execution;
     }
 
@@ -66,16 +82,19 @@ export class RpcHandler implements IRpcHandler {
      */
     private async handleRpcRequestInternal(rpcBody: RpcMessage, maxRetries: number = 3): Promise<void> {
         let lastError: Error | null = null;
+        const startTime = Date.now();
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
                     this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
                     await this.handleSetStateRequest(rpcBody.params);
+                    this.logger.log(`[RPC-DONE] Request completed in ${Date.now() - startTime}ms`);
                     return; // Success
                 } else if (rpcBody.method === "set_state_batch" && rpcBody.params) {
                     this.logger.log(`Processing batch RPC request (attempt ${attempt}/${maxRetries})`);
                     await this.handleSetStateBatchRequest(rpcBody.params);
+                    this.logger.log(`[RPC-DONE] Batch request completed in ${Date.now() - startTime}ms`);
                     return;
                 } else {
                     this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
@@ -83,6 +102,7 @@ export class RpcHandler implements IRpcHandler {
                 }
             } catch (error) {
                 lastError = error as Error;
+                this.logger.error(`[RPC-ERROR] Attempt ${attempt}/${maxRetries} failed after ${Date.now() - startTime}ms: ${lastError.message}`);
 
                 // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
@@ -379,6 +399,8 @@ export class RpcHandler implements IRpcHandler {
                 return;
             }
 
+            this.logger.log(`[SET-STATE] Processing ${Object.keys(filteredParams).length} parameters`);
+
             // Try luoi mapping handler first - it now handles actual Modbus writes
             const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
 
@@ -394,6 +416,8 @@ export class RpcHandler implements IRpcHandler {
             if (Object.keys(standardParams).length > 0) {
                 await this.handleStandardParams(standardParams);
             }
+
+            this.logger.log(`[SET-STATE] Completed successfully`);
         } catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${(error as Error).message}`);
             throw error;
@@ -499,13 +523,16 @@ export class RpcHandler implements IRpcHandler {
         // Validate and convert value
         const value = this.validationService.validateAndConvertValue(key, rawValue);
 
+        this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
+
         // Write to Modbus with connection error handling.
         // If this throws, the outer handleRpcRequest retry loop may re-attempt — which is safe
         // because the write did not actually succeed yet.
         try {
             await this.writeToModbusWithRetry(key, mapping, value);
+            this.logger.log(`[MODBUS-WRITE] Write ${key} completed successfully`);
         } catch (error) {
-            this.logger.error(`Failed to write ${key}: ${(error as Error).message}`);
+            this.logger.error(`[MODBUS-WRITE] Failed to write ${key}: ${(error as Error).message}`);
             throw error; // Propagate: write failed, retry is safe
         }
 

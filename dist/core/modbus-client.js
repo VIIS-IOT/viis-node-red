@@ -41,6 +41,11 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.MAX_CONSECUTIVE_ERRORS = 5; // Trigger recovery after 5 consecutive errors
         this.isRecovering = false; // Prevent concurrent recovery attempts
         this.recoveryLockPromise = null; // Atomic lock for recovery
+        // Concurrency guard for initializeClient() - prevents race conditions
+        this.isInitializing = false;
+        this.initializePromise = null;
+        // Track registered listeners for targeted removal (instead of removeAllListeners)
+        this.registeredListeners = [];
         this.USB_SERIAL_ERRORS = [
             "EPIPE", // USB broken pipe (URB -32)
             "urb stopped: -32", // Linux kernel USB error
@@ -160,9 +165,25 @@ class ModbusClientCore extends events_1.EventEmitter {
     getStateHistory() {
         return [...this.stateHistory];
     }
-    // Khởi tạo client
+    // Khởi tạo client - with concurrency guard to prevent race conditions
     async initializeClient() {
-        ////this.node.log(`Modbus: Attempting to connect type ${this.config.type}...`); // Log connection attempt
+        // If already initializing, return the existing promise to prevent concurrent calls
+        if (this.initializePromise) {
+            this.node.log(`[MODBUS] Initialize already in progress, waiting for existing attempt...`);
+            return this.initializePromise;
+        }
+        this.isInitializing = true;
+        this.initializePromise = this._doInitialize();
+        try {
+            await this.initializePromise;
+        }
+        finally {
+            this.isInitializing = false;
+            this.initializePromise = null;
+        }
+    }
+    async _doInitialize() {
+        this.node.log(`[MODBUS] Attempting to connect type ${this.config.type}...`);
         // FSM: Transition to CONNECTING
         this.transitionTo(ConnectionState.CONNECTING);
         try {
@@ -187,20 +208,21 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.emit("modbus-status", { status: "connected" });
             }
             if (this.config.type === "TCP") {
-                ////this.node.log(`Modbus TCP: Connected successfully to ${this.config.host}:${this.config.tcpPort}`); // Log TCP connect success
+                this.node.log(`[MODBUS] TCP: Connected successfully to ${this.config.host}:${this.config.tcpPort}`);
             }
             else if (this.config.type === "RTU") {
-                ////this.node.log(`Modbus RTU: Connected successfully to ${this.config.serialPort}`); // Log RTU connect success
+                this.node.log(`[MODBUS] RTU: Connected successfully to ${this.config.serialPort}`);
             }
         }
         catch (error) {
-            ////this.node.log(`Modbus: Connection failed for type ${this.config.type}: ${(error as Error).message}`); // Log connection error
+            this.node.log(`[MODBUS] Connection failed for type ${this.config.type}: ${error.message}`);
             // FSM: Transition to ERROR (handleError does this)
             this.handleError(error);
             if (this.config.type === "TCP") {
                 // Sử dụng circuit breaker thay vì scheduleReconnect trực tiếp
                 this.scheduleReconnectWithCircuitBreaker();
             }
+            throw error; // THROW so caller knows initialization failed
         }
     }
     // Kết nối TCP với các tùy chọn tối ưu cho board cụ thể
@@ -280,8 +302,8 @@ class ModbusClientCore extends events_1.EventEmitter {
     handleError(error) {
         // FSM: Transition to ERROR
         this.transitionTo(ConnectionState.ERROR);
-        // Log lỗi chi tiết
-        this.node.error(`Modbus Error: ${error.message}`);
+        // Log lỗi chi tiết với context
+        this.node.error(`[MODBUS-ERROR] ${error.message} (state=${this.connectionState}, isConnected=${this.isConnected}, isOpen=${this.client.isOpen})`);
         this.node.status({ fill: "yellow", shape: "ring", text: `Error: ${error.message}` });
         this.emit("modbus-status", { status: "error", error: error.message });
         // Check if this is a USB serial error that might need port recovery
@@ -593,9 +615,9 @@ class ModbusClientCore extends events_1.EventEmitter {
         try {
             // Mark as disconnected
             this.isConnected = false;
-            // CRITICAL: Remove ALL event listeners FIRST to prevent stale callbacks
+            // CRITICAL: Remove tracked event listeners FIRST to prevent stale callbacks
             // This must happen BEFORE close() to avoid race conditions
-            this.removeAllListeners();
+            this.removeTrackedListeners();
             // Close client if open - with timeout protection
             if (this.client && this.client.isOpen) {
                 try {
@@ -645,6 +667,22 @@ class ModbusClientCore extends events_1.EventEmitter {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
     /**
+     * Track a listener for targeted removal (instead of removeAllListeners)
+     */
+    trackListener(event, listener) {
+        this.registeredListeners.push({ event, listener });
+        this.on(event, listener);
+    }
+    /**
+     * Remove only tracked listeners (preserves external listeners)
+     */
+    removeTrackedListeners() {
+        for (const { event, listener } of this.registeredListeners) {
+            this.removeListener(event, listener);
+        }
+        this.registeredListeners = [];
+    }
+    /**
      * Ensure old connection is fully closed before creating a new one
      * Prevents connection leaks and ensures OS releases file descriptors
      */
@@ -652,8 +690,8 @@ class ModbusClientCore extends events_1.EventEmitter {
         if (this.client && this.client.isOpen) {
             this.node.log('[CLEANUP] Closing existing connection before creating new one');
             try {
-                // Remove all listeners first to prevent stale callbacks
-                this.removeAllListeners();
+                // Remove tracked listeners first to prevent stale callbacks
+                this.removeTrackedListeners();
                 // Close with timeout protection
                 await Promise.race([
                     new Promise((resolve, reject) => {
@@ -777,7 +815,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.disconnectStartTime = null;
                 this.node.warn("[CIRCUIT-BREAKER] Reset, attempting recovery");
                 this.scheduleReconnect();
-            }, 300000); // 5 minutes
+            }, 60000); // 1 minute (reduced from 5 minutes)
             return;
         }
         // Exponential backoff: 10s, 20s, 40s, 60s, 60s...
@@ -809,12 +847,18 @@ class ModbusClientCore extends events_1.EventEmitter {
         // 🆕 Tăng interval từ 5s lên 15s để giảm frequency check
         this.connectionCheckTimer = setInterval(async () => {
             try {
+                // Skip nếu đang initialize hoặc reconnecting - tránh race condition
+                if (this.isInitializing ||
+                    this.connectionState === ConnectionState.CONNECTING ||
+                    this.connectionState === ConnectionState.RECONNECTING) {
+                    return;
+                }
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
                 if (!this.isConnected || !this.client.isOpen) {
                     if (!this.isConnected) {
                         this.disconnectStartTime = Date.now();
                     }
-                    //this.node.log("[STM32-CHECK] Connection appears to be closed, attempting to reconnect...");
+                    this.node.log("[MODBUS-CHECK] Connection appears to be closed, attempting to reconnect...");
                     // Đánh dấu là đã ngắt kết nối
                     this.isConnected = false;
                     // Thử kết nối lại
@@ -830,14 +874,14 @@ class ModbusClientCore extends events_1.EventEmitter {
                 // Nếu có vấn đề với connection state
                 if (!this.isConnected) {
                     this.disconnectStartTime = Date.now();
-                    //this.node.log("[STM32-CHECK] Connection state inconsistent, attempting reconnect...");
+                    this.node.log("[MODBUS-CHECK] Connection state inconsistent, attempting reconnect...");
                     await this.initializeClient();
                 }
             }
             catch (error) {
                 const err = error;
                 this.disconnectStartTime = Date.now();
-                //this.node.log(`[STM32-CHECK] Connection check failed: ${err.message}`);
+                this.node.warn(`[MODBUS-CHECK] Connection check failed: ${err.message}`);
                 // Nếu lỗi liên quan đến kết nối, đánh dấu là đã ngắt kết nối
                 if (err.message.includes("Timed out") ||
                     err.message.includes("Port Not Open") ||
@@ -868,41 +912,47 @@ class ModbusClientCore extends events_1.EventEmitter {
     }
     async ensureConnected() {
         // Kiểm tra kết nối hiện tại
-        if (!this.isConnected || !this.client.isOpen) {
-            //this.node.log(" Connection lost or not initialized, attempting to reconnect...");
-            // Ensure old connection is fully cleaned up
-            await this.ensureCleanConnection();
-            // Thử kết nối lại với retry logic tối ưu cho STM32
-            let retryCount = 0;
-            const maxRetries = 2; // Giảm số retry cho STM32
-            const retryDelay = 3000; // Tăng delay giữa các retry
-            while (retryCount < maxRetries) {
-                try {
-                    await this.initializeClient();
-                    break; // Thoát khỏi vòng lặp nếu kết nối thành công
+        if (this.isConnected && this.client.isOpen) {
+            return; // Already connected
+        }
+        this.node.log(`[MODBUS] Connection lost (isConnected=${this.isConnected}, isOpen=${this.client.isOpen}), attempting to reconnect...`);
+        // Timeout tổng cho toàn bộ quá trình reconnect
+        const reconnectTimeout = 15000;
+        const startTime = Date.now();
+        // Ensure old connection is fully cleaned up
+        await this.ensureCleanConnection();
+        // Thử kết nối lại với retry logic tối ưu cho STM32
+        let retryCount = 0;
+        const maxRetries = 2; // Giảm số retry cho STM32
+        const retryDelay = 3000; // Tăng delay giữa các retry
+        while (retryCount < maxRetries) {
+            // Check timeout trước mỗi lần retry
+            if (Date.now() - startTime > reconnectTimeout) {
+                throw new Error(`[ENSURE-CONNECTED] Reconnect timeout after ${reconnectTimeout}ms`);
+            }
+            try {
+                await this.initializeClient();
+                // Check if actually connected after initializeClient
+                if (this.isConnected && this.client.isOpen) {
+                    this.node.log(`[MODBUS] Reconnection successful on attempt ${retryCount + 1}`);
+                    return;
                 }
-                catch (error) {
-                    retryCount++;
-                    const err = error;
-                    //this.node.log(` Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
-                    if (retryCount >= maxRetries) {
-                        throw new Error(` Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
-                    }
-                    // Đợi lâu hơn cho STM32 recovery
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                // initializeClient didn't throw but didn't connect either
+                retryCount++;
+            }
+            catch (error) {
+                retryCount++;
+                const err = error;
+                this.node.warn(`[MODBUS] Reconnection attempt ${retryCount}/${maxRetries} failed: ${err.message}`);
+                if (retryCount >= maxRetries) {
+                    throw new Error(`[MODBUS] Failed to reconnect after ${maxRetries} attempts: ${err.message}`);
                 }
+                // Đợi lâu hơn cho STM32 recovery
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
             }
         }
-        // KHÔNG verify với readCoils cho STM32 - có thể gây thêm lỗi
-        // STM32 cần thời gian để ổn định sau khi kết nối
-        if (this.isConnected && this.client.isOpen) {
-            // Connection đã OK, không cần verify thêm
-            return;
-        }
-        // Chỉ verify nếu thực sự cần thiết
-        if (!this.isConnected) {
-            throw new Error(" Connection could not be established");
-        }
+        // All retries exhausted
+        throw new Error(`[MODBUS] Connection could not be established after ${maxRetries} attempts`);
     }
     /**
      * 🆕 MỚI: Schedule reconnect với Circuit Breaker pattern
@@ -934,7 +984,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.disconnectStartTime = null;
                 this.node.warn("[CIRCUIT-BREAKER] Reset, attempting recovery");
                 this.scheduleReconnect();
-            }, 300000); // 5 minutes
+            }, 60000); // 1 minute (reduced from 5 minutes)
             return;
         }
         // Continue với normal reconnect
