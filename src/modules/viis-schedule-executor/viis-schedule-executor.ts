@@ -93,6 +93,7 @@ module.exports = function (RED: NodeAPI) {
         node.name = config.name;
         const debugEnable = config.debugEnable; // Read debugEnable from config
         const verifyAfterWrite = config.verifyAfterWrite !== false; // Default to true if not specified
+        const skipCoilVerify = config.skipCoilVerify !== false; // Default to true (skip) if not specified
         const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
 
         // Multi-board state variables
@@ -178,7 +179,7 @@ module.exports = function (RED: NodeAPI) {
         // Initialize ScheduleService with debugEnable setting
         let scheduleService: ScheduleService;
         try {
-            scheduleService = new ScheduleService(node, verifyAfterWrite, debugEnable);
+            scheduleService = new ScheduleService(node, verifyAfterWrite, debugEnable, skipCoilVerify);
             debugLog("ScheduleService initialized successfully");
         } catch (error) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);

@@ -80,12 +80,14 @@ export class ScheduleService {
     private globalHelper: GlobalContextHelper; // Thêm GlobalContextHelper
     private debugEnable: boolean; // Thêm biến debugEnable
     private verifyAfterWrite: boolean; // Enable/disable write verification
+    private skipCoilVerify: boolean; // Skip coil verification after write
     private readonly CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
     private readonly PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
-    constructor(node?: Node, verifyAfterWrite: boolean = true, debugEnable: boolean = false) {
+    constructor(node?: Node, verifyAfterWrite: boolean = true, debugEnable: boolean = false, skipCoilVerify: boolean = true) {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
+        this.skipCoilVerify = skipCoilVerify; // Store skipCoilVerify setting
         this.globalHelper = node ? new GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -812,7 +814,7 @@ export class ScheduleService {
      * @param commands - Array of Modbus commands to verify
      * @returns Promise<boolean> - true if verification passed or disabled, false if verification failed
      *
-     * Note: Coils (FC=5) are ALWAYS verified regardless of verifyAfterWrite flag.
+     * Note: Coils (FC=5) are verified when skipCoilVerify = false.
      *       Holding registers (FC=6) are only verified when verifyAfterWrite = true.
      */
     async verifyModbusWrite(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<boolean> {
@@ -820,6 +822,14 @@ export class ScheduleService {
         const coilCommands = commands.filter(cmd => cmd.fc === 5);
         const holdingCommands = commands.filter(cmd => cmd.fc === 6);
         const otherCommands = commands.filter(cmd => cmd.fc !== 5 && cmd.fc !== 6);
+
+        // Log skipped coil verification if disabled
+        if (this.skipCoilVerify && coilCommands.length > 0) {
+            this.debugLog(`Coil verification disabled (skipCoilVerify=true) - skipping ${coilCommands.length} coil commands`);
+            if (this.node) {
+                this.node.warn(`⏭️  COIL VERIFICATION SKIPPED: ${coilCommands.length} commands (skipCoilVerify = true)`);
+            }
+        }
 
         // Log skipped holding register verification if disabled
         if (!this.verifyAfterWrite && holdingCommands.length > 0) {
@@ -829,20 +839,20 @@ export class ScheduleService {
             }
         }
 
-        // Always verify coils, conditionally verify holding registers
+        // Build list of commands to verify based on configuration
         const commandsToVerify = [
-            ...coilCommands, // Always verify coils
+            ...(this.skipCoilVerify ? [] : coilCommands),  // Only verify coils if skipCoilVerify is false
             ...(this.verifyAfterWrite ? holdingCommands : []) // Only verify holding registers if enabled
         ];
 
         if (commandsToVerify.length === 0) {
-            this.debugLog('No commands to verify');
+            this.debugLog('No commands to verify (all verification disabled)');
             return true;
         }
 
         // Log what will be verified
-        if (this.node && coilCommands.length > 0) {
-            this.node.warn(`🔍 VERIFYING COILS: ${coilCommands.length} commands (always verified)`);
+        if (this.node && !this.skipCoilVerify && coilCommands.length > 0) {
+            this.node.warn(`🔍 VERIFYING COILS: ${coilCommands.length} commands`);
         }
         if (this.node && this.verifyAfterWrite && holdingCommands.length > 0) {
             this.node.warn(`🔍 VERIFYING HOLDING REGISTERS: ${holdingCommands.length} commands`);
@@ -889,7 +899,10 @@ export class ScheduleService {
 
         // CRITICAL LOG: All verifications passed
         if (this.node && commandsToVerify.length > 0) {
-            this.node.warn(`✅ VERIFICATION SUCCESS: ${commandsToVerify.length} commands verified (${coilCommands.length} coils${this.verifyAfterWrite ? `, ${holdingCommands.length} holding registers` : ''})`);
+            const verifiedTypes = [];
+            if (!this.skipCoilVerify && coilCommands.length > 0) verifiedTypes.push(`${coilCommands.length} coils`);
+            if (this.verifyAfterWrite && holdingCommands.length > 0) verifiedTypes.push(`${holdingCommands.length} holding registers`);
+            this.node.warn(`✅ VERIFICATION SUCCESS: ${commandsToVerify.length} commands verified (${verifiedTypes.join(', ')})`);
         }
         return true;
     }

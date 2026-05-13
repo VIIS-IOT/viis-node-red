@@ -21,7 +21,14 @@
         <label for="node-input-verifyAfterWrite"><i class="fa fa-check-circle"></i> Verify After Write</label>
         <input type="checkbox" id="node-input-verifyAfterWrite" style="width: auto;">
         <div style="margin-left: 105px; color: #666; font-size: 11px;">
-            Enable holding register verification after write. <strong>Note:</strong> Coils are always verified regardless of this setting.
+            Enable holding register verification after write. <strong>Note:</strong> Coils verification is controlled separately below.
+        </div>
+    </div>
+    <div class="form-row">
+        <label for="node-input-skipCoilVerify"><i class="fa fa-toggle-on"></i> Skip Coil Verify</label>
+        <input type="checkbox" id="node-input-skipCoilVerify" style="width: auto;">
+        <div style="margin-left: 105px; color: #666; font-size: 11px;">
+            Skip coil (FC=5) verification after write. Default: enabled (skip). Disable to verify coils after each write.
         </div>
     </div>
     <div class="form-row">
@@ -42,6 +49,7 @@
             description: { value: "" },
             debugEnable: { value: false },
             verifyAfterWrite: { value: true },
+            skipCoilVerify: { value: true },
             cleanupInterval: { value: 15, required: true }
         },
         inputs: 1,

@@ -100,7 +100,7 @@ const CONFIG_PARAMETER_KEYS = new Set([
     'EC_min',
 ]);
 let ScheduleService = class ScheduleService {
-    constructor(node, verifyAfterWrite = true, debugEnable = false) {
+    constructor(node, verifyAfterWrite = true, debugEnable = false, skipCoilVerify = true) {
         this.luoiMapping = {
             luoi_1: { thu: "luoi_1_thu", dai: "luoi_1_dai" },
             luoi_2: { thu: "luoi_2_thu", dai: "luoi_2_dai" },
@@ -111,6 +111,7 @@ let ScheduleService = class ScheduleService {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
+        this.skipCoilVerify = skipCoilVerify; // Store skipCoilVerify setting
         this.globalHelper = node ? new global_context_helper_1.GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -779,7 +780,7 @@ let ScheduleService = class ScheduleService {
      * @param commands - Array of Modbus commands to verify
      * @returns Promise<boolean> - true if verification passed or disabled, false if verification failed
      *
-     * Note: Coils (FC=5) are ALWAYS verified regardless of verifyAfterWrite flag.
+     * Note: Coils (FC=5) are verified when skipCoilVerify = false.
      *       Holding registers (FC=6) are only verified when verifyAfterWrite = true.
      */
     async verifyModbusWrite(modbusClient, commands) {
@@ -787,6 +788,13 @@ let ScheduleService = class ScheduleService {
         const coilCommands = commands.filter(cmd => cmd.fc === 5);
         const holdingCommands = commands.filter(cmd => cmd.fc === 6);
         const otherCommands = commands.filter(cmd => cmd.fc !== 5 && cmd.fc !== 6);
+        // Log skipped coil verification if disabled
+        if (this.skipCoilVerify && coilCommands.length > 0) {
+            this.debugLog(`Coil verification disabled (skipCoilVerify=true) - skipping ${coilCommands.length} coil commands`);
+            if (this.node) {
+                this.node.warn(`⏭️  COIL VERIFICATION SKIPPED: ${coilCommands.length} commands (skipCoilVerify = true)`);
+            }
+        }
         // Log skipped holding register verification if disabled
         if (!this.verifyAfterWrite && holdingCommands.length > 0) {
             this.debugLog(`Verification disabled - skipping holding register verification for ${holdingCommands.length} commands`);
@@ -794,18 +802,18 @@ let ScheduleService = class ScheduleService {
                 this.node.warn(`⏭️  HOLDING REGISTER VERIFICATION SKIPPED: ${holdingCommands.length} commands (verifyAfterWrite = false)`);
             }
         }
-        // Always verify coils, conditionally verify holding registers
+        // Build list of commands to verify based on configuration
         const commandsToVerify = [
-            ...coilCommands, // Always verify coils
+            ...(this.skipCoilVerify ? [] : coilCommands), // Only verify coils if skipCoilVerify is false
             ...(this.verifyAfterWrite ? holdingCommands : []) // Only verify holding registers if enabled
         ];
         if (commandsToVerify.length === 0) {
-            this.debugLog('No commands to verify');
+            this.debugLog('No commands to verify (all verification disabled)');
             return true;
         }
         // Log what will be verified
-        if (this.node && coilCommands.length > 0) {
-            this.node.warn(`🔍 VERIFYING COILS: ${coilCommands.length} commands (always verified)`);
+        if (this.node && !this.skipCoilVerify && coilCommands.length > 0) {
+            this.node.warn(`🔍 VERIFYING COILS: ${coilCommands.length} commands`);
         }
         if (this.node && this.verifyAfterWrite && holdingCommands.length > 0) {
             this.node.warn(`🔍 VERIFYING HOLDING REGISTERS: ${holdingCommands.length} commands`);
@@ -850,7 +858,12 @@ let ScheduleService = class ScheduleService {
         }
         // CRITICAL LOG: All verifications passed
         if (this.node && commandsToVerify.length > 0) {
-            this.node.warn(`✅ VERIFICATION SUCCESS: ${commandsToVerify.length} commands verified (${coilCommands.length} coils${this.verifyAfterWrite ? `, ${holdingCommands.length} holding registers` : ''})`);
+            const verifiedTypes = [];
+            if (!this.skipCoilVerify && coilCommands.length > 0)
+                verifiedTypes.push(`${coilCommands.length} coils`);
+            if (this.verifyAfterWrite && holdingCommands.length > 0)
+                verifiedTypes.push(`${holdingCommands.length} holding registers`);
+            this.node.warn(`✅ VERIFICATION SUCCESS: ${commandsToVerify.length} commands verified (${verifiedTypes.join(', ')})`);
         }
         return true;
     }
@@ -2130,5 +2143,5 @@ let ScheduleService = class ScheduleService {
 exports.ScheduleService = ScheduleService;
 exports.ScheduleService = ScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [Object, Boolean, Boolean])
+    __metadata("design:paramtypes", [Object, Boolean, Boolean, Boolean])
 ], ScheduleService);
