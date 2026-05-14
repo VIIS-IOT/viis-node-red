@@ -399,17 +399,8 @@ module.exports = function (RED: NodeAPI) {
                             schedule.status = "finished";
                             schedule.enable = 0;
 
-                            // Get configKeyValues before clearing (for telemetry)
-                            const configKeyValuesBeforeClear = globalContext.get("configKeyValues") as Record<string, any> || {};
-                            const scheduleConfigKeys = globalContext.get("scheduleConfigKeys") as Record<string, string[]> || {};
-                            const configKeysForThisSchedule = scheduleConfigKeys[schedule.name] || [];
-                            const configValuesForThisSchedule: Record<string, any> = {};
-                            for (const key of configKeysForThisSchedule) {
-                                configValuesForThisSchedule[key] = configKeyValuesBeforeClear[key];
-                            }
-
-                            // Clear all function keys: modbus coils/holdings AND config key values
-                            scheduleService.clearScheduleConfigValues(schedule.name);
+                            // Reset config key values to falsy defaults and get the reset values for telemetry
+                            const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
 
                             await scheduleService.updateScheduleStatus(schedule, "finished");
 
@@ -431,7 +422,7 @@ module.exports = function (RED: NodeAPI) {
                                         schedule,
                                         'end',
                                         { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
-                                        configValuesForThisSchedule
+                                        resetConfigValues
                                     );
                                 } catch (telemetryError) {
                                     debugLog(`Failed to publish RPC disable telemetry: ${(telemetryError as Error).message}`);
@@ -571,17 +562,8 @@ module.exports = function (RED: NodeAPI) {
                         schedule.status = "finished";
                         schedule.enable = 0;
 
-                        // Get configKeyValues before clearing (for telemetry)
-                        const configKeyValuesBeforeClear = globalContext.get("configKeyValues") as Record<string, any> || {};
-                        const scheduleConfigKeys = globalContext.get("scheduleConfigKeys") as Record<string, string[]> || {};
-                        const configKeysForThisSchedule = scheduleConfigKeys[schedule.name] || [];
-                        const configValuesForThisSchedule: Record<string, any> = {};
-                        for (const key of configKeysForThisSchedule) {
-                            configValuesForThisSchedule[key] = configKeyValuesBeforeClear[key];
-                        }
-
-                        // Clear all function keys: modbus coils/holdings AND config key values
-                        scheduleService.clearScheduleConfigValues(schedule.name);
+                        // Reset config key values to falsy defaults and get the reset values for telemetry
+                        const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
                         scheduleService.clearActiveCommands(schedule.name);
 
                         await scheduleService.updateScheduleStatus(schedule, "finished");
@@ -604,7 +586,7 @@ module.exports = function (RED: NodeAPI) {
                                 schedule,
                                 'end',
                                 { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
-                                configValuesForThisSchedule
+                                resetConfigValues
                             );
                         } catch (telemetryError) {
                             debugLog(`Failed to publish manual recovery telemetry: ${(telemetryError as Error).message}`);
@@ -738,6 +720,9 @@ module.exports = function (RED: NodeAPI) {
                         const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
 
                         if (configParameters && configParameters.length > 0) {
+                            // Clear dedup cache for config keys to ensure publish goes through
+                            scheduleService.clearPublishedValueCacheForKeys(configParameters.map(cp => cp.key));
+
                             for (const configParam of configParameters) {
                                 try {
                                     await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
@@ -781,12 +766,17 @@ module.exports = function (RED: NodeAPI) {
 
                                 // Publish telemetry with all Modbus keys written (matching viis-rpc-control format)
                                 try {
+                                    const configValuesForTelemetry: Record<string, any> = {};
+                                    for (const cp of configParameters) {
+                                        configValuesForTelemetry[cp.key] = cp.value;
+                                    }
                                     await scheduleService.publishScheduleTelemetry(
                                         thingsboardClient,
                                         emqxClient,
                                         schedule,
                                         'start',
-                                        { holdingCommands, coilCommands }
+                                        { holdingCommands, coilCommands },
+                                        configValuesForTelemetry
                                     );
                                 } catch (telemetryError) {
                                     debugLog(`Failed to publish schedule start telemetry: ${(telemetryError as Error).message}`);
@@ -855,17 +845,8 @@ module.exports = function (RED: NodeAPI) {
 
                         const statusChanged = hasStatusChanged(schedule.name, "finished");
 
-                        // Get configKeyValues before clearing (for telemetry)
-                        const configKeyValuesBeforeClear = globalContext.get("configKeyValues") as Record<string, any> || {};
-                        const scheduleConfigKeys = globalContext.get("scheduleConfigKeys") as Record<string, string[]> || {};
-                        const configKeysForThisSchedule = scheduleConfigKeys[schedule.name] || [];
-                        const configValuesForThisSchedule: Record<string, any> = {};
-                        for (const key of configKeysForThisSchedule) {
-                            configValuesForThisSchedule[key] = configKeyValuesBeforeClear[key];
-                        }
-
-                        // Clear all function keys: modbus coils/holdings AND config key values
-                        scheduleService.clearScheduleConfigValues(schedule.name);
+                        // Reset config key values to falsy defaults and get the reset values for telemetry
+                        const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
 
                         // ALWAYS set to finished - prevents stuck "running" status and notification spam
                         await scheduleService.updateScheduleStatus(schedule, "finished");
@@ -889,7 +870,7 @@ module.exports = function (RED: NodeAPI) {
                                         schedule,
                                         'end',
                                         { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
-                                        configValuesForThisSchedule
+                                        resetConfigValues
                                     );
                                 } catch (telemetryError) {
                                     debugLog(`Failed to publish schedule end telemetry: ${(telemetryError as Error).message}`);

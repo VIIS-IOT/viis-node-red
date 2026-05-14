@@ -179,36 +179,39 @@ describe('Startup Recovery - Config Preservation', () => {
             expect(globalStore.configKeyValues.new_param).toBe('new_value'); // Added
         });
 
-        it('should preserve config values when schedule finishes, and keep keys', () => {
+        it('should reset config values to falsy defaults when schedule finishes', () => {
             const service = createService();
 
             // Setup: Schedule has been running with config values
             globalStore.configKeyValues = {
                 irrigation_mode: true,
-                user_id: 12345,
+                user_id: 1235,
                 max_duration: 3600,
             };
             globalStore.scheduleConfigKeys = {
                 'schedule-1': ['irrigation_mode', 'user_id', 'max_duration'],
             };
 
-            // Schedule finishes - clear config values
-            service.clearScheduleConfigValues('schedule-1');
+            // Schedule finishes - reset config values
+            const resetValues = service.clearScheduleConfigValues('schedule-1');
 
-            // Verify: Values are preserved, keys preserved
-            expect(globalStore.configKeyValues.irrigation_mode).toBe(true);
-            expect(globalStore.configKeyValues.user_id).toBe(12345);
-            expect(globalStore.configKeyValues.max_duration).toBe(3600);
+            // Verify: Values are reset to falsy defaults
+            expect(globalStore.configKeyValues.irrigation_mode).toBe(false);
+            expect(globalStore.configKeyValues.user_id).toBe(false);
+            expect(globalStore.configKeyValues.max_duration).toBe(false);
 
-            // Keys still exist in configKeyValues
+            // Keys still exist in configKeyValues (reset to falsy, not deleted)
             expect(globalStore.configKeyValues).toHaveProperty('irrigation_mode');
             expect(globalStore.configKeyValues).toHaveProperty('user_id');
             expect(globalStore.configKeyValues).toHaveProperty('max_duration');
 
-            // Tracking also preserved
-            expect(globalStore.scheduleConfigKeys['schedule-1']).toContain('irrigation_mode');
-            expect(globalStore.scheduleConfigKeys['schedule-1']).toContain('user_id');
-            expect(globalStore.scheduleConfigKeys['schedule-1']).toContain('max_duration');
+            // Tracking should be cleared
+            expect(globalStore.scheduleConfigKeys['schedule-1']).toBeUndefined();
+
+            // Reset values should be returned for telemetry
+            expect(resetValues).toHaveProperty('irrigation_mode');
+            expect(resetValues).toHaveProperty('user_id');
+            expect(resetValues).toHaveProperty('max_duration');
         });
     });
 });

@@ -163,6 +163,20 @@ let ScheduleService = class ScheduleService {
         }
         this.setPublishedValueCache(cache);
     }
+    /**
+     * Clear dedup cache entries for specific keys to ensure next publish goes through.
+     * Used before publishing config values at schedule start.
+     */
+    clearPublishedValueCacheForKeys(keys) {
+        if (!this.node || keys.length === 0)
+            return;
+        const cache = this.getPublishedValueCache();
+        for (const key of keys) {
+            delete cache[`config:${key}`];
+            delete cache[`telemetry:${key}`];
+        }
+        this.setPublishedValueCache(cache);
+    }
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
     scaleValue(key, value, direction) {
         var _a;
@@ -1665,22 +1679,49 @@ let ScheduleService = class ScheduleService {
         (_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.set("scheduleConfigKeys", keys);
     }
     /**
-     * Preserve configKeyValues when a schedule finishes.
-     *
-     * Rationale: resetting values to 0 at schedule boundaries can create a temporary
-     * mode flicker before the next schedule writes new values.
+     * Reset configKeyValues to falsy defaults when a schedule finishes.
+     * Returns the reset values so they can be published via MQTT telemetry.
      */
     clearScheduleConfigValues(scheduleId) {
+        var _a;
         const scheduleConfigKeys = this.getScheduleConfigKeys();
         const keysForThisSchedule = scheduleConfigKeys[scheduleId] || [];
+        const resetValues = {};
         if (keysForThisSchedule.length === 0) {
             this.debugLog(`No config keys to clear for schedule ${scheduleId}`);
-            return;
+            return resetValues;
         }
+        const currentConfig = this.getConfigKeyValues();
+        const configKeys = ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("configKeys")) || {};
+        for (const key of keysForThisSchedule) {
+            if (key in currentConfig) {
+                const declaredType = configKeys[key];
+                const falsyValue = this.getFalsyDefaultValue(declaredType);
+                resetValues[key] = falsyValue;
+                currentConfig[key] = falsyValue;
+            }
+        }
+        this.setConfigKeyValues(currentConfig);
+        // Clear schedule config key tracking
+        delete scheduleConfigKeys[scheduleId];
+        this.setScheduleConfigKeys(scheduleConfigKeys);
         if (this.node) {
-            this.node.warn(`🧹 PRESERVE ${keysForThisSchedule.length} config values for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
+            this.node.warn(`🧹 RESET ${keysForThisSchedule.length} config values for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
         }
-        this.debugLog(`Preserved ${keysForThisSchedule.length} config values for schedule ${scheduleId}`);
+        this.debugLog(`Reset ${keysForThisSchedule.length} config values for schedule ${scheduleId}`);
+        return resetValues;
+    }
+    /**
+     * Get the appropriate falsy default value based on declared type
+     */
+    getFalsyDefaultValue(declaredType) {
+        if (declaredType === 'number')
+            return 0;
+        if (declaredType === 'boolean')
+            return false;
+        if (declaredType === 'string')
+            return '';
+        return false;
     }
     /**
      * Process RPC control command - write to configKeyValues if not found in modbus mapping
