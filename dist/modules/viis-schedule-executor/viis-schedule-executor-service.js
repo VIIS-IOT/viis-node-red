@@ -659,9 +659,10 @@ let ScheduleService = class ScheduleService {
             }
         }
         // Phân loại coil commands
+        const powerCoils = commands.coilCommands.filter(cmd => cmd.key.includes('power'));
+        const pumpCoils = commands.coilCommands.filter(cmd => cmd.key.includes('pump'));
         const valveCoils = commands.coilCommands.filter(cmd => cmd.key.includes('valve_'));
-        const controlCoils = commands.coilCommands.filter(cmd => cmd.key.includes('pump') || cmd.key.includes('power'));
-        const otherCoils = commands.coilCommands.filter(cmd => !cmd.key.includes('valve_') && !cmd.key.includes('pump') && !cmd.key.includes('power'));
+        const otherCoils = commands.coilCommands.filter(cmd => !cmd.key.includes('power') && !cmd.key.includes('pump') && !cmd.key.includes('valve_'));
         // Xác định đang start hay finish dựa vào status của schedule
         const isStarting = schedule && schedule.status === 'running';
         const isFinishing = schedule && schedule.status === 'finished';
@@ -669,13 +670,30 @@ let ScheduleService = class ScheduleService {
             // CRITICAL LOG: START sequence
             if (this.node && schedule) {
                 this.node.warn(`🔧 MODBUS START SEQUENCE: ${schedule.name}`);
-                this.node.warn(`  ├─ Step 1: Writing ${valveCoils.length} VALVE coils`);
-                this.node.warn(`  ├─ Step 2: Delay 5 seconds`);
-                this.node.warn(`  └─ Step 3: Writing ${controlCoils.length} PUMP/POWER coils`);
+                this.node.warn(`  ├─ Step 1: Writing ${powerCoils.length} POWER coils`);
+                this.node.warn(`  ├─ Step 2: Writing ${valveCoils.length} VALVE coils`);
+                this.node.warn(`  ├─ Step 3: Writing ${otherCoils.length} OTHER coils`);
+                this.node.warn(`  ├─ Step 4: Delay 5 seconds`);
+                this.node.warn(`  └─ Step 5: Writing ${pumpCoils.length} PUMP coils`);
             }
-            // Khi start: ghi valve trước, delay 5s, sau đó ghi pump/power
-            this.debugLog(`Starting schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing valve coils first`);
-            // Thực hiện valve coils trước
+            // Khi start: power trước, rồi valve, other, delay 5s, sau đó ghi pump
+            this.debugLog(`Starting schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing power coils first`);
+            // Thực hiện power coils trước
+            for (const cmd of powerCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    await this.delay(100);
+                }
+                catch (error) {
+                    // CRITICAL LOG: Modbus power coil error
+                    if (this.node && schedule) {
+                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write power coil ${cmd.key} at ${cmd.address} | ${error.message}`);
+                    }
+                    console.error(`Error executing modbus power coil command ${cmd.key}: ${error.message}`);
+                }
+            }
+            // Thực hiện valve coils
             for (const cmd of valveCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
@@ -701,19 +719,19 @@ let ScheduleService = class ScheduleService {
                     console.error(`Error executing modbus other coil command ${cmd.key}: ${error.message}`);
                 }
             }
-            // Delay 5 giây trước khi ghi các pump/power coils
-            if (controlCoils.length > 0) {
-                this.debugLog('Delaying 5 seconds before writing pump/power coils');
+            // Delay 5 giây trước khi ghi các pump coils
+            if (pumpCoils.length > 0) {
+                this.debugLog('Delaying 5 seconds before writing pump coils');
                 await this.delay(5000);
-                // Thực hiện control coils (pump, power)
-                for (const cmd of controlCoils) {
+                // Thực hiện pump coils
+                for (const cmd of pumpCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        this.debugLog(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
+                        this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
                         await this.delay(100);
                     }
                     catch (error) {
-                        console.error(`Error executing modbus control coil command ${cmd.key}: ${error.message}`);
+                        console.error(`Error executing modbus pump coil command ${cmd.key}: ${error.message}`);
                     }
                 }
             }
@@ -722,25 +740,27 @@ let ScheduleService = class ScheduleService {
             // CRITICAL LOG: FINISH sequence
             if (this.node && schedule) {
                 this.node.warn(`🛑 MODBUS FINISH SEQUENCE: ${schedule.name}`);
-                this.node.warn(`  ├─ Step 1: Turning OFF ${controlCoils.length} PUMP/POWER coils`);
-                this.node.warn(`  ├─ Step 2: Delay 5 seconds`);
-                this.node.warn(`  └─ Step 3: Closing ${valveCoils.length} VALVE coils`);
+                this.node.warn(`  ├─ Step 1: Turning OFF ${pumpCoils.length} PUMP coils`);
+                this.node.warn(`  ├─ Step 2: Turning OFF ${otherCoils.length} OTHER coils`);
+                this.node.warn(`  ├─ Step 3: Delay 5 seconds`);
+                this.node.warn(`  ├─ Step 4: Closing ${valveCoils.length} VALVE coils`);
+                this.node.warn(`  └─ Step 5: Turning OFF ${powerCoils.length} POWER coils`);
             }
-            // Khi finish: ghi tắt pump/power trước, delay 5s, sau đó tắt valve
-            this.debugLog(`Finishing schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing pump/power coils first`);
-            // Thực hiện control coils (pump, power) trước
-            for (const cmd of controlCoils) {
+            // Khi finish: pump trước, other, delay 5s, valve, power sau cùng
+            this.debugLog(`Finishing schedule ${schedule === null || schedule === void 0 ? void 0 : schedule.name}: executing pump coils first`);
+            // Thực hiện pump coils trước
+            for (const cmd of pumpCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote control coil at ${cmd.address} with value ${cmd.value}`);
+                    this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
                     await this.delay(100);
                 }
                 catch (error) {
-                    // CRITICAL LOG: Modbus control coil error
+                    // CRITICAL LOG: Modbus pump coil error
                     if (this.node && schedule) {
-                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write control coil ${cmd.key} at ${cmd.address} | ${error.message}`);
+                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write pump coil ${cmd.key} at ${cmd.address} | ${error.message}`);
                     }
-                    console.error(`Error executing modbus control coil command ${cmd.key}: ${error.message}`);
+                    console.error(`Error executing modbus pump coil command ${cmd.key}: ${error.message}`);
                 }
             }
             // Thực hiện other coils
@@ -768,6 +788,17 @@ let ScheduleService = class ScheduleService {
                     catch (error) {
                         console.error(`Error executing modbus valve coil command ${cmd.key}: ${error.message}`);
                     }
+                }
+            }
+            // Thực hiện power coils sau cùng
+            for (const cmd of powerCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    await this.delay(100);
+                }
+                catch (error) {
+                    console.error(`Error executing modbus power coil command ${cmd.key}: ${error.message}`);
                 }
             }
         }
@@ -1266,11 +1297,11 @@ let ScheduleService = class ScheduleService {
     async resetModbusCommands(modbusClient, commands, schedule) {
         let allSuccessful = true; // Initialize a flag to track overall success
         // Phân loại commands
+        const powerCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('power'));
+        const pumpCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('pump'));
         const valveCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('valve_'));
-        const controlCoils = commands.filter(cmd => cmd.fc === 5 &&
-            (cmd.key.includes('pump') || cmd.key.includes('power')));
         const otherCoils = commands.filter(cmd => cmd.fc === 5 &&
-            !cmd.key.includes('valve_') && !cmd.key.includes('pump') && !cmd.key.includes('power'));
+            !cmd.key.includes('power') && !cmd.key.includes('pump') && !cmd.key.includes('valve_'));
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
         // Reset holding registers
         for (const cmd of holdingRegisters) {
@@ -1284,14 +1315,14 @@ let ScheduleService = class ScheduleService {
                 allSuccessful = false;
             }
         }
-        // Khi finish schedule, luôn reset theo thứ tự: pump/power trước, sau đó đến valve
+        // Khi finish schedule, luôn reset theo thứ tự: pump trước, other, delay, valve, power sau cùng
         if (schedule && schedule.status === 'finished') {
             this.debugLog(`Ordered reset for finished schedule ${schedule.name}`);
-            // Reset control coils (pump, power) trước
-            for (const cmd of controlCoils) {
+            // Reset pump coils trước
+            for (const cmd of pumpCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    this.debugLog(`Reset control coil at ${cmd.address} to false`);
+                    this.debugLog(`Reset pump coil at ${cmd.address} to false`);
                     await this.delay(100);
                 }
                 catch (error) {
@@ -1326,6 +1357,18 @@ let ScheduleService = class ScheduleService {
                         console.error(`Error resetting modbus command ${cmd.key}: ${error.message}`);
                         allSuccessful = false;
                     }
+                }
+            }
+            // Reset power coils sau cùng
+            for (const cmd of powerCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, false);
+                    this.debugLog(`Reset power coil at ${cmd.address} to false`);
+                    await this.delay(100);
+                }
+                catch (error) {
+                    console.error(`Error resetting modbus command ${cmd.key}: ${error.message}`);
+                    allSuccessful = false;
                 }
             }
         }
