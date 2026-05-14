@@ -17,6 +17,8 @@ const MQTT_CONFIG = {
     },
     INIT_TIMEOUT_MS: 30000,
     POLL_INTERVAL_MS: 100,
+    CREDENTIAL_RETRY_INTERVAL_MS: 2000,
+    CREDENTIAL_MAX_RETRIES: 30,
 };
 /**
  * Match MQTT topic with wildcard support (+ and #)
@@ -50,149 +52,173 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "No config node" });
             return;
         }
-        // Get device credentials (auto-loaded from config node)
-        const selectedDevice = configNode.device;
-        // Validate credentials
-        if (!selectedDevice || !selectedDevice.id || !selectedDevice.accessToken) {
-            node.error("Device credentials not found. Configure viis-config-node or set device_id/device_access_token in env-loader");
-            node.status({ fill: "red", shape: "ring", text: "No credentials" });
-            return;
-        }
-        node.log(`Using device: ${selectedDevice.id} for telemetry ${config.mode}`);
-        // Determine topic based on mode and configuration
-        let topic;
-        if (config.mode === "publish") {
-            topic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
-        }
-        else {
-            topic = config.topic || MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC;
-        }
-        // MQTT state
+        // MQTT state (shared across initializeMqtt and input/close handlers)
         let mqttClient = null;
         let mqttReady = false;
         let isSubscribed = false;
         let statusHandler = null;
-        let messageHandlerInterval = null;
         const pendingMessages = [];
-        if (config.protocol === "MQTT") {
-            const mqttConfig = {
-                broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar('THINGSBOARD_PORT', MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
-                clientId: `node-red-upload-${config.mode}-${Math.random().toString(16).substring(2, 10)}`,
-                username: selectedDevice.accessToken,
-                password: "",
-                qos: MQTT_CONFIG.THINGSBOARD.QOS,
-            };
-            // Initialize MQTT client
-            (async () => {
-                try {
-                    mqttClient = await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
-                    // Register status listener on mqttClient (not configNode)
-                    statusHandler = (data) => {
-                        if (data.status === "connected") {
-                            node.status({ fill: "green", shape: "dot", text: "Connected" });
-                        }
-                        else if (data.status === "disconnected") {
-                            node.status({ fill: "red", shape: "ring", text: "Disconnected" });
-                        }
-                        else if (data.status === "error") {
-                            node.status({ fill: "yellow", shape: "ring", text: `Error: ${data.error}` });
-                        }
-                    };
-                    mqttClient.on("mqtt-status", statusHandler);
-                    if (config.mode === "subscribe") {
-                        // Register message handler BEFORE subscribing
-                        const handleMessage = (event) => {
-                            var _a, _b, _c, _d;
-                            try {
-                                const msgTopic = (_b = (_a = event === null || event === void 0 ? void 0 : event.message) === null || _a === void 0 ? void 0 : _a.topic) !== null && _b !== void 0 ? _b : event === null || event === void 0 ? void 0 : event.topic;
-                                const rawMessage = (_d = (_c = event === null || event === void 0 ? void 0 : event.message) === null || _c === void 0 ? void 0 : _c.message) !== null && _d !== void 0 ? _d : event === null || event === void 0 ? void 0 : event.message;
-                                if (!msgTopic)
-                                    return;
-                                // Check if message matches this node's topic
-                                if (matchTopic(topic, msgTopic)) {
-                                    let payload;
-                                    if (typeof rawMessage === 'string') {
-                                        try {
-                                            payload = JSON.parse(rawMessage);
-                                        }
-                                        catch (_e) {
-                                            payload = rawMessage;
-                                        }
-                                    }
-                                    else if (rawMessage === null || rawMessage === void 0 ? void 0 : rawMessage.message) {
-                                        payload = rawMessage.message;
-                                    }
-                                    else {
-                                        payload = rawMessage;
-                                    }
-                                    const outputMsg = {
-                                        topic: msgTopic,
-                                        payload: payload,
-                                    };
-                                    outputMsg.receivedAt = (0, dayjs_1.default)().valueOf();
-                                    node.send(outputMsg);
-                                }
+        // Determine topic based on mode and configuration
+        const topic = config.mode === "publish"
+            ? (config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC)
+            : (config.topic || MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC);
+        /**
+         * Initialize MQTT connection with the given device credentials.
+         * Called either immediately or after credentials become available.
+         */
+        function initializeMqtt(device) {
+            node.log(`Using device: ${device.id} for telemetry ${config.mode}`);
+            if (config.protocol === "MQTT") {
+                const mqttConfig = {
+                    broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar('THINGSBOARD_PORT', MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                    clientId: `node-red-upload-${config.mode}-${Math.random().toString(16).substring(2, 10)}`,
+                    username: device.accessToken,
+                    password: "",
+                    qos: MQTT_CONFIG.THINGSBOARD.QOS,
+                };
+                // Initialize MQTT client
+                (async () => {
+                    try {
+                        mqttClient = await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
+                        // Register status listener on mqttClient (not configNode)
+                        statusHandler = (data) => {
+                            if (data.status === "connected") {
+                                node.status({ fill: "green", shape: "dot", text: "Connected" });
                             }
-                            catch (error) {
-                                node.error(`Error handling MQTT message: ${error.message}`);
+                            else if (data.status === "disconnected") {
+                                node.status({ fill: "red", shape: "ring", text: "Disconnected" });
+                            }
+                            else if (data.status === "error") {
+                                node.status({ fill: "yellow", shape: "ring", text: `Error: ${data.error}` });
                             }
                         };
-                        mqttClient.on("mqtt-message", handleMessage);
-                        await mqttClient.subscribe(topic);
-                        isSubscribed = true;
-                        node.log(`Subscribed to topic: ${topic}`);
-                        node.status({ fill: "green", shape: "dot", text: "Subscribed" });
-                    }
-                    else {
-                        node.status({ fill: "green", shape: "dot", text: "Ready" });
-                    }
-                    // Mark ready and flush pending messages
-                    mqttReady = true;
-                    while (pendingMessages.length > 0) {
-                        const queuedMsg = pendingMessages.shift();
-                        try {
-                            const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
-                            await mqttClient.publish(publishTopic, JSON.stringify(queuedMsg.payload));
-                            node.send({
-                                payload: {
-                                    ts: (0, dayjs_1.default)().valueOf(),
-                                    data: queuedMsg.payload,
-                                    topic: publishTopic,
-                                    success: true,
-                                },
-                            });
+                        mqttClient.on("mqtt-status", statusHandler);
+                        if (config.mode === "subscribe") {
+                            // Register message handler BEFORE subscribing
+                            const handleMessage = (event) => {
+                                var _a, _b, _c, _d;
+                                try {
+                                    const msgTopic = (_b = (_a = event === null || event === void 0 ? void 0 : event.message) === null || _a === void 0 ? void 0 : _a.topic) !== null && _b !== void 0 ? _b : event === null || event === void 0 ? void 0 : event.topic;
+                                    const rawMessage = (_d = (_c = event === null || event === void 0 ? void 0 : event.message) === null || _c === void 0 ? void 0 : _c.message) !== null && _d !== void 0 ? _d : event === null || event === void 0 ? void 0 : event.message;
+                                    if (!msgTopic)
+                                        return;
+                                    // Check if message matches this node's topic
+                                    if (matchTopic(topic, msgTopic)) {
+                                        let payload;
+                                        if (typeof rawMessage === 'string') {
+                                            try {
+                                                payload = JSON.parse(rawMessage);
+                                            }
+                                            catch (_e) {
+                                                payload = rawMessage;
+                                            }
+                                        }
+                                        else if (rawMessage === null || rawMessage === void 0 ? void 0 : rawMessage.message) {
+                                            payload = rawMessage.message;
+                                        }
+                                        else {
+                                            payload = rawMessage;
+                                        }
+                                        const outputMsg = {
+                                            topic: msgTopic,
+                                            payload: payload,
+                                        };
+                                        outputMsg.receivedAt = (0, dayjs_1.default)().valueOf();
+                                        node.send(outputMsg);
+                                    }
+                                }
+                                catch (error) {
+                                    node.error(`Error handling MQTT message: ${error.message}`);
+                                }
+                            };
+                            mqttClient.on("mqtt-message", handleMessage);
+                            await mqttClient.subscribe(topic);
+                            isSubscribed = true;
+                            node.log(`Subscribed to topic: ${topic}`);
+                            node.status({ fill: "green", shape: "dot", text: "Subscribed" });
                         }
-                        catch (err) {
-                            node.error(`Failed to publish queued message: ${err.message}`);
+                        else {
+                            node.status({ fill: "green", shape: "dot", text: "Ready" });
+                        }
+                        // Mark ready and flush pending messages
+                        mqttReady = true;
+                        while (pendingMessages.length > 0) {
+                            const queuedMsg = pendingMessages.shift();
+                            try {
+                                const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
+                                await mqttClient.publish(publishTopic, JSON.stringify(queuedMsg.payload));
+                                node.send({
+                                    payload: {
+                                        ts: (0, dayjs_1.default)().valueOf(),
+                                        data: queuedMsg.payload,
+                                        topic: publishTopic,
+                                        success: true,
+                                    },
+                                });
+                            }
+                            catch (err) {
+                                node.error(`Failed to publish queued message: ${err.message}`);
+                                node.send({
+                                    payload: {
+                                        ts: (0, dayjs_1.default)().valueOf(),
+                                        data: queuedMsg.payload,
+                                        success: false,
+                                        error: `Failed to publish queued message: ${err.message}`,
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    catch (error) {
+                        const errorMsg = `MQTT initialization failed: ${error.message}`;
+                        node.error(errorMsg);
+                        node.status({ fill: "red", shape: "ring", text: "MQTT failed" });
+                        // Reject all pending messages
+                        while (pendingMessages.length > 0) {
+                            const queuedMsg = pendingMessages.shift();
                             node.send({
                                 payload: {
                                     ts: (0, dayjs_1.default)().valueOf(),
                                     data: queuedMsg.payload,
                                     success: false,
-                                    error: `Failed to publish queued message: ${err.message}`,
+                                    error: errorMsg,
                                 },
                             });
                         }
                     }
+                })();
+            }
+        }
+        // === CREDENTIAL LOADING WITH RETRY ===
+        let selectedDevice = configNode.device;
+        const hasCredentials = () => selectedDevice && selectedDevice.id && selectedDevice.accessToken;
+        if (hasCredentials()) {
+            // Credentials already loaded, proceed immediately
+            initializeMqtt(selectedDevice);
+        }
+        else {
+            // Credentials not loaded yet (env-loader may still be loading)
+            // Start retry mechanism
+            node.status({ fill: "yellow", shape: "ring", text: "Waiting for credentials..." });
+            node.log("Credentials not loaded yet, waiting for env-loader...");
+            let credentialRetries = 0;
+            const retryInterval = setInterval(() => {
+                credentialRetries++;
+                selectedDevice = configNode.device;
+                if (hasCredentials()) {
+                    clearInterval(retryInterval);
+                    node.log(`Credentials loaded after ${credentialRetries} retries`);
+                    initializeMqtt(selectedDevice);
                 }
-                catch (error) {
-                    const errorMsg = `MQTT initialization failed: ${error.message}`;
-                    node.error(errorMsg);
-                    node.status({ fill: "red", shape: "ring", text: "MQTT failed" });
-                    // Reject all pending messages
-                    while (pendingMessages.length > 0) {
-                        const queuedMsg = pendingMessages.shift();
-                        node.send({
-                            payload: {
-                                ts: (0, dayjs_1.default)().valueOf(),
-                                data: queuedMsg.payload,
-                                success: false,
-                                error: errorMsg,
-                            },
-                        });
-                    }
+                else if (credentialRetries >= MQTT_CONFIG.CREDENTIAL_MAX_RETRIES) {
+                    clearInterval(retryInterval);
+                    node.error("Device credentials not found after waiting. Configure viis-config-node or set device_id/device_access_token in env-loader");
+                    node.status({ fill: "red", shape: "ring", text: "No credentials" });
                 }
-            })();
+                else {
+                    node.status({ fill: "yellow", shape: "ring", text: `Waiting for credentials (${credentialRetries}/${MQTT_CONFIG.CREDENTIAL_MAX_RETRIES})` });
+                }
+            }, MQTT_CONFIG.CREDENTIAL_RETRY_INTERVAL_MS);
         }
         // Handle input messages
         node.on("input", async function (msg) {
@@ -239,6 +265,10 @@ module.exports = function (RED) {
                 }
             }
             else if (config.protocol === "HTTP") {
+                if (!selectedDevice) {
+                    node.warn("Device not available yet");
+                    return;
+                }
                 const status = await (0, device_1.sendTelemetryByHttp)(selectedDevice.accessToken, msg.payload, node.context());
                 if (status) {
                     node.send({
@@ -278,11 +308,6 @@ module.exports = function (RED) {
                 if (statusHandler && mqttClient) {
                     mqttClient.removeListener("mqtt-status", statusHandler);
                     statusHandler = null;
-                }
-                // Clear any pending poll interval (safety)
-                if (messageHandlerInterval) {
-                    clearInterval(messageHandlerInterval);
-                    messageHandlerInterval = null;
                 }
                 if (mqttClient && isSubscribed) {
                     try {
