@@ -69,7 +69,7 @@
   },
   {
     "id": "0a25303ab28d00ad",
-    "type": "viis-upload-telemetry",
+    "type": "viis-mqtt-client",
     "z": "42623b094c3c9f34",
     "name": "Upload data",
     "configNode": "0aa55ec929d04d4e",

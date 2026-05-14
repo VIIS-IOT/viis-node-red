@@ -1,5 +1,5 @@
 <script type="text/javascript">
-  RED.nodes.registerType("viis-upload-telemetry", {
+  RED.nodes.registerType("viis-mqtt-client", {
     category: "function",
     color: "#44C4A1",
     defaults: {
@@ -15,7 +15,7 @@
     inputs: 1,
     outputs: 1,
     label: function () {
-      return this.name || "viis-upload-telemetry";
+      return this.name || "viis-mqtt-client";
     },
     oneditprepare: function () {
       $("#node-input-name").val(this.name || "");
@@ -52,7 +52,7 @@
   });
 </script>
 
-<script type="text/html" data-template-name="viis-upload-telemetry">
+<script type="text/html" data-template-name="viis-mqtt-client">
   <div class="form-row">
     <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
     <input type="text" id="node-input-name" placeholder="Name" />
@@ -112,7 +112,7 @@
   </div>
 </script>
 
-<script type="text/html" data-help-name="viis-upload-telemetry">
+<script type="text/html" data-help-name="viis-mqtt-client">
   <p>Node for publishing and subscribing to ThingsBoard MQTT broker.</p>
 
   <h3>Configuration</h3>

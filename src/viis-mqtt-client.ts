@@ -51,7 +51,7 @@ function matchTopic(pattern: string, topic: string): boolean {
 }
 
 module.exports = function (RED: NodeAPI) {
-  function ViisUploadTelemetry(this: Node, config: MyNodeDef) {
+  function ViisMqttClient(this: Node, config: MyNodeDef) {
     RED.nodes.createNode(this, config);
 
     const node = this;
@@ -332,5 +332,5 @@ module.exports = function (RED: NodeAPI) {
     });
   }
 
-  RED.nodes.registerType("viis-upload-telemetry", ViisUploadTelemetry);
+  RED.nodes.registerType("viis-mqtt-client", ViisMqttClient);
 };

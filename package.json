@@ -62,7 +62,7 @@
       "viis-automation-node": "dist/modules/viis-automation-node/viis-automation-node.js",
       "viis-config-node": "dist/viis-config-node.js",
       "viis-device-events": "dist/viis-device-events.js",
-      "viis-upload-events": "dist/viis-upload-telemetry.js",
+      "viis-mqtt-client": "dist/viis-mqtt-client.js",
       "viis-telemetry": "dist/modules/viis-telemetry/viis-telemetry.js",
       "viis-rpc-control": "dist/modules/viis-rpc-control/viis-rpc-control.js",
       "viis-rpc-control-from-input": "dist/modules/viis-rpc-control-from-input/viis-rpc-control-from-input.js",
