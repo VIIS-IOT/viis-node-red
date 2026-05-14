@@ -21,8 +21,34 @@ const MQTT_CONFIG = {
     QOS: 1 as 0 | 1 | 2,
     PUBLISH_TOPIC: "v1/devices/me/telemetry",
     SUBSCRIBE_TOPIC: "v1/devices/me/rpc/request/+"
-  }
+  },
+  INIT_TIMEOUT_MS: 30000,
+  POLL_INTERVAL_MS: 100,
 };
+
+/**
+ * Match MQTT topic with wildcard support (+ and #)
+ * + matches exactly one level
+ * # matches zero or more levels (must be last)
+ */
+function matchTopic(pattern: string, topic: string): boolean {
+  const patternParts = pattern.split('/');
+  const topicParts = topic.split('/');
+
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i] === '#') {
+      return true;
+    }
+    if (i >= topicParts.length) {
+      return false;
+    }
+    if (patternParts[i] !== '+' && patternParts[i] !== topicParts[i]) {
+      return false;
+    }
+  }
+
+  return patternParts.length === topicParts.length;
+}
 
 module.exports = function (RED: NodeAPI) {
   function ViisUploadTelemetry(this: Node, config: MyNodeDef) {
@@ -58,9 +84,13 @@ module.exports = function (RED: NodeAPI) {
       topic = config.topic || MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC;
     }
 
-    // Initialize MQTT client if protocol is MQTT
+    // MQTT state
     let mqttClient: any = null;
+    let mqttReady = false;
     let isSubscribed = false;
+    let statusHandler: ((data: any) => void) | null = null;
+    let messageHandlerInterval: NodeJS.Timeout | null = null;
+    const pendingMessages: any[] = [];
 
     if (config.protocol === "MQTT") {
       const mqttConfig: MqttConfig = {
@@ -75,9 +105,58 @@ module.exports = function (RED: NodeAPI) {
       (async () => {
         try {
           mqttClient = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
-          
+
+          // Register status listener on mqttClient (not configNode)
+          statusHandler = (data: { status: string; error?: string }) => {
+            if (data.status === "connected") {
+              node.status({ fill: "green", shape: "dot", text: "Connected" });
+            } else if (data.status === "disconnected") {
+              node.status({ fill: "red", shape: "ring", text: "Disconnected" });
+            } else if (data.status === "error") {
+              node.status({ fill: "yellow", shape: "ring", text: `Error: ${data.error}` });
+            }
+          };
+          mqttClient.on("mqtt-status", statusHandler);
+
           if (config.mode === "subscribe") {
-            // Subscribe to topic
+            // Register message handler BEFORE subscribing
+            const handleMessage = (event: any) => {
+              try {
+                const msgTopic = event?.message?.topic ?? event?.topic;
+                const rawMessage = event?.message?.message ?? event?.message;
+
+                if (!msgTopic) return;
+
+                // Check if message matches this node's topic
+                if (matchTopic(topic, msgTopic)) {
+                  let payload: any;
+
+                  if (typeof rawMessage === 'string') {
+                    try {
+                      payload = JSON.parse(rawMessage);
+                    } catch {
+                      payload = rawMessage;
+                    }
+                  } else if (rawMessage?.message) {
+                    payload = rawMessage.message;
+                  } else {
+                    payload = rawMessage;
+                  }
+
+                  const outputMsg: any = {
+                    topic: msgTopic,
+                    payload: payload,
+                  };
+                  outputMsg.receivedAt = dayjs().valueOf();
+                  node.send(outputMsg);
+                }
+              } catch (error) {
+                node.error(`Error handling MQTT message: ${(error as Error).message}`);
+              }
+            };
+
+            mqttClient.on("mqtt-message", handleMessage);
+
             await mqttClient.subscribe(topic);
             isSubscribed = true;
             node.log(`Subscribed to topic: ${topic}`);
@@ -85,79 +164,69 @@ module.exports = function (RED: NodeAPI) {
           } else {
             node.status({ fill: "green", shape: "dot", text: "Ready" });
           }
+
+          // Mark ready and flush pending messages
+          mqttReady = true;
+          while (pendingMessages.length > 0) {
+            const queuedMsg = pendingMessages.shift();
+            try {
+              const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
+              await mqttClient.publish(publishTopic, JSON.stringify(queuedMsg.payload));
+              node.send({
+                payload: {
+                  ts: dayjs().valueOf(),
+                  data: queuedMsg.payload,
+                  topic: publishTopic,
+                  success: true,
+                },
+              });
+            } catch (err) {
+              node.error(`Failed to publish queued message: ${(err as Error).message}`);
+              node.send({
+                payload: {
+                  ts: dayjs().valueOf(),
+                  data: queuedMsg.payload,
+                  success: false,
+                  error: `Failed to publish queued message: ${(err as Error).message}`,
+                },
+              });
+            }
+          }
         } catch (error) {
           const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
           node.error(errorMsg);
           node.status({ fill: "red", shape: "ring", text: "MQTT failed" });
+
+          // Reject all pending messages
+          while (pendingMessages.length > 0) {
+            const queuedMsg = pendingMessages.shift();
+            node.send({
+              payload: {
+                ts: dayjs().valueOf(),
+                data: queuedMsg.payload,
+                success: false,
+                error: errorMsg,
+              },
+            });
+          }
         }
       })();
-
-      // Handle incoming MQTT messages (for subscribe mode)
-      if (config.mode === "subscribe") {
-        const handleMessage = (event: any) => {
-          try {
-            const { topic: msgTopic, message } = event.message || event;
-            
-            // Check if message is for this node's topic
-            if (msgTopic === topic || msgTopic.startsWith(topic.replace('+', '').replace('#', ''))) {
-              let payload: any;
-              
-              // Parse message
-              if (typeof message === 'string') {
-                try {
-                  payload = JSON.parse(message);
-                } catch {
-                  payload = message;
-                }
-              } else if (message.message) {
-                payload = message.message;
-              } else {
-                payload = message;
-              }
-
-              // Send output message
-              const outputMsg: any = {
-                topic: msgTopic,
-                payload: payload
-              };
-              outputMsg.receivedAt = dayjs().valueOf();
-              node.send(outputMsg);
-            }
-          } catch (error) {
-            node.error(`Error handling MQTT message: ${(error as Error).message}`);
-          }
-        };
-
-        // Register message handler immediately
-        // The handler will be called when messages arrive after subscription
-        const checkClient = setInterval(() => {
-          if (mqttClient) {
-            mqttClient.on("mqtt-message", handleMessage);
-            clearInterval(checkClient);
-          }
-        }, 100);
-      }
     }
 
-    // Handle input messages (for publish mode)
+    // Handle input messages
     node.on("input", async function (msg: any) {
-      if (!selectedDevice) {
-        node.error("Device not found");
-        msg.payload = "Device not found";
-        node.send(msg);
-        return;
-      }
-
       if (config.protocol === "MQTT") {
-        if (!mqttClient) {
-          node.warn("MQTT client not initialized yet");
+        if (!mqttReady || !mqttClient) {
+          // Queue message while MQTT is initializing
+          node.warn("MQTT client not ready, queuing message");
+          pendingMessages.push(msg);
           return;
         }
 
         try {
           const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
           await mqttClient.publish(publishTopic, JSON.stringify(msg.payload));
-          
+
           node.send({
             payload: {
               ts: dayjs().valueOf(),
@@ -169,27 +238,26 @@ module.exports = function (RED: NodeAPI) {
         } catch (error) {
           const errorMsg = `MQTT publish failed: ${(error as Error).message}`;
           node.error(errorMsg);
-          
+
           if (config.enableBackup) {
-            node.warn("MQTT disconnected. Storing message for backup.");
-            node.send({
-              payload: {
-                ts: dayjs().valueOf(),
-                data: msg.payload,
-                success: false,
-                error: errorMsg,
-              },
+            const backupKey = `backup_${Date.now()}`;
+            node.context().set(backupKey, {
+              ts: dayjs().valueOf(),
+              data: msg.payload,
+              topic: config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC,
             });
-          } else {
-            node.send({
-              payload: {
-                ts: dayjs().valueOf(),
-                data: msg.payload,
-                success: false,
-                error: errorMsg,
-              },
-            });
+            node.warn(`Message backed up to context: ${backupKey}`);
           }
+
+          node.send({
+            payload: {
+              ts: dayjs().valueOf(),
+              data: msg.payload,
+              success: false,
+              error: errorMsg,
+              backedUp: config.enableBackup,
+            },
+          });
         }
       } else if (config.protocol === "HTTP") {
         const status = await sendTelemetryByHttp(
@@ -197,7 +265,7 @@ module.exports = function (RED: NodeAPI) {
           msg.payload,
           node.context()
         );
-        
+
         if (status) {
           node.send({
             payload: {
@@ -208,59 +276,52 @@ module.exports = function (RED: NodeAPI) {
           });
         } else {
           const errorMsg = "HTTP upload error";
-          if (config.enableBackup) {
-            node.warn(`${errorMsg}. Storing message for backup.`);
-            node.send({
-              payload: {
-                ts: dayjs().valueOf(),
-                data: msg.payload,
-                success: false,
-                error: errorMsg,
-              },
-            });
-          } else {
-            node.warn(errorMsg);
-            node.send({
-              payload: {
-                ts: dayjs().valueOf(),
-                data: msg.payload,
-                success: false,
-                error: errorMsg,
-              },
-            });
-          }
-        }
-      }
-    });
 
-    // Handle connection status changes
-    configNode.on("mqtt-status", (data: { status: string; error?: string }) => {
-      if (data.status === "connected") {
-        node.status({ fill: "green", shape: "dot", text: "Connected" });
-      } else if (data.status === "disconnected") {
-        node.status({ fill: "red", shape: "ring", text: "Disconnected" });
-      } else if (data.status === "error") {
-        node.status({
-          fill: "yellow",
-          shape: "ring",
-          text: `Error: ${data.error}`,
-        });
+          if (config.enableBackup) {
+            const backupKey = `backup_${Date.now()}`;
+            node.context().set(backupKey, {
+              ts: dayjs().valueOf(),
+              data: msg.payload,
+            });
+            node.warn(`Message backed up to context: ${backupKey}`);
+          }
+
+          node.send({
+            payload: {
+              ts: dayjs().valueOf(),
+              data: msg.payload,
+              success: false,
+              error: errorMsg,
+              backedUp: config.enableBackup,
+            },
+          });
+        }
       }
     });
 
     // Cleanup on node close
     node.on("close", async (done: () => void) => {
       try {
+        // Remove status handler from mqttClient
+        if (statusHandler && mqttClient) {
+          mqttClient.removeListener("mqtt-status", statusHandler);
+          statusHandler = null;
+        }
+
+        // Clear any pending poll interval (safety)
+        if (messageHandlerInterval) {
+          clearInterval(messageHandlerInterval);
+          messageHandlerInterval = null;
+        }
+
         if (mqttClient && isSubscribed) {
-          // Unsubscribe from topic before releasing
           try {
             await mqttClient.unsubscribe(topic);
             node.log(`Unsubscribed from topic: ${topic}`);
           } catch (error) {
             node.warn(`Failed to unsubscribe from ${topic}: ${(error as Error).message}`);
           }
-          
-          // Release the client
+
           ClientRegistry.releaseClient("thingsboard", node);
         }
       } catch (error) {
