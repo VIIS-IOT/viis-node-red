@@ -51,7 +51,13 @@ jest.mock('../../../../ultils/global-context-helper', () => ({
                     'valve_1': 10,
                     'valve_2': 11,
                     'pump_1': 20,
-                    'power': 30
+                    'power': 30,
+                    'luoi_1_thu': 40,
+                    'luoi_1_dai': 41,
+                    'luoi_2_thu': 42,
+                    'luoi_2_dai': 43,
+                    'luoi_3_thu': 44,
+                    'luoi_3_dai': 45
                 };
             }
             if (key === 'MODBUS_HOLDING_REGISTERS') {
@@ -244,8 +250,15 @@ describe('ScheduleMapperService', () => {
         it('should store config in global context', () => {
             service.storeConfigParameter('test_param', 100, 'test-schedule');
 
-            const configValues = mockGlobalContext.get('scheduleConfigValues');
-            expect(configValues['test_param']).toBeDefined();
+            const configValues = mockGlobalContext.get('configKeyValues');
+            expect(configValues['test_param']).toBe(100);
+        });
+
+        it('should track config keys per schedule', () => {
+            service.storeConfigParameter('test_param', 100, 'test-schedule');
+
+            const scheduleConfigKeys = mockGlobalContext.get('scheduleConfigKeys');
+            expect(scheduleConfigKeys['test-schedule']).toContain('test_param');
         });
     });
 
@@ -568,6 +581,174 @@ describe('ScheduleMapperService', () => {
             
             expect(holding['iri_time']).toBe(0);
             expect(holding['set_flow']).toBe(100);
+        });
+    });
+
+    describe('Luoi mapping', () => {
+        it('should expand luoi_1=1 to luoi_1_dai=true (coil written), luoi_1_thu=false (skipped)', () => {
+            const schedule: TabiotSchedule = {
+                name: 'luoi-schedule',
+                label: 'Luoi Schedule',
+                status: 'finished',
+                start_time: '08:00:00',
+                end_time: '18:00:00',
+                enable: 1,
+                is_deleted: 0,
+                device_id: 'test-device-001',
+                creation: new Date(),
+                modified: new Date(),
+                type: 'fixed',
+                deleted: null,
+                action: JSON.stringify({
+                    luoi_1: 1
+                })
+            };
+
+            const result = service.mapScheduleToModbus(schedule);
+
+            // luoi_1=1 means dai mode → luoi_1_dai=true (written), luoi_1_thu=false (skipped as falsy)
+            const daiCmd = result.coilCommands.find(cmd => cmd.key === 'luoi_1_dai');
+            const thuCmd = result.coilCommands.find(cmd => cmd.key === 'luoi_1_thu');
+            expect(daiCmd).toBeDefined();
+            expect(daiCmd?.value).toBe(true);
+            expect(thuCmd).toBeUndefined(); // false coils are skipped
+        });
+
+        it('should expand luoi_2=0 to luoi_2_thu=true (coil written), luoi_2_dai=false (skipped)', () => {
+            const schedule: TabiotSchedule = {
+                name: 'luoi-schedule-2',
+                label: 'Luoi Schedule 2',
+                status: 'finished',
+                start_time: '08:00:00',
+                end_time: '18:00:00',
+                enable: 1,
+                is_deleted: 0,
+                device_id: 'test-device-001',
+                creation: new Date(),
+                modified: new Date(),
+                type: 'fixed',
+                deleted: null,
+                action: JSON.stringify({
+                    luoi_2: 0
+                })
+            };
+
+            const result = service.mapScheduleToModbus(schedule);
+
+            // luoi_2=0 means thu mode → luoi_2_thu=true (written), luoi_2_dai=false (skipped)
+            const thuCmd = result.coilCommands.find(cmd => cmd.key === 'luoi_2_thu');
+            const daiCmd = result.coilCommands.find(cmd => cmd.key === 'luoi_2_dai');
+            expect(thuCmd).toBeDefined();
+            expect(thuCmd?.value).toBe(true);
+            expect(daiCmd).toBeUndefined(); // false coils are skipped
+        });
+
+        it('should handle string luoi values ("true" → dai mode)', () => {
+            const schedule: TabiotSchedule = {
+                name: 'luoi-schedule-3',
+                label: 'Luoi Schedule 3',
+                status: 'finished',
+                start_time: '08:00:00',
+                end_time: '18:00:00',
+                enable: 1,
+                is_deleted: 0,
+                device_id: 'test-device-001',
+                creation: new Date(),
+                modified: new Date(),
+                type: 'fixed',
+                deleted: null,
+                action: JSON.stringify({
+                    luoi_3: 'true'
+                })
+            };
+
+            const result = service.mapScheduleToModbus(schedule);
+
+            // 'true' → 1 → dai mode
+            const daiCmd = result.coilCommands.find(cmd => cmd.key === 'luoi_3_dai');
+            expect(daiCmd).toBeDefined();
+            expect(daiCmd?.value).toBe(true);
+        });
+
+        it('should remove original luoi_1/2/3 keys from action after expansion', () => {
+            const schedule: TabiotSchedule = {
+                name: 'luoi-schedule-4',
+                label: 'Luoi Schedule 4',
+                status: 'finished',
+                start_time: '08:00:00',
+                end_time: '18:00:00',
+                enable: 1,
+                is_deleted: 0,
+                device_id: 'test-device-001',
+                creation: new Date(),
+                modified: new Date(),
+                type: 'fixed',
+                deleted: null,
+                action: JSON.stringify({
+                    luoi_1: 1,
+                    set_flow: 50
+                })
+            };
+
+            const result = service.mapScheduleToModbus(schedule);
+
+            // luoi_1 should be expanded, not present as original key
+            const luoiKey = result.holdingCommands.find(cmd => cmd.key === 'luoi_1');
+            expect(luoiKey).toBeUndefined();
+            // set_flow should still be present
+            const setFlowCmd = result.holdingCommands.find(cmd => cmd.key === 'set_flow');
+            expect(setFlowCmd).toBeDefined();
+        });
+    });
+
+    describe('clearScheduleConfigValues', () => {
+        beforeEach(() => {
+            mockGlobalContext.set('configKeyValues', {});
+            mockGlobalContext.set('scheduleConfigKeys', {});
+            mockGlobalContext.set('configKeys', {
+                'set_ec': 'number',
+                'set_ph': 'number',
+                'control_mode': 'number'
+            });
+        });
+
+        it('should reset config values to falsy defaults', () => {
+            // Setup: store some config values
+            mockGlobalContext.set('configKeyValues', {
+                'set_ec': 2.5,
+                'set_ph': 6.0,
+                'control_mode': 1
+            });
+            mockGlobalContext.set('scheduleConfigKeys', {
+                'test-schedule': ['set_ec', 'set_ph', 'control_mode']
+            });
+
+            const resetValues = service.clearScheduleConfigValues('test-schedule');
+
+            expect(resetValues['set_ec']).toBe(0); // number → 0
+            expect(resetValues['set_ph']).toBe(0);
+            expect(resetValues['control_mode']).toBe(0);
+
+            // Verify configKeyValues was updated
+            const configValues = mockGlobalContext.get('configKeyValues');
+            expect(configValues['set_ec']).toBe(0);
+            expect(configValues['set_ph']).toBe(0);
+        });
+
+        it('should clear schedule config key tracking', () => {
+            mockGlobalContext.set('scheduleConfigKeys', {
+                'test-schedule': ['set_ec']
+            });
+
+            service.clearScheduleConfigValues('test-schedule');
+
+            const scheduleConfigKeys = mockGlobalContext.get('scheduleConfigKeys');
+            expect(scheduleConfigKeys['test-schedule']).toBeUndefined();
+        });
+
+        it('should return empty object when no config keys tracked', () => {
+            const resetValues = service.clearScheduleConfigValues('non-existent');
+            expect(resetValues).toEqual({});
         });
     });
 

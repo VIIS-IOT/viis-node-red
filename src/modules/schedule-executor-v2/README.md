@@ -1,35 +1,35 @@
-# Schedule Executor V2 - Migration Guide
+# Schedule Executor V2 - Composable Architecture
 
 ## Overview
 
-Schedule Executor V2 is a complete refactoring of the original `viis-schedule-executor` node into three specialized, testable nodes following the **Single Responsibility Principle** and **Dependency Injection** patterns.
+Schedule Executor V2 refactors the monolithic `viis-schedule-executor` (V1, ~3500 lines) into a **composable architecture** that leverages existing node ecosystem instead of reimplementing everything custom.
+
+### Key Principle
+Schedule nodes handle **scheduling logic only**. Modbus read/write via `viis-modbus-flex`, MQTT via `viis-mqtt-client`, HTTP via built-in `http out` node.
 
 ## Architecture
 
-### Original Node (v1)
+### V1 (Monolithic)
 ```
-┌─────────────────────────────────────────────────────────┐
-│          viis-schedule-executor (Monolithic)            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Timing Check │  │ Logic Check  │  │  Execution   │  │
-│  │              │  │              │  │              │  │
-│  │ - getDue     │  │ - Mode Check │  │ - Modbus     │  │
-│  │ - isDue      │  │ - Conditions │  │ - Verify     │  │
-│  │ - Cron       │  │ - Overlaps   │  │ - Reset      │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└─────────────────────────────────────────────────────────┘
+inject → viis-schedule-executor (3500 lines, does everything) → debug
 ```
 
-### New Nodes (v2)
+### V2 (Composable)
 ```
-┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-│ trigger-v2       │ -> │ logic-v2         │ -> │ executor-v2      │
-│                  │    │                  │    │                  │
-│ Timing Only      │    │ Mode/Conditions  │    │ Modbus Execute   │
-│ - DB Query       │    │ - AUTO/MANUAL    │    │ - Write Coils    │
-│ - Time Check     │    │ - Safety Check   │    │ - Write Holding  │
-│ - Interval       │    │ - Overlaps       │    │ - Verify         │
-└──────────────────┘    └──────────────────┘    └──────────────────┘
+[inject] → [trigger-v2] → [logic-v2] → [function: build msg] → [viis-modbus-flex] → [executor-v2: state] → [viis-mqtt-client] → [http out]
+```
+
+### Data Flow
+```
+[viis-modbus-flex: write done]
+        │
+        ▼
+[executor-v2: update DB status + track active commands]
+        │
+        ├──► [function: build telemetry] ──► [viis-mqtt-client: publish TB + EMQX]
+        ├──► [function: build audit] ─────► [viis-mqtt-client: publish TB + EMQX]
+        ├──► [function: build notification] ► [http out: POST notification API]
+        └──► [function: build schedule log] ► [http out: POST schedule log API]
 ```
 
 ## Folder Structure
@@ -39,27 +39,70 @@ src/modules/schedule-executor-v2/
 ├── common/
 │   ├── types.ts                     # Shared interfaces
 │   └── schedule-utils.ts            # Shared utilities
-├── viis-schedule-trigger-v2/
-│   ├── viis-schedule-trigger-v2.ts  # Node implementation
-│   ├── viis-schedule-trigger-v2.html # Node editor UI
-│   ├── schedule-trigger-service.ts  # Business logic (testable)
-│   └── tests/
-│       └── schedule-trigger.service.test.ts
-├── viis-schedule-logic-v2/
-│   ├── viis-schedule-logic-v2.ts    # Node implementation
-│   ├── viis-schedule-logic-v2.html  # Node editor UI
-│   ├── logic-control-service.ts     # Mode/conditions check
-│   ├── schedule-mapper-service.ts   # mapScheduleToModbus
-│   └── tests/
-│       ├── logic-control.service.test.ts
-│       └── schedule-mapper.service.test.ts
-├── viis-schedule-executor-v2/
-│   ├── viis-schedule-executor-v2.ts # Node implementation
-│   ├── viis-schedule-executor-v2.html # Node editor UI
-│   ├── modbus-executor-service.ts   # Execute & verify
-│   └── tests/
-│       └── modbus-executor.service.test.ts
+├── viis-schedule-trigger-v2/        # Timing check + stuck schedule recovery
+├── viis-schedule-logic-v2/          # Mode/safety check + schedule-to-Modbus mapping
+├── viis-schedule-executor-v2/       # State manager (active commands, DB status)
+├── templates/                       # Function node templates for flow wiring
+│   ├── build-modbus-write-msg.js    # Convert logic output → viis-modbus-flex input
+│   ├── build-modbus-reset-msg.js    # Build reset commands for schedule stop
+│   ├── build-mqtt-telemetry-msg.js  # Build MQTT telemetry payload
+│   ├── build-mqtt-audit-msg.js      # Build MQTT audit log payload
+│   ├── build-http-notification-msg.js # Build HTTP notification payload
+│   └── build-schedule-log-msg.js    # Build schedule log payload
 └── README.md                        # This file
+```
+
+## Nodes
+
+### 1. viis-schedule-trigger-v2 (2 outputs)
+- **Output 1**: Due schedules for normal execution
+- **Output 2**: Stuck schedules for recovery
+- Queries DB, checks timing, detects stuck "running" schedules
+
+### 2. viis-schedule-logic-v2
+- Control mode check (AUTO/MANUAL/OFF)
+- Safety conditions (water level, emergency stop, pump/flow error)
+- Schedule-to-Modbus mapping (with luoi expansion)
+- Manual overrides
+
+### 3. viis-schedule-executor-v2 (Slim State Manager)
+- Active command tracking
+- DB status updates
+- Startup/power-outage recovery
+- Outputs msg for downstream nodes (MQTT, HTTP)
+
+### 4. viis-schedule-rpc (5 outputs)
+- Routes RPC commands to appropriate outputs
+- Output 1: schedule-disable-by-backend
+- Output 2: confirm-devices-off
+- Output 3: control
+- Output 4: set_control_mode
+- Output 5: unknown methods
+
+## Wiring Examples
+
+### Basic Schedule Execution
+```
+[inject: 1min] → [trigger-v2:1] → [logic-v2] → [function: build write] → [viis-modbus-flex] → [executor-v2] → [function: build mqtt] → [viis-mqtt-client]
+```
+
+### With HTTP Notification
+```
+[executor-v2] → [function: build notification] → [http out: POST /api/v2/alarm/notification-by-token]
+```
+
+### With RPC Control
+```
+[viis-mqtt-client: RPC subscribe] → [viis-schedule-rpc] → [switch: method]
+    ├─ schedule-disable → [executor-v2: stop] → [function: reset] → [viis-modbus-flex]
+    ├─ confirm-devices-off → [executor-v2: confirm]
+    ├─ control → [function: write] → [viis-modbus-flex]
+    └─ set_control_mode → [logic-v2: set mode]
+```
+
+### Recovery Flow
+```
+[inject: 1min] → [trigger-v2:2] → [executor-v2: recover] → [function: reset] → [viis-modbus-flex]
 ```
 
 ## Node Details

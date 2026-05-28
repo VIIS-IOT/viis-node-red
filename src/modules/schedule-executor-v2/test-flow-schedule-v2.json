@@ -1,0 +1,562 @@
+[
+    {
+        "id": "schedule-v2-test-flow",
+        "type": "tab",
+        "label": "Schedule V2 Test",
+        "disabled": false,
+        "info": "Test flow for Schedule Executor V2 composable architecture"
+    },
+    {
+        "id": "inject-trigger",
+        "type": "inject",
+        "z": "schedule-v2-test-flow",
+        "name": "Trigger Every Minute",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "60",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 160,
+        "y": 80,
+        "wires": [
+            ["trigger-v2"]
+        ]
+    },
+    {
+        "id": "trigger-v2",
+        "type": "viis-schedule-trigger-v2",
+        "z": "schedule-v2-test-flow",
+        "name": "Schedule Trigger",
+        "debugEnable": true,
+        "cleanupInterval": 1,
+        "x": 380,
+        "y": 80,
+        "wires": [
+            ["logic-v2"],
+            ["function-recovery-reset"]
+        ]
+    },
+    {
+        "id": "function-build-write",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Build Modbus Write Msg",
+        "func": "// Extract input\nconst payload = msg.payload;\nconst allowed = payload.allowed !== false;\nconst schedules = payload.schedules || [];\n\nif (!allowed || schedules.length === 0) {\n    // No due schedules — skip\n    return null;\n}\n\n// Process first due schedule (for demo)\nconst schedule = schedules[0];\nconst action = JSON.parse(schedule.action || '{}');\n\n// Build commands array for viis-modbus-flex\nconst commands = [];\nconst holdingRegisters = global.get('MODBUS_HOLDING_REGISTERS') || {};\nconst coils = global.get('MODBUS_COILS') || {};\n\nfor (const [key, value] of Object.entries(action)) {\n    if (key === 'iri_time' && !value) continue;\n    \n    if (holdingRegisters[key] !== undefined) {\n        commands.push({\n            fc: 6,\n            unitid: 1,\n            address: holdingRegisters[key],\n            value: Number(value)\n        });\n    } else if (coils[key] !== undefined) {\n        if (value === true || value === 'true' || value === 1) {\n            commands.push({\n                fc: 5,\n                unitid: 1,\n                address: coils[key],\n                value: true\n            });\n        }\n    }\n}\n\nif (commands.length === 0) {\n    return null;\n}\n\n// Output for viis-modbus-flex\nmsg.payload = {\n    commands: commands,\n    schedule: schedule,\n    isStarting: schedule.status !== 'running'\n};\n\nmsg.topic = 'schedule-modbus-write';\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 80,
+        "wires": [
+            ["modbus-flex-write"]
+        ]
+    },
+    {
+        "id": "modbus-flex-write",
+        "type": "viis-modbus-flex",
+        "z": "schedule-v2-test-flow",
+        "name": "Modbus Write",
+        "boardId": "",
+        "enableLogging": true,
+        "x": 840,
+        "y": 80,
+        "wires": [
+            ["function-process-result"]
+        ]
+    },
+    {
+        "id": "function-process-result",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Process Modbus Result",
+        "func": "// Process viis-modbus-flex response\nconst payload = msg.payload;\n\nif (payload.error) {\n    node.warn('Modbus write error: ' + payload.error);\n    return null;\n}\n\n// Pass through with schedule info\nmsg.payload = {\n    success: true,\n    scheduleId: payload.schedule?.name || 'unknown',\n    action: 'start',\n    schedule: payload.schedule,\n    commands: payload.commands || []\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1080,
+        "y": 80,
+        "wires": [
+            ["executor-v2"]
+        ]
+    },
+    {
+        "id": "executor-v2",
+        "type": "viis-schedule-executor-v2",
+        "z": "schedule-v2-test-flow",
+        "name": "Schedule State Manager",
+        "debugEnable": true,
+        "x": 1320,
+        "y": 80,
+        "wires": [
+            ["function-build-telemetry", "function-build-audit", "function-build-notification", "function-build-log"]
+        ]
+    },
+    {
+        "id": "function-build-telemetry",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Build MQTT Telemetry",
+        "func": "const payload = msg.payload;\nconst schedule = payload.schedule;\n\nif (!schedule) return null;\n\nconst telemetryData = {\n    ts: Date.now(),\n    _schedule_action: payload.action,\n    _schedule_id: schedule.name,\n    _schedule_label: schedule.label\n};\n\n// Add command values\nfor (const cmd of (payload.commands || [])) {\n    telemetryData[cmd.key] = cmd.value;\n}\n\nmsg.payload = {\n    topic: 'v1/devices/me/telemetry',\n    payload: JSON.stringify(telemetryData)\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1560,
+        "y": 40,
+        "wires": [
+            ["mqtt-client-publish"]
+        ]
+    },
+    {
+        "id": "function-build-audit",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Build MQTT Audit Log",
+        "func": "const payload = msg.payload;\nconst schedule = payload.schedule;\n\nif (!schedule) return null;\n\nconst auditLog = {\n    from: 'DEVICE_EXE_SCHEDULE',\n    requestId: require('uuid').v4(),\n    message: `Schedule ${schedule.name} ${payload.action}`,\n    metadata: {\n        status: payload.success ? 'SUCCESS' : 'FAIL',\n        schedule_id: schedule.name,\n        action: payload.action,\n        timestamp: Date.now()\n    }\n};\n\nmsg.payload = {\n    topic: 'v1/devices/me/telemetry',\n    payload: JSON.stringify({ logs: auditLog })\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1560,
+        "y": 80,
+        "wires": [
+            ["mqtt-client-publish"]
+        ]
+    },
+    {
+        "id": "function-build-notification",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Build HTTP Notification",
+        "func": "const payload = msg.payload;\nconst schedule = payload.schedule;\n\nif (!schedule) return null;\n\nconst deviceId = global.get('DEVICE_ID') || 'unknown';\nconst backendUrl = global.get('VIIS_BACKEND') || '';\nconst token = global.get('DEVICE_ACCESS_TOKEN') || '';\n\nif (!backendUrl || !token) {\n    node.warn('HTTP notification skipped: missing config');\n    return null;\n}\n\nconst httpPayload = {\n    alarm_name: schedule.label || schedule.name,\n    id: deviceId,\n    msg: `Schedule ${schedule.name} ${payload.action}`,\n    severity: payload.success ? 'notification' : 'error',\n    trigger_time: new Date().toISOString(),\n    tb_alarm_id: schedule.name,\n    alarm_status: payload.action === 'start' ? 'Pending' : 'Clear',\n    entity: deviceId\n};\n\nmsg.method = 'POST';\nmsg.url = `${backendUrl}/api/v2/alarm/notification-by-token?device_access_token=${encodeURIComponent(token)}`;\nmsg.headers = { 'Content-Type': 'application/json' };\nmsg.payload = httpPayload;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1580,
+        "y": 120,
+        "wires": [
+            ["http-notify"]
+        ]
+    },
+    {
+        "id": "function-build-log",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Build Schedule Log",
+        "func": "const payload = msg.payload;\nconst schedule = payload.schedule;\n\nif (!schedule) return null;\n\nconst backendUrl = global.get('VIIS_BACKEND') || '';\nconst token = global.get('DEVICE_ACCESS_TOKEN') || '';\n\nif (!backendUrl || !token) return null;\n\nconst now = new Date();\nconst today = now.toISOString().split('T')[0];\n\nmsg.method = 'POST';\nmsg.url = `${backendUrl}/api/v2/schedule/log?device_access_token=${encodeURIComponent(token)}`;\nmsg.headers = { 'Content-Type': 'application/json' };\nmsg.payload = {\n    start_time: `${today}T${schedule.start_time || '00:00:00'}`,\n    end_time: `${today}T${schedule.end_time || '23:59:59'}`,\n    schedule_id: schedule.name\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1560,
+        "y": 160,
+        "wires": [
+            ["http-log"]
+        ]
+    },
+    {
+        "id": "function-recovery-reset",
+        "type": "function",
+        "z": "schedule-v2-test-flow",
+        "name": "Build Recovery Reset",
+        "func": "// Handle stuck schedule recovery from trigger output 2\nconst payload = msg.payload;\nconst recovered = payload.recoveredSchedules || [];\n\nif (recovered.length === 0) return null;\n\n// Build reset commands for first recovered schedule\nconst schedule = recovered[0];\nconst activeCommands = context.global.get('activeModbusCommands') || {};\nconst commands = activeCommands[schedule.name] || [];\n\nconst resetCommands = commands.map(cmd => ({\n    fc: cmd.fc,\n    unitid: cmd.unitid || 1,\n    address: cmd.address,\n    value: cmd.fc === 5 ? false : 0\n}));\n\nif (resetCommands.length === 0) return null;\n\nmsg.payload = {\n    commands: resetCommands,\n    schedule: schedule,\n    isReset: true\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 160,
+        "wires": [
+            ["modbus-flex-reset"]
+        ]
+    },
+    {
+        "id": "modbus-flex-reset",
+        "type": "viis-modbus-flex",
+        "z": "schedule-v2-test-flow",
+        "name": "Modbus Reset",
+        "boardId": "",
+        "enableLogging": true,
+        "x": 840,
+        "y": 160,
+        "wires": [
+            ["debug-reset-result"]
+        ]
+    },
+    {
+        "id": "mqtt-client-publish",
+        "type": "viis-mqtt-client",
+        "z": "schedule-v2-test-flow",
+        "name": "MQTT Publish",
+        "configNode": "",
+        "mode": "publish",
+        "x": 1800,
+        "y": 80,
+        "wires": [
+            ["debug-mqtt"]
+        ]
+    },
+    {
+        "id": "http-notify",
+        "type": "http request",
+        "z": "schedule-v2-test-flow",
+        "name": "HTTP Notification",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1800,
+        "y": 120,
+        "wires": [
+            ["debug-http"]
+        ]
+    },
+    {
+        "id": "http-log",
+        "type": "http request",
+        "z": "schedule-v2-test-flow",
+        "name": "HTTP Schedule Log",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1800,
+        "y": 160,
+        "wires": [
+            ["debug-log"]
+        ]
+    },
+    {
+        "id": "debug-reset-result",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "Reset Result",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1080,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "debug-mqtt",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "MQTT Published",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2020,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "debug-http",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "HTTP Response",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2020,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "debug-log",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "Log Response",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2000,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "manual-trigger",
+        "type": "inject",
+        "z": "schedule-v2-test-flow",
+        "name": "Manual Trigger",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 150,
+        "y": 240,
+        "wires": [
+            ["trigger-v2"]
+        ]
+    },
+    {
+        "id": "debug-trigger",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "Trigger Output",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 600,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "rpc-subscribe",
+        "type": "viis-mqtt-client",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC Subscribe",
+        "configNode": "",
+        "mode": "subscribe",
+        "topic": "v1/devices/me/rpc/request/+",
+        "x": 150,
+        "y": 320,
+        "wires": [
+            ["schedule-rpc"]
+        ]
+    },
+    {
+        "id": "schedule-rpc",
+        "type": "viis-schedule-rpc",
+        "z": "schedule-v2-test-flow",
+        "name": "Schedule RPC Router",
+        "debugEnable": true,
+        "x": 400,
+        "y": 320,
+        "wires": [
+            ["debug-rpc-disable"],
+            ["debug-rpc-confirm"],
+            ["debug-rpc-control"],
+            ["debug-rpc-mode"],
+            ["debug-rpc-unknown"]
+        ]
+    },
+    {
+        "id": "debug-rpc-disable",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC: Disable",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 660,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "debug-rpc-confirm",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC: Confirm Off",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "debug-rpc-control",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC: Control",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 660,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "debug-rpc-mode",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC: Set Mode",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 660,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "debug-rpc-unknown",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC: Unknown",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 660,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "logic-v2",
+        "type": "viis-schedule-logic-v2",
+        "z": "schedule-v2-test-flow",
+        "name": "Schedule Logic",
+        "debugEnable": true,
+        "x": 620,
+        "y": 40,
+        "wires": [
+            ["function-build-write"]
+        ]
+    },
+    {
+        "id": "node-red-contribmodbusflex",
+        "type": "viis-modbus-flex",
+        "z": "schedule-v2-test-flow",
+        "name": "Modbus Read (for verify)",
+        "boardId": "",
+        "enableLogging": false,
+        "x": 1320,
+        "y": 240,
+        "wires": [
+            ["debug-modbus-read"]
+        ]
+    },
+    {
+        "id": "debug-modbus-read",
+        "type": "debug",
+        "z": "schedule-v2-test-flow",
+        "name": "Modbus Read Result",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1560,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "comment-architecture",
+        "type": "comment",
+        "z": "schedule-v2-test-flow",
+        "name": "Schedule V2 Composable Architecture",
+        "info": "V2 Flow:\n[inject] → [trigger-v2] → [logic-v2] → [function: build] → [modbus-flex] → [executor-v2] → [mqtt-client / http out]\n\nOutputs from executor-v2:\n1. MQTT Telemetry → viis-mqtt-client\n2. MQTT Audit Log → viis-mqtt-client\n3. HTTP Notification → http out\n4. Schedule Log → http out",
+        "x": 220,
+        "y": 20,
+        "wires": []
+    },
+    {
+        "id": "comment-rpc",
+        "type": "comment",
+        "z": "schedule-v2-test-flow",
+        "name": "RPC Control Flow",
+        "info": "[viis-mqtt-client: RPC subscribe] → [viis-schedule-rpc] → [switch by output]\n\nOutputs:\n1. schedule-disable-by-backend\n2. confirm-devices-off\n3. control\n4. set_control_mode\n5. unknown",
+        "x": 200,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "comment-recovery",
+        "type": "comment",
+        "z": "schedule-v2-test-flow",
+        "name": "Recovery Flow",
+        "info": "[trigger-v2: output 2] → [function: build reset] → [modbus-flex: reset] → [executor-v2: recover]",
+        "x": 160,
+        "y": 120,
+        "wires": []
+    }
+]

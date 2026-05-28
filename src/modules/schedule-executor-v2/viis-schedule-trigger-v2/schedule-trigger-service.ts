@@ -6,12 +6,13 @@
  * It focuses ONLY on determining which schedules should run based on time
  */
 
-import { ScheduleTriggerOutput, TabiotSchedule } from "../common/types";
+import { ScheduleTriggerOutput, TabiotSchedule, ActiveModbusCommands } from "../common/types";
 import { isScheduleDue, getCurrentTimestamp } from "../common/schedule-utils";
 import { AppDataSource } from "../../../orm/dataSource";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import { Node } from "node-red";
 import { Repository } from "typeorm";
+import moment from "moment";
 
 export class ScheduleTriggerService {
     private node: Node;
@@ -184,5 +185,86 @@ export class ScheduleTriggerService {
         const globalContext = this.node.context().global;
         globalContext.set("scheduleLastCheckTimestamps", {});
         this.debugLog("Cleared all last check timestamps");
+    }
+
+    // ==================== STUCK SCHEDULE RECOVERY ====================
+
+    /**
+     * Check for schedules that are "running" but past their end time (stuck).
+     * Returns array of schedules that need recovery (status change to "finished").
+     * The actual Modbus reset is handled by downstream nodes.
+     */
+    async checkAndRecoverStuckSchedules(): Promise<TabiotSchedule[]> {
+        try {
+            const allSchedules = await this.getDueSchedules();
+            const globalContext = this.node.context().global;
+            const activeCommands: ActiveModbusCommands = (globalContext.get("activeModbusCommands") as ActiveModbusCommands) || {};
+            const recoveredSchedules: TabiotSchedule[] = [];
+
+            // Also check all schedules (not just enabled) for stuck "running" status
+            if (!AppDataSource.isInitialized) {
+                await AppDataSource.initialize();
+            }
+
+            const repository: Repository<any> = AppDataSource.getRepository('TabiotSchedule' as any);
+            const runningSchedules: any[] = await repository
+                .createQueryBuilder("schedule")
+                .where("schedule.status = :status", { status: "running" })
+                .andWhere("schedule.is_deleted = :isDeleted", { isDeleted: 0 })
+                .getMany();
+
+            const now = moment().utc().add(7, 'hours');
+
+            for (const schedule of runningSchedules) {
+                if (!schedule.end_time) continue;
+
+                const endTime = moment(schedule.end_time, "HH:mm:ss");
+                const today = now.clone().startOf('day');
+                let endDateTime = today.clone().set({
+                    hour: endTime.hour(),
+                    minute: endTime.minute(),
+                    second: endTime.second(),
+                });
+
+                // Handle cross-midnight
+                if (endDateTime.isBefore(today.clone().set({ hour: 0, minute: 0, second: 0 }))) {
+                    endDateTime.add(1, 'day');
+                }
+
+                // Add 2-minute grace period
+                const graceEndTime = endDateTime.clone().add(2, 'minutes');
+
+                if (now.isAfter(graceEndTime)) {
+                    // Schedule is past end time + grace period
+                    const hasActiveCommands = activeCommands[schedule.name]?.length > 0;
+
+                    if (!hasActiveCommands) {
+                        // No active commands = stuck after power outage or error
+                        this.debugLog(`🔄 STUCK RECOVERY: ${schedule.name} is "running" but has no active commands past end time`);
+                        schedule.status = "finished";
+                        schedule.enable = 0;
+                        recoveredSchedules.push(schedule);
+                    } else {
+                        // Has active commands but past end time for > 3 minutes
+                        const threeMinPastEnd = endDateTime.clone().add(3, 'minutes');
+                        if (now.isAfter(threeMinPastEnd)) {
+                            this.debugLog(`🔄 STUCK RECOVERY: ${schedule.name} is "running" for 3+ minutes past end time`);
+                            schedule.status = "finished";
+                            schedule.enable = 0;
+                            recoveredSchedules.push(schedule);
+                        }
+                    }
+                }
+            }
+
+            if (recoveredSchedules.length > 0) {
+                this.node.warn(`🔄 RECOVERY: Found ${recoveredSchedules.length} stuck schedule(s) to recover`);
+            }
+
+            return recoveredSchedules;
+        } catch (error) {
+            console.error(`Error in checkAndRecoverStuckSchedules: ${(error as Error).message}`);
+            return [];
+        }
     }
 }

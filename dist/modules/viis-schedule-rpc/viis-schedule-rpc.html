@@ -1,0 +1,95 @@
+<script type="text/javascript">
+    RED.nodes.registerType('viis-schedule-rpc', {
+        category: 'VIIS V2',
+        color: '#3FADB5',
+        defaults: {
+            name: { value: "" },
+            description: { value: "" },
+            debugEnable: { value: false }
+        },
+        inputs: 1,
+        outputs: 5,
+        icon: "font-awesome/fa-exchange",
+        align: "left",
+        label: function () {
+            return this.name || "viis-schedule-rpc";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="viis-schedule-rpc">
+    <div class="form-row">
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i> Name
+        </label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-description">
+            <i class="fa fa-info-circle"></i> Description
+        </label>
+        <input type="text" id="node-input-description" placeholder="Description">
+    </div>
+    <div class="form-row">
+        <label for="node-input-debugEnable">
+            <i class="fa fa-bug"></i> Debug
+        </label>
+        <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+        <span>Enable debug logging</span>
+    </div>
+    <div class="form-tips">
+        <i class="fa fa-info-circle"></i>
+        <strong>viis-schedule-rpc</strong> routes RPC commands to 5 outputs:
+        <ol>
+            <li>schedule-disable-by-backend</li>
+            <li>confirm-devices-off</li>
+            <li>control (general Modbus)</li>
+            <li>set_control_mode</li>
+            <li>unknown/other</li>
+        </ol>
+        Connect upstream MQTT subscriber to this node's input.
+    </div>
+</script>
+
+<script type="text/html" data-help-name="viis-schedule-rpc">
+    <h3>viis-schedule-rpc</h3>
+    <p>Routes schedule-related RPC commands to appropriate outputs.</p>
+    
+    <h4>Responsibilities</h4>
+    <ul>
+        <li>Receive RPC messages from upstream MQTT subscriber</li>
+        <li>Route by method to 5 outputs</li>
+        <li>Log unknown methods</li>
+    </ul>
+    
+    <h4>Input</h4>
+    <dl class="message-properties">
+        <dt>msg.payload<span class="property-type">object</span></dt>
+        <dd>
+            <ul>
+                <li><code>method</code>: RPC method name</li>
+                <li><code>params</code>: RPC parameters (optional)</li>
+            </ul>
+        </dd>
+    </dl>
+    
+    <h4>Outputs</h4>
+    <dl class="message-properties">
+        <dt>Output 1<span class="property-type">msg</span></dt>
+        <dd><code>schedule-disable-by-backend</code></dd>
+        <dt>Output 2<span class="property-type">msg</span></dt>
+        <dd><code>confirm-devices-off</code></dd>
+        <dt>Output 3<span class="property-type">msg</span></dt>
+        <dd><code>control</code> (general Modbus control)</dd>
+        <dt>Output 4<span class="property-type">msg</span></dt>
+        <dd><code>set_control_mode</code></dd>
+        <dt>Output 5<span class="property-type">msg</span></dt>
+        <dd>Unknown/other methods</dd>
+    </dl>
+    
+    <h4>Wiring</h4>
+    <pre>[viis-mqtt-client: RPC subscribe] → [viis-schedule-rpc] → [switch by output]</pre>
+</script>

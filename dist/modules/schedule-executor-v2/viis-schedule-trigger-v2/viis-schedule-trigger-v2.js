@@ -2,11 +2,12 @@
 /**
  * viis-schedule-trigger-v2 Node
  *
- * Responsibility: Check timing and emit due schedules
+ * Responsibility: Check timing and emit due schedules, detect stuck schedules for recovery
  * This is the FIRST node in the V2 chain
  *
  * Input: msg (trigger)
- * Output: msg.payload = { schedules: TabiotSchedule[], timestamp: number, checkInterval: number }
+ * Output 1: msg.payload = { schedules: TabiotSchedule[], timestamp: number, checkInterval: number }
+ * Output 2: msg.payload = { recoveredSchedules: TabiotSchedule[] } (stuck schedule recovery)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const schedule_trigger_service_1 = require("./schedule-trigger-service");
@@ -16,15 +17,13 @@ module.exports = function (RED) {
         const node = this;
         node.name = config.name;
         const debugEnable = config.debugEnable || false;
-        const checkInterval = config.cleanupInterval || 1; // Default 1 minute
-        // Helper function for conditional logging
+        const checkInterval = config.cleanupInterval || 1;
         const debugLog = (message) => {
             if (debugEnable) {
                 node.warn(message);
             }
         };
         debugLog("🚀 viis-schedule-trigger-v2 initialized");
-        // Initialize service
         let triggerService;
         try {
             triggerService = new schedule_trigger_service_1.ScheduleTriggerService(node, debugEnable);
@@ -42,28 +41,34 @@ module.exports = function (RED) {
                 node.status({ fill: "blue", shape: "dot", text: "Checking..." });
                 // Execute trigger check
                 const result = await triggerService.checkTriggers(checkInterval);
-                debugLog(`✅ Trigger check complete: ${result.schedules.length} schedules due`);
-                // Output result
+                debugLog(`✅ Trigger check: ${result.schedules.length} schedules due`);
+                // Check for stuck schedules (recovery)
+                const recoveredSchedules = await triggerService.checkAndRecoverStuckSchedules();
+                if (recoveredSchedules.length > 0) {
+                    debugLog(`🔄 Recovery: ${recoveredSchedules.length} stuck schedule(s) found`);
+                }
+                // Output 1: due schedules
                 msg.payload = result;
                 msg.topic = "schedule-trigger-v2";
                 msg.timestamp = result.timestamp;
                 msg.scheduleCount = result.schedules.length;
+                // Output 2: recovered schedules (or null if none)
+                const recoveryMsg = recoveredSchedules.length > 0
+                    ? { payload: { recoveredSchedules }, topic: "schedule-trigger-v2-recovery" }
+                    : null;
                 // Set status
-                if (result.schedules.length > 0) {
+                const totalOutput = result.schedules.length + recoveredSchedules.length;
+                if (totalOutput > 0) {
                     node.status({
                         fill: "green",
                         shape: "dot",
-                        text: `${result.schedules.length} due`
+                        text: `${result.schedules.length} due, ${recoveredSchedules.length} recovery`
                     });
                 }
                 else {
-                    node.status({
-                        fill: "grey",
-                        shape: "dot",
-                        text: "No schedules due"
-                    });
+                    node.status({ fill: "grey", shape: "dot", text: "No action" });
                 }
-                send(msg);
+                send([msg, recoveryMsg]);
                 done();
             }
             catch (error) {
@@ -73,11 +78,6 @@ module.exports = function (RED) {
                 done(error);
             }
         });
-        // Handle RPC commands (optional - for future extensibility)
-        node.on("input", async function (msg, send, done) {
-            // Already handled above
-        });
-        // Cleanup on close
         node.on("close", () => {
             debugLog("viis-schedule-trigger-v2 closed");
             node.status({});

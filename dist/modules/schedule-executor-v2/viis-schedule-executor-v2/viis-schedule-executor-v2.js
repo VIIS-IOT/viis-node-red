@@ -1,347 +1,165 @@
 "use strict";
 /**
- * viis-schedule-executor-v2 Node
+ * viis-schedule-executor-v2 Node (Slim State Manager)
  *
- * Responsibility: Execute Modbus commands, verify, notify, and sync status
- * This is the THIRD (final) node in the V2 chain
+ * Responsibility: State management only — track active commands, update DB status, recovery logic
+ * This is the state management node in the V2 composable flow.
  *
- * Input: msg.payload = { allowed: boolean, commands: ModbusCmd[], schedule?: TabiotSchedule, configParameters?: ConfigParameter[] }
- * Output: msg.payload = { success: boolean, executedCommands: number, failedCommands: number }
+ * Modbus execution → viis-modbus-flex
+ * MQTT publishing → viis-mqtt-client
+ * HTTP notifications → http out node
+ *
+ * Input: msg.payload = { success: boolean, scheduleId: string, schedule?: TabiotSchedule, action?: 'start'|'end', commands?: ModbusCmd[] }
+ * Output: msg.payload = { success: boolean, scheduleId: string, statusChanged: boolean, action: string }
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
-const modbus_executor_service_1 = require("./modbus-executor-service");
-const schedule_notification_service_1 = require("./schedule-notification-service");
 const schedule_status_service_1 = require("./schedule-status-service");
-const client_registry_1 = __importDefault(require("../../../core/client-registry"));
-const global_context_helper_1 = require("../../../ultils/global-context-helper");
 module.exports = function (RED) {
     function ScheduleExecutorV2Node(config) {
         RED.nodes.createNode(this, config);
         const node = this;
         node.name = config.name;
         const debugEnable = config.debugEnable || false;
-        const verifyAfterWrite = config.verifyAfterWrite !== false;
-        // Helper function for conditional logging
+        const globalContext = node.context().global;
         const debugLog = (message) => {
             if (debugEnable) {
                 node.warn(message);
             }
         };
-        debugLog("⚙️ viis-schedule-executor-v2 initialized");
-        debugLog(`Verify after write: ${verifyAfterWrite}`);
-        // Initialize services
-        let executorService;
-        let notificationService;
+        // ==================== STARTUP RECOVERY ====================
+        const currentStartupId = `startup_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const lastStartupId = globalContext.get("scheduleExecutorStartupId") || null;
+        const isStartupRecovery = !lastStartupId || lastStartupId !== currentStartupId;
+        if (isStartupRecovery) {
+            globalContext.set("scheduleExecutorStartupId", currentStartupId);
+            globalContext.set("scheduleExecutorStartupTime", Date.now());
+            const staleCommands = globalContext.get("activeModbusCommands") || {};
+            const staleStatus = globalContext.get("scheduleStatusHistoryV2") || {};
+            const staleTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
+            if (Object.keys(staleCommands).length > 0 || Object.keys(staleStatus).length > 0 || Object.keys(staleTimestamps).length > 0) {
+                node.warn(`🔄 STARTUP RECOVERY: Clearing stale state`);
+                globalContext.set("activeModbusCommands", {});
+                globalContext.set("scheduleStatusHistoryV2", {});
+                globalContext.set("scheduleLastCheckTimestamps", {});
+                node.warn(`✅ STARTUP RECOVERY: Cleared stale state - schedules will start fresh`);
+            }
+            else {
+                globalContext.set("activeModbusCommands", {});
+                globalContext.set("scheduleStatusHistoryV2", {});
+                globalContext.set("scheduleLastCheckTimestamps", {});
+                if (!globalContext.get("scheduleConfigKeys")) {
+                    globalContext.set("scheduleConfigKeys", {});
+                }
+                if (!globalContext.get("configKeyValues")) {
+                    globalContext.set("configKeyValues", {});
+                }
+            }
+        }
+        else {
+            if (!globalContext.get("activeModbusCommands")) {
+                globalContext.set("activeModbusCommands", {});
+            }
+            if (!globalContext.get("scheduleConfigKeys")) {
+                globalContext.set("scheduleConfigKeys", {});
+            }
+            if (!globalContext.get("configKeyValues")) {
+                globalContext.set("configKeyValues", {});
+            }
+        }
+        // Initialize status service
         let statusService;
-        let globalHelper;
         try {
-            globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
-            executorService = new modbus_executor_service_1.ModbusExecutorService(node, verifyAfterWrite, debugEnable);
-            notificationService = new schedule_notification_service_1.ScheduleNotificationService(node, debugEnable);
             statusService = new schedule_status_service_1.ScheduleStatusService(node, debugEnable);
-            debugLog("All services initialized (executor, notification, status)");
         }
         catch (error) {
-            node.error(`Failed to initialize services: ${error.message}`);
+            node.error(`Failed to initialize StatusService: ${error.message}`);
             node.status({ fill: "red", shape: "ring", text: "Init failed" });
             return;
         }
-        // MQTT client references (lazy init)
-        let thingsboardClient = null;
-        let emqxClient = null;
-        const initializeMqttClients = async () => {
-            try {
-                const thingsboardConfig = {
-                    broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
-                    clientId: `node-red-tb-v2-${Math.random().toString(16).substring(2, 10)}`,
-                    username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
-                    password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),
-                    qos: 1,
-                };
-                const emqxConfig = {
-                    broker: `mqtt://${globalHelper.getEnvVar("EMQX_HOST", "emqx")}:${globalHelper.getEnvVar("EMQX_PORT", "1883")}`,
-                    clientId: `node-red-emqx-v2-${Math.random().toString(16).substring(2, 10)}`,
-                    username: globalHelper.getEnvVar("EMQX_USERNAME", ""),
-                    password: globalHelper.getEnvVar("EMQX_PASSWORD", ""),
-                    qos: 1,
-                };
-                thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, node);
-                emqxClient = await client_registry_1.default.getLocalMqttClient(emqxConfig, node);
-                debugLog(`MQTT initialized - TB: ${thingsboardClient.isConnected()}, EMQX: ${emqxClient.isConnected()}`);
+        debugLog("⚙️ viis-schedule-executor-v2 (state manager) initialized");
+        // ==================== ACTIVE COMMAND TRACKING ====================
+        function getActiveCommands(scheduleId) {
+            const activeCommands = globalContext.get("activeModbusCommands") || {};
+            return activeCommands[scheduleId] || [];
+        }
+        function trackActiveCommands(scheduleId, commands) {
+            const activeCommands = globalContext.get("activeModbusCommands") || {};
+            activeCommands[scheduleId] = commands;
+            globalContext.set("activeModbusCommands", activeCommands);
+            debugLog(`Tracked ${commands.length} active commands for ${scheduleId}`);
+        }
+        function clearActiveCommands(scheduleId) {
+            const activeCommands = globalContext.get("activeModbusCommands") || {};
+            if (activeCommands[scheduleId]) {
+                delete activeCommands[scheduleId];
+                globalContext.set("activeModbusCommands", activeCommands);
+                debugLog(`Cleared active commands for ${scheduleId}`);
             }
-            catch (error) {
-                debugLog(`MQTT init failed (non-critical): ${error.message}`);
-            }
-        };
-        // Start MQTT init in background
-        initializeMqttClients();
-        // Get Modbus client
-        let modbusClient = null;
-        let modbusUnitId = 1;
-        // Initialize Modbus client asynchronously
-        const initializeModbusClient = async () => {
+        }
+        // ==================== INPUT HANDLER ====================
+        node.on("input", async function (msg, send, done) {
             var _a;
             try {
-                const boardId = config.boardId;
-                const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);
-                if (boardsConfig) {
-                    // Multi-board mode
-                    let boards;
-                    if (Array.isArray(boardsConfig)) {
-                        boards = boardsConfig;
-                    }
-                    else if (typeof boardsConfig === 'string') {
-                        boards = JSON.parse(boardsConfig);
-                    }
-                    else {
-                        throw new Error('Invalid MODBUS_BOARDS format');
-                    }
-                    const boardToUse = boardId || ((_a = boards[0]) === null || _a === void 0 ? void 0 : _a.id);
-                    debugLog(`Getting Modbus client for board: ${boardToUse}`);
-                    const client = await client_registry_1.default.getModbusClientV2(boardToUse, node);
-                    const boardConfig = boards.find((b) => b.id === boardToUse);
-                    modbusClient = client;
-                    modbusUnitId = (boardConfig === null || boardConfig === void 0 ? void 0 : boardConfig.unitId) || 1;
-                }
-                else {
-                    // Single-board mode
-                    const configData = {
-                        type: globalHelper.getEnvVar("MODBUS_TYPE", "TCP"),
-                        host: globalHelper.getEnvVar("MODBUS_HOST", "localhost"),
-                        tcpPort: globalHelper.getNumericEnvVar("MODBUS_TCP_PORT", 502),
-                        serialPort: globalHelper.getEnvVar("MODBUS_SERIAL_PORT", "/dev/ttyUSB0"),
-                        baudRate: globalHelper.getNumericEnvVar("MODBUS_BAUD_RATE", 9600),
-                        parity: globalHelper.getEnvVar("MODBUS_PARITY", "none"),
-                        unitId: globalHelper.getNumericEnvVar("MODBUS_UNIT_ID", 1)
-                    };
-                    debugLog(`Getting Modbus client for ${configData.type} ${configData.host}`);
-                    const client = await client_registry_1.default.getModbusClientV2(configData, node);
-                    modbusClient = client;
-                    modbusUnitId = configData.unitId;
-                }
-                debugLog(`Modbus client initialized (unitId: ${modbusUnitId})`);
-            }
-            catch (error) {
-                node.error(`Failed to initialize Modbus client: ${error.message}`);
-            }
-        };
-        // Start initialization
-        initializeModbusClient();
-        // Handle input messages
-        node.on("input", async function (msg, send, done) {
-            try {
-                debugLog("📥 Received execution request");
-                node.status({ fill: "blue", shape: "dot", text: "Executing..." });
-                // Validate input
-                if (!msg.payload) {
-                    const error = new Error("Invalid input: msg.payload is required");
-                    node.error(error.message);
-                    node.status({ fill: "red", shape: "ring", text: "Invalid input" });
-                    done(error);
-                    return;
-                }
                 const payload = msg.payload;
-                // Check if execution is allowed
-                if (payload.allowed === false) {
-                    debugLog(`⛔ Execution blocked: ${payload.blockedReason || 'Not allowed'}`);
-                    node.warn(`⛔ Schedule execution BLOCKED: ${payload.blockedReason || 'Not allowed'}`);
-                    msg.payload = {
-                        success: false,
-                        executedCommands: 0,
-                        failedCommands: 0,
-                        blockedReason: payload.blockedReason || 'Execution not allowed'
-                    };
-                    msg.topic = "schedule-executor-v2-blocked";
-                    msg.timestamp = Date.now();
-                    node.status({
-                        fill: "yellow",
-                        shape: "ring",
-                        text: payload.blockedReason || "Blocked"
-                    });
-                    send(msg);
-                    done();
+                if (!payload) {
+                    done(new Error("Invalid input: msg.payload is required"));
                     return;
                 }
-                // Wait for Modbus client to be ready
-                if (!modbusClient) {
-                    debugLog("Waiting for Modbus client to initialize...");
-                    node.status({ fill: "blue", shape: "dot", text: "Initializing..." });
-                    // Wait up to 10 seconds
-                    let waitCount = 0;
-                    while (!modbusClient && waitCount < 50) {
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                        waitCount++;
-                    }
-                    if (!modbusClient) {
-                        throw new Error("Modbus client failed to initialize");
-                    }
-                    debugLog("Modbus client ready");
-                }
-                // Extract commands and schedule
-                const commands = payload.commands || [];
+                const scheduleId = payload.scheduleId || ((_a = payload.schedule) === null || _a === void 0 ? void 0 : _a.name) || `schedule_${Date.now()}`;
                 const schedule = payload.schedule;
-                const scheduleId = (schedule === null || schedule === void 0 ? void 0 : schedule.name) || `schedule_${Date.now()}`;
-                debugLog(`Executing ${commands.length} commands for ${scheduleId}`);
-                // Check if commands can be executed (no conflicts)
-                if (!executorService.canExecuteCommands(commands, scheduleId)) {
-                    node.warn("⚠️ Command conflict detected - execution may have unexpected results");
+                const action = payload.action || ((schedule === null || schedule === void 0 ? void 0 : schedule.status) === 'running' ? 'start' : 'end');
+                const commands = payload.commands || [];
+                const executionSuccess = payload.success !== false;
+                debugLog(`📥 Processing state update for ${scheduleId} (${action})`);
+                // Track active commands
+                if (action === 'start' && commands.length > 0) {
+                    trackActiveCommands(scheduleId, commands);
                 }
-                // Execute commands
-                const holdingCommands = commands.filter((cmd) => cmd.fc === 6);
-                const coilCommands = commands.filter((cmd) => cmd.fc === 5);
-                await executorService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands }, schedule);
-                // Verify writes if enabled
-                if (verifyAfterWrite) {
-                    debugLog("Verifying Modbus writes...");
-                    const verifySuccess = await executorService.verifyModbusWrite(modbusClient, commands);
-                    if (!verifySuccess) {
-                        node.warn("⚠️ Verification failed - some commands may not have executed correctly");
+                else if (action === 'end') {
+                    clearActiveCommands(scheduleId);
+                }
+                // Update DB status if schedule provided
+                let statusChanged = false;
+                if (schedule && (schedule.status === 'running' || schedule.status === 'finished')) {
+                    statusChanged = statusService.hasStatusChanged(schedule.name, schedule.status);
+                    try {
+                        await statusService.updateScheduleStatus(schedule, schedule.status);
+                    }
+                    catch (statusError) {
+                        debugLog(`Status update failed: ${statusError.message}`);
+                    }
+                    // Clear status history on finish
+                    if (schedule.status === 'finished' && statusChanged) {
+                        statusService.clearStatusHistory(schedule.name);
                     }
                 }
-                // Track active commands if starting
-                if (schedule && schedule.status === 'running') {
-                    executorService.trackActiveCommands(scheduleId, commands);
-                    debugLog(`Tracked ${commands.length} active commands for ${scheduleId}`);
-                }
-                // Clear active commands if finishing
-                if (schedule && schedule.status === 'finished') {
-                    executorService.clearActiveCommands(scheduleId);
-                    debugLog(`Cleared active commands for ${scheduleId}`);
-                }
-                // Determine execution success (based on verification)
-                const executionSuccess = !verifyAfterWrite || commands.length === 0
-                    ? true
-                    : true; // Will be enhanced with actual verify result tracking
-                // ==================== NOTIFICATIONS & STATUS ====================
-                if (schedule) {
-                    const commandsPayload = { holdingCommands, coilCommands };
-                    const configParameters = payload.configParameters || [];
-                    const configKeyValues = {};
-                    for (const cp of configParameters) {
-                        configKeyValues[cp.key] = cp.value;
-                    }
-                    // Track status change
-                    const statusChanged = statusService.hasStatusChanged(schedule.name, schedule.status || 'unknown');
-                    // Update DB status if changed
-                    if (schedule.status === 'running' || schedule.status === 'finished') {
-                        try {
-                            await statusService.updateScheduleStatus(schedule, schedule.status);
-                        }
-                        catch (statusError) {
-                            debugLog(`Status update failed: ${statusError.message}`);
-                        }
-                    }
-                    // Publish via MQTT (non-blocking - fire and forget)
-                    if (thingsboardClient && emqxClient) {
-                        const action = schedule.status === 'running' ? 'start' : 'end';
-                        // Telemetry
-                        notificationService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, action, commandsPayload, configKeyValues).catch(err => debugLog(`Telemetry failed: ${err.message}`));
-                        // Audit log
-                        notificationService.publishAuditLog(thingsboardClient, emqxClient, schedule, action, commandsPayload, executionSuccess).catch(err => debugLog(`Audit log failed: ${err.message}`));
-                        // Config parameter updates
-                        for (const cp of configParameters) {
-                            notificationService.publishConfigUpdate(thingsboardClient, emqxClient, cp).catch(err => debugLog(`Config publish failed: ${err.message}`));
-                        }
-                    }
-                    // HTTP notification (only on status change)
-                    if (statusChanged) {
-                        const action = schedule.status === 'running' ? 'start' : 'end';
-                        statusService.sendNotificationToBackend(schedule, action, executionSuccess)
-                            .catch(err => debugLog(`HTTP notification failed: ${err.message}`));
-                        // Sync schedule log
-                        statusService.syncScheduleLog(schedule, executionSuccess)
-                            .catch(err => debugLog(`Log sync failed: ${err.message}`));
-                        // Clear status history on finish
-                        if (schedule.status === 'finished') {
-                            statusService.clearStatusHistory(schedule.name);
-                        }
-                    }
-                }
-                // ==================== END NOTIFICATIONS ====================
-                // Output result
+                // Output result for downstream nodes (MQTT, HTTP)
                 msg.payload = {
-                    success: true,
-                    executedCommands: commands.length,
-                    failedCommands: 0,
+                    success: executionSuccess,
                     scheduleId,
-                    verified: verifyAfterWrite
+                    action,
+                    statusChanged,
+                    schedule: schedule || null,
+                    commands
                 };
                 msg.topic = "schedule-executor-v2";
                 msg.timestamp = Date.now();
                 node.status({
-                    fill: "green",
+                    fill: statusChanged ? "green" : "grey",
                     shape: "dot",
-                    text: `${commands.length} executed`
+                    text: `${action} ${scheduleId}`
                 });
                 send(msg);
                 done();
             }
             catch (error) {
                 const errorMessage = error.message;
-                node.error(`Execution failed: ${errorMessage}`);
+                node.error(`State update failed: ${errorMessage}`);
                 node.status({ fill: "red", shape: "ring", text: "Error" });
-                msg.payload = {
-                    success: false,
-                    executedCommands: 0,
-                    failedCommands: 1,
-                    errorMessage
-                };
-                msg.topic = "schedule-executor-v2-error";
-                msg.timestamp = Date.now();
                 done(error);
             }
         });
-        // Handle RPC reset command
-        node.on("input", async function (msg, send, done) {
-            var _a;
-            const payload = msg.payload;
-            if (payload && typeof payload === 'object' && payload.method === 'reset_schedule') {
-                const scheduleId = (_a = payload.params) === null || _a === void 0 ? void 0 : _a.scheduleId;
-                if (!scheduleId) {
-                    node.error("Missing scheduleId in reset_schedule RPC");
-                    done(new Error("Missing scheduleId"));
-                    return;
-                }
-                debugLog(`📡 RPC: Resetting schedule ${scheduleId}`);
-                if (!modbusClient) {
-                    node.error("Modbus client not available for reset");
-                    done(new Error("Modbus client not available"));
-                    return;
-                }
-                const activeCommands = executorService.getActiveCommands(scheduleId);
-                if (activeCommands.length === 0) {
-                    debugLog(`No active commands to reset for ${scheduleId}`);
-                    msg.payload = { success: true, message: "No active commands" };
-                    send(msg);
-                    done();
-                    return;
-                }
-                const resetSuccess = await executorService.resetModbusCommands(modbusClient, activeCommands);
-                executorService.clearActiveCommands(scheduleId);
-                // Notify on RPC reset if we have schedule info and MQTT clients
-                if (thingsboardClient && emqxClient) {
-                    const resetCommands = { holdingCommands: activeCommands.filter(c => c.fc === 6), coilCommands: activeCommands.filter(c => c.fc === 5) };
-                    notificationService.publishAuditLog(thingsboardClient, emqxClient, { name: scheduleId, label: scheduleId }, 'end', resetCommands, resetSuccess).catch(err => debugLog(`Reset audit log failed: ${err.message}`));
-                }
-                msg.payload = {
-                    success: resetSuccess,
-                    resetCommands: activeCommands.length
-                };
-                if (resetSuccess) {
-                    node.status({ fill: "green", shape: "dot", text: "Reset complete" });
-                }
-                else {
-                    node.status({ fill: "yellow", shape: "ring", text: "Reset partial" });
-                }
-                send(msg);
-                done();
-                return;
-            }
-        });
-        // Cleanup on close
+        // ==================== CLEANUP ====================
         node.on("close", () => {
             debugLog("viis-schedule-executor-v2 closed");
             node.status({});

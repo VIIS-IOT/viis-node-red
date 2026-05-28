@@ -27,6 +27,12 @@ export class ScheduleMapperService {
     private globalHelper: GlobalContextHelper;
     private debugEnable: boolean;
 
+    private readonly luoiMapping: Record<string, { thu: string; dai: string }> = {
+        luoi_1: { thu: "luoi_1_thu", dai: "luoi_1_dai" },
+        luoi_2: { thu: "luoi_2_thu", dai: "luoi_2_dai" },
+        luoi_3: { thu: "luoi_3_thu", dai: "luoi_3_dai" },
+    };
+
     constructor(node: Node, debugEnable: boolean = false) {
         this.node = node;
         this.debugEnable = debugEnable;
@@ -41,6 +47,155 @@ export class ScheduleMapperService {
             this.node.warn(message);
         }
     }
+
+    // ==================== LUOI MAPPING ====================
+
+    /**
+     * Normalize luoi command value to binary mode.
+     * Returns:
+     * - 0: thu=true, dai=false
+     * - 1: thu=false, dai=true
+     * - null: invalid value
+     */
+    private normalizeLuoiValue(value: any): 0 | 1 | null {
+        if (value === 0 || value === "0" || value === false || value === "false") {
+            return 0;
+        }
+        if (value === 1 || value === "1" || value === true || value === "true") {
+            return 1;
+        }
+        return null;
+    }
+
+    /**
+     * Expand abstract luoi keys (luoi_1/2/3) into concrete coil keys
+     * (luoi_X_thu/luoi_X_dai) so schedule execution can write Modbus coils directly.
+     */
+    private expandLuoiActionParams(actionObj: Record<string, any>, scheduleName: string): Record<string, any> {
+        const expanded = { ...actionObj };
+
+        for (const [luoiKey, mapping] of Object.entries(this.luoiMapping)) {
+            if (!Object.prototype.hasOwnProperty.call(expanded, luoiKey)) {
+                continue;
+            }
+
+            const mode = this.normalizeLuoiValue(expanded[luoiKey]);
+            if (mode === null) {
+                console.warn(`Invalid ${luoiKey} value in schedule ${scheduleName}: ${JSON.stringify(expanded[luoiKey])}`);
+                delete expanded[luoiKey];
+                continue;
+            }
+
+            expanded[mapping.thu] = mode === 0;
+            expanded[mapping.dai] = mode === 1;
+            delete expanded[luoiKey];
+
+            this.debugLog(
+                `Expanded ${luoiKey}=${mode} -> ${mapping.thu}=${expanded[mapping.thu]}, ${mapping.dai}=${expanded[mapping.dai]}`
+            );
+        }
+
+        return expanded;
+    }
+
+    // ==================== CONFIG KEY TRACKING ====================
+
+    /**
+     * Get tracked config keys for all schedules
+     */
+    private getScheduleConfigKeys(): Record<string, string[]> {
+        return this.node?.context().global.get("scheduleConfigKeys") as Record<string, string[]> || {};
+    }
+
+    /**
+     * Set tracked config keys for all schedules
+     */
+    private setScheduleConfigKeys(keys: Record<string, string[]>): void {
+        this.node?.context().global.set("scheduleConfigKeys", keys);
+    }
+
+    /**
+     * Track a config key as belonging to a specific schedule
+     */
+    private addScheduleConfigKey(scheduleId: string, key: string): void {
+        const scheduleConfigKeys = this.getScheduleConfigKeys();
+        if (!scheduleConfigKeys[scheduleId]) {
+            scheduleConfigKeys[scheduleId] = [];
+        }
+        if (!scheduleConfigKeys[scheduleId].includes(key)) {
+            scheduleConfigKeys[scheduleId].push(key);
+            this.debugLog(`Tracked config key ${key} for schedule ${scheduleId}`);
+        }
+        this.setScheduleConfigKeys(scheduleConfigKeys);
+    }
+
+    /**
+     * Get configKeyValues from global context
+     */
+    private getConfigKeyValues(): Record<string, any> {
+        return this.node?.context().global.get("configKeyValues") as Record<string, any> || {};
+    }
+
+    /**
+     * Set configKeyValues in global context
+     */
+    private setConfigKeyValues(values: Record<string, any>): void {
+        this.node?.context().global.set("configKeyValues", values);
+        this.node?.context().global.set("configKeyValuesUpdatedAt", Date.now());
+        this.debugLog(`Updated configKeyValues: ${JSON.stringify(values)}`);
+    }
+
+    /**
+     * Get the appropriate falsy default value based on declared type
+     */
+    private getFalsyDefaultValue(declaredType?: string): any {
+        if (declaredType === 'number') return 0;
+        if (declaredType === 'boolean') return false;
+        if (declaredType === 'string') return '';
+        return false;
+    }
+
+    /**
+     * Reset configKeyValues to falsy defaults when a schedule finishes.
+     * Returns the reset values so they can be published via MQTT telemetry.
+     */
+    clearScheduleConfigValues(scheduleId: string): Record<string, any> {
+        const scheduleConfigKeys = this.getScheduleConfigKeys();
+        const keysForThisSchedule = scheduleConfigKeys[scheduleId] || [];
+        const resetValues: Record<string, any> = {};
+
+        if (keysForThisSchedule.length === 0) {
+            this.debugLog(`No config keys to clear for schedule ${scheduleId}`);
+            return resetValues;
+        }
+
+        const currentConfig = this.getConfigKeyValues();
+        const configKeys = this.node?.context().global.get("configKeys") as Record<string, string> || {};
+
+        for (const key of keysForThisSchedule) {
+            if (key in currentConfig) {
+                const declaredType = configKeys[key];
+                const falsyValue = this.getFalsyDefaultValue(declaredType);
+                resetValues[key] = falsyValue;
+                currentConfig[key] = falsyValue;
+            }
+        }
+
+        this.setConfigKeyValues(currentConfig);
+
+        // Clear schedule config key tracking
+        delete scheduleConfigKeys[scheduleId];
+        this.setScheduleConfigKeys(scheduleConfigKeys);
+
+        if (this.node) {
+            this.node.warn(`🧹 RESET ${keysForThisSchedule.length} config values for finished schedule ${scheduleId}: [${keysForThisSchedule.join(', ')}]`);
+        }
+
+        this.debugLog(`Reset ${keysForThisSchedule.length} config values for schedule ${scheduleId}`);
+        return resetValues;
+    }
+
+    // ==================== SCALE ====================
 
     /**
      * Scale a value based on configuration
@@ -166,6 +321,7 @@ export class ScheduleMapperService {
 
     /**
      * Store configuration parameter for unmapped keys
+     * Also tracks which keys belong to which schedule for cleanup on finish
      * @param key - Parameter key
      * @param value - Parameter value
      * @param scheduleId - Schedule ID
@@ -199,11 +355,13 @@ export class ScheduleMapperService {
                 scheduleId
             };
 
-            // Store in global context
-            const globalContext = this.node.context().global;
-            const configValues = globalContext.get('scheduleConfigValues') || {};
-            configValues[key] = configParam;
-            globalContext.set('scheduleConfigValues', configValues);
+            // Store in global context (configKeyValues — same key as V1 for backward compatibility)
+            const currentConfig = this.getConfigKeyValues();
+            currentConfig[key] = value;
+            this.setConfigKeyValues(currentConfig);
+
+            // Track which keys belong to this schedule for cleanup on finish
+            this.addScheduleConfigKey(scheduleId, key);
 
             return configParam;
         } catch (error) {
@@ -277,14 +435,17 @@ export class ScheduleMapperService {
                 }
             }
 
+            // Expand abstract luoi keys (luoi_1/2/3 → luoi_X_thu/dai)
+            const expandedActionObj = this.expandLuoiActionParams(actionObj, schedule.name);
+
             // Load Modbus mappings
             const modbusCoils = this.loadAllModbusCoils();
             const modbusHolding = this.loadAllModbusHoldingRegisters();
 
-            // Process each key in action
-            for (const key in actionObj) {
-                if (actionObj.hasOwnProperty(key)) {
-                    let value = actionObj[key];
+            // Process each key in expanded action
+            for (const key in expandedActionObj) {
+                if (expandedActionObj.hasOwnProperty(key)) {
+                    let value = expandedActionObj[key];
 
                     // Convert string booleans to actual booleans
                     if (typeof value === "string") {
