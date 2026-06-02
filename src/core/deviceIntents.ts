@@ -139,7 +139,7 @@ export class DeviceIntentService {
         });
       }
       if (cond.conditions && cond.conditions.length > 0) {
-        this.traverseConditions(cond.conditions, interval, results);
+        await this.traverseConditions(cond.conditions, interval, results);
       }
     }
   }
@@ -183,14 +183,6 @@ export class DeviceIntentService {
     }
 
     return result;
-  }
-
-  stringifyAllValues(obj: any) {
-    return JSON.parse(
-      JSON.stringify(obj, (key, value) =>
-        typeof value === "object" && value !== null ? value : String(value)
-      )
-    );
   }
 
   async processDeviceIntent(intent: DeviceIntent) {
@@ -257,7 +249,7 @@ export class DeviceIntentService {
       }
       return results;
     } catch (error) {
-      return error;
+      throw error;
     }
   }
 }

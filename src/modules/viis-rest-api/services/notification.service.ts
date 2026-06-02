@@ -240,6 +240,16 @@ export class NotificationService extends BaseService {
     }
 
     /**
+     * Cleanup on service shutdown — release MQTT client
+     */
+    protected async onCleanup(): Promise<void> {
+        if (this.mqttClient) {
+            ClientRegistry.releaseClient('local', this.node);
+            this.mqttClient = null;
+        }
+    }
+
+    /**
      * Create MQTT configuration for local EMQX broker
      */
     private createMqttConfig(): MqttConfig {

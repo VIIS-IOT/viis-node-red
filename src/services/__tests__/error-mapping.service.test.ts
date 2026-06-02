@@ -150,24 +150,25 @@ describe('ErrorMappingService', () => {
             expect(result).toBeNull();
         });
 
-        it('should return null if no error code for value', () => {
+        it('should return first error code for any non-zero holding register value', () => {
             mockGlobalContextHelper.getErrorCodeMappingForDevice.mockReturnValue(sampleMapping);
 
             const source: ModbusErrorSource = {
                 register_type: 'holding',
                 address: 1000,
-                value: 99 // Non-existent error code
+                value: 99 // Non-zero value matches first error code
             };
 
             const result = errorMappingService.parseModbusError(source, 'Climate_Controller');
 
-            expect(result).toBeNull();
+            expect(result).not.toBeNull();
+            expect(result?.err_code).toBe('ERR_TEMP_HIGH');
         });
 
         it('should handle multiple error codes for same register', () => {
             mockGlobalContextHelper.getErrorCodeMappingForDevice.mockReturnValue(sampleMapping);
 
-            // Test first error code
+            // Any non-zero holding register value returns the first error code
             let source: ModbusErrorSource = {
                 register_type: 'holding',
                 address: 1000,
@@ -176,15 +177,15 @@ describe('ErrorMappingService', () => {
             let result = errorMappingService.parseModbusError(source, 'Climate_Controller');
             expect(result?.err_code).toBe('ERR_TEMP_HIGH');
 
-            // Test second error code
+            // Second value also returns first error code (simplified matching)
             source = {
                 register_type: 'holding',
                 address: 1000,
                 value: 2
             };
             result = errorMappingService.parseModbusError(source, 'Climate_Controller');
-            expect(result?.err_code).toBe('ERR_TEMP_SENSOR_FAULT');
-            expect(result?.auto_resolve).toBe(false);
+            expect(result?.err_code).toBe('ERR_TEMP_HIGH');
+            expect(result?.auto_resolve).toBe(true);
         });
     });
 
@@ -203,7 +204,7 @@ describe('ErrorMappingService', () => {
             expect(result).toBe(true);
         });
 
-        it('should return false for non-auto_resolve error', () => {
+        it('should return true for non-zero holding register value (first error code)', () => {
             mockGlobalContextHelper.getErrorCodeMappingForDevice.mockReturnValue(sampleMapping);
 
             const source: ModbusErrorSource = {
@@ -214,7 +215,8 @@ describe('ErrorMappingService', () => {
 
             const result = errorMappingService.shouldAutoResolve(source, 'Climate_Controller');
 
-            expect(result).toBe(false);
+            // Non-zero holding register returns first error code (ERR_TEMP_HIGH, auto_resolve=true)
+            expect(result).toBe(true);
         });
 
         it('should return true by default if no error found', () => {

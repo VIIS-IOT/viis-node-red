@@ -503,8 +503,8 @@ module.exports = function (RED: NodeAPI) {
         ClientRegistry.releaseClient('local', node);
         ClientRegistry.releaseClient('mysql', node);
 
-        // Disconnect ThingsBoard client
-        thingsboardMqttClient.disconnect();
+        // Disconnect ThingsBoard client via registry (not direct)
+        ClientRegistry.releaseClient('thingsboard', node);
 
         node.log('[Node] Closed and cleaned up successfully');
         done();
