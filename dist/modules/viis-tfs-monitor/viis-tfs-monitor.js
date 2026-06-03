@@ -238,6 +238,7 @@ module.exports = function (RED) {
             if (cronJob) {
                 cronJob.stop();
             }
+            client_registry_1.default.releaseClientV2('modbus-board', node, config.boardId || 'board1');
             node.status({});
             done();
         });

@@ -380,8 +380,8 @@ module.exports = function (RED) {
                 }
                 client_registry_1.default.releaseClient('local', node);
                 client_registry_1.default.releaseClient('mysql', node);
-                // Disconnect ThingsBoard client
-                thingsboardMqttClient.disconnect();
+                // Disconnect ThingsBoard client via registry (not direct)
+                client_registry_1.default.releaseClient('thingsboard', node);
                 node.log('[Node] Closed and cleaned up successfully');
                 done();
             }

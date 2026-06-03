@@ -168,6 +168,15 @@ let NotificationService = class NotificationService extends base_service_1.BaseS
         }
     }
     /**
+     * Cleanup on service shutdown — release MQTT client
+     */
+    async onCleanup() {
+        if (this.mqttClient) {
+            client_registry_1.default.releaseClient('local', this.node);
+            this.mqttClient = null;
+        }
+    }
+    /**
      * Create MQTT configuration for local EMQX broker
      */
     createMqttConfig() {

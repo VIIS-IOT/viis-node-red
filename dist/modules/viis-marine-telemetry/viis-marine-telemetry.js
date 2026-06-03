@@ -334,11 +334,11 @@ module.exports = function (RED) {
                         node.warn(`[Marine] DH6400 cleanup warning: ${dh6400Error.message}`);
                     }
                 }
-                // Disconnect ThingsBoard MQTT
+                // Disconnect ThingsBoard MQTT via registry (not direct)
                 if (thingsboardMqttClient) {
                     try {
-                        thingsboardMqttClient.disconnect();
-                        node.log('[Marine] ThingsBoard MQTT disconnected');
+                        client_registry_1.default.releaseClient('thingsboard', node);
+                        node.log('[Marine] ThingsBoard MQTT released');
                     }
                     catch (mqttError) {
                         node.warn(`[Marine] MQTT cleanup warning: ${mqttError.message}`);

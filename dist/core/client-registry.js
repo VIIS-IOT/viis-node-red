@@ -257,6 +257,15 @@ class ClientRegistry {
                     throw new Error(`[MODBUS-MULTI] Board config not found for ID: ${targetBoardId}`);
                 }
                 try {
+                    // Connection limiter — enforce max connections per host:port (ESP32 4-client limit)
+                    if (boardConfig.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                        const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                        const currentCount = this.hostConnectionCount.get(hostKey) || 0;
+                        if (currentCount >= this.MAX_CONNECTIONS_PER_HOST) {
+                            throw new Error(`[MODBUS-CONNECTION-LIMIT] Max ${this.MAX_CONNECTIONS_PER_HOST} connections to ${hostKey}. Current: ${currentCount}. ` +
+                                `ESP32 board limit is 4 clients.`);
+                        }
+                    }
                     // Log connection type for debugging
                     if (boardConfig.type === 'RTU') {
                         //node.warn(`[MODBUS-MULTI] Creating RTU connection for board: ${targetBoardId} (${boardConfig.serialPort}@${boardConfig.baudRate})`);
@@ -267,6 +276,11 @@ class ClientRegistry {
                     // Create new connection for this board
                     const client = new modbus_client_1.ModbusClientCore(boardConfig, node);
                     this.modbusBoardPool.set(targetBoardId, client);
+                    // Increment host connection count for TCP
+                    if (boardConfig.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                        const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                        this.hostConnectionCount.set(hostKey, (this.hostConnectionCount.get(hostKey) || 0) + 1);
+                    }
                     // Track connections
                     if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
                         this.activeConnections.modbusBoards.set(targetBoardId, 0);
@@ -456,6 +470,15 @@ class ClientRegistry {
                     // Disconnect and remove board connection
                     const client = this.modbusBoardPool.get(boardId);
                     if (client) {
+                        // Decrement host connection count for TCP boards
+                        const boardConfig = this.modbusBoardConfigs.get(boardId);
+                        if ((boardConfig === null || boardConfig === void 0 ? void 0 : boardConfig.type) === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                            const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                            const currentCount = this.hostConnectionCount.get(hostKey) || 0;
+                            if (currentCount > 0) {
+                                this.hostConnectionCount.set(hostKey, currentCount - 1);
+                            }
+                        }
                         client.disconnect();
                         this.modbusBoardPool.delete(boardId);
                         this.activeConnections.modbusBoards.delete(boardId);
@@ -529,6 +552,17 @@ class ClientRegistry {
             users: Array.from(this.clientUsers.modbus),
             config: this.modbusConfig
         };
+    }
+    /**
+     * Get connection count per host:port for monitoring
+     * Used to verify ESP32 4-client limit compliance
+     */
+    static getHostConnectionCounts() {
+        const counts = {};
+        this.hostConnectionCount.forEach((count, hostKey) => {
+            counts[hostKey] = count;
+        });
+        return counts;
     }
     /**
      * Force reload Modbus config and reconnect all clients
@@ -630,6 +664,9 @@ ClientRegistry.mysqlInstance = null;
 // Reference counting with board support
 ClientRegistry.referenceCount = { modbus: 0, thingsboard: 0, local: 0, mysql: 0 };
 ClientRegistry.boardReferenceCount = new Map();
+// Connection limiter — max TCP connections per host:port (ESP32 4-client limit)
+ClientRegistry.hostConnectionCount = new Map();
+ClientRegistry.MAX_CONNECTIONS_PER_HOST = 2; // 1 active + 1 buffer for reconnect transient
 ClientRegistry.activeConnections = {
     modbus: 0,
     thingsboardMqtt: 0,

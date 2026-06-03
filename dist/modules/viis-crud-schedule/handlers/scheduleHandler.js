@@ -345,6 +345,11 @@ class ScheduleHandler {
                 payload.status = 'finished';
                 payload.enable = 0;
             }
+            finally {
+                // Release all acquired clients to prevent ref count leaks
+                client_registry_1.default.releaseClient('thingsboard', this.node);
+                client_registry_1.default.releaseClient('local', this.node);
+            }
         }
         try {
             // Validate payload against DTO

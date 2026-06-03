@@ -27,15 +27,15 @@ const groupUtils_1 = require("../utils/groupUtils");
         (0, globals_1.expect)(fan6Action === null || fan6Action === void 0 ? void 0 : fan6Action.value).toBe(true);
         (0, globals_1.expect)(fan6Action === null || fan6Action === void 0 ? void 0 : fan6Action.address).toBe(5);
     });
-    (0, globals_1.it)("recommends 6 fans for K3 and K4 temperature ranges", () => {
+    (0, globals_1.it)("recommends 4 fans for K3 and 6 fans for K4 temperature ranges", () => {
         const thresholds = {
             k1: 21,
             k2: 26,
             k3: 27,
             k4: 29
         };
-        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(27, 70, thresholds)).toBe(6);
-        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(30, 70, thresholds)).toBe(6);
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(27, 70, thresholds)).toBe(4); // K3 → 4 fans
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(30, 70, thresholds)).toBe(6); // K4 → 6 fans
     });
     (0, globals_1.it)("recommends correct fan counts for K1-K4 thresholds", () => {
         const thresholds = {
@@ -46,8 +46,8 @@ const groupUtils_1 = require("../utils/groupUtils");
         };
         (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(24, 70, thresholds)).toBe(0);
         (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(26, 70, thresholds)).toBe(2); // K1
-        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(31, 70, thresholds)).toBe(4); // K2
-        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(36, 70, thresholds)).toBe(6); // K3
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(31, 70, thresholds)).toBe(3); // K2
+        (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(36, 70, thresholds)).toBe(4); // K3
         (0, globals_1.expect)((0, groupUtils_1.getRecommendedGroupSize)(41, 70, thresholds)).toBe(6); // K4
     });
 });
