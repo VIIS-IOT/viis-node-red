@@ -71,8 +71,10 @@ class ConfigService {
                 config.set_k2_fan === undefined || (config.set_k2_fan >= 0 && config.set_k2_fan <= 100),
                 config.set_k3_fan === undefined || (config.set_k3_fan >= 0 && config.set_k3_fan <= 100),
                 config.set_k4_fan === undefined || (config.set_k4_fan >= 0 && config.set_k4_fan <= 100),
+                // Fan dao mode should be 0, 1, or 2
+                config.set_auto_mode_fan_dao === undefined || [0, 1, 2].includes(config.set_auto_mode_fan_dao),
                 // Group size should be valid
-                config.set_gr_alternate_fan === undefined || [1, 2, 4, 6].includes(config.set_gr_alternate_fan),
+                config.set_gr_alternate_fan === undefined || [1, 2, 3, 4, 6].includes(config.set_gr_alternate_fan),
                 // Time intervals should be positive
                 config.set_time_alternate_fan === undefined || config.set_time_alternate_fan > 0,
                 config.set_time_alternate_fan_dao === undefined || config.set_time_alternate_fan_dao > 0,
@@ -84,9 +86,15 @@ class ConfigService {
                 config.set_light_thu_luoi_1 === undefined || config.set_light_thu_luoi_1 >= 0,
                 config.set_light_dai_luoi_2 === undefined || config.set_light_dai_luoi_2 >= 0,
                 config.set_light_thu_luoi_2 === undefined || config.set_light_thu_luoi_2 >= 0,
+                config.set_light_dai_luoi_3 === undefined || config.set_light_dai_luoi_3 >= 0,
+                config.set_light_thu_luoi_3 === undefined || config.set_light_thu_luoi_3 >= 0,
+                config.set_light_dai_luoi_4 === undefined || config.set_light_dai_luoi_4 >= 0,
+                config.set_light_thu_luoi_4 === undefined || config.set_light_thu_luoi_4 >= 0,
                 // Tolerance times should be positive
                 config.set_tolerance_light_luoi_1 === undefined || config.set_tolerance_light_luoi_1 > 0,
-                config.set_tolerance_light_luoi_2 === undefined || config.set_tolerance_light_luoi_2 > 0
+                config.set_tolerance_light_luoi_2 === undefined || config.set_tolerance_light_luoi_2 > 0,
+                config.set_tolerance_light_luoi_3 === undefined || config.set_tolerance_light_luoi_3 > 0,
+                config.set_tolerance_light_luoi_4 === undefined || config.set_tolerance_light_luoi_4 > 0
             ];
             const isValid = criticalChecks.every(check => check);
             if (!isValid) {
@@ -141,8 +149,14 @@ class ConfigService {
         // Fan dao defaults
         if (config.set_mode_fan_dao === undefined)
             config.set_mode_fan_dao = 0;
+        if (config.set_auto_mode_fan_dao === undefined)
+            config.set_auto_mode_fan_dao = 1;
         if (config.set_time_alternate_fan_dao === undefined)
             config.set_time_alternate_fan_dao = 5;
+        if (config.set_time_fan_dao_on === undefined)
+            config.set_time_fan_dao_on = 5;
+        if (config.set_time_fan_dao_off === undefined)
+            config.set_time_fan_dao_off = 30;
         // Water pump defaults
         if (config.set_mode_tuong_nuoc === undefined)
             config.set_mode_tuong_nuoc = 0;
@@ -165,6 +179,22 @@ class ConfigService {
             config.set_light_thu_luoi_2 = 30000;
         if (config.set_tolerance_light_luoi_2 === undefined)
             config.set_tolerance_light_luoi_2 = 5;
+        if (config.set_light_dai_luoi_3 === undefined)
+            config.set_light_dai_luoi_3 = 50000;
+        if (config.set_light_thu_luoi_3 === undefined)
+            config.set_light_thu_luoi_3 = 30000;
+        if (config.set_light_indoor_thu_luoi_3 === undefined)
+            config.set_light_indoor_thu_luoi_3 = 15000;
+        if (config.set_tolerance_light_luoi_3 === undefined)
+            config.set_tolerance_light_luoi_3 = 5;
+        if (config.set_light_dai_luoi_4 === undefined)
+            config.set_light_dai_luoi_4 = 50000;
+        if (config.set_light_thu_luoi_4 === undefined)
+            config.set_light_thu_luoi_4 = 30000;
+        if (config.set_light_indoor_thu_luoi_4 === undefined)
+            config.set_light_indoor_thu_luoi_4 = 15000;
+        if (config.set_tolerance_light_luoi_4 === undefined)
+            config.set_tolerance_light_luoi_4 = 5;
     }
     /**
      * Get default configuration

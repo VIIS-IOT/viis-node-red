@@ -318,13 +318,13 @@ export class AutoControlHandler implements IAutoControlHandler {
                 requiredFanCount = 6;
             } else if (temperature >= thresholds.k3) {
                 currentThreshold = "K3";
-                requiredFanCount = 6;
+                requiredFanCount = 4;
             } else if (temperature >= thresholds.k2) {
                 currentThreshold = "K2";
-                requiredFanCount = 2;
+                requiredFanCount = 3;
             } else if (temperature >= thresholds.k1) {
                 currentThreshold = "K1";
-                requiredFanCount = 1;
+                requiredFanCount = 2;
             }
 
             // Get current device status
@@ -432,12 +432,15 @@ export class AutoControlHandler implements IAutoControlHandler {
                     ["quat_1"], ["quat_2"], ["quat_3"], ["quat_4"], ["quat_5"], ["quat_6"]
                 ],
                 2: [
-                    ["quat_1", "quat_2"], ["quat_3", "quat_4"], ["quat_5", "quat_6"]
+                    ["quat_1", "quat_4"], ["quat_2", "quat_5"], ["quat_3", "quat_6"]
+                ],
+                3: [
+                    ["quat_1", "quat_3", "quat_5"], ["quat_2", "quat_4", "quat_6"]
                 ],
                 4: [
-                    ["quat_1", "quat_2", "quat_3", "quat_4"],
-                    ["quat_3", "quat_4", "quat_5", "quat_6"],
-                    ["quat_5", "quat_6", "quat_1", "quat_2"]
+                    ["quat_1", "quat_2", "quat_4", "quat_5"],
+                    ["quat_2", "quat_3", "quat_5", "quat_6"],
+                    ["quat_1", "quat_3", "quat_4", "quat_6"]
                 ],
                 6: [
                     ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]

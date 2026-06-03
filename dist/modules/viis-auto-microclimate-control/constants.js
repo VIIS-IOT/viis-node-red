@@ -49,14 +49,18 @@ exports.FAN_CONFIG = {
             ["quat_6"]
         ],
         TWO_FANS: [
-            ["quat_1", "quat_2"],
-            ["quat_3", "quat_4"],
-            ["quat_5", "quat_6"]
+            ["quat_1", "quat_4"],
+            ["quat_2", "quat_5"],
+            ["quat_3", "quat_6"]
+        ],
+        THREE_FANS: [
+            ["quat_1", "quat_3", "quat_5"],
+            ["quat_2", "quat_4", "quat_6"]
         ],
         FOUR_FANS: [
-            ["quat_1", "quat_2", "quat_3", "quat_4"],
-            ["quat_3", "quat_4", "quat_5", "quat_6"],
-            ["quat_5", "quat_6", "quat_1", "quat_2"]
+            ["quat_1", "quat_2", "quat_4", "quat_5"],
+            ["quat_2", "quat_3", "quat_5", "quat_6"],
+            ["quat_1", "quat_3", "quat_4", "quat_6"]
         ],
         FIVE_FANS: [
             ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5"],
@@ -118,15 +122,18 @@ exports.CURTAIN_CONFIG = {
     LUOI_MAPPING: {
         "luoi_1": { thu: "luoi_1_thu", dai: "luoi_1_dai" },
         "luoi_2": { thu: "luoi_2_thu", dai: "luoi_2_dai" },
-        "luoi_3": { thu: "luoi_3_thu", dai: "luoi_3_dai" }
+        "luoi_3": { thu: "luoi_3_thu", dai: "luoi_3_dai" },
+        "luoi_4": { thu: "luoi_4_thu", dai: "luoi_4_dai" }
     },
     COIL_MAPPING: {
         "luoi_1_thu": 16,
         "luoi_1_dai": 17,
         "luoi_2_thu": 12,
         "luoi_2_dai": 13,
-        "luoi_3_thu": 14,
-        "luoi_3_dai": 15
+        "luoi_3_thu": 999,
+        "luoi_3_dai": 998,
+        "luoi_4_thu": 997,
+        "luoi_4_dai": 996
     },
     // Coil pairs for conflict prevention
     COIL_PAIRS: [
@@ -165,6 +172,8 @@ exports.CONFIG_KEYS = [
     "set_threshold_on_fan_dao",
     "set_threshold_off_fan_dao",
     "set_time_alternate_fan_dao",
+    "set_time_fan_dao_on",
+    "set_time_fan_dao_off",
     // Water pump control
     "set_mode_tuong_nuoc",
     "set_threshold_low_water_bump",
@@ -182,11 +191,11 @@ exports.CONFIG_KEYS = [
     "set_tolerance_light_luoi_2",
     "set_light_dai_luoi_3",
     "set_light_thu_luoi_3",
-    "set_light_indoor_thu_luoi_3", // New: indoor light threshold for luoi_3
+    "set_light_indoor_thu_luoi_3",
     "set_tolerance_light_luoi_3",
     "set_light_dai_luoi_4",
     "set_light_thu_luoi_4",
-    "set_light_indoor_thu_luoi_4", // New: indoor light threshold for luoi_4
+    "set_light_indoor_thu_luoi_4",
     "set_tolerance_light_luoi_4",
     // Environmental settings
     "ideal_light_time",

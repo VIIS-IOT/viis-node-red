@@ -117,7 +117,11 @@ export class SensorService implements ISensorService {
                 luoi_2_thu: this.validateBooleanValue(coilRegisterData.luoi_2_thu, "luoi_2_thu"),
                 luoi_2_dai: this.validateBooleanValue(coilRegisterData.luoi_2_dai, "luoi_2_dai"),
                 luoi_1_thu: this.validateBooleanValue(coilRegisterData.luoi_1_thu, "luoi_1_thu"),
-                luoi_1_dai: this.validateBooleanValue(coilRegisterData.luoi_1_dai, "luoi_1_dai")
+                luoi_1_dai: this.validateBooleanValue(coilRegisterData.luoi_1_dai, "luoi_1_dai"),
+                luoi_3_thu: this.validateBooleanValue(coilRegisterData.luoi_3_thu, "luoi_3_thu"),
+                luoi_3_dai: this.validateBooleanValue(coilRegisterData.luoi_3_dai, "luoi_3_dai"),
+                luoi_4_thu: this.validateBooleanValue(coilRegisterData.luoi_4_thu, "luoi_4_thu"),
+                luoi_4_dai: this.validateBooleanValue(coilRegisterData.luoi_4_dai, "luoi_4_dai")
             };
 
             // Cache the data

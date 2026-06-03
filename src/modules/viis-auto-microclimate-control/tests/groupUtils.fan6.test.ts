@@ -38,7 +38,7 @@ describe("groupUtils - fan6 support", () => {
         expect(fan6Action?.address).toBe(5);
     });
 
-    it("recommends 6 fans for K3 and K4 temperature ranges", () => {
+    it("recommends 4 fans for K3 and 6 fans for K4 temperature ranges", () => {
         const thresholds = {
             k1: 21,
             k2: 26,
@@ -46,8 +46,8 @@ describe("groupUtils - fan6 support", () => {
             k4: 29
         };
 
-        expect(getRecommendedGroupSize(27, 70, thresholds)).toBe(6);
-        expect(getRecommendedGroupSize(30, 70, thresholds)).toBe(6);
+        expect(getRecommendedGroupSize(27, 70, thresholds)).toBe(4); // K3 → 4 fans
+        expect(getRecommendedGroupSize(30, 70, thresholds)).toBe(6); // K4 → 6 fans
     });
 
     it("recommends correct fan counts for K1-K4 thresholds", () => {
@@ -60,8 +60,8 @@ describe("groupUtils - fan6 support", () => {
 
         expect(getRecommendedGroupSize(24, 70, thresholds)).toBe(0);
         expect(getRecommendedGroupSize(26, 70, thresholds)).toBe(2); // K1
-        expect(getRecommendedGroupSize(31, 70, thresholds)).toBe(4); // K2
-        expect(getRecommendedGroupSize(36, 70, thresholds)).toBe(6); // K3
+        expect(getRecommendedGroupSize(31, 70, thresholds)).toBe(3); // K2
+        expect(getRecommendedGroupSize(36, 70, thresholds)).toBe(4); // K3
         expect(getRecommendedGroupSize(41, 70, thresholds)).toBe(6); // K4
     });
 });

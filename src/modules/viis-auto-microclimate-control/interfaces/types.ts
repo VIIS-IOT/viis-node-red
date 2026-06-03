@@ -40,6 +40,8 @@ export interface AutoControlConfig {
     set_threshold_on_fan_dao?: number;
     set_threshold_off_fan_dao?: number;
     set_time_alternate_fan_dao?: number;
+    set_time_fan_dao_on?: number;
+    set_time_fan_dao_off?: number;
 
     // Water pump control
     set_mode_tuong_nuoc?: number;
@@ -109,6 +111,8 @@ export interface DeviceStatus {
     luoi_1_dai?: boolean;
     luoi_3_thu?: boolean;
     luoi_3_dai?: boolean;
+    luoi_4_thu?: boolean;
+    luoi_4_dai?: boolean;
     // Index signature to allow string indexing
     [key: string]: boolean | number | undefined;
 }
