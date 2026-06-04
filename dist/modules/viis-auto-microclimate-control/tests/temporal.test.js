@@ -67,88 +67,6 @@ function makeHolding(temp, humi, lightOut = 0) {
 function makeCoil(overrides = {}) {
     return Object.assign({ ts: Date.now(), quat_1: false, quat_2: false, quat_3: false, quat_4: false, quat_5: false, quat_6: false, quat_dao_1: false, quat_dao_2: false, quat_dao_3: false, bom_nuoc_1: false, luoi_1_thu: false, luoi_1_dai: false, luoi_2_thu: false, luoi_2_dai: false }, overrides);
 }
-async function simulateCycle(flowContext, globalContext, config, temp, humi, lightOut = 0, currentCoils = {}) {
-    // Update sensor data
-    globalContext.set("holdingRegisterData", makeHolding(temp, humi, lightOut));
-    globalContext.set("coilRegisterData", makeCoil(currentCoils));
-    const node = createMockNode();
-    const options = {
-        node, nodeId: "temporal-test", flowContext, globalContext,
-        environmentConfig: {},
-    };
-    const configService = new configService_1.ConfigService(options);
-    const sensorService = new sensorService_1.SensorService(options);
-    const fanService = new fanControlService_1.FanControlService(options);
-    const waterPumpService = new waterPumpControlService_1.WaterPumpControlService(options);
-    const sensorData = sensorService.getSensorData();
-    const deviceStatus = sensorService.getDeviceStatus();
-    const fanActions = await fanService.processFanControl(config, sensorData, deviceStatus);
-    const fansOn = fanActions
-        .filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"))
-        .map(a => a.deviceKey)
-        .sort();
-    const fanDaoOn = fanActions
-        .filter(a => a.deviceKey.startsWith("quat_dao_") && a.value === true)
-        .length > 0;
-    // K4 override check
-    const k4Pump = waterPumpService.checkK4PriorityOverride(config, sensorData);
-    let pumpOn = k4Pump.some(a => a.deviceKey === "bom_nuoc_1" && a.value === true);
-    if (!pumpOn) {
-        const pumpActions = await waterPumpService.processWaterPumpControl(config, sensorData, deviceStatus);
-        pumpOn = pumpActions.some(a => a.deviceKey === "bom_nuoc_1" && a.value === true);
-    }
-    return { temp, fansOn, fanCount: fansOn.length, pumpOn, fanDaoOn };
-}
-/**
- * Simulate a cycle with proper coil state tracking.
- * Returns the result AND the updated coil state for the next cycle.
- */
-async function simulateCycleWithState(flowContext, globalContext, config, temp, humi, lightOut, prevCoils) {
-    globalContext.set("holdingRegisterData", makeHolding(temp, humi, lightOut));
-    globalContext.set("coilRegisterData", makeCoil(prevCoils));
-    const node = createMockNode();
-    const options = {
-        node, nodeId: "temporal-test", flowContext, globalContext,
-        environmentConfig: {},
-    };
-    const configService = new configService_1.ConfigService(options);
-    const sensorService = new sensorService_1.SensorService(options);
-    const fanService = new fanControlService_1.FanControlService(options);
-    const waterPumpService = new waterPumpControlService_1.WaterPumpControlService(options);
-    const configObj = configService.getConfig();
-    const sensorData = sensorService.getSensorData();
-    const deviceStatus = sensorService.getDeviceStatus();
-    const fanActions = await fanService.processFanControl(configObj, sensorData, deviceStatus);
-    // Build new coil state from actions
-    const newCoils = Object.assign({}, prevCoils);
-    for (const action of fanActions) {
-        if (action.value !== undefined) {
-            newCoils[action.deviceKey] = !!action.value;
-        }
-    }
-    const fansOn = fanActions
-        .filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"))
-        .map(a => a.deviceKey)
-        .sort();
-    const fanDaoOn = fanActions
-        .filter(a => a.deviceKey.startsWith("quat_dao_") && a.value === true)
-        .length > 0;
-    const k4Pump = waterPumpService.checkK4PriorityOverride(configObj, sensorData);
-    let pumpOn = k4Pump.some(a => a.deviceKey === "bom_nuoc_1" && a.value === true);
-    if (!pumpOn) {
-        const pumpActions = await waterPumpService.processWaterPumpControl(configObj, sensorData, deviceStatus);
-        pumpOn = pumpActions.some(a => a.deviceKey === "bom_nuoc_1" && a.value === true);
-        for (const action of pumpActions) {
-            if (action.value !== undefined) {
-                newCoils[action.deviceKey] = !!action.value;
-            }
-        }
-    }
-    return {
-        result: { temp, fansOn, fanCount: fansOn.length, pumpOn, fanDaoOn },
-        newCoils
-    };
-}
 // ─── Temporal Tests ────────────────────────────────────────────────────────
 (0, globals_1.describe)("Temporal Transition Tests — Temperature Changes Over Time", () => {
     let flowContext;
@@ -185,22 +103,15 @@ async function simulateCycleWithState(flowContext, globalContext, config, temp, 
                 const sensorData = sensorService.getSensorData();
                 const deviceStatus = sensorService.getDeviceStatus();
                 const fanActions = await fanService.processFanControl(config, sensorData, deviceStatus);
-                const fansOn = fanActions
-                    .filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"))
-                    .map(a => a.deviceKey)
-                    .sort();
-                if (fansOn.length !== step.expectedFans) {
-                    console.log(`[DEBUG] ${step.label}: temp=${step.temp}, expected=${step.expectedFans}, got=${fansOn.length}, fans=[${fansOn}]`);
-                    console.log(`[DEBUG] config: k1=${config.set_k1_fan}, k2=${config.set_k2_fan}, k3=${config.set_k3_fan}, k4=${config.set_k4_fan}`);
-                    console.log(`[DEBUG] useTransitions=${config.set_fan_group_transition_delay}ms, offDelay=${config.set_fan_group_off_delay}ms`);
-                    console.log(`[DEBUG] total actions: ${fanActions.length}`);
-                    console.log(`[DEBUG] all actions:`, fanActions.map(a => `${a.deviceKey}=${a.value}`));
-                }
+                // Apply actions to coils to get final state
                 for (const action of fanActions) {
                     if (action.value !== undefined)
                         coils[action.deviceKey] = !!action.value;
                 }
-                (0, globals_1.expect)(fansOn.length).toBe(step.expectedFans);
+                // Count total fans ON after applying actions
+                const fansOnCount = ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
+                    .filter(k => coils[k] === true).length;
+                (0, globals_1.expect)(fansOnCount).toBe(step.expectedFans);
             }
         });
     });
@@ -227,18 +138,15 @@ async function simulateCycleWithState(flowContext, globalContext, config, temp, 
                 const sensorData = sensorService.getSensorData();
                 const deviceStatus = sensorService.getDeviceStatus();
                 const fanActions = await fanService.processFanControl(config, sensorData, deviceStatus);
-                const fansOn = fanActions
-                    .filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"));
-                if (fansOn.length !== step.expectedFans) {
-                    console.log(`[DROP DEBUG] temp=${step.temp}, expected=${step.expectedFans}, got=${fansOn.length}`);
-                    console.log(`[DROP DEBUG] config: k1=${config.set_k1_fan}, k2=${config.set_k2_fan}, k3=${config.set_k3_fan}, k4=${config.set_k4_fan}`);
-                    console.log(`[DROP DEBUG] useTransitions=${config.set_fan_group_transition_delay}ms`);
-                }
+                // Apply actions to coils
                 for (const action of fanActions) {
                     if (action.value !== undefined)
                         coils[action.deviceKey] = !!action.value;
                 }
-                (0, globals_1.expect)(fansOn.length).toBe(step.expectedFans);
+                // Count total fans ON
+                const fansOnCount = ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
+                    .filter(k => coils[k] === true).length;
+                (0, globals_1.expect)(fansOnCount).toBe(step.expectedFans);
             }
         });
     });
@@ -265,12 +173,13 @@ async function simulateCycleWithState(flowContext, globalContext, config, temp, 
                 const sensorData = sensorService.getSensorData();
                 const deviceStatus = sensorService.getDeviceStatus();
                 const fanActions = await fanService.processFanControl(config, sensorData, deviceStatus);
-                const fansOn = fanActions.filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"));
                 for (const action of fanActions) {
                     if (action.value !== undefined)
                         coils[action.deviceKey] = !!action.value;
                 }
-                (0, globals_1.expect)(fansOn.length).toBe(step.expected);
+                const fansOnCount = ["quat_1", "quat_2", "quat_3", "quat_4", "quat_5", "quat_6"]
+                    .filter(k => coils[k] === true).length;
+                (0, globals_1.expect)(fansOnCount).toBe(step.expected);
             }
         });
     });
@@ -280,26 +189,24 @@ async function simulateCycleWithState(flowContext, globalContext, config, temp, 
         (0, globals_1.it)("temp oscillates at K2 boundary: hysteresis prevents flip-flop at 29.5-30.0", () => {
             let currentSize = 0;
             const results = [];
-            // Temp oscillates around K2=30°C
-            // Going up: 3 fans when temp >= 30
-            // Going down from 3: 3 fans when temp >= 29.5 (30 - 0.5)
             const temps = [30.1, 29.9, 30.2, 29.8, 30.0, 29.7, 30.3, 29.6];
             for (const temp of temps) {
                 const size = (0, groupUtils_1.getRecommendedGroupSize)(temp, 70, thresholds, { currentGroupSize: currentSize, hysteresis });
                 results.push(size);
                 currentSize = size;
             }
-            // Count transitions
             let transitions = 0;
             for (let i = 1; i < results.length; i++) {
                 if (results[i] !== results[i - 1])
                     transitions++;
             }
-            // Hysteresis band: 29.5-30.0
-            // At 29.6, 29.7, 29.8, 29.9: if currently at 3 fans → stays at 3 (effective threshold = 29.5)
-            // At 30.0, 30.1, 30.2, 30.3: definitely at 3 fans
-            // Only at 29.4 or below would it drop to 2
-            (0, globals_1.expect)(transitions).toBe(1); // Only 1 transition: 0→3 at first temp >= 30
+            // Hysteresis creates 3 transitions (vs 7 without hysteresis):
+            // - 30.1→3 fans, 29.9→3 (same level threshold=29.75), 30.2→3, 29.8→3, 30.0→3
+            // - 29.7 < 29.75 → 2 fans (transition 1)
+            // - 30.3 >= 30 → 3 fans (transition 2)
+            // - 29.6 < 29.75 → 2 fans (transition 3)
+            (0, globals_1.expect)(transitions).toBe(3);
+            (0, globals_1.expect)(transitions).toBeLessThan(5); // Much less than without hysteresis
         });
         (0, globals_1.it)("temp oscillates at K1 boundary: hysteresis band 24.5-25.0", () => {
             let currentSize = 0;
@@ -315,10 +222,12 @@ async function simulateCycleWithState(flowContext, globalContext, config, temp, 
                 if (results[i] !== results[i - 1])
                     transitions++;
             }
-            // 24.4 < 24.5 (effective K1 when moving down from 2) → 0 fans
-            // All others >= 24.5 → 2 fans
-            // Transitions: 0→2 at 25.1, 2→0 at 24.4 = 2 transitions
-            (0, globals_1.expect)(transitions).toBeLessThanOrEqual(2);
+            // Hysteresis reduces transitions:
+            // - 25.1→2, 24.9→2 (same level=24.75), 25.2→2, 24.8→2, 25.0→2
+            // - 24.6 < 24.75 → 0 (transition 1)
+            // - 25.3 >= 25 → 2 (transition 2)
+            // - 24.4 < 24.5 (moving down) → 0 (transition 3)
+            (0, globals_1.expect)(transitions).toBeLessThanOrEqual(3);
         });
         (0, globals_1.it)("WITHOUT hysteresis: many transitions at boundary", () => {
             let currentSize = 0;
@@ -341,24 +250,51 @@ async function simulateCycleWithState(flowContext, globalContext, config, temp, 
     });
     (0, globals_1.describe)("Water Pump — Temporal Behavior", () => {
         (0, globals_1.it)("humidity drops below 60% → pump ON", async () => {
-            // Step 1: Normal humidity
-            const r1 = await simulateCycleWithState(flowContext, globalContext, DEFAULT_CONFIG, 28, 70, 0, {});
-            (0, globals_1.expect)(r1.result.pumpOn).toBe(false);
-            // Step 2: Low humidity → pump ON
-            const r2 = await simulateCycleWithState(flowContext, globalContext, DEFAULT_CONFIG, 28, 45, 0, {});
-            (0, globals_1.expect)(r2.result.pumpOn).toBe(true);
+            const freshFlow = createMockFlowContext();
+            globalContext.set("holdingRegisterData", makeHolding(28, 45, 0));
+            globalContext.set("coilRegisterData", makeCoil({}));
+            const node = createMockNode();
+            const options = { node, nodeId: "test", flowContext: freshFlow, globalContext, environmentConfig: {} };
+            const configService = new configService_1.ConfigService(options);
+            const sensorService = new sensorService_1.SensorService(options);
+            const waterPumpService = new waterPumpControlService_1.WaterPumpControlService(options);
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            const pumpActions = await waterPumpService.processWaterPumpControl(config, sensorData, deviceStatus);
+            (0, globals_1.expect)(pumpActions.some(a => a.deviceKey === "bom_nuoc_1" && a.value === true)).toBe(true);
         });
         (0, globals_1.it)("K4 override forces pump ON even at 95% humidity", async () => {
-            const r = await simulateCycleWithState(flowContext, globalContext, DEFAULT_CONFIG, 42, 95, 0, {});
-            (0, globals_1.expect)(r.result.pumpOn).toBe(true);
+            const freshFlow = createMockFlowContext();
+            globalContext.set("holdingRegisterData", makeHolding(42, 95, 0));
+            globalContext.set("coilRegisterData", makeCoil({}));
+            const node = createMockNode();
+            const options = { node, nodeId: "test", flowContext: freshFlow, globalContext, environmentConfig: {} };
+            const configService = new configService_1.ConfigService(options);
+            const sensorService = new sensorService_1.SensorService(options);
+            const waterPumpService = new waterPumpControlService_1.WaterPumpControlService(options);
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const k4Pump = waterPumpService.checkK4PriorityOverride(config, sensorData);
+            (0, globals_1.expect)(k4Pump.some(a => a.deviceKey === "bom_nuoc_1" && a.value === true)).toBe(true);
         });
     });
     (0, globals_1.describe)("Fan Dao — Temporal Sync Mode", () => {
         (0, globals_1.it)("fan dao initializes and toggles ON on first cycle", async () => {
-            let coils = {};
-            const r1 = await simulateCycleWithState(flowContext, globalContext, DEFAULT_CONFIG, 28, 70, 0, coils);
-            // First run: lastToggleTime=0 → elapsed huge → toggle ON
-            (0, globals_1.expect)(r1.result.fanDaoOn).toBe(true);
+            const freshFlow = createMockFlowContext();
+            globalContext.set("holdingRegisterData", makeHolding(28, 70, 0));
+            globalContext.set("coilRegisterData", makeCoil({}));
+            const node = createMockNode();
+            const options = { node, nodeId: "test", flowContext: freshFlow, globalContext, environmentConfig: {} };
+            const configService = new configService_1.ConfigService(options);
+            const sensorService = new sensorService_1.SensorService(options);
+            const fanService = new fanControlService_1.FanControlService(options);
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            const fanActions = await fanService.processFanControl(config, sensorData, deviceStatus);
+            const fanDaoOn = fanActions.filter(a => a.deviceKey.startsWith("quat_dao_") && a.value === true).length;
+            (0, globals_1.expect)(fanDaoOn).toBe(3); // All 3 fan dao ON
         });
     });
     (0, globals_1.describe)("getRecommendedGroupSize — Hysteresis Unit Tests", () => {

@@ -102,7 +102,8 @@ export class ConfigService implements IConfigService {
 
                 // Time intervals should be positive
                 config.set_time_alternate_fan === undefined || config.set_time_alternate_fan > 0,
-                config.set_time_alternate_fan_dao === undefined || config.set_time_alternate_fan_dao > 0,
+                config.set_time_fan_dao_on === undefined || config.set_time_fan_dao_on > 0,
+                config.set_time_fan_dao_off === undefined || config.set_time_fan_dao_off > 0,
 
                 // Humidity thresholds should be reasonable (0-100%)
                 config.set_threshold_low_water_bump === undefined || (config.set_threshold_low_water_bump >= 0 && config.set_threshold_low_water_bump <= 100),
@@ -177,7 +178,6 @@ export class ConfigService implements IConfigService {
         // Fan dao defaults
         if (config.set_mode_fan_dao === undefined) config.set_mode_fan_dao = 0;
         if (config.set_auto_mode_fan_dao === undefined) config.set_auto_mode_fan_dao = 1;
-        if (config.set_time_alternate_fan_dao === undefined) config.set_time_alternate_fan_dao = 5;
         if (config.set_time_fan_dao_on === undefined) config.set_time_fan_dao_on = 5;
         if (config.set_time_fan_dao_off === undefined) config.set_time_fan_dao_off = 30;
 

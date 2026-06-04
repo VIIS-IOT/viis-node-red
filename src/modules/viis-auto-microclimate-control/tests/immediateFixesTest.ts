@@ -250,7 +250,7 @@ export class ImmediateFixesTestSuite {
 
             // Test fan dao logic
             const fanDaoResult = FanControlCore.executeFanDaoControl(
-                { ...config, set_mode_fan_dao: 1, set_time_alternate_fan_dao: 5 },
+                { ...config, set_mode_fan_dao: 1, set_time_fan_dao_on: 5 },
                 0, // Last time
                 false, // Current state
                 { quat_dao_1: 6, quat_dao_2: 7, quat_dao_3: 8 },

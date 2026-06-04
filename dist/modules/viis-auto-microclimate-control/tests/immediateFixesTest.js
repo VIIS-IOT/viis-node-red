@@ -204,7 +204,7 @@ class ImmediateFixesTestSuite {
             console.log(`✓ Threshold logic executed: ${thresholdResult.requiredGroupSize} fans required`);
             console.log(`✓ Generated ${thresholdResult.actions.length} actions`);
             // Test fan dao logic
-            const fanDaoResult = fanControlCore_1.FanControlCore.executeFanDaoControl(Object.assign(Object.assign({}, config), { set_mode_fan_dao: 1, set_time_alternate_fan_dao: 5 }), 0, // Last time
+            const fanDaoResult = fanControlCore_1.FanControlCore.executeFanDaoControl(Object.assign(Object.assign({}, config), { set_mode_fan_dao: 1, set_time_fan_dao_on: 5 }), 0, // Last time
             false, // Current state
             { quat_dao_1: 6, quat_dao_2: 7, quat_dao_3: 8 }, this.mockLogger);
             console.log(`✓ Fan DAO logic executed: ${fanDaoResult.actions.length} actions`);

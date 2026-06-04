@@ -19,6 +19,7 @@ import {
 import {
     CONTEXT_KEYS,
     CONTROL_CONFIG,
+    CURTAIN_CONFIG,
     STATUS_MESSAGES,
     ERROR_MESSAGES
 } from "../constants";
@@ -244,6 +245,9 @@ export class AutoControlHandler implements IAutoControlHandler {
             // Get detailed fan control debug information
             const fanDebugInfo = this.getFanControlDebugInfo(config, sensorData);
 
+            // Get detailed curtain control debug information
+            const curtainDebugInfo = this.getCurtainDebugInfo(config, sensorData);
+
             const outputMessage = {
                 payload: {
                     timestamp: result.timestamp,
@@ -264,6 +268,7 @@ export class AutoControlHandler implements IAutoControlHandler {
                         curtainControlEnabled: config.set_mode_luoi === 1
                     },
                     fanControl: fanDebugInfo,
+                    curtainControl: curtainDebugInfo,
                     actions: result.actionsExecuted.map(action => ({
                         device: action.deviceKey,
                         value: action.value,
@@ -488,6 +493,104 @@ export class AutoControlHandler implements IAutoControlHandler {
         } catch (error) {
             return {
                 error: `Fan group info error: ${(error as Error).message}`
+            };
+        }
+    }
+
+    /**
+     * Get detailed curtain control debugging information
+     */
+    private getCurtainDebugInfo(config: any, sensorData: any): any {
+        try {
+            if (config.set_mode_luoi !== 1) {
+                return {
+                    enabled: false,
+                    reason: "Curtain control disabled"
+                };
+            }
+
+            const lightOutdoor = sensorData.light_outdoor;
+            const lightIndoor = sensorData.light_indoor;
+
+            if (lightOutdoor === undefined || lightIndoor === undefined) {
+                return {
+                    enabled: true,
+                    error: "Missing light sensor data",
+                    light_outdoor: lightOutdoor,
+                    light_indoor: lightIndoor
+                };
+            }
+
+            // Get current device status
+            const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
+
+            // Get tolerance timers from flow context
+            const toleranceTimers = this.flowContext.get(CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS) || [];
+
+            // Build luoi details
+            const luoiKeys = ["luoi_1", "luoi_2", "luoi_3", "luoi_4"];
+            const luoiDetails: Record<string, any> = {};
+
+            for (const luoiKey of luoiKeys) {
+                const index = luoiKey.split("_")[1];
+                const daiThreshold = config[`set_light_dai_luoi_${index}`] || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_DAI;
+                const thuThreshold = config[`set_light_thu_luoi_${index}`] || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_THU;
+                const indoorThuThreshold = config[`set_light_indoor_thu_luoi_${index}`] || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.LIGHT_INDOOR_THU;
+                const toleranceMinutes = config[`set_tolerance_light_luoi_${index}`] || CURTAIN_CONFIG.DEFAULT_THRESHOLDS.TOLERANCE_TIME;
+
+                // Current coil states
+                const mapping = CURTAIN_CONFIG.LUOI_MAPPING[luoiKey as keyof typeof CURTAIN_CONFIG.LUOI_MAPPING];
+                const currentThuState = mapping ? (deviceStatus[mapping.thu] || false) : false;
+                const currentDaiState = mapping ? (deviceStatus[mapping.dai] || false) : false;
+
+                // Determine desired action
+                let desiredAction = "none";
+                if (lightOutdoor >= daiThreshold) {
+                    desiredAction = currentDaiState ? "already_dai" : "dai";
+                } else if (lightOutdoor <= thuThreshold) {
+                    desiredAction = currentThuState ? "already_thu" : "thu";
+                }
+
+                // Find tolerance timer for this luoi
+                const timer = toleranceTimers.find((t: any) => t.luoiId === luoiKey);
+                const timerInfo = timer ? {
+                    targetAction: timer.targetAction,
+                    lightValue: timer.lightValue,
+                    startTime: timer.startTime,
+                    elapsedMs: Date.now() - timer.startTime,
+                    elapsedMinutes: Math.round((Date.now() - timer.startTime) / 60000 * 10) / 10,
+                    toleranceMinutes: toleranceMinutes
+                } : null;
+
+                luoiDetails[luoiKey] = {
+                    thresholds: {
+                        light_dai: daiThreshold,
+                        light_thu: thuThreshold,
+                        light_indoor_thu: indoorThuThreshold,
+                        tolerance_minutes: toleranceMinutes
+                    },
+                    currentState: {
+                        thu: currentThuState,
+                        dai: currentDaiState,
+                        status: currentDaiState ? "EXTENDED" : currentThuState ? "RETRACTED" : "IDLE"
+                    },
+                    desiredAction: desiredAction,
+                    toleranceTimer: timerInfo
+                };
+            }
+
+            return {
+                enabled: true,
+                light_outdoor: lightOutdoor,
+                light_indoor: lightIndoor,
+                activeToleranceTimers: toleranceTimers.length,
+                luoi: luoiDetails
+            };
+
+        } catch (error) {
+            return {
+                enabled: true,
+                error: `Curtain debug info error: ${(error as Error).message}`
             };
         }
     }

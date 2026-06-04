@@ -78,7 +78,8 @@ class ConfigService {
                 config.set_gr_alternate_fan === undefined || [1, 2, 3, 4, 6].includes(config.set_gr_alternate_fan),
                 // Time intervals should be positive
                 config.set_time_alternate_fan === undefined || config.set_time_alternate_fan > 0,
-                config.set_time_alternate_fan_dao === undefined || config.set_time_alternate_fan_dao > 0,
+                config.set_time_fan_dao_on === undefined || config.set_time_fan_dao_on > 0,
+                config.set_time_fan_dao_off === undefined || config.set_time_fan_dao_off > 0,
                 // Humidity thresholds should be reasonable (0-100%)
                 config.set_threshold_low_water_bump === undefined || (config.set_threshold_low_water_bump >= 0 && config.set_threshold_low_water_bump <= 100),
                 config.set_threshold_high_water_bump === undefined || (config.set_threshold_high_water_bump >= 0 && config.set_threshold_high_water_bump <= 100),
@@ -152,8 +153,6 @@ class ConfigService {
             config.set_mode_fan_dao = 0;
         if (config.set_auto_mode_fan_dao === undefined)
             config.set_auto_mode_fan_dao = 1;
-        if (config.set_time_alternate_fan_dao === undefined)
-            config.set_time_alternate_fan_dao = 5;
         if (config.set_time_fan_dao_on === undefined)
             config.set_time_fan_dao_on = 5;
         if (config.set_time_fan_dao_off === undefined)

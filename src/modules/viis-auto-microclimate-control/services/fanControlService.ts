@@ -315,7 +315,7 @@ export class FanControlService implements IFanControlService {
             }
 
             const autoMode = config.set_auto_mode_fan_dao || 1; // Default: Synchronization
-            const timeOn = minutesToMs(config.set_time_fan_dao_on || config.set_time_alternate_fan_dao || 5);
+            const timeOn = minutesToMs(config.set_time_fan_dao_on || 5);
             const timeOff = minutesToMs(config.set_time_fan_dao_off || 30);
 
             if (autoMode === 1) {

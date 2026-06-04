@@ -157,7 +157,7 @@ class FanControlCore {
                 actions: (0, groupUtils_1.createFanDaoActions)(false, "Fan dao control disabled", coilMapping)
             };
         }
-        const alternateInterval = (0, timeUtils_1.minutesToMs)(config.set_time_alternate_fan_dao || 5);
+        const alternateInterval = (0, timeUtils_1.minutesToMs)(config.set_time_fan_dao_on || 5);
         // Check if it's time to toggle fan dao state
         if ((0, timeUtils_1.hasTimeElapsed)(lastFanDaoTime, alternateInterval)) {
             const newState = !currentFanDaoState;

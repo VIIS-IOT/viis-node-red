@@ -434,4 +434,100 @@ function makeCoilRegister(overrides = {}) {
             (0, globals_1.expect)(svc.getSensorData()).toBeNull();
         });
     });
+    // ─── Rotation Mode Tests ────────────────────────────────────────────
+    (0, globals_1.describe)("Rotation Mode (set_auto_mode_fan=1)", () => {
+        (0, globals_1.it)("rotates fan groups by time interval", async () => {
+            setupServices({ set_auto_mode_fan: 1, set_gr_alternate_fan: 2, set_time_alternate_fan: 15, set_fan_group_transition_delay: 0, set_fan_group_off_delay: 0 });
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            // First cycle: should activate first group
+            const actions = await fanService.processFanControl(config, sensorData, deviceStatus);
+            const fansOn = actions.filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"));
+            (0, globals_1.expect)(fansOn).toHaveLength(2);
+        });
+        (0, globals_1.it)("respects set_gr_alternate_fan group size", async () => {
+            setupServices({ set_auto_mode_fan: 1, set_gr_alternate_fan: 3, set_time_alternate_fan: 15, set_fan_group_transition_delay: 0, set_fan_group_off_delay: 0 });
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            const actions = await fanService.processFanControl(config, sensorData, deviceStatus);
+            const fansOn = actions.filter(a => a.value === true && a.deviceKey.startsWith("quat_") && !a.deviceKey.includes("dao"));
+            (0, globals_1.expect)(fansOn).toHaveLength(3);
+        });
+        (0, globals_1.it)("K4 override does NOT activate in rotation mode", async () => {
+            setupServices({ set_auto_mode_fan: 1 }, { temp_indoor: 42 });
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const k4Actions = waterPumpService.checkK4PriorityOverride(config, sensorData);
+            (0, globals_1.expect)(k4Actions).toEqual([]);
+        });
+    });
+    // ─── Curtain Timer Elapse Tests ─────────────────────────────────────
+    (0, globals_1.describe)("Curtain — Timer Elapse Scenarios", () => {
+        (0, globals_1.it)("luoi_1 dai: timer elapsed + light still high → execute", async () => {
+            setupServices({}, { light_outdoor: 60000, light_indoor: 25000 });
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            // Pre-set elapsed timer
+            const now = Date.now();
+            flowContext.set(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS, [
+                { luoiId: "luoi_1", startTime: now - 10 * 60 * 1000, targetAction: "dai", lightValue: 60000 },
+            ]);
+            const actions = await curtainService.processCurtainControl(config, sensorData, deviceStatus);
+            (0, globals_1.expect)(actions.find(a => a.deviceKey === "luoi_1_dai" && a.value === true)).toBeDefined();
+            (0, globals_1.expect)(actions.find(a => a.deviceKey === "luoi_1_thu" && a.value === false)).toBeDefined();
+        });
+        (0, globals_1.it)("luoi_2 thu: timer elapsed + light still low → execute", async () => {
+            setupServices({}, { light_outdoor: 20000, light_indoor: 10000 });
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            const now = Date.now();
+            flowContext.set(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS, [
+                { luoiId: "luoi_2", startTime: now - 10 * 60 * 1000, targetAction: "thu", lightValue: 20000 },
+            ]);
+            const actions = await curtainService.processCurtainControl(config, sensorData, deviceStatus);
+            (0, globals_1.expect)(actions.find(a => a.deviceKey === "luoi_2_thu" && a.value === true)).toBeDefined();
+            (0, globals_1.expect)(actions.find(a => a.deviceKey === "luoi_2_dai" && a.value === false)).toBeDefined();
+        });
+        (0, globals_1.it)("timer restarts when condition changes during wait", async () => {
+            setupServices({}, { light_outdoor: 60000, light_indoor: 25000 });
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            // Pre-set timer with thu target, but now light is high (should be dai)
+            const now = Date.now();
+            flowContext.set(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS, [
+                { luoiId: "luoi_1", startTime: now - 10 * 60 * 1000, targetAction: "thu", lightValue: 20000 },
+            ]);
+            await curtainService.processCurtainControl(config, sensorData, deviceStatus);
+            // Timer should be restarted with new target (dai)
+            const timers = flowContext.get(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS);
+            const luoi1Timer = timers.find((t) => t.luoiId === "luoi_1");
+            (0, globals_1.expect)(luoi1Timer).toBeDefined();
+            (0, globals_1.expect)(luoi1Timer.targetAction).toBe("dai");
+            // Timer should be recent (just restarted)
+            (0, globals_1.expect)(now - luoi1Timer.startTime).toBeLessThan(1000);
+        });
+        (0, globals_1.it)("expired timers (>30 min) are cleaned up", async () => {
+            setupServices({}, { light_outdoor: 40000, light_indoor: 20000 }); // Between thresholds
+            const config = configService.getConfig();
+            const sensorData = sensorService.getSensorData();
+            const deviceStatus = sensorService.getDeviceStatus();
+            // Pre-set expired timer (35 min old)
+            const now = Date.now();
+            flowContext.set(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS, [
+                { luoiId: "luoi_1", startTime: now - 35 * 60 * 1000, targetAction: "dai", lightValue: 60000 },
+                { luoiId: "luoi_2", startTime: now - 5 * 60 * 1000, targetAction: "dai", lightValue: 60000 }, // Not expired
+            ]);
+            await curtainService.processCurtainControl(config, sensorData, deviceStatus);
+            const timers = flowContext.get(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS);
+            // Expired timer should be removed
+            (0, globals_1.expect)(timers.find((t) => t.luoiId === "luoi_1")).toBeUndefined();
+            // Non-expired timer should remain
+            (0, globals_1.expect)(timers.find((t) => t.luoiId === "luoi_2")).toBeDefined();
+        });
+    });
 });
