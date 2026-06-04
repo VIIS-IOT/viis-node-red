@@ -309,10 +309,10 @@ class FanControlStateMachine {
         return config.set_mode_fan === 1;
     }
     isRotationModeEnabled(config) {
-        return this.isFanControlEnabled(config) && config.set_auto_mode_fan === 2;
+        return this.isFanControlEnabled(config) && config.set_auto_mode_fan === 1;
     }
     isThresholdModeEnabled(config) {
-        return this.isFanControlEnabled(config) && config.set_auto_mode_fan === 1;
+        return this.isFanControlEnabled(config) && config.set_auto_mode_fan !== 1;
     }
     shouldStartRotationTransition(context) {
         // Check if rotation interval has elapsed and transitions are enabled

@@ -87,7 +87,7 @@ export class FanControlService implements IFanControlService {
             const useTransitions = transitionDelayMs > 0 || offDelayMs > 0;
 
             // Process based on auto mode
-            if (config.set_auto_mode_fan === 2) {
+            if (config.set_auto_mode_fan === 1) {
                 // Rotation mode
                 if (useTransitions) {
                     const rotationActions = await this.processRotationModeWithTransition(config);
@@ -362,97 +362,138 @@ export class FanControlService implements IFanControlService {
     }
 
     /**
-     * Fan Dao Scrolling mode: sequential Q1→Q2→Q3, each runs T_on then rests T_off
-     * When one fan finishes, the next starts immediately
+     * Fan Dao Scrolling mode: sequential Q1→Q2→Q3, each runs T_on then rests T_off.
+     * When current fan finishes T_on, find next fan that has rested enough (T_off).
+     * If no fan is available, there's a gap (no fan runs) until next cycle.
+     *
+     * With 3 fixed fans: if T_off <= 2×T_on → always 1 fan running.
+     * If T_off > 2×T_on → gaps where no fan runs (intentional for plant health).
      */
     private async processFanDaoScrolling(timeOnMs: number, timeOffMs: number): Promise<ControlAction[]> {
         const stateKey = `${CONTEXT_KEYS.FAN_ROTATION_STATE}_dao_scroll`;
         let state = this.flowContext.get(stateKey);
         const fanDaoKeys = ["quat_dao_1", "quat_dao_2", "quat_dao_3"];
+        const fanCount = fanDaoKeys.length;
 
-        if (!state || typeof state !== 'object') {
+        // Initialize state on first run
+        if (!state || typeof state !== 'object' || !Array.isArray(state.lastStopTime)) {
+            const now = getCurrentTimestamp();
             state = {
                 currentIndex: 0,
-                phase: 'ON', // 'ON' or 'OFF'
-                lastTransitionTime: getCurrentTimestamp()
+                lastStopTime: new Array(fanCount).fill(0), // 0 = never ran → available immediately
+                activeFanSince: now, // when current fan started
+                isRunning: false // no fan running yet on first cycle
             };
             this.flowContext.set(stateKey, state);
         }
 
         const now = getCurrentTimestamp();
-        const elapsed = now - state.lastTransitionTime;
-        const currentInterval = state.phase === 'ON' ? timeOnMs : timeOffMs;
+        const coilMapping = this.getCoilMapping();
 
-        if (elapsed >= currentInterval) {
-            const coilMapping = this.getCoilMapping();
-            const actions: ControlAction[] = [];
+        // First cycle: start the first fan immediately
+        if (!state.isRunning) {
+            const firstFanKey = fanDaoKeys[0];
+            const address = coilMapping[firstFanKey];
+            state.isRunning = true;
+            state.currentIndex = 0;
+            state.activeFanSince = now;
+            this.flowContext.set(stateKey, state);
 
-            if (state.phase === 'ON') {
-                // Current fan finished T_on → turn it OFF, move to OFF phase
-                const currentFanKey = fanDaoKeys[state.currentIndex];
-                const address = coilMapping[currentFanKey];
-                if (address !== undefined) {
-                    actions.push({
-                        deviceKey: currentFanKey,
-                        value: false,
-                        address: address,
-                        fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
-                        reason: `Fan dao scroll: ${currentFanKey} finished T_on, turning OFF`
-                    });
-                }
-
-                // Switch to OFF phase
-                state.phase = 'OFF';
-                state.lastTransitionTime = now;
-                this.flowContext.set(stateKey, state);
-
-                this.logger.warn(`Fan dao scroll: ${currentFanKey} OFF, entering rest phase`);
-
-            } else {
-                // Current fan finished T_off → turn ON next fan
-                state.currentIndex = (state.currentIndex + 1) % fanDaoKeys.length;
-                const nextFanKey = fanDaoKeys[state.currentIndex];
-                const address = coilMapping[nextFanKey];
-
-                if (address !== undefined) {
-                    // Turn off all other fans first
-                    fanDaoKeys.forEach((fanKey, idx) => {
-                        if (idx !== state.currentIndex) {
-                            const addr = coilMapping[fanKey];
-                            if (addr !== undefined) {
-                                actions.push({
-                                    deviceKey: fanKey,
-                                    value: false,
-                                    address: addr,
-                                    fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
-                                    reason: `Fan dao scroll: turn off ${fanKey}`
-                                });
-                            }
-                        }
-                    });
-
-                    // Turn on next fan
-                    actions.push({
-                        deviceKey: nextFanKey,
-                        value: true,
-                        address: address,
-                        fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
-                        reason: `Fan dao scroll: ${nextFanKey} starting T_on`
-                    });
-                }
-
-                // Switch to ON phase
-                state.phase = 'ON';
-                state.lastTransitionTime = now;
-                this.flowContext.set(stateKey, state);
-
-                this.logger.warn(`Fan dao scroll: ${nextFanKey} ON (fan ${state.currentIndex + 1}/3)`);
+            if (address !== undefined) {
+                this.logger.warn(`Fan dao scroll: ${firstFanKey} ON (first run, fan 1/${fanCount})`);
+                return [{
+                    deviceKey: firstFanKey,
+                    value: true,
+                    address: address,
+                    fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                    reason: `Fan dao scroll: ${firstFanKey} starting T_on (first run)`
+                }];
             }
+            return [];
+        }
 
+        // Check if current fan has finished T_on
+        const elapsed = now - state.activeFanSince;
+        if (elapsed < timeOnMs) {
+            return []; // Current fan still running
+        }
+
+        // Current fan finished T_on → turn it OFF
+        const actions: ControlAction[] = [];
+        const currentFanKey = fanDaoKeys[state.currentIndex];
+        const currentAddress = coilMapping[currentFanKey];
+
+        if (currentAddress !== undefined) {
+            actions.push({
+                deviceKey: currentFanKey,
+                value: false,
+                address: currentAddress,
+                fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                reason: `Fan dao scroll: ${currentFanKey} finished T_on, turning OFF`
+            });
+        }
+
+        // Record stop time for current fan
+        state.lastStopTime[state.currentIndex] = now;
+
+        // Find next fan that has rested enough (lastStopTime + T_off <= now)
+        let nextIndex = -1;
+        for (let i = 1; i <= fanCount; i++) {
+            const candidateIndex = (state.currentIndex + i) % fanCount;
+            const candidateLastStop = state.lastStopTime[candidateIndex];
+            const candidateRestTime = now - candidateLastStop;
+
+            if (candidateRestTime >= timeOffMs) {
+                nextIndex = candidateIndex;
+                break;
+            }
+        }
+
+        if (nextIndex === -1) {
+            // No fan available → gap (no fan runs)
+            state.isRunning = false;
+            this.flowContext.set(stateKey, state);
+
+            this.logger.warn(`Fan dao scroll: ${currentFanKey} OFF, no fan available (all resting). Gap until next cycle.`);
             return actions;
         }
 
-        return [];
+        // Turn off all other fans (safety), then turn on next fan
+        fanDaoKeys.forEach((fanKey, idx) => {
+            if (idx !== nextIndex) {
+                const addr = coilMapping[fanKey];
+                if (addr !== undefined) {
+                    actions.push({
+                        deviceKey: fanKey,
+                        value: false,
+                        address: addr,
+                        fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                        reason: `Fan dao scroll: turn off ${fanKey}`
+                    });
+                }
+            }
+        });
+
+        const nextFanKey = fanDaoKeys[nextIndex];
+        const nextAddress = coilMapping[nextFanKey];
+        if (nextAddress !== undefined) {
+            actions.push({
+                deviceKey: nextFanKey,
+                value: true,
+                address: nextAddress,
+                fc: MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL,
+                reason: `Fan dao scroll: ${nextFanKey} starting T_on`
+            });
+        }
+
+        // Update state
+        state.currentIndex = nextIndex;
+        state.activeFanSince = now;
+        state.isRunning = true;
+        this.flowContext.set(stateKey, state);
+
+        this.logger.warn(`Fan dao scroll: ${currentFanKey} OFF → ${nextFanKey} ON (fan ${nextIndex + 1}/${fanCount})`);
+        return actions;
     }
 
     /**

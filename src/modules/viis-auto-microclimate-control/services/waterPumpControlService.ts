@@ -151,7 +151,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
             const k4TempCondition = tempIndoor >= k4Threshold;
 
             // Threshold mode is treated as any mode other than explicit rotation mode (2)
-            const isThresholdMode = currentSetAutoModeFan !== 2;
+            const isThresholdMode = currentSetAutoModeFan !== 1;
 
             if (k4TempCondition && currentSetModeFan === 1 && isThresholdMode) {
                 const reason = `K4 priority override: temp=${tempIndoor}°C (≥${k4Threshold})`;

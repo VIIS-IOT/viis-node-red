@@ -264,7 +264,7 @@ class AutoControlHandler {
             const fanGroupInfo = this.getFanGroupInfo(requiredFanCount, currentActiveFans);
             return {
                 enabled: true,
-                mode: config.set_auto_mode_fan === 2 ? "ROTATION" : "THRESHOLD",
+                mode: config.set_auto_mode_fan === 1 ? "ROTATION" : "THRESHOLD",
                 temperature: temperature,
                 humidity: humidity,
                 thresholds: thresholds,
@@ -290,7 +290,7 @@ class AutoControlHandler {
      */
     getRotationStateInfo(config, requiredFanCount) {
         try {
-            if (config.set_auto_mode_fan === 2) {
+            if (config.set_auto_mode_fan === 1) {
                 // Rotation mode
                 const rotationState = this.flowContext.get('fanRotationState');
                 return {

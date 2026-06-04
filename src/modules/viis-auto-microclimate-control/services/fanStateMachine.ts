@@ -422,11 +422,11 @@ export class FanControlStateMachine {
     }
 
     private isRotationModeEnabled(config: AutoControlConfig): boolean {
-        return this.isFanControlEnabled(config) && config.set_auto_mode_fan === 2;
+        return this.isFanControlEnabled(config) && config.set_auto_mode_fan === 1;
     }
 
     private isThresholdModeEnabled(config: AutoControlConfig): boolean {
-        return this.isFanControlEnabled(config) && config.set_auto_mode_fan === 1;
+        return this.isFanControlEnabled(config) && config.set_auto_mode_fan !== 1;
     }
 
     private shouldStartRotationTransition(context: StateMachineContext): boolean {

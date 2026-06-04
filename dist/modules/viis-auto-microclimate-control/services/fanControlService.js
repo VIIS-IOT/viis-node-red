@@ -46,7 +46,7 @@ class FanControlService {
             const offDelayMs = this.getFanGroupOffDelayMs(config);
             const useTransitions = transitionDelayMs > 0 || offDelayMs > 0;
             // Process based on auto mode
-            if (config.set_auto_mode_fan === 2) {
+            if (config.set_auto_mode_fan === 1) {
                 // Rotation mode
                 if (useTransitions) {
                     const rotationActions = await this.processRotationModeWithTransition(config);

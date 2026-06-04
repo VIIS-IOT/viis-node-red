@@ -59,9 +59,10 @@ class ConfigService {
             const config = this.getConfig();
             // Check critical configuration values
             const criticalChecks = [
-                // Fan control mode should be 1 (threshold) or 2 (rotation)
+                // Fan control mode: 0 = manual/off, 1 = auto/on
                 config.set_mode_fan === undefined || [0, 1].includes(config.set_mode_fan),
-                config.set_auto_mode_fan === undefined || [1, 2].includes(config.set_auto_mode_fan),
+                // Auto mode: 0 = threshold (theo nhiệt độ), 1 = rotation (luân phiên)
+                config.set_auto_mode_fan === undefined || [0, 1].includes(config.set_auto_mode_fan),
                 // Water pump mode should be 0 or 1
                 config.set_mode_tuong_nuoc === undefined || [0, 1].includes(config.set_mode_tuong_nuoc),
                 // Curtain mode should be 0 or 1

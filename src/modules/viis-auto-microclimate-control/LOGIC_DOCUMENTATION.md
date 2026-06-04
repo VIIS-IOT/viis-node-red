@@ -46,25 +46,32 @@ Source: services/fanControlService.ts, utils/groupUtils.ts
 
 Enable and mode:
 
-- set_mode_fan: 0 off, 1 on
-- set_auto_mode_fan: 2 rotation mode, otherwise threshold mode
+- set_mode_fan: 0 manual/off, 1 auto/on
+- set_auto_mode_fan: 0 threshold mode (theo nhiệt độ), 1 rotation mode (luân phiên)
 
 ### Threshold Mode
 
-Required fan count is determined by getRecommendedGroupSize with hysteresis:
+Required fan count is determined by getRecommendedGroupSize with hysteresis (0.5°C):
 
-- >= k4 => 6
-- >= k3 => 6
-- >= k2 => 2
-- >= k1 => 1
+- >= k4 => 6 fans
+- >= k3 => 4 fans
+- >= k2 => 3 fans
+- >= k1 => 2 fans
 - below k1 => 0
+
+Fan grouping (6-fan symmetric topology):
+
+- 2 fans: (1,4), (2,5), (3,6) — symmetric pairs
+- 3 fans: (1,3,5), (2,4,6) — interleaved triples
+- 4 fans: (1,2,4,5), (2,3,5,6), (1,3,4,6) — balanced combos
+- 6 fans: all
 
 When multiple groups exist for a required size, rotation state for threshold mode is persisted in flow context and rotated by set_time_alternate_fan interval.
 
 ### Rotation Mode
 
 Uses set_gr_alternate_fan and set_time_alternate_fan.
-Supported group sizes in utility code: 1, 2, 4, 5, 6.
+Supported group sizes: 1, 2, 3, 4, 5, 6.
 
 ### Fan Transition Delay
 
@@ -84,10 +91,42 @@ Transition config keys:
 
 Source: services/fanControlService.ts
 
-- set_mode_fan_dao: enable/disable
-- set_time_alternate_fan_dao: toggle interval (minutes)
+Enable and mode:
+
+- set_mode_fan_dao: 0 off, 1 on
+- set_auto_mode_fan_dao: 1 Synchronization (Đồng bộ), 2 Scrolling (Cuốn chiếu)
+
+Config keys:
+
+- set_time_fan_dao_on: runtime in minutes (default 5)
+- set_time_fan_dao_off: rest time in minutes (default 30)
+- set_time_alternate_fan_dao: legacy toggle interval (fallback for time_on)
 
 Fan dao runs independently from main fan threshold/rotation path.
+
+### Synchronization Mode (autoMode=1)
+
+All 3 fan dao (quat_dao_1, quat_dao_2, quat_dao_3) turn ON together for T_on, then OFF together for T_off. Cycle repeats.
+
+### Scrolling Mode (autoMode=2)
+
+Sequential operation: at any time at most 1 fan dao is active.
+
+Each fan runs for T_on, then rests for at least T_off. When current fan finishes T_on:
+1. Turn off current fan, record its stop time
+2. Search for next fan (in order Q1→Q2→Q3→Q1) whose `lastStopTime + T_off <= now`
+3. If found → turn it on immediately
+4. If not found → **gap** (no fan runs), wait for next polling cycle
+
+With 3 fixed fans:
+- If T_off <= 2×T_on → always 1 fan running (no gaps)
+- If T_off > 2×T_on → intentional gaps where no fan runs (e.g. T_on=5, T_off=30 → 20 min gap)
+
+Config keys:
+- `set_time_fan_dao_on`: T_on in minutes (how long each fan runs)
+- `set_time_fan_dao_off`: T_off in minutes (minimum rest per fan)
+
+T_on and T_off are independent parameters. T_off controls per-fan rest duration, not system-level cycle time.
 
 ## Water Pump Logic
 
@@ -101,25 +140,47 @@ Normal hysteresis behavior:
 
 K4 override check is executed before normal water pump logic inside autoControlHandler.
 
+K4 override activates when:
+
+- temp_indoor >= k4 threshold
+- set_mode_fan = 1 (fan control enabled)
+- set_auto_mode_fan != 1 (threshold mode, not rotation)
+
+K4 override turns on water pump regardless of humidity. No humidity condition is checked for K4.
+
 ## Curtain Logic
 
 Source: services/curtainControlService.ts
 
-Curtains handled: luoi_1, luoi_2, luoi_3
+Curtains handled: luoi_1, luoi_2, luoi_3, luoi_4
+
+Each curtain has independent light thresholds:
+
+- set_light_dai_luoi_N: outdoor light threshold to extend (default 50000 lux)
+- set_light_thu_luoi_N: outdoor light threshold to retract (default 30000 lux)
+- set_light_indoor_thu_luoi_N: indoor light threshold (passed through, outdoor dominates)
+- set_tolerance_light_luoi_N: tolerance timer in minutes (default 5)
 
 Decision branch per curtain:
 
 - light_outdoor >= dai threshold => target action dai
 - else if light_outdoor <= thu threshold => target action thu
 
-Tolerance timer is required before action execution.
+Tolerance timer is required before action execution. Timer resets if condition changes during waiting period.
 
 Each curtain action writes two coils with mutual exclusion:
 
 - dai: thu OFF, dai ON
 - thu: dai OFF, thu ON
 
-Indoor light thresholds are read from config and passed through function parameters, but current branch condition is dominated by outdoor light checks.
+Coil mapping (addresses are device-specific, configured in constants.ts):
+
+- luoi_1: thu=16, dai=17
+- luoi_2: thu=12, dai=13
+- luoi_3: thu=placeholder, dai=placeholder
+- luoi_4: thu=placeholder, dai=placeholder
+
+COIL_PAIRS defines conflict prevention pairs to ensure mutual exclusion per curtain.
 
 ## Input Commands
 
@@ -261,4 +322,4 @@ Send this message to trigger immediate execution:
 
 ---
 
-*Last updated: 2026-04-09*
+*Last updated: 2026-06-04*

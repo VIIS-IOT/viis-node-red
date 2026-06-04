@@ -148,7 +148,8 @@ export const CURTAIN_CONFIG = {
     COIL_PAIRS: [
         { key1: "luoi_1_thu", key2: "luoi_1_dai" },
         { key1: "luoi_2_thu", key2: "luoi_2_dai" },
-        { key1: "luoi_3_thu", key2: "luoi_3_dai" }
+        { key1: "luoi_3_thu", key2: "luoi_3_dai" },
+        { key1: "luoi_4_thu", key2: "luoi_4_dai" }
     ],
 
     DEFAULT_THRESHOLDS: {
