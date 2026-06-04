@@ -37,8 +37,6 @@ export interface AutoControlConfig {
     // Fan dao control
     set_mode_fan_dao?: number;
     set_auto_mode_fan_dao?: number;
-    set_threshold_on_fan_dao?: number;
-    set_threshold_off_fan_dao?: number;
     set_time_fan_dao_on?: number;
     set_time_fan_dao_off?: number;
 
