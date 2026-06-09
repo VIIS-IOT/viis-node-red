@@ -158,6 +158,15 @@ module.exports = function (RED) {
             node.error(`Failed to initialize ScheduleService: ${error.message}`);
             return;
         }
+        // Connect to ProtectionGateService if available
+        const protectionGate = globalContext.get('protectionGateService');
+        if (protectionGate) {
+            scheduleService.setProtectionGate(protectionGate);
+            debugLog("ProtectionGateService connected to ScheduleService");
+        }
+        else {
+            debugLog("ProtectionGateService not found in global context — protection disabled");
+        }
         // Helper function to read Modbus config
         const readModbusConfig = () => {
             const boardsConfig = globalHelper.getEnvVar('MODBUS_BOARDS', null);

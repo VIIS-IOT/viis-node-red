@@ -3,6 +3,7 @@ import { DeviceIntent, DeviceLatestData } from "../../../core/type";
 import { DeviceIntentService } from "../../../core/deviceIntents";
 import { ServiceOptions, IntentProcessingResult, AutomationPayload } from "../interfaces/types";
 import { Logger } from "../utils/logger";
+import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
 
 /**
  * Service for processing automation intents
@@ -15,12 +16,20 @@ export class ProcessingService {
     private flowContext: any;
     private globalContext: any;
     private logger: Logger;
+    private protectionGate: ProtectionGateService | null = null;
 
     constructor(options: ServiceOptions) {
         this.node = options.node;
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
         this.logger = new Logger(this.node, "PROCESSING");
+    }
+
+    /**
+     * Set protection gate service for filtering intent actions
+     */
+    setProtectionGate(gate: ProtectionGateService): void {
+        this.protectionGate = gate;
     }
 
     /**
@@ -43,15 +52,40 @@ export class ProcessingService {
             const intentService = new DeviceIntentService(intents, devicesData);
             const results = await intentService.processDeviceIntents() as IntentProcessingResult[];
 
+            // Filter device actions through protection gate
+            let filteredResults = results;
+            if (this.protectionGate) {
+                filteredResults = results.map(result => {
+                    const blockedActions: { key: string; value: any; reason: string }[] = [];
+                    const allowedActions = result.device_actions.filter((action: any) => {
+                        const gate = this.protectionGate!.checkGate(action.key, action.value, 'intent');
+                        if (!gate.allowed) {
+                            blockedActions.push({ key: action.key, value: action.value, reason: gate.reason });
+                            this.logger.warn(`Intent action blocked: ${action.key}=${action.value} - ${gate.reason}`);
+                        }
+                        return gate.allowed;
+                    });
+
+                    if (blockedActions.length > 0) {
+                        this.logger.log(`Protection blocked ${blockedActions.length}/${result.device_actions.length} intent actions`);
+                    }
+
+                    return {
+                        ...result,
+                        device_actions: allowedActions,
+                    };
+                });
+            }
+
             this.node.status({
                 fill: "green",
                 shape: "dot",
                 text: "Processing complete"
             });
 
-            this.logger.log(`Processing complete. Generated ${results.length} results`);
+            this.logger.log(`Processing complete. Generated ${filteredResults.length} results`);
 
-            return results;
+            return filteredResults;
         } catch (error) {
             this.logger.error(`Intent processing failed: ${(error as Error).message}`);
 

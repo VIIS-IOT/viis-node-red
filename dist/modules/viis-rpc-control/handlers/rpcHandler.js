@@ -13,6 +13,7 @@ class RpcHandler {
         this.RPC_REQUEST_TIMEOUT = 30000; // 30s overall timeout per RPC request
         this.requestQueue = Promise.resolve();
         this.queueLength = 0;
+        this.protectionGate = null;
         this.defaultBatchOptions = {
             sequential: true,
             modbus_delay_ms: 150,
@@ -27,6 +28,12 @@ class RpcHandler {
         this.luoiHandler = luoiHandler;
         this.node = options.node;
         this.logger = new logger_1.Logger(options.node, "RPC-HANDLER");
+    }
+    /**
+     * Set protection gate service for coil write protection
+     */
+    setProtectionGate(gate) {
+        this.protectionGate = gate;
     }
     /**
      * Handle incoming RPC request with retry logic
@@ -429,6 +436,25 @@ class RpcHandler {
     async handleModbusMappedParameter(key, rawValue, mapping) {
         // Validate and convert value
         const value = this.validationService.validateAndConvertValue(key, rawValue);
+        // Protection gate check for coils (fc=5)
+        if (mapping.fc === 5 && this.protectionGate) {
+            const gate = this.protectionGate.checkGate(key, Boolean(value), 'rpc');
+            if (!gate.allowed) {
+                this.logger.warn(`[PROTECTION] Blocked ${key}=${value}: ${gate.reason}`);
+                try {
+                    await this.mqttService.publishConfigUpdate(`_blocked_${key}`, {
+                        requested: value,
+                        reason: gate.reason,
+                        source: 'rpc',
+                        action: gate.action,
+                    });
+                }
+                catch (pubErr) {
+                    this.logger.warn(`Failed to publish blocked telemetry: ${pubErr.message}`);
+                }
+                throw new Error(`Protection blocked: ${gate.reason}`);
+            }
+        }
         this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
         // Write to Modbus with connection error handling.
         // If this throws, the outer handleRpcRequest retry loop may re-attempt — which is safe
@@ -449,6 +475,10 @@ class RpcHandler {
             const readValue = await this.readFromModbusWithRetry(key, mapping);
             // Update global context cache only after successful read-back verification
             this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
+            // Update protection gate state after successful coil write
+            if (mapping.fc === 5 && this.protectionGate) {
+                this.protectionGate.updateState(key, Boolean(readValue));
+            }
             // Publish the confirmed read-back value
             await this.publishResultWithRetry(key, readValue);
             this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });
@@ -459,6 +489,10 @@ class RpcHandler {
             this.logger.warn(`[RPC-HANDLER] Write succeeded but read-back failed for ${key}: ${readError.message}. Publishing written value as fallback.`);
             await this.publishResultWithRetry(key, value);
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
+            // Update gate state even on read-back failure (write succeeded)
+            if (mapping.fc === 5 && this.protectionGate) {
+                this.protectionGate.updateState(key, Boolean(value));
+            }
         }
     }
     /**

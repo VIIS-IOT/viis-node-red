@@ -108,6 +108,7 @@ let ScheduleService = class ScheduleService {
         };
         this.CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
         this.PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
+        this.protectionGate = null;
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
@@ -124,6 +125,9 @@ let ScheduleService = class ScheduleService {
             console.error(`Failed to initialize SyncScheduleService: ${error.message}`);
             this.syncScheduleService = undefined;
         }
+    }
+    setProtectionGate(gate) {
+        this.protectionGate = gate;
     }
     // Helper function for conditional logging
     debugLog(message) {
@@ -639,6 +643,31 @@ let ScheduleService = class ScheduleService {
         return { holdingCommands, coilCommands, configParameters };
     }
     /**
+     * Write a single coil with protection gate check.
+     * Returns true if written, false if blocked by gate.
+     * OFF commands (value=false) always bypass the gate.
+     */
+    async writeCoilWithGate(modbusClient, cmd, source = 'schedule') {
+        // Protection gate check — only for ON commands
+        if (this.protectionGate && cmd.fc === 5 && Boolean(cmd.value)) {
+            const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), source);
+            if (!gate.allowed) {
+                this.debugLog(`🛡️ Protection BLOCKED: ${cmd.key}=${cmd.value} - ${gate.reason}`);
+                if (this.node) {
+                    this.node.warn(`[PROTECTION] Schedule coil blocked: ${cmd.key} - ${gate.reason}`);
+                }
+                return false;
+            }
+        }
+        // Write coil
+        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+        // Update gate state after successful write
+        if (this.protectionGate && cmd.fc === 5) {
+            this.protectionGate.updateState(cmd.key, Boolean(cmd.value));
+        }
+        return true;
+    }
+    /**
  * Gửi các lệnh modbus qua modbusClient
  */
     async executeModbusCommands(modbusClient, commands, schedule) {
@@ -681,8 +710,10 @@ let ScheduleService = class ScheduleService {
             // Thực hiện power coils trước
             for (const cmd of powerCoils) {
                 try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 }
                 catch (error) {
@@ -696,8 +727,10 @@ let ScheduleService = class ScheduleService {
             // Thực hiện valve coils
             for (const cmd of valveCoils) {
                 try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 }
                 catch (error) {
@@ -711,8 +744,10 @@ let ScheduleService = class ScheduleService {
             // Thực hiện other coils
             for (const cmd of otherCoils) {
                 try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 }
                 catch (error) {
@@ -726,8 +761,10 @@ let ScheduleService = class ScheduleService {
                 // Thực hiện pump coils
                 for (const cmd of pumpCoils) {
                     try {
-                        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
+                        const written = await this.writeCoilWithGate(modbusClient, cmd);
+                        if (written) {
+                            this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
+                        }
                         await this.delay(100);
                     }
                     catch (error) {
@@ -808,9 +845,10 @@ let ScheduleService = class ScheduleService {
             // Sau đó thực hiện coil commands
             for (const cmd of commands.coilCommands) {
                 try {
-                    let writeValue = cmd.value;
-                    await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
-                    this.debugLog(`Wrote coil at ${cmd.address} with value ${writeValue}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 }
                 catch (error) {

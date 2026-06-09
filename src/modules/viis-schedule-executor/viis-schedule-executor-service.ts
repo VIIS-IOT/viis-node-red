@@ -20,6 +20,7 @@ import {
 } from "./resilience-utils";
 import axios, { AxiosError } from "axios";
 import { v4 as uuidv4 } from "uuid";
+import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
 
 // require('dotenv').config();
 
@@ -83,6 +84,8 @@ export class ScheduleService {
     private skipCoilVerify: boolean; // Skip coil verification after write
     private readonly CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
     private readonly PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
+    private protectionGate: ProtectionGateService | null = null;
+
     constructor(node?: Node, verifyAfterWrite: boolean = true, debugEnable: boolean = false, skipCoilVerify: boolean = true) {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
@@ -99,6 +102,10 @@ export class ScheduleService {
             console.error(`Failed to initialize SyncScheduleService: ${(error as Error).message}`);
             this.syncScheduleService = undefined as any;
         }
+    }
+
+    setProtectionGate(gate: ProtectionGateService): void {
+        this.protectionGate = gate;
     }
 
     // Helper function for conditional logging
@@ -666,6 +673,39 @@ export class ScheduleService {
 
 
     /**
+     * Write a single coil with protection gate check.
+     * Returns true if written, false if blocked by gate.
+     * OFF commands (value=false) always bypass the gate.
+     */
+    private async writeCoilWithGate(
+        modbusClient: ModbusClientCore,
+        cmd: ModbusCmd,
+        source: string = 'schedule'
+    ): Promise<boolean> {
+        // Protection gate check — only for ON commands
+        if (this.protectionGate && cmd.fc === 5 && Boolean(cmd.value)) {
+            const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), source);
+            if (!gate.allowed) {
+                this.debugLog(`🛡️ Protection BLOCKED: ${cmd.key}=${cmd.value} - ${gate.reason}`);
+                if (this.node) {
+                    this.node.warn(`[PROTECTION] Schedule coil blocked: ${cmd.key} - ${gate.reason}`);
+                }
+                return false;
+            }
+        }
+
+        // Write coil
+        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+
+        // Update gate state after successful write
+        if (this.protectionGate && cmd.fc === 5) {
+            this.protectionGate.updateState(cmd.key, Boolean(cmd.value));
+        }
+
+        return true;
+    }
+
+    /**
  * Gửi các lệnh modbus qua modbusClient
  */
     async executeModbusCommands(modbusClient: ModbusClientCore, commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] }, schedule?: TabiotSchedule): Promise<void> {
@@ -713,8 +753,10 @@ export class ScheduleService {
             // Thực hiện power coils trước
             for (const cmd of powerCoils) {
                 try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 } catch (error) {
                     // CRITICAL LOG: Modbus power coil error
@@ -728,8 +770,10 @@ export class ScheduleService {
             // Thực hiện valve coils
             for (const cmd of valveCoils) {
                 try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 } catch (error) {
                     // CRITICAL LOG: Modbus valve coil error
@@ -743,8 +787,10 @@ export class ScheduleService {
             // Thực hiện other coils
             for (const cmd of otherCoils) {
                 try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 } catch (error) {
                     console.error(`Error executing modbus other coil command ${cmd.key}: ${(error as Error).message}`);
@@ -759,8 +805,10 @@ export class ScheduleService {
                 // Thực hiện pump coils
                 for (const cmd of pumpCoils) {
                     try {
-                        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
+                        const written = await this.writeCoilWithGate(modbusClient, cmd);
+                        if (written) {
+                            this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
+                        }
                         await this.delay(100);
                     } catch (error) {
                         console.error(`Error executing modbus pump coil command ${cmd.key}: ${(error as Error).message}`);
@@ -841,9 +889,10 @@ export class ScheduleService {
             // Sau đó thực hiện coil commands
             for (const cmd of commands.coilCommands) {
                 try {
-                    let writeValue = cmd.value;
-                    await modbusClient.writeCoil(cmd.address, Boolean(writeValue));
-                    this.debugLog(`Wrote coil at ${cmd.address} with value ${writeValue}`);
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) {
+                        this.debugLog(`Wrote coil at ${cmd.address} with value ${cmd.value}`);
+                    }
                     await this.delay(100);
                 } catch (error) {
                     console.error(`Error executing modbus coil command ${cmd.key}: ${(error as Error).message}`);

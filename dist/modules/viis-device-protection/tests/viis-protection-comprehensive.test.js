@@ -354,11 +354,11 @@ describe('VIIS Device Protection', () => {
         it('should get protection config for device', () => {
             const mockData = {
                 configKeyValues: {
-                    'lamp_protect_max_time_on': 300,
-                    'lamp_protect_min_time_on': 60,
-                    'lamp_protect_bypass': false,
-                    'lamp_protect_force_on': true,
-                    'lamp_protect_upper_limit': 30
+                    'lamp_protect_all_max_time_on': 300,
+                    'lamp_protect_all_min_time_on': 60,
+                    'lamp_protect_all_bypass': false,
+                    'lamp_protect_all_force_on': true,
+                    'lamp_protect_all_upper_limit': 30
                 }
             };
             const mockNode = createMockNode(mockData);
@@ -440,8 +440,8 @@ describe('VIIS Device Protection', () => {
         it('should resolve generalized protect config for dynamic label', () => {
             const mockData = {
                 configKeyValues: {
-                    'lamp_control_protect_max_time_on': 120,
-                    'lamp_control_protect_bypass': true
+                    'lamp_protect_all_max_time_on': 120,
+                    'lamp_protect_all_bypass': true
                 }
             };
             const mockNode = createMockNode(mockData);
@@ -451,12 +451,12 @@ describe('VIIS Device Protection', () => {
             expect(result.bypass).toBe(true);
             expect(result.deviceType).toBe('lamp_control_1');
         });
-        it('should prioritize specific protect config over generalized config', () => {
+        it('should prioritize specific protect config over all rule config', () => {
             const mockData = {
                 configKeyValues: {
-                    'lamp_control_protect_max_time_on': 120,
+                    'lamp_protect_all_max_time_on': 120,
                     'lamp_control_1_protect_max_time_on': 30,
-                    'lamp_control_protect_force_on': false,
+                    'lamp_protect_all_force_on': false,
                     'lamp_control_1_protect_force_on': true
                 }
             };

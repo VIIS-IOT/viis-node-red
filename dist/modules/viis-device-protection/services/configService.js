@@ -30,16 +30,27 @@ class ConfigService {
     /**
      * Get protection config for a specific device
      * Matches field naming from device profile
+     *
+     * Lookup: {deviceLabel}_protect_{field}
+     * Example: deviceKey="lamp" → deviceLabel="lamp" → lamp_protect_all_max_time_on
      */
     getProtectionConfig(deviceKey) {
         const configKeyValues = this.getConfigKeyValues();
         const deviceLabel = constants_1.DEVICE_LABEL_MAP[deviceKey] || deviceKey;
-        // Helper to get field value
+        // Helper to get field value — try _protect_all_ first, then _protect_
         const getFieldValue = (field) => {
+            const allKey = `${deviceLabel}_all_${field}`;
+            if (Object.prototype.hasOwnProperty.call(configKeyValues, allKey)) {
+                return Number(configKeyValues[allKey] || 0);
+            }
             const key = `${deviceLabel}_${field}`;
             return Number(configKeyValues[key] || 0);
         };
         const getBoolField = (field) => {
+            const allKey = `${deviceLabel}_all_${field}`;
+            if (Object.prototype.hasOwnProperty.call(configKeyValues, allKey)) {
+                return Boolean(configKeyValues[allKey]);
+            }
             const key = `${deviceLabel}_${field}`;
             return Boolean(configKeyValues[key]);
         };
@@ -52,83 +63,64 @@ class ConfigService {
             minOffTime: getFieldValue('min_off_time') || getFieldValue('min_stop_time'), // CO2 uses min_stop_time
             upperLimit: getFieldValue('upper_temp') || getFieldValue('upper_limit'),
             lowerLimit: getFieldValue('lower_temp') || getFieldValue('lower_limit'),
+            sensorId: (configKeyValues[`${deviceLabel}_all_sensor_id`] || configKeyValues[`${deviceLabel}_sensor_id`])
+                ? String(configKeyValues[`${deviceLabel}_all_sensor_id`] || configKeyValues[`${deviceLabel}_sensor_id`])
+                : null,
             deviceType: deviceKey,
         };
     }
     /**
      * Get protection config by device label (dynamic coil names)
-     * Resolution order for new function identifiers:
-     * 1) Exact key: lamp_control_1_protect_*
-     * 2) Generalized prefixes: lamp_control_protect_*, lamp_protect_*
-     * 3) Device type prefixes: fan_protect_intake_*, fan_protect_circ_*, cool_protect_1_*, etc.
+     *
+     * 2-level lookup chain:
+     * 1) Specific coil: lamp_control_1_protect_*
+     * 2) All rule:      lamp_protect_all_*
      *
      * Example: deviceLabel = "lamp_control_1"
-     * - exact: lamp_control_1_protect_max_time_on
-     * - fallback: lamp_control_protect_max_time_on
-     * - fallback: lamp_protect_max_time_on
+     * - lamp_control_1_protect_max_time_on  (specific)
+     * - lamp_protect_all_max_time_on        (all lamps)
      *
-     * Example: deviceLabel = "fan_control_intake"
-     * - exact: fan_control_intake_protect_max_time_on
-     * - fallback: fan_control_protect_max_time_on
-     * - fallback: fan_protect_intake_max_time_on
-     * - fallback: fan_protect_max_time_on
+     * Sub-type lookup (fan, cool):
+     * - fan_control_intake → fan_protect_all → fan_protect_intake
+     * - cool_control_ac1   → cool_protect_all → cool_protect_1
      */
     getProtectionConfigByLabel(deviceLabel) {
         const configKeyValues = this.getConfigKeyValues();
         const buildLookupLabels = (label) => {
             const labels = [label];
             const parts = label.split('_');
-            // Add generalized prefixes by removing trailing segments.
-            // Example: lamp_control_1 -> lamp_control -> lamp
-            // Example: fan_control_intake -> fan_control -> fan
-            // Example: cool_control_ac1 -> cool_control -> cool
-            for (let i = parts.length - 1; i >= 1; i--) {
-                labels.push(parts.slice(0, i).join('_'));
-            }
-            // Add device-type specific prefixes for new function identifiers
-            // Map control keys to protect keys
-            if (label.includes('lamp_control')) {
-                labels.push('lamp_protect');
-            }
-            else if (label.includes('fan_control_intake')) {
+            const deviceType = parts[0]; // "lamp", "fan", "cool", etc.
+            // Priority 2: all rule (e.g., lamp_protect_all)
+            labels.push(`${deviceType}_protect_all`);
+            // Sub-type specific prefixes (for devices with sub-types like fan, cool)
+            if (label.includes('fan_control_intake')) {
                 labels.push('fan_protect_intake');
-                labels.push('fan_protect');
             }
             else if (label.includes('fan_control_circ')) {
                 labels.push('fan_protect_circ');
-                labels.push('fan_protect');
             }
             else if (label.includes('fan_control_dc')) {
                 labels.push('fan_protect_dc');
-                labels.push('fan_protect');
             }
             else if (label.includes('cool_control_ac1') || label.includes('cool_ac1')) {
                 labels.push('cool_protect_1');
-                labels.push('cool_protect');
             }
             else if (label.includes('cool_control_ac2') || label.includes('cool_ac2')) {
                 labels.push('cool_protect_2');
-                labels.push('cool_protect');
             }
             else if (label.includes('cool_control_freezer')) {
                 labels.push('cool_protect_freezer');
-                labels.push('cool_protect');
-            }
-            else if (label.includes('humid_control') || label.includes('humid')) {
-                labels.push('humid_protect');
-            }
-            else if (label.includes('dehumid_control') || label.includes('dehumid')) {
-                labels.push('dehumid_protect');
-            }
-            else if (label.includes('co2_control') || label.includes('co2')) {
-                labels.push('co2_protect');
             }
             return labels;
         };
         const lookupLabels = buildLookupLabels(deviceLabel);
         const resolveValue = (field, transformer, defaultValue) => {
             for (const label of lookupLabels) {
-                const key = `${label}_protect_${field}`;
+                // Labels with _protect_ already include the prefix (e.g., lamp_protect_all)
+                // Coil labels need _protect_ appended (e.g., lamp_control_1 → lamp_control_1_protect_)
+                const key = label.includes('_protect')
+                    ? `${label}_${field}`
+                    : `${label}_protect_${field}`;
                 if (Object.prototype.hasOwnProperty.call(configKeyValues, key)) {
                     return transformer(configKeyValues[key]);
                 }
@@ -142,6 +134,9 @@ class ConfigService {
         const getBoolField = (field) => {
             return resolveValue(field, (value) => Boolean(value), false);
         };
+        const getStringField = (field) => {
+            return resolveValue(field, (value) => value ? String(value) : null, null);
+        };
         return {
             bypass: getBoolField('bypass'),
             forceOn: getBoolField('force_on'),
@@ -151,6 +146,7 @@ class ConfigService {
             minOffTime: getFieldValue('min_off_time') || getFieldValue('min_stop_time'),
             upperLimit: getFieldValue('upper_temp') || getFieldValue('upper_limit'),
             lowerLimit: getFieldValue('lower_temp') || getFieldValue('lower_limit'),
+            sensorId: getStringField('sensor_id'),
             deviceType: deviceLabel,
         };
     }

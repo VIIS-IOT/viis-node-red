@@ -11,10 +11,17 @@ const logger_1 = require("../utils/logger");
  */
 class ProcessingService {
     constructor(options) {
+        this.protectionGate = null;
         this.node = options.node;
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
         this.logger = new logger_1.Logger(this.node, "PROCESSING");
+    }
+    /**
+     * Set protection gate service for filtering intent actions
+     */
+    setProtectionGate(gate) {
+        this.protectionGate = gate;
     }
     /**
      * Process automation intents with device data
@@ -30,13 +37,32 @@ class ProcessingService {
             // Use existing DeviceIntentService for logic
             const intentService = new deviceIntents_1.DeviceIntentService(intents, devicesData);
             const results = await intentService.processDeviceIntents();
+            // Filter device actions through protection gate
+            let filteredResults = results;
+            if (this.protectionGate) {
+                filteredResults = results.map(result => {
+                    const blockedActions = [];
+                    const allowedActions = result.device_actions.filter((action) => {
+                        const gate = this.protectionGate.checkGate(action.key, action.value, 'intent');
+                        if (!gate.allowed) {
+                            blockedActions.push({ key: action.key, value: action.value, reason: gate.reason });
+                            this.logger.warn(`Intent action blocked: ${action.key}=${action.value} - ${gate.reason}`);
+                        }
+                        return gate.allowed;
+                    });
+                    if (blockedActions.length > 0) {
+                        this.logger.log(`Protection blocked ${blockedActions.length}/${result.device_actions.length} intent actions`);
+                    }
+                    return Object.assign(Object.assign({}, result), { device_actions: allowedActions });
+                });
+            }
             this.node.status({
                 fill: "green",
                 shape: "dot",
                 text: "Processing complete"
             });
-            this.logger.log(`Processing complete. Generated ${results.length} results`);
-            return results;
+            this.logger.log(`Processing complete. Generated ${filteredResults.length} results`);
+            return filteredResults;
         }
         catch (error) {
             this.logger.error(`Intent processing failed: ${error.message}`);

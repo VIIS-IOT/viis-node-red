@@ -18,6 +18,7 @@ const client_registry_1 = __importDefault(require("../../core/client-registry"))
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const error_notification_service_1 = require("../../services/error-notification.service");
 const protection_manager_1 = require("./protection-manager");
+const protection_gate_service_1 = require("./services/protection-gate-service");
 const configService_1 = require("./services/configService");
 const constants_1 = require("./constants");
 module.exports = function (RED) {
@@ -31,6 +32,11 @@ module.exports = function (RED) {
         const errorNotificationService = new error_notification_service_1.ErrorNotificationService(node.context());
         const configService = new configService_1.ConfigService(node);
         const protectionManager = new protection_manager_1.ProtectionManager();
+        // Initialize shared ProtectionGateService
+        const protectionGate = new protection_gate_service_1.ProtectionGateService(configService.getConfigKeyValues());
+        // Store in global context so other nodes (RPC, Schedule, Intent) can access it
+        node.context().global.set('protectionGateService', protectionGate);
+        node.log("ProtectionGateService initialized and stored in global context");
         // ========================================================================
         // Node State
         // ========================================================================
@@ -321,28 +327,45 @@ module.exports = function (RED) {
                 node.status({ fill: "yellow", shape: "ring", text: constants_1.STATUS_MESSAGES.NO_CONFIG });
                 return;
             }
+            // Refresh gate service config
+            protectionGate.refreshConfig(configKeyValues);
             const sensorData = configService.getSensorData();
+            // Sync sensor values to gate service
+            for (const [sensorKey, sensorValue] of Object.entries(sensorData)) {
+                protectionGate.updateSensorValue(sensorKey, sensorValue);
+            }
             debugLog(`Checking ${Object.keys(configKeyValues).length} config keys`);
             // Auto-detect all protection configs from configKeyValues
             // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
-            // Supports new function identifiers:
-            // - lamp_protect_*, fan_protect_intake_*, fan_protect_circ_*, etc.
-            // - cool_protect_1_*, cool_protect_2_*, humid_protect_*, dehumid_protect_*, co2_protect_*
+            // Supports:
+            // - Specific coil: lamp_control_1_protect_*
+            // - All rule: lamp_protect_all_*
+            // - Device type: lamp_protect_*
             const protectedCoils = new Set();
             const coilKeys = Object.keys(modbusCoils);
             for (const key of Object.keys(configKeyValues)) {
-                const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit|pulse_time_on|pulse_time_off)$/);
+                const match = key.match(/^(.+)_protect_(all_)?(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit|pulse_time_on|pulse_time_off|sensor_id)$/);
                 if (match) {
                     const baseKey = match[1];
                     // Exact mapping support (e.g. lamp_control_1_protect_* -> lamp_control_1)
                     if (modbusCoils[baseKey] !== undefined) {
                         protectedCoils.add(baseKey);
                     }
-                    // Generalized mapping support (e.g. lamp_control_protect_* -> lamp_control_1, lamp_control_2)
+                    // Generalized mapping support (e.g. lamp_protect_all_* -> lamp_control_1, lamp_control_2)
                     const prefix = `${baseKey}_`;
                     for (const coilKey of coilKeys) {
                         if (coilKey.startsWith(prefix)) {
                             protectedCoils.add(coilKey);
+                        }
+                    }
+                    // For _protect_all_ keys, match all coils of that device type
+                    // e.g. lamp_protect_all_* -> lamp_control_1, lamp_control_2, lamp_control_3...
+                    if (match[2] === 'all_') {
+                        const deviceType = baseKey; // "lamp" from "lamp_protect"
+                        for (const coilKey of coilKeys) {
+                            if (coilKey.startsWith(`${deviceType}_control_`)) {
+                                protectedCoils.add(coilKey);
+                            }
                         }
                     }
                 }
@@ -363,6 +386,8 @@ module.exports = function (RED) {
                 // READ coil state directly from Modbus
                 const currentState = await readCoil(coilAddress);
                 debugLog(`Coil ${coilKey} current state: ${currentState}`);
+                // Sync coil state to gate service
+                protectionGate.syncCoilState(coilKey, currentState);
                 // Get sensor value if applicable
                 // Sensor mapping based on new function identifiers:
                 // - Temperature: cool_monitor_Aquara_temp_1, cool_monitor_Aquara_temp_2
@@ -419,6 +444,8 @@ module.exports = function (RED) {
                         const writeSuccess = await writeCoil(coilAddress, targetState);
                         if (writeSuccess) {
                             debugLog(`Coil ${coilKey} successfully updated to ${targetState}`);
+                            // Update gate service state after successful write
+                            protectionGate.updateState(coilKey, targetState);
                         }
                         else {
                             node.warn(`Coil ${coilKey} write may have failed - read-back verification failed`);

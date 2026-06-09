@@ -14,9 +14,16 @@ exports.LogicControlService = void 0;
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 class LogicControlService {
     constructor(node, debugEnable = false) {
+        this.protectionGate = null;
         this.node = node;
         this.debugEnable = debugEnable;
         this.globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
+    }
+    /**
+     * Set protection gate service for coil write protection
+     */
+    setProtectionGate(gate) {
+        this.protectionGate = gate;
     }
     /**
      * Debug logging helper
@@ -269,8 +276,37 @@ class LogicControlService {
             this.debugLog(`⚠️ Command overlap detected - execution may be blocked`);
             // Note: Overlaps don't necessarily block, but we log them
         }
+        // 3.5 Protection gate check for coil commands
+        let filteredCommands = input.commands;
+        if (this.protectionGate) {
+            const blockedCommands = [];
+            const allowedCommands = [];
+            for (const cmd of input.commands) {
+                if (cmd.fc === 5) { // Coil write
+                    const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), 'schedule');
+                    if (!gate.allowed) {
+                        blockedCommands.push({ key: cmd.key, reason: gate.reason });
+                        this.debugLog(`🛡️ Protection BLOCKED: ${cmd.key}=${cmd.value} - ${gate.reason}`);
+                    }
+                    else {
+                        allowedCommands.push(cmd);
+                    }
+                }
+                else {
+                    allowedCommands.push(cmd);
+                }
+            }
+            if (blockedCommands.length > 0) {
+                this.debugLog(`🛡️ Protection blocked ${blockedCommands.length}/${input.commands.length} coil commands`);
+                // Log blocked commands but don't block entire schedule
+                for (const blocked of blockedCommands) {
+                    this.node.warn(`[PROTECTION] Schedule coil blocked: ${blocked.key} - ${blocked.reason}`);
+                }
+            }
+            filteredCommands = allowedCommands;
+        }
         // 4. Apply manual overrides
-        const finalCommands = this.applyManualOverrides(input.commands);
+        const finalCommands = this.applyManualOverrides(filteredCommands);
         const overrides = this.getManualOverrides(input.commands);
         if (overrides.length > 0) {
             this.debugLog(`Applied ${overrides.length} manual overrides`);

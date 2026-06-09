@@ -8,6 +8,7 @@ import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
 import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, RpcControlResult, ScheduleExecutorNodeDef } from "./type";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
 
 module.exports = function (RED: NodeAPI) {
     function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
@@ -184,6 +185,15 @@ module.exports = function (RED: NodeAPI) {
         } catch (error) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
             return;
+        }
+
+        // Connect to ProtectionGateService if available
+        const protectionGate = globalContext.get('protectionGateService') as ProtectionGateService | undefined;
+        if (protectionGate) {
+            scheduleService.setProtectionGate(protectionGate);
+            debugLog("ProtectionGateService connected to ScheduleService");
+        } else {
+            debugLog("ProtectionGateService not found in global context — protection disabled");
         }
 
         // Helper function to read Modbus config

@@ -15,6 +15,7 @@ import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ErrorNotificationService } from "../../services/error-notification.service";
 import { ProtectionManager, ProtectionResult } from "./protection-manager";
+import { ProtectionGateService } from "./services/protection-gate-service";
 import { ConfigService } from "./services/configService";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import {
@@ -45,6 +46,12 @@ module.exports = function (RED: NodeAPI) {
         const errorNotificationService = new ErrorNotificationService(node.context());
         const configService = new ConfigService(node);
         const protectionManager = new ProtectionManager();
+
+        // Initialize shared ProtectionGateService
+        const protectionGate = new ProtectionGateService(configService.getConfigKeyValues());
+        // Store in global context so other nodes (RPC, Schedule, Intent) can access it
+        node.context().global.set('protectionGateService', protectionGate);
+        node.log("ProtectionGateService initialized and stored in global context");
 
         // ========================================================================
         // Node State
@@ -368,19 +375,28 @@ module.exports = function (RED: NodeAPI) {
                 return;
             }
 
+            // Refresh gate service config
+            protectionGate.refreshConfig(configKeyValues);
+
             const sensorData = configService.getSensorData();
+
+            // Sync sensor values to gate service
+            for (const [sensorKey, sensorValue] of Object.entries(sensorData)) {
+                protectionGate.updateSensorValue(sensorKey, sensorValue as number);
+            }
 
             debugLog(`Checking ${Object.keys(configKeyValues).length} config keys`);
 
             // Auto-detect all protection configs from configKeyValues
             // Find all keys ending with _protect_max_time_on, _protect_min_time_on, etc.
-            // Supports new function identifiers:
-            // - lamp_protect_*, fan_protect_intake_*, fan_protect_circ_*, etc.
-            // - cool_protect_1_*, cool_protect_2_*, humid_protect_*, dehumid_protect_*, co2_protect_*
+            // Supports:
+            // - Specific coil: lamp_control_1_protect_*
+            // - All rule: lamp_protect_all_*
+            // - Device type: lamp_protect_*
             const protectedCoils = new Set<string>();
             const coilKeys = Object.keys(modbusCoils);
             for (const key of Object.keys(configKeyValues)) {
-                const match = key.match(/^(.+)_protect_(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit|pulse_time_on|pulse_time_off)$/);
+                const match = key.match(/^(.+)_protect_(all_)?(max_time_on|min_time_on|min_off_time|min_stop_time|bypass|force_on|force_off|upper_temp|upper_limit|lower_temp|lower_limit|pulse_time_on|pulse_time_off|sensor_id)$/);
                 if (match) {
                     const baseKey = match[1];
 
@@ -389,11 +405,22 @@ module.exports = function (RED: NodeAPI) {
                         protectedCoils.add(baseKey);
                     }
 
-                    // Generalized mapping support (e.g. lamp_control_protect_* -> lamp_control_1, lamp_control_2)
+                    // Generalized mapping support (e.g. lamp_protect_all_* -> lamp_control_1, lamp_control_2)
                     const prefix = `${baseKey}_`;
                     for (const coilKey of coilKeys) {
                         if (coilKey.startsWith(prefix)) {
                             protectedCoils.add(coilKey);
+                        }
+                    }
+
+                    // For _protect_all_ keys, match all coils of that device type
+                    // e.g. lamp_protect_all_* -> lamp_control_1, lamp_control_2, lamp_control_3...
+                    if (match[2] === 'all_') {
+                        const deviceType = baseKey; // "lamp" from "lamp_protect"
+                        for (const coilKey of coilKeys) {
+                            if (coilKey.startsWith(`${deviceType}_control_`)) {
+                                protectedCoils.add(coilKey);
+                            }
                         }
                     }
                 }
@@ -419,6 +446,9 @@ module.exports = function (RED: NodeAPI) {
                 // READ coil state directly from Modbus
                 const currentState = await readCoil(coilAddress);
                 debugLog(`Coil ${coilKey} current state: ${currentState}`);
+
+                // Sync coil state to gate service
+                protectionGate.syncCoilState(coilKey, currentState);
 
                 // Get sensor value if applicable
                 // Sensor mapping based on new function identifiers:
@@ -481,6 +511,8 @@ module.exports = function (RED: NodeAPI) {
 
                         if (writeSuccess) {
                             debugLog(`Coil ${coilKey} successfully updated to ${targetState}`);
+                            // Update gate service state after successful write
+                            protectionGate.updateState(coilKey, targetState);
                         } else {
                             node.warn(`Coil ${coilKey} write may have failed - read-back verification failed`);
                         }

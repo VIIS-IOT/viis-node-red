@@ -21,16 +21,25 @@ import {
     ManualModbusOverrides
 } from "../common/types";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
+import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
 
 export class LogicControlService {
     private node: Node;
     private globalHelper: GlobalContextHelper;
     private debugEnable: boolean;
+    private protectionGate: ProtectionGateService | null = null;
 
     constructor(node: Node, debugEnable: boolean = false) {
         this.node = node;
         this.debugEnable = debugEnable;
         this.globalHelper = new GlobalContextHelper(node.context());
+    }
+
+    /**
+     * Set protection gate service for coil write protection
+     */
+    setProtectionGate(gate: ProtectionGateService): void {
+        this.protectionGate = gate;
     }
 
     /**
@@ -319,8 +328,39 @@ export class LogicControlService {
             // Note: Overlaps don't necessarily block, but we log them
         }
 
+        // 3.5 Protection gate check for coil commands
+        let filteredCommands = input.commands;
+        if (this.protectionGate) {
+            const blockedCommands: { key: string; reason: string }[] = [];
+            const allowedCommands: ModbusCmd[] = [];
+
+            for (const cmd of input.commands) {
+                if (cmd.fc === 5) { // Coil write
+                    const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), 'schedule');
+                    if (!gate.allowed) {
+                        blockedCommands.push({ key: cmd.key, reason: gate.reason });
+                        this.debugLog(`🛡️ Protection BLOCKED: ${cmd.key}=${cmd.value} - ${gate.reason}`);
+                    } else {
+                        allowedCommands.push(cmd);
+                    }
+                } else {
+                    allowedCommands.push(cmd);
+                }
+            }
+
+            if (blockedCommands.length > 0) {
+                this.debugLog(`🛡️ Protection blocked ${blockedCommands.length}/${input.commands.length} coil commands`);
+                // Log blocked commands but don't block entire schedule
+                for (const blocked of blockedCommands) {
+                    this.node.warn(`[PROTECTION] Schedule coil blocked: ${blocked.key} - ${blocked.reason}`);
+                }
+            }
+
+            filteredCommands = allowedCommands;
+        }
+
         // 4. Apply manual overrides
-        const finalCommands = this.applyManualOverrides(input.commands);
+        const finalCommands = this.applyManualOverrides(filteredCommands);
         const overrides = this.getManualOverrides(input.commands);
 
         if (overrides.length > 0) {

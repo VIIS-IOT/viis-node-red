@@ -15,6 +15,7 @@ import {
 import { LuoiMappingHandler } from "../luoi-mapping-handler";
 import { ERROR_MESSAGES, STATUS_MESSAGES } from "../constants";
 import { Logger } from "../utils/logger";
+import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
 
 export class RpcHandler implements IRpcHandler {
     private readonly maxBatchSize = 100;
@@ -28,6 +29,7 @@ export class RpcHandler implements IRpcHandler {
     private logger: Logger;
     private requestQueue: Promise<void> = Promise.resolve();
     private queueLength: number = 0;
+    private protectionGate: ProtectionGateService | null = null;
 
     private readonly defaultBatchOptions = {
         sequential: true,
@@ -52,6 +54,13 @@ export class RpcHandler implements IRpcHandler {
         this.luoiHandler = luoiHandler;
         this.node = options.node;
         this.logger = new Logger(options.node, "RPC-HANDLER");
+    }
+
+    /**
+     * Set protection gate service for coil write protection
+     */
+    setProtectionGate(gate: ProtectionGateService): void {
+        this.protectionGate = gate;
     }
 
     /**
@@ -523,6 +532,25 @@ export class RpcHandler implements IRpcHandler {
         // Validate and convert value
         const value = this.validationService.validateAndConvertValue(key, rawValue);
 
+        // Protection gate check for coils (fc=5)
+        if (mapping.fc === 5 && this.protectionGate) {
+            const gate = this.protectionGate.checkGate(key, Boolean(value), 'rpc');
+            if (!gate.allowed) {
+                this.logger.warn(`[PROTECTION] Blocked ${key}=${value}: ${gate.reason}`);
+                try {
+                    await this.mqttService.publishConfigUpdate(`_blocked_${key}`, {
+                        requested: value,
+                        reason: gate.reason,
+                        source: 'rpc',
+                        action: gate.action,
+                    });
+                } catch (pubErr) {
+                    this.logger.warn(`Failed to publish blocked telemetry: ${(pubErr as Error).message}`);
+                }
+                throw new Error(`Protection blocked: ${gate.reason}`);
+            }
+        }
+
         this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
 
         // Write to Modbus with connection error handling.
@@ -546,6 +574,11 @@ export class RpcHandler implements IRpcHandler {
             // Update global context cache only after successful read-back verification
             this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
 
+            // Update protection gate state after successful coil write
+            if (mapping.fc === 5 && this.protectionGate) {
+                this.protectionGate.updateState(key, Boolean(readValue));
+            }
+
             // Publish the confirmed read-back value
             await this.publishResultWithRetry(key, readValue);
 
@@ -556,6 +589,11 @@ export class RpcHandler implements IRpcHandler {
             this.logger.warn(`[RPC-HANDLER] Write succeeded but read-back failed for ${key}: ${(readError as Error).message}. Publishing written value as fallback.`);
             await this.publishResultWithRetry(key, value);
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
+
+            // Update gate state even on read-back failure (write succeeded)
+            if (mapping.fc === 5 && this.protectionGate) {
+                this.protectionGate.updateState(key, Boolean(value));
+            }
         }
     }
 
