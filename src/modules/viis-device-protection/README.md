@@ -1,84 +1,72 @@
 # VIIS Device Protection Node v2.0
 
-## 📋 Overview
+## Overview
 
 Advanced device protection node with **Min/Max/Bypass/Force** logic for IoT devices. Monitors Modbus coils and automatically enforces protection rules to prevent equipment damage.
 
 **Architecture:** Follows `viis-rpc-control` pattern with:
 - ConfigService for configuration management
 - ProtectionManager for business logic
+- ProtectionGateService — centralized gate shared across all control sources (Schedule, RPC, Intent)
 - ErrorNotificationService for alerts
 - MQTT integration for telemetry publishing
 
 **Features:**
-- ✅ **Bypass Protection** - Skip all protections for manual control
-- ✅ **Force ON/OFF** - Override logic (still respects safety limits)
-- ✅ **Max Time ON** - Auto OFF after maximum runtime
-- ✅ **Min Time ON** - Prevent rapid cycling (must stay ON for minimum time)
-- ✅ **Min Off Time** - Prevent rapid re-start (must stay OFF for minimum time)
-- ✅ **Upper/Lower Limits** - Auto control based on sensor readings
-- ✅ **Multi-board Support** - Works with single and multi Modbus board configurations
-- ✅ **Read-Back Verification** - Confirms writes succeeded
-- ✅ **MQTT Publishing** - Publishes coil state changes to telemetry topic
-- ✅ **Hot Reload** - Auto-detects configuration changes every 30 seconds
+- **Bypass Protection** - Skip all protections for manual control
+- **Force ON/OFF** - Override logic (still respects safety limits)
+- **Max Time ON** - Auto OFF after maximum runtime
+- **Min Time ON** - Prevent rapid cycling (must stay ON for minimum time)
+- **Min Off Time** - Prevent rapid re-start (must stay OFF for minimum time)
+- **Upper/Lower Limits** - Auto control based on sensor readings
+- **Sensor Binding** - Link coils to specific sensors via `sensor_id`
+- **Multi-board Support** - Works with single and multi Modbus board configurations
+- **Read-Back Verification** - Confirms writes succeeded
+- **MQTT Publishing** - Publishes coil state changes to telemetry topic
+- **Hot Reload** - Auto-detects configuration changes every 30 seconds
+- **Standard Flow Access** — ProtectionGateService accessible from Function nodes
 
 ---
 
-## 🎯 Priority Flow
+## Priority Flow
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Input: Device State (from Modbus read)                     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STEP 1: Check BYPASS                                       │
-│  if (bypass == true) → Allow immediately, skip all checks   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STEP 2: Check FORCE                                        │
-│  if (force_on == true) → Force ON (validate Min/Max)        │
-│  if (force_off == true) → Force OFF (validate Min/Max)      │
-│  if (both) → Prioritize OFF for safety                      │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STEP 3: Check MAX TIME ON                                  │
-│  if (current_time_on > max_time_on) → Auto OFF + Notify     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STEP 4: Check MIN TIME ON                                  │
-│  if (trying_to_OFF && time_on < min_time_on) → BLOCK OFF    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STEP 5: Check MIN OFF TIME                                 │
-│  if (trying_to_ON && time_off < min_off_time) → BLOCK ON    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STEP 6: Check UPPER/LOWER LIMITS (if applicable)           │
-│  if (sensor > upper_limit) → Auto ON/OFF based on device    │
-│  if (sensor < lower_limit) → Auto ON/OFF based on device    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  FINAL: Write to Modbus → Read-back → Update Cache → MQTT   │
-└─────────────────────────────────────────────────────────────┘
+checkGate(coilKey, requestedValue)
+│
+├── requestedValue = OFF → ALWAYS ALLOW
+│
+├── bypass = true → ALLOW (skip all checks)
+│
+├── forceOn + forceOff → BLOCK (safety: prioritize OFF)
+│
+├── forceOff → BLOCK ON
+│
+├── requestedValue = ON:
+│   ├── maxTimeOn exceeded? → BLOCK
+│   ├── minOffTime not met? → BLOCK
+│   ├── sensor > upperLimit? → BLOCK
+│   ├── sensor < lowerLimit? → BLOCK (cooling: auto OFF)
+│   └── All clear → ALLOW
+│
+└── forceOn → ALLOW (still check maxTimeOn for safety)
 ```
 
 ---
 
-## 🔧 Configuration
+## Control Sources Integration
+
+Protection gate is checked **before every coil write** from all sources:
+
+| Source | Gate check? | File |
+|--------|-------------|------|
+| Schedule (V1 + V2) | `checkGate()` before write | `viis-schedule-executor-service.ts` |
+| RPC (mobile app) | `checkGate()` before write | `rpcHandler.ts` |
+| Device Intent | `checkGate()` before output | `processingService.ts` |
+| Protection Node (timer) | Self-enforce + auto-OFF | `viis-device-protection.ts` |
+| **Standard Node-RED Flow** | Via `global.get('protectionGateService')` | Function node (see below) |
+
+---
+
+## Configuration
 
 ### Node Configuration
 
@@ -109,7 +97,452 @@ When **Enable Debug** is checked, the node outputs detailed logs:
 
 ---
 
-## 🌍 Environment Configuration
+## Production Function Naming
+
+Every protection setting is a **production function** in ThingsBoard (`tabiot_production_function`).
+
+### Naming Format
+
+```
+{deviceType}_protect_all_{field}     → applies to ALL coils of this type
+{coilKey}_protect_{field}            → applies to ONE specific coil
+```
+
+### Recognized Fields
+
+| Field | Description | Type | Unit |
+|-------|-------------|------|------|
+| `bypass` | Skip all protections | Bool | - |
+| `force_on` | Force ON continuously | Bool | - |
+| `force_off` | Force OFF continuously | Bool | - |
+| `max_time_on` | Max ON time before auto-OFF | Value | seconds (s) or minutes (m) |
+| `min_time_on` | Min ON time (block early OFF) | Value | s or m |
+| `min_off_time` | Min OFF time (block rapid restart) | Value | s or m |
+| `upper_temp` / `upper_limit` | Sensor upper threshold | Value | C / % / ppm |
+| `lower_temp` / `lower_limit` | Sensor lower threshold | Value | C / % / ppm |
+| `pulse_time_on` | ON duration per cycle (pulse mode) | Value | minutes |
+| `pulse_time_off` | OFF duration per cycle (pulse mode) | Value | minutes |
+| `sensor_id` | Sensor identifier for threshold checks | String | - |
+
+### 2-Level Config Lookup
+
+When checking coil `lamp_control_1`, config is resolved in this order:
+
+```
+Priority 1 (Specific coil):   lamp_control_1_protect_max_time_on = 3600
+Priority 2 (All same type):    lamp_protect_all_max_time_on = 7200
+```
+
+If specific coil config exists, it takes priority. Otherwise, the `_all_` config is used.
+
+**Sub-type lookup** (FAN and COOLING only):
+
+```
+fan_control_intake → fan_protect_all → fan_protect_intake
+fan_control_circ   → fan_protect_all → fan_protect_circ
+fan_control_dc     → fan_protect_all → fan_protect_dc
+cool_control_ac1   → cool_protect_all → cool_protect_1
+cool_control_ac2   → cool_protect_all → cool_protect_2
+cool_control_freezer → cool_protect_all → cool_protect_freezer
+```
+
+---
+
+## Sensor Binding
+
+### How It Works
+
+Protection needs **sensor values** to check `upper_temp`/`lower_temp`/`upper_limit`/`lower_limit`.
+
+Sensor binding uses the `sensor_id` field — the value is the **sensor identifier** from the device profile.
+
+### Available Sensor Identifiers
+
+| Identifier | Unit | Description |
+|-----------|------|-------------|
+| `temp_monitor_sensor_1` | C | Temperature sensor 1 |
+| `humid_monitor_sensor_1` | % | Humidity sensor 1 |
+| `co2_monitor_sensor_1` | ppm | CO2 sensor 1 |
+| `lamp_monitor_sensor_1` | lx | Light sensor 1 |
+| `temp_monitor_sensor_2` | C | Temperature sensor 2 |
+| `humid_monitor_sensor_2` | % | Humidity sensor 2 |
+| `co2_monitor_sensor_2` | ppm | CO2 sensor 2 |
+| `cool_monitor_Aquara_temp_1` | C | Aquara temp 1 |
+| `cool_monitor_Aquara_temp_2` | C | Aquara temp 2 |
+| `humid_monitor_Aquara_humid_1` | % | Aquara humidity 1 |
+| `humid_monitor_Aquara_humid_2` | % | Aquara humidity 2 |
+
+### Configuration Options
+
+**Option A: Per-device-type (recommended)**
+
+```
+cool_protect_all_sensor_id = "cool_monitor_Aquara_temp_1"
+→ All cool devices (ac1, ac2, freezer) check Aquara temp 1
+```
+
+**Option B: Per-coil (override)**
+
+```
+cool_control_ac1_protect_sensor_id = "cool_monitor_Aquara_temp_1"
+cool_control_ac2_protect_sensor_id = "cool_monitor_Aquara_temp_2"
+→ AC1 checks sensor 1, AC2 checks sensor 2
+```
+
+### Auto-mapping (fallback)
+
+If `sensor_id` is not set, the protection node auto-maps by coil name:
+
+| Coil contains | Auto-mapped sensor |
+|--------------|-------------------|
+| `cool`, `ac` | `cool_monitor_Aquara_temp_1` → `cool_Aquara_temp_1` |
+| `humid` | `humid_sensor_1` → `humid_monitor_Aquara_humid_1` |
+| `dehumid` | `humid_sensor_1` → `humid_monitor_Aquara_humid_1` |
+| `co2` | `co2_sensor_1` |
+
+**Recommendation:** Always set `sensor_id` explicitly. Do not rely on auto-mapping.
+
+---
+
+## Device-Specific Configuration
+
+### Coil Keys (controllable devices)
+
+```
+modbus_board1_coils = {
+  "lamp_control_1":         1,
+  "lamp_control_2":         2,
+  "co2_control_valve":      3,
+  "humid_control_on":       4,
+  "fan_control_intake":     5,
+  "cool_control_freezer_1": 6,
+  "fan_control_circ":       7,
+  "fan_control_dc":         8,
+  "dehumid_control_1":      9,
+  "dehumid_control_2":      10,
+  "cool_control_ac1":       11,
+  "cool_control_ac2":       12,
+  "cool_control_freezer_2": 13,
+  "backup_control_2":       14,
+  "backup_control_3":       15,
+  "backup_control_4":       16
+}
+```
+
+### LAMP (lights)
+
+```
+-- All lamp protection --
+lamp_protect_all_bypass        = false    (Bool)
+lamp_protect_all_force_on      = false    (Bool)
+lamp_protect_all_force_off     = false    (Bool)
+lamp_protect_all_max_time_on   = 14400    (seconds — 4 hours)
+lamp_protect_all_min_off_time  = 300      (seconds — 5 minutes)
+
+-- Per-coil override (optional) --
+lamp_control_1_protect_max_time_on = 7200   (seconds — 2 hours)
+lamp_control_1_protect_sensor_id   = "temp_monitor_sensor_1"
+lamp_control_1_protect_upper_temp  = 35     (C)
+```
+
+**Explanation:**
+- `max_time_on = 14400`: Lamp must not stay ON continuously超过 4 hours → auto-OFF
+- `min_off_time = 300`: After turning OFF, must wait at least 5 minutes before turning ON again
+- `upper_temp = 35`: If temperature > 35C → block turning ON (prevent overheating)
+
+### FAN
+
+FAN has 3 sub-types, each needs its own **protection group**:
+
+| Coil Key | Protection Group | Config Lookup |
+|----------|-----------------|---------------|
+| `fan_control_intake` | `fan_protect_intake_*` | specific → all → intake |
+| `fan_control_circ` | `fan_protect_circ_*` | specific → all → circ |
+| `fan_control_dc` | `fan_protect_dc_*` | specific → all → dc |
+
+```
+-- FAN Intake --
+fan_protect_intake_bypass        = false
+fan_protect_intake_force_on      = false
+fan_protect_intake_force_off     = false
+fan_protect_intake_max_time_on   = 7200    (2 hours)
+fan_protect_intake_min_off_time  = 120     (2 minutes)
+
+-- FAN Circulation --
+fan_protect_circ_bypass        = false
+fan_protect_circ_force_on      = false
+fan_protect_circ_force_off     = false
+fan_protect_circ_max_time_on   = 7200
+fan_protect_circ_min_off_time  = 120
+
+-- FAN DC --
+fan_protect_dc_bypass        = false
+fan_protect_dc_force_on      = false
+fan_protect_dc_force_off     = false
+fan_protect_dc_max_time_on   = 7200
+fan_protect_dc_min_off_time  = 120
+```
+
+### COOLING (AC / freezer)
+
+```
+-- All cooling protection --
+cool_protect_all_bypass        = false
+cool_protect_all_force_on      = false
+cool_protect_all_force_off     = false
+cool_protect_all_max_time_on   = 180      (MINUTES — 3 hours)
+cool_protect_all_min_off_time  = 10       (MINUTES — 10 minutes)
+cool_protect_all_upper_temp    = 30       (C — above 30C → auto ON)
+cool_protect_all_lower_temp    = 18       (C — below 18C → auto OFF)
+cool_protect_all_sensor_id     = "cool_monitor_Aquara_temp_1"
+
+-- Per-coil override --
+cool_control_ac1_protect_max_time_on = 120
+cool_control_ac1_protect_sensor_id   = "cool_monitor_Aquara_temp_1"
+cool_control_ac2_protect_sensor_id   = "cool_monitor_Aquara_temp_2"
+```
+
+**Note:** `max_time_on` and `min_off_time` for COOLING are in **minutes** (not seconds).
+
+### HUMIDITY (humidifier)
+
+```
+humid_protect_all_bypass        = false
+humid_protect_all_force_on      = false
+humid_protect_all_force_off     = false
+humid_protect_all_max_time_on   = 3600     (seconds — 1 hour)
+humid_protect_all_min_off_time  = 300      (seconds — 5 minutes)
+humid_protect_all_upper_limit   = 85       (% — above 85% → block ON)
+humid_protect_all_sensor_id     = "humid_monitor_Aquara_humid_1"
+```
+
+### DE-HUMIDITY (dehumidifier)
+
+```
+dehumid_protect_all_bypass        = false
+dehumid_protect_all_force_on      = false
+dehumid_protect_all_force_off     = false
+dehumid_protect_all_max_time_on   = 3600
+dehumid_protect_all_min_off_time  = 300
+dehumid_protect_all_lower_limit   = 40      (% — below 40% → block ON)
+dehumid_protect_all_sensor_id     = "humid_monitor_Aquara_humid_1"
+```
+
+### CO2
+
+```
+co2_protect_all_bypass        = false
+co2_protect_all_force_on      = false
+co2_protect_all_force_off     = false
+co2_protect_all_max_time_on   = 600       (seconds — 10 minutes)
+co2_protect_all_min_off_time  = 120       (seconds — 2 minutes)
+co2_protect_all_upper_limit   = 1500      (ppm — above 1500 → auto ON)
+co2_protect_all_lower_limit   = 400       (ppm — below 400 → block ON)
+co2_protect_all_sensor_id     = "co2_monitor_sensor_1"
+```
+
+---
+
+## Using from Standard Node-RED Flow Nodes
+
+The `ProtectionGateService` is stored in Node-RED global context, making it accessible from any Function node without needing the custom node directly.
+
+### Prerequisite
+
+The `viis-device-protection` custom node **must be deployed at least once** to initialize the `ProtectionGateService` in global context. After that, any Function node can access it.
+
+### Access Points
+
+| Data | Global Context Key | Access from Function node |
+|------|-------------------|--------------------------|
+| ProtectionGateService | `protectionGateService` | `global.get('protectionGateService')` |
+| Protection Config | `configKeyValues` | `global.get('configKeyValues')` |
+| Coil States | `coilRegisterData` | `global.get('coilRegisterData')` |
+| Sensor Data | `sensorRegisterData` | `global.get('sensorRegisterData')` |
+
+### Example 1: Set Protection Config from Function Node
+
+```javascript
+// Function node: Configure protection rules
+const config = global.get('configKeyValues') || {};
+
+// All lamps: max 4h ON, 5min cooldown, 35C upper limit
+config['lamp_protect_all_max_time_on'] = 14400;
+config['lamp_protect_all_min_off_time'] = 300;
+config['lamp_protect_all_upper_temp'] = 35;
+config['lamp_protect_all_sensor_id'] = 'temp_monitor_sensor_1';
+
+// Override for specific lamp
+config['lamp_control_1_protect_max_time_on'] = 7200;
+
+global.set('configKeyValues', config);
+return msg;
+```
+
+### Example 2: Check Gate Before Modbus Write
+
+```javascript
+// Function node: Gate check before writing to Modbus
+const gate = global.get('protectionGateService');
+
+if (!gate) {
+    node.warn('ProtectionGateService not initialized — passthrough');
+    return msg;
+}
+
+const coilKey = 'lamp_control_1';
+const requestedValue = true; // ON
+const source = 'manual'; // or 'schedule', 'rpc', 'intent'
+
+const result = gate.checkGate(coilKey, requestedValue, source);
+
+if (result.allowed) {
+    // Proceed to Modbus write node
+    msg.payload = { address: 1, value: true };
+    msg.protection = result;
+    return msg;
+} else {
+    // Blocked — log reason, do not write
+    node.warn(`PROTECTION BLOCKED: ${result.reason}`);
+    msg.payload = { blocked: true, reason: result.reason, action: result.action };
+    return msg;
+}
+```
+
+### Example 3: Update State After Successful Write
+
+```javascript
+// Function node: Update gate state after Modbus write success
+const gate = global.get('protectionGateService');
+
+if (gate && msg.payload && msg.payload.writeSuccess !== false) {
+    gate.updateState('lamp_control_1', true);
+    node.log('Updated protection state: lamp_control_1 = ON');
+}
+
+return msg;
+```
+
+### Example 4: Read Protection Config
+
+```javascript
+// Function node: Read current protection config for a coil
+const gate = global.get('protectionGateService');
+
+if (gate) {
+    const config = gate.getProtectionConfigForCoil('lamp_control_1');
+    msg.payload = {
+        coil: 'lamp_control_1',
+        config: config
+    };
+}
+
+return msg;
+```
+
+### Example 5: Sync Sensor Values
+
+```javascript
+// Function node: Update sensor values for protection checks
+const gate = global.get('protectionGateService');
+
+if (gate) {
+    // Read from sensorRegisterData or from msg.payload
+    const sensorData = global.get('sensorRegisterData') || {};
+    
+    for (const [key, value] of Object.entries(sensorData)) {
+        gate.updateSensorValue(key, value);
+    }
+}
+
+return msg;
+```
+
+### Example 6: Complete Flow (Inject → Gate → Modbus → Update)
+
+```
+[Inject trigger]
+      ↓
+[Function: Check Gate]
+      ↓ (allowed)
+[Modbus Flex Write]
+      ↓
+[Function: Update State + Log]
+      ↓
+[Debug output]
+
+      ↓ (blocked)
+[Function: Log Block Reason]
+      ↓
+[Debug: show reason]
+```
+
+**Function node — Check Gate:**
+```javascript
+const gate = global.get('protectionGateService');
+if (!gate) return msg;
+
+const result = gate.checkGate(msg.coilKey || 'lamp_control_1', true, 'flow');
+if (result.allowed) {
+    msg.payload = { value: true, address: msg.address || 1 };
+    return msg;
+}
+node.warn(`Blocked: ${result.reason}`);
+return null; // drop message
+```
+
+**Function node — Update State:**
+```javascript
+const gate = global.get('protectionGateService');
+if (gate) {
+    gate.updateState(msg.coilKey || 'lamp_control_1', true);
+}
+return msg;
+```
+
+### ProtectionGateService API Reference
+
+```typescript
+class ProtectionGateService {
+    // Main gate check — call BEFORE writing coil
+    checkGate(coilKey: string, requestedValue: boolean, source: string): GateResult;
+
+    // Update coil state after successful write
+    updateState(coilKey: string, newState: boolean): void;
+
+    // Sync coil state from Modbus read (called by protection node timer)
+    syncCoilState(coilKey: string, currentState: boolean): void;
+
+    // Update sensor value for limit checks
+    updateSensorValue(sensorKey: string, value: number): void;
+
+    // Get current coil state
+    getCoilState(coilKey: string): CoilState | undefined;
+
+    // Get full protection config for a coil (with 2-level lookup)
+    getProtectionConfigForCoil(coilKey: string): ProtectionConfig;
+
+    // Reload config from configKeyValues
+    refreshConfig(configKeyValues: Record<string, any>): void;
+}
+
+interface GateResult {
+    allowed: boolean;
+    reason: string;
+    action: 'allow' | 'block' | 'force_on' | 'force_off' | 'auto_off';
+    metadata?: {
+        elapsedOnTime?: number;
+        elapsedOffTime?: number;
+        sensorValue?: number;
+        sensorId?: string;
+        violation?: string;
+    };
+}
+```
+
+---
+
+## Environment Configuration
 
 ### Required Environment Variables
 
@@ -144,7 +577,7 @@ EMQX_PASSWORD=password
 
 ---
 
-## 🧠 Global Context Required
+## Global Context Required
 
 ### 1. Modbus Coil Mappings
 
@@ -197,8 +630,8 @@ global.set("configKeyValues", {
     "cool_ac1_protect_max_time_on": 0,               // Unlimited
     "cool_ac1_protect_min_time_on": 300,             // 5 minutes (compressor protection)
     "cool_ac1_protect_min_off_time": 180,            // 3 minutes
-    "cool_ac1_protect_upper_temp": 30,               // Auto ON if > 30°C
-    "cool_ac1_protect_lower_temp": 22                // Auto OFF if < 22°C
+    "cool_ac1_protect_upper_temp": 30,               // Auto ON if > 30C
+    "cool_ac1_protect_lower_temp": 22                // Auto OFF if < 22C
 });
 ```
 
@@ -216,56 +649,7 @@ global.set("sensorRegisterData", {
 
 ---
 
-## 📊 Device Configuration Fields
-
-### Naming Convention
-
-```
-{coil_key}_protect_{property}
-```
-
-Examples:
-- `lamp_control_1_protect_max_time_on`
-- `fan_intake_protect_bypass`
-- `cool_ac1_protect_upper_temp`
-
-### All Supported Fields
-
-| Field Pattern | Type | Default | Description |
-|---------------|------|---------|-------------|
-| `{coil}_protect_bypass` | Bool | false | Bypass all protections |
-| `{coil}_protect_force_on` | Bool | false | Force device ON |
-| `{coil}_protect_force_off` | Bool | false | Force device OFF |
-| `{coil}_protect_max_time_on` | Number (s) | 0 | Max continuous ON time |
-| `{coil}_protect_min_time_on` | Number (s) | 0 | Min ON time before OFF allowed |
-| `{coil}_protect_min_off_time` | Number (s) | 0 | Min OFF time before ON allowed |
-| `{coil}_protect_upper_temp` | Number | 0 | Auto ON above this value |
-| `{coil}_protect_upper_limit` | Number | 0 | Auto ON above this value |
-| `{coil}_protect_lower_temp` | Number | 0 | Auto OFF below this value |
-| `{coil}_protect_lower_limit` | Number | 0 | Auto OFF below this value |
-
-**Note:** `0` means disabled for all numeric fields.
-
-### Config Resolution Order
-
-The node uses a hierarchical lookup for protection configs:
-
-1. **Exact match**: `lamp_control_1_protect_*`
-2. **Generalized prefix**: `lamp_control_protect_*` → applies to `lamp_control_1`, `lamp_control_2`, etc.
-3. **Base prefix**: `lamp_protect_*` → applies to all lamp-related coils
-
-Example:
-```javascript
-// Base configuration for all lamps
-"lamp_protect_max_time_on": 3600,
-
-// Override for specific lamp
-"lamp_control_1_protect_max_time_on": 7200  // Takes precedence
-```
-
----
-
-## 🔄 Post-Write Operations
+## Post-Write Operations
 
 After writing to Modbus, the node automatically performs:
 
@@ -306,7 +690,7 @@ global.set("coilRegisterData", {
 
 ---
 
-## 📤 Output Messages
+## Output Messages
 
 When protection actions are triggered, the node sends messages:
 
@@ -369,367 +753,126 @@ When protection actions are triggered, the node sends messages:
 
 ---
 
-## 🎯 Usage Examples
+## Naming Mismatch (Device Profile vs Code)
 
-### Example 1: Basic Protection (Max Time Only)
+Current device profiles use **different names** from what the code expects. Use this mapping to fix:
 
-```javascript
-// Protect LAMP from running too long
-global.set("configKeyValues", {
-    "lamp_control_1_protect_max_time_on": 3600  // Auto OFF after 1 hour
-});
-```
+### Needs Fix
 
-**Behavior:**
-- LAMP turns ON → Timer starts
-- After 1 hour → Auto OFF + Notification created
+| Device Profile Identifier | Correct Production Function | Notes |
+|--------------------------|----------------------------|-------|
+| `lamp_protect_min_time_off` | `lamp_protect_all_min_off_time` | `min_time_off` → `min_off_time`, add `_all_` |
+| `lamp_protect_max_temp_on` | `lamp_protect_all_upper_temp` | `max_temp_on` → `upper_temp`, add `_all_` |
+| `fan_protect_intake_min_time_off` | `fan_protect_intake_min_off_time` | `min_time_off` → `min_off_time` |
+| `fan_protect_circ_min_time_off` | `fan_protect_circ_min_off_time` | Rename |
+| `fan_protect_dc_min_time_off` | `fan_protect_dc_min_off_time` | Rename |
+| `cool_protect_min_time_off` | `cool_protect_all_min_off_time` | Rename, add `_all_` |
+| `humid_protect_min_time_off` | `humid_protect_all_min_off_time` | Rename + add `_all_` |
+| `dehumid_protect_min_time_off` | `dehumid_protect_all_min_off_time` | Rename + add `_all_` |
+| `co2_protect_min_time_off` | `co2_protect_all_min_off_time` | Rename + add `_all_` |
 
----
+### Already Correct (just add `_all_`)
 
-### Example 2: Anti-Cycling Protection (Min Time)
-
-```javascript
-// Protect AC compressor from rapid cycling
-global.set("configKeyValues", {
-    "cool_ac1_protect_min_time_on": 300,    // Must run 5 min minimum
-    "cool_ac1_protect_min_off_time": 180    // Must rest 3 min minimum
-});
-```
-
-**Behavior:**
-- AC turns ON → Must stay ON for 5 minutes
-- AC turns OFF → Must wait 3 minutes before restarting
-
----
-
-### Example 3: Temperature-Based Auto Control
-
-```javascript
-// Automatic temperature control
-global.set("configKeyValues", {
-    "cool_ac1_protect_upper_temp": 28,   // Auto ON if > 28°C
-    "cool_ac1_protect_lower_temp": 24,   // Auto OFF if < 24°C
-    "cool_ac1_protect_min_time_on": 300, // Compressor protection
-    "cool_ac1_protect_min_off_time": 180
-});
-
-// Sensor data (updated by telemetry node)
-global.set("sensorRegisterData", {
-    "cool_Aquara_temp_1": 29.5  // Current temperature
-});
-```
-
-**Behavior:**
-- Temp > 28°C → Auto ON (if min off time met)
-- Temp < 24°C → Auto OFF (if min on time met)
+| Device Profile Identifier | Production Function | Status |
+|--------------------------|-------------------|--------|
+| `lamp_protect_bypass` | `lamp_protect_all_bypass` | Add `_all_` |
+| `lamp_protect_force_on` | `lamp_protect_all_force_on` | Add `_all_` |
+| `lamp_protect_force_off` | `lamp_protect_all_force_off` | Add `_all_` |
+| `lamp_protect_max_time_on` | `lamp_protect_all_max_time_on` | Add `_all_` |
+| `cool_protect_bypass` | `cool_protect_all_bypass` | Add `_all_` |
+| `cool_protect_upper_temp` | `cool_protect_all_upper_temp` | Add `_all_` |
+| `cool_protect_lower_temp` | `cool_protect_all_lower_temp` | Add `_all_` |
 
 ---
 
-### Example 4: Manual Override with Bypass
+## Troubleshooting
 
-```javascript
-// Maintenance mode - disable all protections
-global.set("configKeyValues", {
-    "lamp_control_1_protect_bypass": true,
-    "fan_intake_protect_bypass": true
-});
-```
-
-**Behavior:**
-- All protections disabled
-- Devices run freely
-- Useful for testing/maintenance
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Protection not working | `viis-device-protection` node not deployed | Deploy node, check global context |
+| Config not recognized | Wrong identifier format | Ensure `{type}_protect_all_{field}` is correct |
+| Sensor not checking | `sensor_id` not set | Add `{type}_protect_all_sensor_id` |
+| FAN shares wrong config | Using `fan_protect_*` instead of `fan_protect_intake_*` | Set separate config per fan sub-type |
+| Time value wrong unit | Minutes vs Seconds | COOLING uses minutes, others use seconds |
+| Blocked forever, won't turn ON | `min_off_time` too large | Reduce value or enable bypass |
+| Gate not accessible from flow | `viis-device-protection` not deployed yet | Deploy custom node first to init global context |
 
 ---
 
-### Example 5: Force Control
-
-```javascript
-// Emergency shutdown
-global.set("configKeyValues", {
-    "cool_ac1_protect_force_off": true  // Force OFF immediately
-});
-
-// Or force ON (e.g., for testing)
-global.set("configKeyValues", {
-    "fan_intake_protect_force_on": true  // Force ON
-});
-```
-
-**Behavior:**
-- Force OFF → Immediate shutdown (respects min time for safety)
-- Force ON → Immediate start (respects max time for safety)
-
----
-
-## 🔍 Monitoring & Diagnostics
-
-### Node Status
-
-| Status | Meaning |
-|--------|---------|
-| 🟢 Running | Normal operation |
-| 🟡 No configKeyValues | Configuration missing |
-| 🔴 Modbus client failed | Connection error |
-
-### Violation Tracking
-
-The node tracks protection violations internally via `ProtectionManager`:
-
-```typescript
-// Access violation stats
-const stats = protectionManager.getViolationStats("lamp_control_1");
-// Returns: { maxTime: 5, minTime: 2, minOffTime: 3 }
-
-// Reset violations
-protectionManager.resetViolations("lamp_control_1");
-```
-
-**Interpretation:**
-- High `maxTime` violations → Device runs too long
-- High `minTime` violations → Frequent on/off cycling
-- High `minOffTime` violations → Rapid restart attempts
-
----
-
-## 🧩 Integration with Other Nodes
-
-### Common Pattern Compliance
-
-This node follows the **VIIS Node-RED Common Pattern** (`common_pattern.md`):
-
-1. ✅ **Credentials from Global Context** - Reads Modbus config and mappings from global context
-2. ✅ **Core Service Reuse** - Uses `GlobalContextHelper`, `ErrorNotificationService`, `ClientRegistry`
-3. ✅ **Multi-Board Mapping** - Supports `modbus_board1_coils`, `modbus_board2_coils`, etc.
-4. ✅ **RPC Fallback Behavior** - Cooperates with `viis-rpc-control` for unmapped keys
-5. ✅ **Dependent Node Behavior** - Uses both `configKeyValues` and Modbus mappings
-
-### Typical Flow
+## File Structure
 
 ```
-[viis-telemetry] → [Update sensorRegisterData] → [viis-device-protection]
-                                                      │
-                                                      ▼
-                                         [Write to Modbus Coil]
-                                                      │
-                                                      ▼
-                                    [Read-back → Update Cache → MQTT]
-                                                      │
-                                                      ▼
-                                         [Send Notification if needed]
-```
-
-### Example Flow (JSON)
-
-```json
-[
-  {
-    "id": "telemetry_node",
-    "type": "viis-telemetry",
-    "wires": [["update_sensor_data"]]
-  },
-  {
-    "id": "update_sensor_data",
-    "type": "function",
-    "func": "global.set('sensorRegisterData', msg.payload);\nreturn msg;",
-    "wires": [["protection_node"]]
-  },
-  {
-    "id": "protection_node",
-    "type": "viis-device-protection",
-    "boardId": "board1",
-    "enableDebug": true,
-    "wires": [["debug_output"]]
-  },
-  {
-    "id": "debug_output",
-    "type": "debug",
-    "active": true
-  }
-]
+viis-device-protection/
+├── constants.ts                          # Centralized constants
+├── services/
+│   ├── configService.ts                  # Configuration management
+│   └── protection-gate-service.ts        # Centralized gate (shared with Schedule/RPC/Intent)
+├── tests/
+│   ├── protection-manager.test.ts        # Unit tests (14 tests)
+│   ├── protection-gate-service.test.ts   # Gate service unit tests
+│   ├── protection-gate-integration.test.ts  # Integration tests (11 tests)
+│   └── viis-protection-comprehensive.test.ts  # Comprehensive tests (22 tests)
+├── protection-manager.ts                 # Core business logic
+├── viis-device-protection.ts             # Main node implementation
+├── viis-device-protection.html           # UI definition
+└── README.md                             # This file
 ```
 
 ---
 
-## 🐛 Troubleshooting
-
-### Issue: Protection not triggering
-
-**Check:**
-1. `configKeyValues` is set in global context
-2. Coil keys match Modbus mapping exactly
-3. Modbus client is initialized (green status)
-4. Check debug logs for coil detection
-
-### Issue: Device won't turn ON
-
-**Possible causes:**
-- Min off time not met (check `MIN_OFF_TIME`)
-- Max time exceeded (check `MAX_TIME_ON`)
-- Force OFF is active (check `FORCE_OFF`)
-- Coil address not in Modbus mapping
-
-### Issue: Device won't turn OFF
-
-**Possible causes:**
-- Min time not met (check `MIN_TIME_ON`)
-- Force ON is active (check `FORCE_ON`)
-- Bypass is enabled (check `BYPASS`)
-
-### Issue: Notifications not created
-
-**Check:**
-- `ErrorNotificationService` is initialized
-- Global context is accessible
-- Check node logs for errors
-
-### Issue: MQTT not publishing
-
-**Check:**
-- MQTT credentials in environment variables
-- MQTT client connection status
-- Check debug logs for publish attempts
-
-### Issue: Read-back verification failed
-
-**Possible causes:**
-- Modbus write succeeded but read failed (timeout)
-- Coil state changed by external factor
-- Check `writeSuccess: false` in output messages
-
----
-
-## 📈 Best Practices
+## Best Practices
 
 ### 1. Set Reasonable Limits
 
-```javascript
-// GOOD - Protects equipment
-"COOL_AC1_PROTECT_MIN_TIME_ON": 300,    // 5 min
-"COOL_AC1_PROTECT_MIN_OFF_TIME": 180    // 3 min
+```
+// GOOD — Protects equipment
+cool_protect_all_min_time_on = 300    // 5 min
+cool_protect_all_min_off_time = 180   // 3 min
 
-// BAD - Too aggressive
-"COOL_AC1_PROTECT_MIN_TIME_ON": 10,     // 10 sec (not enough)
-"COOL_AC1_PROTECT_MIN_OFF_TIME": 5      // 5 sec (damages compressor)
+// BAD — Too aggressive
+cool_protect_all_min_time_on = 10     // 10 sec (not enough)
+cool_protect_all_min_off_time = 5     // 5 sec (damages compressor)
 ```
 
 ### 2. Use Bypass Sparingly
 
-```javascript
+```
 // Enable bypass only for maintenance
-"LAMP_PROTECT_BYPASS": true  // ⚠️ Disable after maintenance!
+lamp_protect_all_bypass = true  // Disable after maintenance!
 ```
 
-### 3. Monitor Violations
+### 3. Always Set sensor_id
 
-Regularly check violation stats to identify problematic devices:
+```
+// GOOD — Explicit
+cool_protect_all_sensor_id = "cool_monitor_Aquara_temp_1"
 
-```javascript
-// High max time violations → Device runs too long
-// High min time violations → Frequent on/off cycling
+// BAD — Relies on auto-mapping, may break
+// (no sensor_id set)
 ```
 
-### 4. Sensor Calibration
+### 4. Use Hierarchical Configs
 
-Ensure sensor readings are accurate for limit-based protection:
-
-```javascript
-// Calibrate temperature sensors regularly
-"cool_Aquara_temp_1": 25.0  // Should match actual temperature
 ```
-
-### 5. Use Hierarchical Configs
-
-```javascript
 // Base config for all fans
-"fan_protect_max_time_on": 7200,
+fan_protect_all_max_time_on = 7200
 
 // Override for specific fan
-"fan_intake_protect_max_time_on": 3600  // Takes precedence
+fan_protect_intake_max_time_on = 3600  // Takes precedence
 ```
 
 ---
 
-## 📚 API Reference
-
-### ProtectionManager Class
-
-```typescript
-class ProtectionManager {
-    // Evaluate protection logic
-    evaluateProtection(
-        deviceKey: string,
-        currentState: boolean,
-        config: CoilProtectionConfig
-    ): ProtectionResult;
-
-    // Update sensor value
-    updateSensorValue(deviceKey: string, value: number): void;
-
-    // Get violation statistics
-    getViolationStats(deviceKey: string): { 
-        maxTime: number; 
-        minTime: number; 
-        minOffTime: number 
-    } | null;
-
-    // Reset violations
-    resetViolations(deviceKey: string): void;
-
-    // Clear all states
-    clearAllStates(): void;
-}
-```
-
-### ProtectionResult Interface
-
-```typescript
-interface ProtectionResult {
-    allowed: boolean;
-    finalState: boolean;
-    reason?: string;
-    action?: 'allow' | 'block' | 'force_on' | 'force_off' | 'auto_off' | 'auto_on' | 'bypass';
-    metadata?: {
-        elapsedOnTime?: number;
-        elapsedOffTime?: number;
-        violation?: string;
-        sensorValue?: number;
-    };
-}
-```
-
-### ConfigService Class
-
-```typescript
-class ConfigService {
-    // Get all config values
-    getConfigKeyValues(): Record<string, any>;
-
-    // Get protection config by coil key
-    getProtectionConfigByLabel(coilKey: string): ProtectionConfig;
-
-    // Get sensor data
-    getSensorData(): Record<string, number>;
-}
-```
-
----
-
-## 📝 Version History
+## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.1 | 2026-06-13 | Added standard Node-RED flow access docs, aligned with protection-mechanism-guide.md |
 | v2.0 | 2026-03-24 | Added Min/Max/Bypass/Force logic, read-back verification, MQTT publishing |
 | v1.0 | - | Initial Max Time protection only |
 
 ---
 
-## 📄 License
-
-VIIS IoT Platform - Internal Use Only
-
----
-
-**Last Updated:** 2026-03-24  
-**Status:** ✅ Production Ready  
+**Last Updated:** 2026-06-13
+**Status:** Production Ready
 **Architecture:** Follows viis-rpc-control pattern

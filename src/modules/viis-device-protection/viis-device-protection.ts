@@ -231,32 +231,79 @@ module.exports = function (RED: NodeAPI) {
         // Async Initialization
         // ========================================================================
 
-        const initModbusClient = async () => {
+        /**
+         * Modbus client lifecycle management.
+         *
+         * Uses a single cached reference. On close, release exactly once.
+         * On config change, release old reference before acquiring new one.
+         * This prevents refcount leaks and avoids disconnecting shared clients.
+         */
+        let modbusRefCount = 0; // Track how many times we acquired
+
+        const acquireModbusClient = async (): Promise<any> => {
             try {
+                let client;
                 if (isMultiBoardMode) {
                     const boardToUse = currentBoardId || configData.defaultBoard;
-                    modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
+                    client = await ClientRegistry.getModbusClientV2(boardToUse, node);
                 } else {
-                    modbusClient = await ClientRegistry.getModbusClientV2(configData.config, node);
+                    client = await ClientRegistry.getModbusClientV2(configData.config, node);
                 }
 
-                if (!modbusClient) {
+                if (!client) {
                     node.error(ERROR_MESSAGES.CLIENT_INIT_FAILED);
                     node.status({ fill: "red", shape: "ring", text: STATUS_MESSAGES.MODBUS_FAILED });
-                    return false;
+                } else {
+                    modbusRefCount++;
                 }
-
-                node.log("Modbus client initialized");
-                node.status({ fill: "green", shape: "ring", text: "Ready (inject)" });
-                return true;
+                return client;
             } catch (err) {
                 node.error(`Modbus init error: ${(err as Error).message}`);
-                return false;
+                return null;
             }
         };
 
-        initModbusClient().catch(err => {
-            node.error(`Modbus init error: ${err.message}`);
+        const releaseModbusClient = () => {
+            if (modbusRefCount <= 0) return;
+            try {
+                if (isMultiBoardMode && currentBoardId) {
+                    ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                } else {
+                    ClientRegistry.releaseClientV2("modbus", node);
+                }
+                modbusRefCount--;
+            } catch (err) {
+                // Ignore release errors during cleanup
+            }
+        };
+
+        /**
+         * Release current modbus client reference (if any) without
+         * disconnecting — used before acquiring a new one on config change.
+         */
+        const releaseModbusClientRef = () => {
+            if (modbusClient && modbusRefCount > 0) {
+                try {
+                    if (isMultiBoardMode && currentBoardId) {
+                        ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                    } else {
+                        ClientRegistry.releaseClientV2("modbus", node);
+                    }
+                    modbusRefCount--;
+                } catch (err) {
+                    // Ignore
+                }
+                modbusClient = null;
+            }
+        };
+
+        // Warm up — acquire reference for the session lifetime
+        acquireModbusClient().then(client => {
+            if (client) {
+                modbusClient = client;
+                node.log("Modbus client warmed up");
+                node.status({ fill: "green", shape: "ring", text: "Ready (inject)" });
+            }
         });
 
         // ========================================================================
@@ -595,18 +642,19 @@ module.exports = function (RED: NodeAPI) {
                 if (hasChanged) {
                     node.warn(`Config change: ${changeDescription}`);
 
+                    // Release old Modbus reference before acquiring new one
+                    releaseModbusClientRef();
+
                     if (newConfig.mode === 'multi') {
                         ClientRegistry.initializeMultiBoardConfig({
                             mode: 'multi',
                             defaultBoard: newConfig.defaultBoard,
                             boards: newConfig.boards
                         }, node);
-                        modbusClient = await ClientRegistry.getModbusClientV2(
-                            currentBoardId || newConfig.defaultBoard, node
-                        );
+                        modbusClient = await acquireModbusClient();
                     } else {
                         await ClientRegistry.reloadModbusConfig(newConfig.config, node);
-                        modbusClient = await ClientRegistry.getModbusClientV2(newConfig.config, node);
+                        modbusClient = await acquireModbusClient();
                     }
 
                     currentModbusConfig = { ...newConfig };
@@ -638,27 +686,24 @@ module.exports = function (RED: NodeAPI) {
                 node.log("Config check interval stopped");
             }
 
-            // Disconnect MQTT client
-            if (mqttClient) {
-                mqttClient.disconnect();
-                node.log("MQTT client disconnected");
-            }
+            // Release Modbus client reference — only decrements refcount,
+            // does NOT disconnect shared client if other nodes are still using it
+            releaseModbusClientRef();
 
-            // Release Modbus client (multi-board aware)
-            if (isMultiBoardMode && currentBoardId) {
-                ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
-            } else {
-                ClientRegistry.releaseClientV2("modbus", node);
-            }
-
-            // Release MQTT clients
+            // Release MQTT client from registry (handles disconnect internally
+            // only when refcount reaches 0)
             if (mqttClient) {
-                const mqttBroker = "thingsboard"; // Match initialization
-                if (mqttBroker === "thingsboard") {
-                    ClientRegistry.releaseClient("thingsboard", node);
-                } else {
-                    ClientRegistry.releaseClient("local", node);
+                try {
+                    const mqttBroker = "thingsboard";
+                    if (mqttBroker === "thingsboard") {
+                        ClientRegistry.releaseClient("thingsboard", node);
+                    } else {
+                        ClientRegistry.releaseClient("local", node);
+                    }
+                } catch (e) {
+                    // Ignore release errors
                 }
+                mqttClient = null;
             }
 
             node.log("Protection node closed");
