@@ -222,15 +222,20 @@ export class ScheduleService {
      * Returns:
      * - 0: thu=true, dai=false
      * - 1: thu=false, dai=true
+     * - 2: N/A (no action — skip coil entirely)
      * - null: invalid value
      */
-    private normalizeLuoiValue(value: any): 0 | 1 | null {
+    private normalizeLuoiValue(value: any): 0 | 1 | 2 | null {
         if (value === 0 || value === "0" || value === false || value === "false") {
             return 0;
         }
 
         if (value === 1 || value === "1" || value === true || value === "true") {
             return 1;
+        }
+
+        if (value === 2 || value === "2") {
+            return 2;
         }
 
         return null;
@@ -252,6 +257,13 @@ export class ScheduleService {
             if (mode === null) {
                 console.warn(`Invalid ${luoiKey} value in schedule ${scheduleName}: ${JSON.stringify(expanded[luoiKey])}`);
                 delete expanded[luoiKey];
+                continue;
+            }
+
+            // N/A (2) — không tác động coil, xóa key và skip
+            if (mode === 2) {
+                delete expanded[luoiKey];
+                this.debugLog(`Skipped ${luoiKey}=2 (N/A) in schedule ${scheduleName}`);
                 continue;
             }
 

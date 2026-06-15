@@ -93,6 +93,9 @@ export class LuoiMappingHandler {
                 thuValue = 0;
                 daiValue = 1;
                 break;
+            case 2:
+                // N/A — không tác động coil
+                return;
             default:
                 this.logger.warn(`Giá trị không hợp lệ cho ${key}: ${rawValue}`);
                 return;
