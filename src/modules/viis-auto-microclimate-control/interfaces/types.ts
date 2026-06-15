@@ -269,6 +269,9 @@ export interface ServiceOptions {
 export interface IConfigService {
     getConfig(): AutoControlConfig;
     isConfigValid(): boolean;
+    isFanConfigValid(): boolean;
+    isWaterPumpConfigValid(): boolean;
+    isCurtainConfigValid(): boolean;
     getConfigValue<T>(key: keyof AutoControlConfig): T | undefined;
 }
 
