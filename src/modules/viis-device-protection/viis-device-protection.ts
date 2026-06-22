@@ -503,25 +503,26 @@ module.exports = function (RED: NodeAPI) {
                 // - Humidity: humid_sensor_1, humid_sensor_2, humid_monitor_Aquara_humid_1, humid_monitor_Aquara_humid_2
                 // - CO2: co2_sensor_1
                 let sensorValue: number | undefined;
-                if (coilKey.includes('cool') || coilKey.includes('ac')) {
+                const deviceType = coilKey.split('_')[0] || coilKey;
+                if (deviceType === 'cool' || deviceType === 'ac') {
                     // Cooling devices use temperature sensors
                     sensorValue = sensorData['cool_monitor_Aquara_temp_1'] 
-                        || sensorData['cool_monitor_Aquara_temp_2']
-                        || sensorData['cool_Aquara_temp_1'] 
-                        || sensorData['cool_Aquara_temp_2'];
-                } else if (coilKey.includes('humid')) {
+                        ?? sensorData['cool_monitor_Aquara_temp_2']
+                        ?? sensorData['cool_Aquara_temp_1'] 
+                        ?? sensorData['cool_Aquara_temp_2'];
+                } else if (deviceType === 'humid') {
                     // Humidity devices use humidity sensors
                     sensorValue = sensorData['humid_sensor_1'] 
-                        || sensorData['humid_sensor_2']
-                        || sensorData['humid_monitor_Aquara_humid_1']
-                        || sensorData['humid_monitor_Aquara_humid_2'];
-                } else if (coilKey.includes('dehumid')) {
+                        ?? sensorData['humid_sensor_2']
+                        ?? sensorData['humid_monitor_Aquara_humid_1']
+                        ?? sensorData['humid_monitor_Aquara_humid_2'];
+                } else if (deviceType === 'dehumid') {
                     // Dehumidification uses humidity sensors
                     sensorValue = sensorData['humid_sensor_1'] 
-                        || sensorData['humid_sensor_2']
-                        || sensorData['humid_monitor_Aquara_humid_1']
-                        || sensorData['humid_monitor_Aquara_humid_2'];
-                } else if (coilKey.includes('co2')) {
+                        ?? sensorData['humid_sensor_2']
+                        ?? sensorData['humid_monitor_Aquara_humid_1']
+                        ?? sensorData['humid_monitor_Aquara_humid_2'];
+                } else if (deviceType === 'co2') {
                     // CO2 devices use CO2 sensor
                     sensorValue = sensorData['co2_sensor_1'];
                 }
@@ -542,10 +543,8 @@ module.exports = function (RED: NodeAPI) {
                 if (!result.allowed || (result.allowed && result.action !== 'allow')) {
                     debugLog(`Action required for ${coilKey}: ${result.action}`);
 
-                    // Create notification for significant events
-                    if (result.action === 'auto_off' || result.action === 'block' ||
-                        result.action === 'force_on' || result.action === 'force_off' ||
-                        result.action === 'auto_on') {
+                    // Create notification for significant events (violations only)
+                    if (result.action === 'auto_off' || result.action === 'block') {
                         await createProtectionNotification(coilKey, deviceLabel, result, coilAddress);
                     }
 
@@ -595,6 +594,12 @@ module.exports = function (RED: NodeAPI) {
             }
 
             isProtectionCheckRunning = true;
+            const safetyTimer = setTimeout(() => {
+                if (isProtectionCheckRunning) {
+                    node.warn(`Protection check timeout after 30s — force resetting flag`);
+                    isProtectionCheckRunning = false;
+                }
+            }, 30000);
 
             try {
                 debugLog(`Run protection check by trigger: ${trigger}`);
@@ -607,6 +612,7 @@ module.exports = function (RED: NodeAPI) {
                 node.status({ fill: "red", shape: "ring", text: "Check failed" });
                 if (done) done(err);
             } finally {
+                clearTimeout(safetyTimer);
                 isProtectionCheckRunning = false;
             }
         };

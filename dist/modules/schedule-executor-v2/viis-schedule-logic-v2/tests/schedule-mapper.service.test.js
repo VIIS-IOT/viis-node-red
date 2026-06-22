@@ -597,6 +597,63 @@ describe('ScheduleMapperService', () => {
             const setFlowCmd = result.holdingCommands.find(cmd => cmd.key === 'set_flow');
             expect(setFlowCmd).toBeDefined();
         });
+        it('should skip luoi_1=2 (N/A) — no coil commands generated', () => {
+            const schedule = {
+                name: 'luoi-na-schedule',
+                label: 'Luoi N/A Schedule',
+                status: 'finished',
+                start_time: '08:00:00',
+                end_time: '18:00:00',
+                enable: 1,
+                is_deleted: 0,
+                device_id: 'test-device-001',
+                creation: new Date(),
+                modified: new Date(),
+                type: 'fixed',
+                deleted: null,
+                action: JSON.stringify({
+                    luoi_1: 2,
+                    luoi_2: 1
+                })
+            };
+            const result = service.mapScheduleToModbus(schedule);
+            // luoi_1=2 (N/A) → no luoi_1_thu or luoi_1_dai commands
+            const luoi1Dai = result.coilCommands.find(cmd => cmd.key === 'luoi_1_dai');
+            const luoi1Thu = result.coilCommands.find(cmd => cmd.key === 'luoi_1_thu');
+            expect(luoi1Dai).toBeUndefined();
+            expect(luoi1Thu).toBeUndefined();
+            // luoi_2=1 (dai) should still be expanded normally
+            const luoi2Dai = result.coilCommands.find(cmd => cmd.key === 'luoi_2_dai');
+            expect(luoi2Dai).toBeDefined();
+            expect(luoi2Dai === null || luoi2Dai === void 0 ? void 0 : luoi2Dai.value).toBe(true);
+        });
+        it('should skip luoi=2 string variant ("2") as N/A', () => {
+            const schedule = {
+                name: 'luoi-na-string-schedule',
+                label: 'Luoi N/A String Schedule',
+                status: 'finished',
+                start_time: '08:00:00',
+                end_time: '18:00:00',
+                enable: 1,
+                is_deleted: 0,
+                device_id: 'test-device-001',
+                creation: new Date(),
+                modified: new Date(),
+                type: 'fixed',
+                deleted: null,
+                action: JSON.stringify({
+                    luoi_3: "2"
+                })
+            };
+            const result = service.mapScheduleToModbus(schedule);
+            // luoi_3="2" (N/A) → no coil commands
+            const luoi3Dai = result.coilCommands.find(cmd => cmd.key === 'luoi_3_dai');
+            const luoi3Thu = result.coilCommands.find(cmd => cmd.key === 'luoi_3_thu');
+            expect(luoi3Dai).toBeUndefined();
+            expect(luoi3Thu).toBeUndefined();
+            // No config parameters either — key is simply removed
+            expect(result.configParameters.length).toBe(0);
+        });
     });
     describe('clearScheduleConfigValues', () => {
         beforeEach(() => {

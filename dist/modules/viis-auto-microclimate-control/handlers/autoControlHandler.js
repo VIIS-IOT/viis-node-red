@@ -41,11 +41,6 @@ class AutoControlHandler {
             // Get configuration
             const config = this.configService.getConfig();
             this.logger.warn(`Configuration: ${JSON.stringify(config)}`);
-            if (!this.configService.isConfigValid()) {
-                this.logger.warn("Invalid configuration, skipping control cycle");
-                this.node.status({ fill: "yellow", shape: "ring", text: "Invalid config" });
-                return;
-            }
             // Get sensor data and device status
             const sensorData = this.sensorService.getSensorData();
             const deviceStatus = this.sensorService.getDeviceStatus();
@@ -69,42 +64,63 @@ class AutoControlHandler {
             }
             // Collect all control actions
             const allActions = [];
+            const skippedSections = [];
             // 1. Process water pump control first (K4 priority check)
-            const k4OverrideActions = this.waterPumpControlService.checkK4PriorityOverride(config, sensorData);
-            if (k4OverrideActions.length > 0) {
-                // K4 override takes priority
-                allActions.push(...k4OverrideActions);
-                this.logger.log("K4 priority override activated for water pump");
+            if (this.configService.isWaterPumpConfigValid()) {
+                const k4OverrideActions = this.waterPumpControlService.checkK4PriorityOverride(config, sensorData);
+                if (k4OverrideActions.length > 0) {
+                    // K4 override takes priority
+                    allActions.push(...k4OverrideActions);
+                    this.logger.log("K4 priority override activated for water pump");
+                }
+                else {
+                    // Normal water pump control
+                    const waterPumpActions = await this.waterPumpControlService.processWaterPumpControl(config, sensorData, deviceStatus);
+                    allActions.push(...waterPumpActions);
+                }
             }
             else {
-                // Normal water pump control
-                const waterPumpActions = await this.waterPumpControlService.processWaterPumpControl(config, sensorData, deviceStatus);
-                allActions.push(...waterPumpActions);
+                skippedSections.push("waterPump");
+                this.logger.warn("Skipping water pump control — invalid config");
             }
             // 2. Process fan control
-            const fanActions = await this.fanControlService.processFanControl(config, sensorData, deviceStatus);
-            allActions.push(...fanActions);
+            if (this.configService.isFanConfigValid()) {
+                const fanActions = await this.fanControlService.processFanControl(config, sensorData, deviceStatus);
+                allActions.push(...fanActions);
+            }
+            else {
+                skippedSections.push("fan");
+                this.logger.warn("Skipping fan control — invalid config");
+            }
             // 3. Process curtain control
-            const curtainActions = await this.curtainControlService.processCurtainControl(config, sensorData, deviceStatus);
-            allActions.push(...curtainActions);
+            if (this.configService.isCurtainConfigValid()) {
+                const curtainActions = await this.curtainControlService.processCurtainControl(config, sensorData, deviceStatus);
+                allActions.push(...curtainActions);
+            }
+            else {
+                skippedSections.push("curtain");
+                this.logger.warn("Skipping curtain control — invalid config");
+            }
             // Execute all actions
             if (allActions.length > 0) {
                 this.logger.log(`Executing ${allActions.length} control actions`);
                 const result = await this.modbusService.executeControlActions(allActions);
+                const skipNote = skippedSections.length > 0 ? ` (skip: ${skippedSections.join(',')})` : '';
                 if (result.success) {
-                    this.node.status({ fill: "green", shape: "dot", text: `${result.actionsExecuted.length} actions executed` });
-                    this.logger.log(`Control cycle completed successfully: ${result.actionsExecuted.length} actions executed`);
+                    this.node.status({ fill: "green", shape: "dot", text: `${result.actionsExecuted.length} actions${skipNote}` });
+                    this.logger.log(`Control cycle completed successfully: ${result.actionsExecuted.length} actions executed${skipNote}`);
                 }
                 else {
-                    this.node.status({ fill: "red", shape: "ring", text: `${result.errors.length} errors` });
-                    this.logger.error(`Control cycle completed with errors: ${result.errors.join(', ')}`);
+                    this.node.status({ fill: "red", shape: "ring", text: `${result.errors.length} errors${skipNote}` });
+                    this.logger.error(`Control cycle completed with errors: ${result.errors.join(', ')}${skipNote}`);
                 }
                 // Send output message with results
                 this.sendOutputMessage(result, config, sensorData);
             }
             else {
-                this.node.status({ fill: "green", shape: "ring", text: constants_1.STATUS_MESSAGES.READY });
-                this.logger.debug("Control cycle completed - no actions needed");
+                const skipNote = skippedSections.length > 0 ? ` (skip: ${skippedSections.join(',')})` : '';
+                this.node.status({ fill: "green", shape: "ring", text: `${constants_1.STATUS_MESSAGES.READY}${skipNote}` });
+                this.logger.debug(`Control cycle completed - no actions needed${skipNote}`);
             }
         }
         catch (error) {

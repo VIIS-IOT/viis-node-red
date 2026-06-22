@@ -58,6 +58,9 @@ export interface ProtectionResult {
 }
 
 export class ProtectionManager {
+    private static readonly MAX_STATES = 1000;
+    private static readonly STATE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
     private states: Map<string, CoilProtectionState> = new Map();
     private sensorValues: Map<string, number> = new Map();
 
@@ -66,6 +69,28 @@ export class ProtectionManager {
      */
     updateSensorValue(deviceKey: string, value: number): void {
         this.sensorValues.set(deviceKey, value);
+    }
+
+    /**
+     * Prune stale states to prevent memory leaks
+     */
+    pruneStaleStates(): void {
+        const now = Date.now();
+        for (const [key, state] of this.states.entries()) {
+            if (now - state.lastStateChangeTime > ProtectionManager.STATE_TTL_MS) {
+                this.states.delete(key);
+                this.sensorValues.delete(key);
+            }
+        }
+        if (this.states.size > ProtectionManager.MAX_STATES) {
+            const entries = [...this.states.entries()]
+                .sort((a, b) => a[1].lastStateChangeTime - b[1].lastStateChangeTime);
+            const toRemove = entries.slice(0, entries.length - ProtectionManager.MAX_STATES);
+            for (const [key] of toRemove) {
+                this.states.delete(key);
+                this.sensorValues.delete(key);
+            }
+        }
     }
 
     /**
@@ -99,6 +124,7 @@ export class ProtectionManager {
         currentState: boolean,
         config: CoilProtectionConfig
     ): ProtectionResult {
+        this.pruneStaleStates();
         const state = this.getState(deviceKey);
         
         // Update current state if changed

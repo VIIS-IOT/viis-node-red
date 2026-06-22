@@ -194,7 +194,7 @@ describe('ProtectionGateService', () => {
   });
 
   describe('Force ON/OFF', () => {
-    it('should allow ON when forceOn is true', () => {
+    it('should allow ON when forceOn is true (falls through to all checks passed)', () => {
       service = new ProtectionGateService({
         'lamp_protect_all_force_on': true,
       });
@@ -202,6 +202,17 @@ describe('ProtectionGateService', () => {
       const result = service.checkGate('lamp_control_1', true, 'rpc');
       expect(result.allowed).toBe(true);
       expect(result.action).toBe('allow');
+    });
+
+    it('should block OFF when forceOn is true', () => {
+      service = new ProtectionGateService({
+        'lamp_protect_all_force_on': true,
+      });
+
+      const result = service.checkGate('lamp_control_1', false, 'rpc');
+      expect(result.allowed).toBe(false);
+      expect(result.action).toBe('force_on');
+      expect(result.reason).toContain('Force ON active');
     });
 
     it('should block ON when forceOff is true', () => {
@@ -214,7 +225,17 @@ describe('ProtectionGateService', () => {
       expect(result.action).toBe('force_off');
     });
 
-    it('should prioritize OFF when both forceOn and forceOff', () => {
+    it('should allow OFF when forceOff is true', () => {
+      service = new ProtectionGateService({
+        'lamp_protect_all_force_off': true,
+      });
+
+      const result = service.checkGate('lamp_control_1', false, 'rpc');
+      expect(result.allowed).toBe(true);
+      expect(result.action).toBe('allow');
+    });
+
+    it('should prioritize OFF when both forceOn and forceOff (ON request)', () => {
       service = new ProtectionGateService({
         'lamp_protect_all_force_on': true,
         'lamp_protect_all_force_off': true,
@@ -222,6 +243,17 @@ describe('ProtectionGateService', () => {
 
       const result = service.checkGate('lamp_control_1', true, 'rpc');
       expect(result.allowed).toBe(false);
+      expect(result.action).toBe('force_off');
+    });
+
+    it('should allow OFF when both forceOn and forceOff (OFF request)', () => {
+      service = new ProtectionGateService({
+        'lamp_protect_all_force_on': true,
+        'lamp_protect_all_force_off': true,
+      });
+
+      const result = service.checkGate('lamp_control_1', false, 'rpc');
+      expect(result.allowed).toBe(true);
       expect(result.action).toBe('force_off');
     });
   });
@@ -385,6 +417,107 @@ describe('ProtectionGateService', () => {
       // Should allow now (maxTimeOn = 120)
       const result2 = service.checkGate('lamp_control_1', true, 'schedule');
       expect(result2.allowed).toBe(true);
+    });
+  });
+
+  describe('Min Time ON (gate)', () => {
+    it('should block OFF during minTimeOn', () => {
+      service = new ProtectionGateService({
+        'cool_protect_all_min_time_on': 300, // 5 minutes
+      });
+
+      // Set coil ON for 60 seconds
+      service.updateState('cool_control_ac1', true);
+      jest.advanceTimersByTime(60 * 1000);
+
+      // Request OFF — should be blocked (minTimeOn not met)
+      const result = service.checkGate('cool_control_ac1', false, 'rpc');
+      expect(result.allowed).toBe(false);
+      expect(result.action).toBe('block');
+      expect(result.reason).toContain('Min time ON not met');
+    });
+
+    it('should allow OFF after minTimeOn elapsed', () => {
+      service = new ProtectionGateService({
+        'cool_protect_all_min_time_on': 300, // 5 minutes
+      });
+
+      // Set coil ON for 301 seconds
+      service.updateState('cool_control_ac1', true);
+      jest.advanceTimersByTime(301 * 1000);
+
+      const result = service.checkGate('cool_control_ac1', false, 'rpc');
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe('3-level config lookup (level 3)', () => {
+    it('should fall back to {deviceType}_protect_{field}', () => {
+      service = new ProtectionGateService({
+        'cool_protect_max_time_on': 60, // level 3: cool_protect_*
+      });
+
+      service.updateState('cool_control_ac1', true);
+      jest.advanceTimersByTime(61 * 1000);
+
+      const result = service.checkGate('cool_control_ac1', true, 'schedule');
+      expect(result.allowed).toBe(false);
+    });
+
+    it('should prefer all rule over device type fallback', () => {
+      service = new ProtectionGateService({
+        'cool_protect_all_max_time_on': 120, // level 2
+        'cool_protect_max_time_on': 60,       // level 3
+      });
+
+      service.updateState('cool_control_ac1', true);
+      jest.advanceTimersByTime(90 * 1000);
+
+      // Should use level 2 (120s), not level 3 (60s)
+      const result = service.checkGate('cool_control_ac1', true, 'schedule');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('should prefer specific coil over device type fallback', () => {
+      service = new ProtectionGateService({
+        'cool_control_ac1_protect_max_time_on': 120, // level 1
+        'cool_protect_max_time_on': 60,               // level 3
+      });
+
+      service.updateState('cool_control_ac1', true);
+      jest.advanceTimersByTime(90 * 1000);
+
+      // Should use level 1 (120s), not level 3 (60s)
+      const result = service.checkGate('cool_control_ac1', true, 'schedule');
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe('Humidifier lower limit', () => {
+    it('should auto ON humidifier when humidity below lower limit', () => {
+      service = new ProtectionGateService({
+        'humid_protect_all_lower_limit': 40,
+        'humid_protect_all_sensor_id': 'humid_sensor_1',
+      });
+
+      service.updateSensorValue('humid_sensor_1', 30);
+
+      const result = service.checkGate('humid_control_on', true, 'rpc');
+      expect(result.allowed).toBe(true);
+      expect(result.action).toBe('auto_on');
+    });
+
+    it('should block ON dehumidifier when humidity below lower limit', () => {
+      service = new ProtectionGateService({
+        'dehumid_protect_all_lower_limit': 40,
+        'dehumid_protect_all_sensor_id': 'humid_sensor_1',
+      });
+
+      service.updateSensorValue('humid_sensor_1', 30);
+
+      const result = service.checkGate('dehumid_control_1', true, 'rpc');
+      expect(result.allowed).toBe(false);
+      expect(result.action).toBe('block');
     });
   });
 });

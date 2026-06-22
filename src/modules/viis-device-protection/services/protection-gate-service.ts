@@ -30,7 +30,7 @@ export interface ProtectionConfig {
 export interface GateResult {
   allowed: boolean;
   reason: string;
-  action: 'allow' | 'block' | 'force_on' | 'force_off' | 'auto_off';
+  action: 'allow' | 'block' | 'force_on' | 'force_off' | 'auto_off' | 'auto_on';
   metadata?: {
     elapsedOnTime?: number;
     elapsedOffTime?: number;
@@ -91,6 +91,12 @@ export class ProtectionGateService {
     const allKey = `${deviceType}_protect_all_${field}`;
     if (Object.prototype.hasOwnProperty.call(this.configKeyValues, allKey)) {
       return this.configKeyValues[allKey];
+    }
+
+    // Priority 3: device type fallback
+    const typeKey = `${deviceType}_protect_${field}`;
+    if (Object.prototype.hasOwnProperty.call(this.configKeyValues, typeKey)) {
+      return this.configKeyValues[typeKey];
     }
 
     return undefined;
@@ -241,17 +247,7 @@ export class ProtectionGateService {
     const elapsedOnTime = (state && state.on) ? (now - state.since) / 1000 : 0;
     const elapsedOffTime = (state && !state.on) ? (now - state.since) / 1000 : 0;
 
-    // ===== OFF is ALWAYS allowed =====
-    if (!requestedValue) {
-      return {
-        allowed: true,
-        reason: 'OFF is always allowed',
-        action: 'allow',
-        metadata: { elapsedOnTime, elapsedOffTime },
-      };
-    }
-
-    // ===== BYPASS =====
+    // ===== BYPASS (before any force checks) =====
     if (config.bypass) {
       return {
         allowed: true,
@@ -261,9 +257,16 @@ export class ProtectionGateService {
       };
     }
 
-    // ===== FORCE =====
+    // ===== FORCE: combined forceOn + forceOff =====
     if (config.forceOn && config.forceOff) {
-      // Both force on and off — prioritize off for safety
+      if (!requestedValue) {
+        return {
+          allowed: true,
+          reason: 'Force OFF active (both flags set)',
+          action: 'force_off',
+          metadata: { elapsedOnTime, elapsedOffTime },
+        };
+      }
       return {
         allowed: false,
         reason: 'Force ON and OFF both active — prioritizing OFF for safety',
@@ -272,11 +275,56 @@ export class ProtectionGateService {
       };
     }
 
+    // ===== FORCE: forceOn blocks OFF =====
+    if (config.forceOn) {
+      if (!requestedValue) {
+        return {
+          allowed: false,
+          reason: 'Force ON active — OFF blocked',
+          action: 'force_on',
+          metadata: { elapsedOnTime, elapsedOffTime },
+        };
+      }
+      // ON request with forceOn — fall through to maxTimeOn safety check
+    }
+
+    // ===== FORCE: forceOff blocks ON =====
     if (config.forceOff) {
+      if (requestedValue) {
+        return {
+          allowed: false,
+          reason: 'Force OFF active',
+          action: 'force_off',
+          metadata: { elapsedOnTime, elapsedOffTime },
+        };
+      }
+      // OFF request with forceOff — always allowed
       return {
-        allowed: false,
-        reason: 'Force OFF active',
-        action: 'force_off',
+        allowed: true,
+        reason: 'OFF is always allowed',
+        action: 'allow',
+        metadata: { elapsedOnTime, elapsedOffTime },
+      };
+    }
+
+    // ===== Min Time ON — block OFF if not met (compressor protection) =====
+    if (config.minTimeOn > 0 && state && state.on && elapsedOnTime < config.minTimeOn) {
+      if (!requestedValue) {
+        return {
+          allowed: false,
+          reason: `Min time ON not met (${elapsedOnTime.toFixed(0)}s/${config.minTimeOn}s) — must stay ON`,
+          action: 'block',
+          metadata: { elapsedOnTime, elapsedOffTime, violation: 'min_time' },
+        };
+      }
+    }
+
+    // ===== OFF without force flags — always allowed =====
+    if (!requestedValue) {
+      return {
+        allowed: true,
+        reason: 'OFF is always allowed',
+        action: 'allow',
         metadata: { elapsedOnTime, elapsedOffTime },
       };
     }
@@ -322,9 +370,9 @@ export class ProtectionGateService {
     if (config.lowerLimit > 0 && config.sensorId) {
       const sensorValue = this.sensorValues.get(config.sensorId);
       if (sensorValue !== undefined && sensorValue < config.lowerLimit) {
-        // For cooling devices: lower limit means auto OFF (too cold)
-        // For other devices: block ON (not enough conditions)
-        const isCoolingDevice = config.deviceType.includes('cool') || config.deviceType.includes('ac');
+        const isCoolingDevice = config.deviceType === 'cool' || config.deviceType === 'ac';
+        const isHumidifier = config.deviceType === 'humid';
+
         if (isCoolingDevice) {
           return {
             allowed: false,
@@ -333,7 +381,16 @@ export class ProtectionGateService {
             metadata: { elapsedOnTime, elapsedOffTime, sensorValue, sensorId: config.sensorId, violation: 'lower_limit' },
           };
         }
-        // For non-cooling: lower limit violation blocks ON
+        if (isHumidifier) {
+          // Low humidity → auto ON the humidifier
+          return {
+            allowed: true,
+            reason: `Sensor ${config.sensorId}=${sensorValue} < lower limit ${config.lowerLimit} — humidifier auto ON`,
+            action: 'auto_on',
+            metadata: { elapsedOnTime, elapsedOffTime, sensorValue, sensorId: config.sensorId, violation: 'lower_limit' },
+          };
+        }
+        // For other devices: block ON
         return {
           allowed: false,
           reason: `Sensor ${config.sensorId}=${sensorValue} < lower limit ${config.lowerLimit}`,
