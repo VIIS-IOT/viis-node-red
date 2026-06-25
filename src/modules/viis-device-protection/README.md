@@ -124,26 +124,86 @@ Every protection setting is a **production function** in ThingsBoard (`tabiot_pr
 | `pulse_time_off` | OFF duration per cycle (pulse mode) | Value | minutes |
 | `sensor_id` | Sensor identifier for threshold checks | String | - |
 
-### 2-Level Config Lookup
+### 4-Level Config Lookup
 
-When checking coil `lamp_control_1`, config is resolved in this order:
-
-```
-Priority 1 (Specific coil):   lamp_control_1_protect_max_time_on = 3600
-Priority 2 (All same type):    lamp_protect_all_max_time_on = 7200
-```
-
-If specific coil config exists, it takes priority. Otherwise, the `_all_` config is used.
-
-**Sub-type lookup** (FAN and COOLING only):
+When checking a coil, config is resolved in this order:
 
 ```
-fan_control_intake → fan_protect_all → fan_protect_intake
-fan_control_circ   → fan_protect_all → fan_protect_circ
-fan_control_dc     → fan_protect_all → fan_protect_dc
-cool_control_ac1   → cool_protect_all → cool_protect_1
-cool_control_ac2   → cool_protect_all → cool_protect_2
-cool_control_freezer → cool_protect_all → cool_protect_freezer
+Level 1 (Specific coil):   {coilKey}_protect_{field}        → lamp_control_1_protect_force_off
+Level 2 (All rule):        {deviceType}_protect_all_{field} → lamp_protect_all_force_off
+Level 3 (Sub-type):        {subTypePrefix}_{field}          → fan_protect_intake_force_off
+Level 4 (Device type):     {deviceType}_protect_{field}     → fan_protect_force_off
+```
+
+**Rule: First level with a value wins. Later levels are skipped.**
+
+#### Example: `fan_control_intake`, field `force_off`
+
+```javascript
+configKeyValues = {
+  "fan_protect_all_force_off": false,        // Level 2
+  "fan_protect_intake_force_off": true,      // Level 3
+  "fan_protect_force_off": false             // Level 4
+}
+```
+
+| Level | Key lookup | Found? | Result |
+|-------|-----------|--------|--------|
+| 1 | `fan_control_intake_protect_force_off` | ❌ No | Skip |
+| 2 | `fan_protect_all_force_off` | ✅ `false` | **Use `false`** |
+| 3 | `fan_protect_intake_force_off` | ⏭️ Skipped (Level 2 matched) | - |
+| 4 | `fan_protect_force_off` | ⏭️ Skipped (Level 2 matched) | - |
+
+→ Result: `force_off = false` (Level 2 wins)
+
+#### Example: Level 1 overrides all
+
+```javascript
+configKeyValues = {
+  "fan_protect_all_max_time_on": 7200,              // Level 2: 2 hours
+  "fan_protect_intake_max_time_on": 3600,            // Level 3: 1 hour
+  "fan_control_intake_protect_max_time_on": 1800     // Level 1: 30 min
+}
+```
+
+→ Result for `fan_control_intake`: `max_time_on = 1800` (Level 1 wins)
+
+#### Full lookup table for all device types
+
+| Coil | Level 1 (Specific) | Level 2 (All) | Level 3 (Sub-type) | Level 4 (Device) |
+|------|-------------------|---------------|--------------------|--------------------|
+| `lamp_control_1` | `lamp_control_1_protect_*` | `lamp_protect_all_*` | *(none)* | `lamp_protect_*` |
+| `fan_control_intake` | `fan_control_intake_protect_*` | `fan_protect_all_*` | `fan_protect_intake_*` | `fan_protect_*` |
+| `fan_control_circ` | `fan_control_circ_protect_*` | `fan_protect_all_*` | `fan_protect_circ_*` | `fan_protect_*` |
+| `fan_control_dc` | `fan_control_dc_protect_*` | `fan_protect_all_*` | `fan_protect_dc_*` | `fan_protect_*` |
+| `cool_control_ac1` | `cool_control_ac1_protect_*` | `cool_protect_all_*` | `cool_protect_1_*` | `cool_protect_*` |
+| `cool_control_ac2` | `cool_control_ac2_protect_*` | `cool_protect_all_*` | `cool_protect_2_*` | `cool_protect_*` |
+| `cool_control_freezer` | `cool_control_freezer_protect_*` | `cool_protect_all_*` | `cool_protect_freezer_*` | `cool_protect_*` |
+| `humid_control_on` | `humid_control_on_protect_*` | `humid_protect_all_*` | *(none)* | `humid_protect_*` |
+| `dehumid_control_1` | `dehumid_control_1_protect_*` | `dehumid_protect_all_*` | *(none)* | `dehumid_protect_*` |
+| `co2_control_valve` | `co2_control_valve_protect_*` | `co2_protect_all_*` | *(none)* | `co2_protect_*` |
+
+#### Code reference (`resolveField`)
+
+```typescript
+// Level 1: Specific coil
+const specificKey = `${coilKey}_protect_${field}`;
+if (configKeyValues[specificKey]) return configKeyValues[specificKey];
+
+// Level 2: All rule
+const allKey = `${deviceType}_protect_all_${field}`;
+if (configKeyValues[allKey]) return configKeyValues[allKey];
+
+// Level 3: Sub-type (FAN and COOLING only)
+const subTypePrefix = getSubTypePrefix(coilKey);  // fan_protect_intake, cool_protect_1...
+if (subTypePrefix) {
+  const subTypeKey = `${subTypePrefix}_${field}`;
+  if (configKeyValues[subTypeKey]) return configKeyValues[subTypeKey];
+}
+
+// Level 4: Device type fallback
+const typeKey = `${deviceType}_protect_${field}`;
+if (configKeyValues[typeKey]) return configKeyValues[typeKey];
 ```
 
 ---
