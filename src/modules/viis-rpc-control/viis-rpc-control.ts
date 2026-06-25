@@ -15,6 +15,7 @@ import { ValidationService } from "./services/validationService";
 import { Logger } from "./utils/logger";
 import { ScalingUtils } from "./utils/scaling";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
 import {
     MQTT_CONFIG,
     MODBUS_CONFIG,
@@ -259,7 +260,15 @@ module.exports = function (RED: NodeAPI) {
                     luoiHandler
                 );
 
-
+                // Connect to ProtectionGateService if available
+                const globalContext = node.context().global;
+                const protectionGate = globalContext.get('protectionGateService') as ProtectionGateService | undefined;
+                if (protectionGate) {
+                    rpcHandler.setProtectionGate(protectionGate);
+                    logger.log("ProtectionGateService connected to RpcHandler");
+                } else {
+                    logger.log("ProtectionGateService not found in global context — protection disabled for RPC");
+                }
 
                 // Set up MQTT subscription with auto-recovery
                 const setupSubscription = async (isRetry = false): Promise<boolean> => {

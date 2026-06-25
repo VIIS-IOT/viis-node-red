@@ -216,6 +216,16 @@ module.exports = function (RED) {
                 const messageHandler = new messageHandler_1.MessageHandler(serviceOptions);
                 const luoiHandler = new luoi_mapping_handler_1.LuoiMappingHandler(node, modbusService, validationService, mqttService);
                 const rpcHandler = new rpcHandler_1.RpcHandler(serviceOptions, configService, validationService, modbusService, mqttService, luoiHandler);
+                // Connect to ProtectionGateService if available
+                const globalContext = node.context().global;
+                const protectionGate = globalContext.get('protectionGateService');
+                if (protectionGate) {
+                    rpcHandler.setProtectionGate(protectionGate);
+                    logger.log("ProtectionGateService connected to RpcHandler");
+                }
+                else {
+                    logger.log("ProtectionGateService not found in global context — protection disabled for RPC");
+                }
                 // Set up MQTT subscription with auto-recovery
                 const setupSubscription = async (isRetry = false) => {
                     try {
