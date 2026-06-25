@@ -71,12 +71,13 @@ export class ProtectionGateService {
   }
 
   /**
-   * 3-level config lookup for any field
+   * 4-level config lookup for any field
    *
    * Priority:
    *   1. {coilKey}_protect_{field}        (specific coil)
    *   2. {deviceType}_protect_all_{field}  (all coils of this type)
-   *   3. {deviceType}_protect_{field}      (device type fallback)
+   *   3. {subTypePrefix}_{field}           (sub-type: fan_protect_intake, cool_protect_1, etc.)
+   *   4. {deviceType}_protect_{field}      (device type fallback)
    */
   private resolveField(coilKey: string, field: string): any {
     const deviceType = this.extractDeviceType(coilKey);
@@ -93,13 +94,42 @@ export class ProtectionGateService {
       return this.configKeyValues[allKey];
     }
 
-    // Priority 3: device type fallback
+    // Priority 3: sub-type lookup (matches ConfigService.getProtectionConfigByLabel)
+    const subTypePrefix = this.getSubTypePrefix(coilKey);
+    if (subTypePrefix) {
+      const subTypeKey = `${subTypePrefix}_${field}`;
+      if (Object.prototype.hasOwnProperty.call(this.configKeyValues, subTypeKey)) {
+        return this.configKeyValues[subTypeKey];
+      }
+    }
+
+    // Priority 4: device type fallback
     const typeKey = `${deviceType}_protect_${field}`;
     if (Object.prototype.hasOwnProperty.call(this.configKeyValues, typeKey)) {
       return this.configKeyValues[typeKey];
     }
 
     return undefined;
+  }
+
+  /**
+   * Get sub-type prefix for devices with sub-types (fan, cool)
+   *
+   * fan_control_intake → fan_protect_intake
+   * fan_control_circ   → fan_protect_circ
+   * fan_control_dc     → fan_protect_dc
+   * cool_control_ac1   → cool_protect_1
+   * cool_control_ac2   → cool_protect_2
+   * cool_control_freezer → cool_protect_freezer
+   */
+  private getSubTypePrefix(coilKey: string): string | null {
+    if (coilKey.includes('fan_control_intake')) return 'fan_protect_intake';
+    if (coilKey.includes('fan_control_circ')) return 'fan_protect_circ';
+    if (coilKey.includes('fan_control_dc')) return 'fan_protect_dc';
+    if (coilKey.includes('cool_control_ac1') || coilKey.includes('cool_ac1')) return 'cool_protect_1';
+    if (coilKey.includes('cool_control_ac2') || coilKey.includes('cool_ac2')) return 'cool_protect_2';
+    if (coilKey.includes('cool_control_freezer')) return 'cool_protect_freezer';
+    return null;
   }
 
   /**
