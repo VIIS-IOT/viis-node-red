@@ -111,11 +111,17 @@ export class ScheduleService {
     // Helper function for conditional logging
     private debugLog(message: string): void {
         if (this.debugEnable) {
-            //this.debugLog(message);
             if (this.node) {
-                this.node.warn(message); // Also log to Node-RED debug panel
+                this.node.warn(message);
             }
         }
+    }
+
+    /** Always-log helper for Modbus commands — visible in Node-RED debug panel regardless of debugEnable */
+    private logModbusCmd(action: string, cmd: { key: string; address: number; value: any; fc?: number }): void {
+        if (!this.node) return;
+        const fcLabel = cmd.fc === 6 ? 'HOLD' : cmd.fc === 5 ? 'COIL' : `FC${cmd.fc}`;
+        this.node.warn(`[MODBUS] ${action} ${fcLabel} ${cmd.key}=${cmd.value} @${cmd.address}`);
     }
 
     private getPublishedValueCache(): Record<string, string> {
@@ -662,8 +668,7 @@ export class ScheduleService {
                         });
                         this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                     } else {
-                        // Xử lý unmapped keys như configuration parameters
-                        console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}, storing as config parameter`);
+                        // Unmapped keys → config parameters (MQTT publish)
                         try {
                             const configParam = this.storeConfigParameter(key, value, schedule.name);
                             if (configParam) {
@@ -698,9 +703,8 @@ export class ScheduleService {
         if (this.protectionGate && cmd.fc === 5 && Boolean(cmd.value)) {
             const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), source);
             if (!gate.allowed) {
-                this.debugLog(`🛡️ Protection BLOCKED: ${cmd.key}=${cmd.value} - ${gate.reason}`);
                 if (this.node) {
-                    this.node.warn(`[PROTECTION] Schedule coil blocked: ${cmd.key} - ${gate.reason}`);
+                    this.node.warn(`[PROTECTION] BLOCKED: ${cmd.key}=${cmd.value} — ${gate.reason}`);
                 }
                 return false;
             }
@@ -721,193 +725,141 @@ export class ScheduleService {
  * Gửi các lệnh modbus qua modbusClient
  */
     async executeModbusCommands(modbusClient: ModbusClientCore, commands: { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[] }, schedule?: TabiotSchedule): Promise<void> {
-        // Thực hiện holding commands trước
+        // Log summary of all commands before execution
+        if (this.node && (commands.holdingCommands.length > 0 || commands.coilCommands.length > 0)) {
+            this.node.warn(`[MODBUS] EXEC ${schedule?.name || '?'}: ${commands.holdingCommands.length} registers + ${commands.coilCommands.length} coils`);
+        }
+
+        // Holding registers first
         for (const cmd of commands.holdingCommands) {
             try {
-                let writeValue = this.scaleValue(cmd.key, cmd.value as number, 'write'); // Scale nếu có config
+                const writeValue = this.scaleValue(cmd.key, cmd.value as number, 'write');
                 await modbusClient.writeRegister(cmd.address, Number(writeValue));
-                this.debugLog(`Wrote register at ${cmd.address} with scaled value ${writeValue}`);
+                this.logModbusCmd('WRITE', { ...cmd, value: writeValue });
                 await this.delay(100);
             } catch (error) {
-                // CRITICAL LOG: Modbus holding register error
-                if (this.node && schedule) {
-                    this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write holding register ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
-                }
-                console.error(`Error executing modbus holding command ${cmd.key}: ${(error as Error).message}`);
+                this.logModbusCmd('FAIL', cmd);
+                console.error(`Modbus HOLD write failed: ${cmd.key}@${cmd.address} - ${(error as Error).message}`);
             }
         }
 
-        // Phân loại coil commands
+        // Classify coil commands
         const powerCoils = commands.coilCommands.filter(cmd => cmd.key.includes('power'));
         const pumpCoils = commands.coilCommands.filter(cmd => cmd.key.includes('pump'));
         const valveCoils = commands.coilCommands.filter(cmd => cmd.key.includes('valve_'));
         const otherCoils = commands.coilCommands.filter(cmd =>
             !cmd.key.includes('power') && !cmd.key.includes('pump') && !cmd.key.includes('valve_'));
 
-        // Xác định đang start hay finish dựa vào status của schedule
         const isStarting = schedule && schedule.status === 'running';
         const isFinishing = schedule && schedule.status === 'finished';
 
         if (isStarting) {
-            // CRITICAL LOG: START sequence
-            if (this.node && schedule) {
-                this.node.warn(`🔧 MODBUS START SEQUENCE: ${schedule.name}`);
-                this.node.warn(`  ├─ Step 1: Writing ${powerCoils.length} POWER coils`);
-                this.node.warn(`  ├─ Step 2: Writing ${valveCoils.length} VALVE coils`);
-                this.node.warn(`  ├─ Step 3: Writing ${otherCoils.length} OTHER coils`);
-                this.node.warn(`  ├─ Step 4: Delay 5 seconds`);
-                this.node.warn(`  └─ Step 5: Writing ${pumpCoils.length} PUMP coils`);
+            if (this.node) {
+                this.node.warn(`🔧 START ${schedule.name}: power(${powerCoils.length}) → valve(${valveCoils.length}) → other(${otherCoils.length}) → 5s → pump(${pumpCoils.length})`);
             }
 
-            // Khi start: power trước, rồi valve, other, delay 5s, sau đó ghi pump
-            this.debugLog(`Starting schedule ${schedule?.name}: executing power coils first`);
-
-            // Thực hiện power coils trước
             for (const cmd of powerCoils) {
                 try {
                     const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written) {
-                        this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
-                    }
+                    if (written) this.logModbusCmd('START', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    // CRITICAL LOG: Modbus power coil error
-                    if (this.node && schedule) {
-                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write power coil ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
-                    }
-                    console.error(`Error executing modbus power coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
+                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${(error as Error).message}`);
                 }
             }
 
-            // Thực hiện valve coils
             for (const cmd of valveCoils) {
                 try {
                     const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written) {
-                        this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
-                    }
+                    if (written) this.logModbusCmd('START', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    // CRITICAL LOG: Modbus valve coil error
-                    if (this.node && schedule) {
-                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write valve coil ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
-                    }
-                    console.error(`Error executing modbus valve coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
+                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${(error as Error).message}`);
                 }
             }
 
-            // Thực hiện other coils
             for (const cmd of otherCoils) {
                 try {
                     const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written) {
-                        this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
-                    }
+                    if (written) this.logModbusCmd('START', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error executing modbus other coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
                 }
             }
 
-            // Delay 5 giây trước khi ghi các pump coils
             if (pumpCoils.length > 0) {
-                this.debugLog('Delaying 5 seconds before writing pump coils');
+                if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before PUMP...`);
                 await this.delay(5000);
-
-                // Thực hiện pump coils
                 for (const cmd of pumpCoils) {
                     try {
                         const written = await this.writeCoilWithGate(modbusClient, cmd);
-                        if (written) {
-                            this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
-                        }
+                        if (written) this.logModbusCmd('START', cmd);
                         await this.delay(100);
                     } catch (error) {
-                        console.error(`Error executing modbus pump coil command ${cmd.key}: ${(error as Error).message}`);
+                        this.logModbusCmd('FAIL', cmd);
                     }
                 }
             }
         } else if (isFinishing) {
-            // CRITICAL LOG: FINISH sequence
-            if (this.node && schedule) {
-                this.node.warn(`🛑 MODBUS FINISH SEQUENCE: ${schedule.name}`);
-                this.node.warn(`  ├─ Step 1: Turning OFF ${pumpCoils.length} PUMP coils`);
-                this.node.warn(`  ├─ Step 2: Turning OFF ${otherCoils.length} OTHER coils`);
-                this.node.warn(`  ├─ Step 3: Delay 5 seconds`);
-                this.node.warn(`  ├─ Step 4: Closing ${valveCoils.length} VALVE coils`);
-                this.node.warn(`  └─ Step 5: Turning OFF ${powerCoils.length} POWER coils`);
+            if (this.node) {
+                this.node.warn(`🛑 FINISH ${schedule.name}: pump(${pumpCoils.length}) → other(${otherCoils.length}) → 5s → valve(${valveCoils.length}) → power(${powerCoils.length})`);
             }
 
-            // Khi finish: pump trước, other, delay 5s, valve, power sau cùng
-            this.debugLog(`Finishing schedule ${schedule?.name}: executing pump coils first`);
-
-            // Thực hiện pump coils trước
             for (const cmd of pumpCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote pump coil at ${cmd.address} with value ${cmd.value}`);
+                    this.logModbusCmd('FINISH', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    // CRITICAL LOG: Modbus pump coil error
-                    if (this.node && schedule) {
-                        this.node.warn(`❌ MODBUS ERROR: ${schedule.name} | Failed to write pump coil ${cmd.key} at ${cmd.address} | ${(error as Error).message}`);
-                    }
-                    console.error(`Error executing modbus pump coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
+                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${(error as Error).message}`);
                 }
             }
 
-            // Thực hiện other coils
             for (const cmd of otherCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote other coil at ${cmd.address} with value ${cmd.value}`);
+                    this.logModbusCmd('FINISH', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error executing modbus other coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
                 }
             }
 
-            // Delay 5 giây trước khi ghi các valve coils
             if (valveCoils.length > 0) {
-                this.debugLog('Delaying 5 seconds before writing valve coils');
+                if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before VALVE close...`);
                 await this.delay(5000);
-
-                // Thực hiện valve coils
                 for (const cmd of valveCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        this.debugLog(`Wrote valve coil at ${cmd.address} with value ${cmd.value}`);
+                        this.logModbusCmd('FINISH', cmd);
                         await this.delay(100);
                     } catch (error) {
-                        console.error(`Error executing modbus valve coil command ${cmd.key}: ${(error as Error).message}`);
+                        this.logModbusCmd('FAIL', cmd);
                     }
                 }
             }
 
-            // Thực hiện power coils sau cùng
             for (const cmd of powerCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.debugLog(`Wrote power coil at ${cmd.address} with value ${cmd.value}`);
+                    this.logModbusCmd('FINISH', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error executing modbus power coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
                 }
             }
         } else {
-            // Nếu không có schedule hoặc status không phải running/finished, thực hiện theo thứ tự thông thường
-            this.debugLog('Executing coil commands in default order');
-
-            // Sau đó thực hiện coil commands
             for (const cmd of commands.coilCommands) {
                 try {
                     const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written) {
-                        this.debugLog(`Wrote coil at ${cmd.address} with value ${cmd.value}`);
-                    }
+                    if (written) this.logModbusCmd('WRITE', cmd);
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error executing modbus coil command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('FAIL', cmd);
                 }
             }
         }
@@ -923,92 +875,48 @@ export class ScheduleService {
      *       Holding registers (FC=6) are only verified when verifyAfterWrite = true.
      */
     async verifyModbusWrite(modbusClient: ModbusClientCore, commands: ModbusCmd[]): Promise<boolean> {
-        // Separate commands into coils and holding registers
         const coilCommands = commands.filter(cmd => cmd.fc === 5);
         const holdingCommands = commands.filter(cmd => cmd.fc === 6);
-        const otherCommands = commands.filter(cmd => cmd.fc !== 5 && cmd.fc !== 6);
 
-        // Log skipped coil verification if disabled
-        if (this.skipCoilVerify && coilCommands.length > 0) {
-            this.debugLog(`Coil verification disabled (skipCoilVerify=true) - skipping ${coilCommands.length} coil commands`);
-            if (this.node) {
-                this.node.warn(`⏭️  COIL VERIFICATION SKIPPED: ${coilCommands.length} commands (skipCoilVerify = true)`);
-            }
-        }
-
-        // Log skipped holding register verification if disabled
-        if (!this.verifyAfterWrite && holdingCommands.length > 0) {
-            this.debugLog(`Verification disabled - skipping holding register verification for ${holdingCommands.length} commands`);
-            if (this.node) {
-                this.node.warn(`⏭️  HOLDING REGISTER VERIFICATION SKIPPED: ${holdingCommands.length} commands (verifyAfterWrite = false)`);
-            }
-        }
-
-        // Build list of commands to verify based on configuration
         const commandsToVerify = [
-            ...(this.skipCoilVerify ? [] : coilCommands),  // Only verify coils if skipCoilVerify is false
-            ...(this.verifyAfterWrite ? holdingCommands : []) // Only verify holding registers if enabled
+            ...(this.skipCoilVerify ? [] : coilCommands),
+            ...(this.verifyAfterWrite ? holdingCommands : [])
         ];
 
-        if (commandsToVerify.length === 0) {
-            this.debugLog('No commands to verify (all verification disabled)');
-            return true;
-        }
+        if (commandsToVerify.length === 0) return true;
 
-        // Log what will be verified
-        if (this.node && !this.skipCoilVerify && coilCommands.length > 0) {
-            this.node.warn(`🔍 VERIFYING COILS: ${coilCommands.length} commands`);
-        }
-        if (this.node && this.verifyAfterWrite && holdingCommands.length > 0) {
-            this.node.warn(`🔍 VERIFYING HOLDING REGISTERS: ${holdingCommands.length} commands`);
+        if (this.node) {
+            this.node.warn(`[MODBUS] VERIFY ${commandsToVerify.length} commands...`);
         }
 
         for (const cmd of commandsToVerify) {
             try {
-                let readResult: { data: any[] };
                 let readValue: number | boolean;
 
                 if (cmd.fc === 5) {
-                    readResult = await modbusClient.readCoils(cmd.address, 1);
+                    const readResult = await modbusClient.readCoils(cmd.address, 1);
                     readValue = Boolean(readResult.data[0]);
                 } else if (cmd.fc === 6) {
-                    readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
-                    // Đọc giá trị thô và scale nếu có config cho 'read'
-                    const rawValue = Number(readResult.data[0]);
-                    readValue = this.scaleValue(cmd.key, rawValue, 'read');
+                    const readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                    readValue = this.scaleValue(cmd.key, Number(readResult.data[0]), 'read');
                 } else {
                     continue;
                 }
 
-                // So sánh với giá trị gốc (cmd.value)
-                this.debugLog(`Verifying ${cmd.key}: readValue = ${readValue} (${typeof readValue}), expected = ${cmd.value} (${typeof cmd.value})`);
-
-                if (readValue !== cmd.value) {
-                    // CRITICAL LOG: Verification failed
-                    if (this.node) {
-                        this.node.warn(`❌ VERIFICATION FAILED: ${cmd.key} at address ${cmd.address} | Expected: ${cmd.value}, Got: ${readValue}`);
-                    }
-                    console.warn(`Verification failed for ${cmd.key} at ${cmd.address}: expected ${cmd.value}, got ${readValue}`);
-                    return false;
-                }
-                this.debugLog(`Verified ${cmd.key} at ${cmd.address} successfully`);
-            } catch (error) {
-                // CRITICAL LOG: Verification error
+                const ok = readValue === cmd.value;
                 if (this.node) {
-                    this.node.warn(`❌ VERIFICATION ERROR: ${cmd.key} | ${(error as Error).message}`);
+                    const fcLabel = cmd.fc === 6 ? 'HOLD' : 'COIL';
+                    this.node.warn(`[MODBUS] VERIFY ${fcLabel} ${cmd.key}@${cmd.address}: read=${readValue} expected=${cmd.value} → ${ok ? '✅' : '❌'}`);
                 }
-                console.error(`Error verifying modbus write for ${cmd.key}: ${(error as Error).message}`);
+                if (!ok) return false;
+            } catch (error) {
+                if (this.node) {
+                    this.node.warn(`[MODBUS] VERIFY ERROR ${cmd.key}@${cmd.address}: ${(error as Error).message}`);
+                }
                 return false;
             }
         }
 
-        // CRITICAL LOG: All verifications passed
-        if (this.node && commandsToVerify.length > 0) {
-            const verifiedTypes = [];
-            if (!this.skipCoilVerify && coilCommands.length > 0) verifiedTypes.push(`${coilCommands.length} coils`);
-            if (this.verifyAfterWrite && holdingCommands.length > 0) verifiedTypes.push(`${holdingCommands.length} holding registers`);
-            this.node.warn(`✅ VERIFICATION SUCCESS: ${commandsToVerify.length} commands verified (${verifiedTypes.join(', ')})`);
-        }
         return true;
     }
 
@@ -1436,7 +1344,7 @@ export class ScheduleService {
                         this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
                     }
 
-                    const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule);
+                    const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
                         this.clearScheduleConfigValues(schedule.name);
@@ -1460,10 +1368,9 @@ export class ScheduleService {
     /**
      * Reset lại các lệnh modbus
      */
-    async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[], schedule?: TabiotSchedule): Promise<boolean> {
-        let allSuccessful = true; // Initialize a flag to track overall success
+    async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[], schedule?: TabiotSchedule, isFinishing: boolean = false): Promise<boolean> {
+        let allSuccessful = true;
 
-        // Phân loại commands
         const powerCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('power'));
         const pumpCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('pump'));
         const valveCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('valve_'));
@@ -1471,84 +1378,80 @@ export class ScheduleService {
             !cmd.key.includes('power') && !cmd.key.includes('pump') && !cmd.key.includes('valve_'));
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
 
-        // Reset holding registers
+        if (this.node) {
+            this.node.warn(`[MODBUS] RESET ${schedule?.name || '?'}: ${holdingRegisters.length} registers + ${commands.filter(c => c.fc === 5).length} coils (ordered=${isFinishing})`);
+        }
+
+        // Reset holding registers to 0
         for (const cmd of holdingRegisters) {
             try {
                 await modbusClient.writeRegister(cmd.address, 0);
-                this.debugLog(`Reset register at ${cmd.address} to 0`);
+                this.logModbusCmd('RESET', { ...cmd, value: 0 });
                 await this.delay(100);
             } catch (error) {
-                console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                this.logModbusCmd('RESET_FAIL', { ...cmd, value: 0 });
                 allSuccessful = false;
             }
         }
 
-        // Khi finish schedule, luôn reset theo thứ tự: pump trước, other, delay, valve, power sau cùng
-        if (schedule && schedule.status === 'finished') {
-            this.debugLog(`Ordered reset for finished schedule ${schedule.name}`);
-
-            // Reset pump coils trước
+        if (isFinishing) {
+            // Ordered reset: pump → other → 5s delay → valve → power
             for (const cmd of pumpCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    this.debugLog(`Reset pump coil at ${cmd.address} to false`);
+                    this.logModbusCmd('RESET', { ...cmd, value: false });
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
                     allSuccessful = false;
                 }
             }
 
-            // Reset other coils
             for (const cmd of otherCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    this.debugLog(`Reset other coil at ${cmd.address} to false`);
+                    this.logModbusCmd('RESET', { ...cmd, value: false });
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
                     allSuccessful = false;
                 }
             }
 
-            // Delay 5 giây trước khi reset valve coils
             if (valveCoils.length > 0) {
-                this.debugLog('Delaying 5 seconds before resetting valve coils');
+                if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before VALVE reset...`);
                 await this.delay(5000);
-
-                // Reset valve coils
                 for (const cmd of valveCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, false);
-                        this.debugLog(`Reset valve coil at ${cmd.address} to false`);
+                        this.logModbusCmd('RESET', { ...cmd, value: false });
                         await this.delay(100);
                     } catch (error) {
-                        console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                        this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
                         allSuccessful = false;
                     }
                 }
             }
 
-            // Reset power coils sau cùng
             for (const cmd of powerCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    this.debugLog(`Reset power coil at ${cmd.address} to false`);
+                    this.logModbusCmd('RESET', { ...cmd, value: false });
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
                     allSuccessful = false;
                 }
             }
         } else {
-            // Nếu không phải finishing schedule, reset theo thứ tự thông thường
+            // Default order — no ordering
             for (const cmd of commands.filter(cmd => cmd.fc === 5)) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
-                    this.debugLog(`Reset coil at ${cmd.address} to false`);
+                    this.logModbusCmd('RESET', { ...cmd, value: false });
                     await this.delay(100);
                 } catch (error) {
-                    console.error(`Error resetting modbus command ${cmd.key}: ${(error as Error).message}`);
+                    this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
                     allSuccessful = false;
                 }
             }

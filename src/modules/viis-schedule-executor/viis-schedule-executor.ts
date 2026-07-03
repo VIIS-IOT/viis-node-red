@@ -656,7 +656,6 @@ module.exports = function (RED: NodeAPI) {
                 }
 
                 const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
-                debugLog(`Found ${schedules.length} schedule(s).`);
 
                 // Run hourly cleanup of stale status history entries
                 cleanStaleStatusHistory();
@@ -697,19 +696,14 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
-                        debugLog("start running schedule");
-
                         const statusChanged = hasStatusChanged(schedule.name, "running");
 
                         const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
-                        debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         let actionObj: Record<string, any> = {};
                         if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
                             try {
                                 actionObj = JSON.parse(schedule.action);
-                            } catch (err) {
-                                debugLog('Cannot parse schedule.action, treat as empty object');
-                            }
+                            } catch (err) { /* ignore parse error */ }
                         } else if (typeof schedule.action === 'object' && schedule.action !== null) {
                             actionObj = schedule.action;
                         }
@@ -724,7 +718,6 @@ module.exports = function (RED: NodeAPI) {
                                 quantity: 1
                             }));
                         if (resetKeys.length > 0) {
-                            debugLog(`Resetting keys at schedule start: ${resetKeys.map(k => k.key).join(', ')}`);
                             await scheduleService.resetModbusCommands(modbusClient, resetKeys);
                         }
                         const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
@@ -809,26 +802,14 @@ module.exports = function (RED: NodeAPI) {
                             }
                         }
                     } else if (schedule.status === "running" && isDue) {
-                        const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
-                        const now = Date.now();
-                        const lastCheck = lastCheckTimestamps[schedule.name] || 0;
-                        const checkInterval = 60000;
-
-                        if (now - lastCheck >= checkInterval) {
-                            debugLog(`Schedule ${schedule.name} is running - automatic coil recovery is DISABLED`);
-                            lastCheckTimestamps[schedule.name] = now;
-                            globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
-                        }
+                        // Schedule still running and still due — no action needed
                     } else if (schedule.status === "running" && !isDue) {
-                        debugLog(`Schedule ${schedule.name} no longer due - stopping (was: running, isDue: ${isDue})`);
-
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
 
                         const activeCommands = scheduleService.getActiveCommands(schedule.name);
                         const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
-                        debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
                             .map(([key, address]) => ({
@@ -846,7 +827,7 @@ module.exports = function (RED: NodeAPI) {
 
                         let resetSuccess = true; // Track reset result
                         if (allResetCommands.length > 0) {
-                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule);
+                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true);
                         }
 
                         // Always clear active commands and set status to "finished"
