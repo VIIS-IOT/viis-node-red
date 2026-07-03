@@ -39,6 +39,22 @@ export class RpcHandler implements IRpcHandler {
         continue_on_error: false,
     };
 
+    private static readonly COMMAND_PRIORITY: Record<string, number> = {
+        valve: 0,
+        pump: 1,
+        power: 2,
+    };
+
+    static getCommandPriority(key: string): number {
+        const lower = key.toLowerCase();
+        for (const [keyword, priority] of Object.entries(RpcHandler.COMMAND_PRIORITY)) {
+            if (lower.includes(keyword)) {
+                return priority;
+            }
+        }
+        return 3;
+    }
+
     constructor(
         options: ServiceOptions,
         configService: IConfigService,
@@ -158,7 +174,10 @@ export class RpcHandler implements IRpcHandler {
         const sortedCommands = [...commands].sort((a, b) => {
             const aOrder = typeof a?.order === "number" ? a.order : Number.MAX_SAFE_INTEGER;
             const bOrder = typeof b?.order === "number" ? b.order : Number.MAX_SAFE_INTEGER;
-            return aOrder - bOrder;
+            const aPriority = RpcHandler.getCommandPriority(String(a?.key || ""));
+            const bPriority = RpcHandler.getCommandPriority(String(b?.key || ""));
+            const priorityDiff = aPriority - bPriority;
+            return priorityDiff !== 0 ? priorityDiff : aOrder - bOrder;
         });
 
         const results: Array<{

@@ -8,6 +8,15 @@ exports.RpcHandler = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 class RpcHandler {
+    static getCommandPriority(key) {
+        const lower = key.toLowerCase();
+        for (const [keyword, priority] of Object.entries(RpcHandler.COMMAND_PRIORITY)) {
+            if (lower.includes(keyword)) {
+                return priority;
+            }
+        }
+        return 3;
+    }
     constructor(options, configService, validationService, modbusService, mqttService, luoiHandler) {
         this.maxBatchSize = 100;
         this.RPC_REQUEST_TIMEOUT = 30000; // 30s overall timeout per RPC request
@@ -113,7 +122,10 @@ class RpcHandler {
         const sortedCommands = [...commands].sort((a, b) => {
             const aOrder = typeof (a === null || a === void 0 ? void 0 : a.order) === "number" ? a.order : Number.MAX_SAFE_INTEGER;
             const bOrder = typeof (b === null || b === void 0 ? void 0 : b.order) === "number" ? b.order : Number.MAX_SAFE_INTEGER;
-            return aOrder - bOrder;
+            const aPriority = RpcHandler.getCommandPriority(String((a === null || a === void 0 ? void 0 : a.key) || ""));
+            const bPriority = RpcHandler.getCommandPriority(String((b === null || b === void 0 ? void 0 : b.key) || ""));
+            const priorityDiff = aPriority - bPriority;
+            return priorityDiff !== 0 ? priorityDiff : aOrder - bOrder;
         });
         const results = [];
         const successfulCommands = [];
@@ -722,3 +734,8 @@ class RpcHandler {
     }
 }
 exports.RpcHandler = RpcHandler;
+RpcHandler.COMMAND_PRIORITY = {
+    valve: 0,
+    pump: 1,
+    power: 2,
+};
