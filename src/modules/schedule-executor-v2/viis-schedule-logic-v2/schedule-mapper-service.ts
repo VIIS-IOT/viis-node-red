@@ -21,6 +21,7 @@ import {
 } from "../common/types";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import { isFalsyValue, normalizeNumericValue, calculateDurationSeconds } from "../common/schedule-utils";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 
 export class ScheduleMapperService {
     private node: Node;
@@ -216,7 +217,7 @@ export class ScheduleMapperService {
      * @returns Scaled value or original if no config
      */
     scaleValue(key: string, value: number, direction: 'read' | 'write'): number {
-        const scaleConfigs = (this.node.context().global.get("scaleConfigs") as ScaleConfig[]) || [];
+        const scaleConfigs = (this.node.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[]) || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         
         if (!config) {

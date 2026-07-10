@@ -3,6 +3,8 @@
  * Centralized configuration and magic numbers
  */
 
+import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
+
 // Context keys for storing data
 export const CONTEXT_KEYS = {
     // Flow context keys (node-specific)
@@ -16,8 +18,8 @@ export const CONTEXT_KEYS = {
 
     // Global context keys (shared across nodes)
     GLOBAL_CONFIG_VALUES: "configKeyValues",
-    GLOBAL_HOLDING_REGISTER_DATA: "holdingRegisterData",
-    GLOBAL_COIL_REGISTER_DATA: "coilRegisterData",
+    GLOBAL_HOLDING_REGISTER_DATA: GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA,
+    GLOBAL_COIL_REGISTER_DATA: GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA,
     GLOBAL_MODBUS_COILS: "modbusCoils",
     GLOBAL_MODBUS_HOLDING_REGISTERS: "modbusHoldingRegisters",
 } as const;

@@ -22,6 +22,7 @@ import {
     MODBUS_FUNCTION_CODES,
     CONTROL_CONFIG
 } from "../constants";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { Logger } from "../utils/logger";
 import {
     getFanGroups,
@@ -1167,7 +1168,7 @@ export class FanControlService implements IFanControlService {
      * Get current device status from global context
      */
     public getCurrentDeviceStatus(): Record<string, boolean> {
-        const coilData = this.globalContext.get(CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA) || {};
+        const coilData = this.globalContext.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
         const deviceStatus: Record<string, boolean> = {};
 
         // Map coil data to device status

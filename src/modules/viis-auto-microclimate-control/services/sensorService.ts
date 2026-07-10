@@ -11,6 +11,7 @@ import {
     ILogger
 } from "../interfaces/types";
 import { CONTEXT_KEYS, ERROR_MESSAGES } from "../constants";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { Logger } from "../utils/logger";
 
 export class SensorService implements ISensorService {
@@ -38,7 +39,7 @@ export class SensorService implements ISensorService {
             }
 
             // Read fresh data from global context
-            const holdingRegisterData = this.globalContext.get(CONTEXT_KEYS.GLOBAL_HOLDING_REGISTER_DATA);
+            const holdingRegisterData = this.globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA);
 
             if (!holdingRegisterData || typeof holdingRegisterData !== 'object') {
                 this.logger.warn("No sensor data found in global context");
@@ -86,7 +87,7 @@ export class SensorService implements ISensorService {
             }
 
             // Read fresh data from global context
-            const coilRegisterData = this.globalContext.get(CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA);
+            const coilRegisterData = this.globalContext.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA);
 
             if (!coilRegisterData || typeof coilRegisterData !== 'object') {
                 this.logger.warn("No device status data found in global context");

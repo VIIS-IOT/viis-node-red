@@ -23,6 +23,7 @@ import {
     STATUS_MESSAGES,
     ERROR_MESSAGES
 } from "../constants";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { Logger } from "../utils/logger";
 import { hasTimeElapsed, getCurrentTimestamp } from "../utils/timeUtils";
 
@@ -346,7 +347,7 @@ export class AutoControlHandler implements IAutoControlHandler {
             }
 
             // Get current device status
-            const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
+            const deviceStatus = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
             const currentActiveFans = Object.keys(deviceStatus).filter(key =>
                 deviceStatus[key] === true && ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'].includes(key)
             );
@@ -535,7 +536,7 @@ export class AutoControlHandler implements IAutoControlHandler {
             }
 
             // Get current device status
-            const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
+            const deviceStatus = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
 
             // Get tolerance timers from flow context
             const toleranceTimers = this.flowContext.get(CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS) || [];

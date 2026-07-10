@@ -21,6 +21,7 @@ import {
 import axios, { AxiosError } from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
+import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 
 // require('dotenv').config();
 
@@ -170,7 +171,7 @@ export class ScheduleService {
 
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
     private scaleValue(key: string, value: number, direction: 'read' | 'write'): number {
-        const scaleConfigs: ScaleConfig[] = this.node?.context().global.get("scaleConfigs") as ScaleConfig[] || [];
+        const scaleConfigs: ScaleConfig[] = this.node?.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
             this.debugLog(`No scale config for ${key} in ${direction}, returning ${value}`);

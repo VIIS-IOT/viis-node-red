@@ -5,6 +5,8 @@
  * Values can be overridden via environment variables.
  */
 
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
+
 // ========================================
 // Modbus Register Keys (for Global Context Lookup)
 // ========================================
@@ -178,10 +180,10 @@ export const EC_CONTROL_DEFAULTS = {
     GLOBAL_DATA_MAX_AGE: 10000,
 
     /** Global context key for holding register data (from polling flow) */
-    GLOBAL_HOLDING_DATA_KEY: 'holdingRegisterData',
+    GLOBAL_HOLDING_DATA_KEY: GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA,
 
     /** Global context key for coil data (from polling flow) */
-    GLOBAL_COIL_DATA_KEY: 'coilRegisterData',
+    GLOBAL_COIL_DATA_KEY: GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA,
 } as const;
 
 // ========================================

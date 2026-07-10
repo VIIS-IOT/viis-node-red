@@ -21,6 +21,7 @@ import {
     ScaleConfig
 } from "../common/types";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 
 export class ModbusExecutorService {
     private node: Node;
@@ -48,7 +49,7 @@ export class ModbusExecutorService {
      * Scale a value based on configuration
      */
     private scaleValue(key: string, value: number, direction: 'read' | 'write'): number {
-        const scaleConfigs = (this.node.context().global.get("scaleConfigs") as ScaleConfig[]) || [];
+        const scaleConfigs = (this.node.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[]) || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
 
         if (!config) {

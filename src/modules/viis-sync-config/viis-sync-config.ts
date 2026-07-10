@@ -15,6 +15,7 @@ import { MqttConfig } from '../../core/mqtt-client';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios, { AxiosError } from 'axios';
+import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
 
 interface ViisSyncConfigNodeDef extends NodeDef {
     configFile: string;
@@ -312,7 +313,7 @@ export = function (RED: NodeAPI) {
                 ctx.set('modbusThresholds', config.modbusPublishThresholds);
             }
             if (config.scaleConfigs !== undefined) {
-                ctx.set('scaleConfigs', config.scaleConfigs);
+                ctx.set(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, config.scaleConfigs);
             }
 
             log.info(node, 'Global context updated');

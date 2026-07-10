@@ -11,6 +11,7 @@ import {
     ServiceOptions
 } from "../interfaces/types";
 import { CONTEXT_KEYS, VALIDATION, ERROR_MESSAGES } from "../constants";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { Logger } from "../utils/logger";
 
 export class ConfigService implements IConfigService {
@@ -33,7 +34,7 @@ export class ConfigService implements IConfigService {
      * Get scale configurations from flow context
      */
     getScaleConfigs(): ScaleConfig[] {
-        return this.globalContext.get(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS) as ScaleConfig[] || [];
+        return this.globalContext.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
     }
 
     /**
@@ -82,7 +83,7 @@ export class ConfigService implements IConfigService {
         }
         
         const mergedConfigs = Array.from(configMap.values());
-        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, mergedConfigs);
+        this.globalContext.set(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, mergedConfigs);
         this.logger.log(`Merged scale configs (${existingConfigs.length} existing + ${newConfigs.length} new = ${mergedConfigs.length} total): ${JSON.stringify(mergedConfigs)}`);
     }
 
@@ -238,7 +239,7 @@ export class ConfigService implements IConfigService {
      * Clear all configurations for this node
      */
     clearNodeConfigs(): void {
-        this.globalContext.set(CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, []);
+        this.globalContext.set(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, []);
         this.logger.log("Cleared node-specific configurations");
     }
 

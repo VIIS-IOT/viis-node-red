@@ -27,6 +27,7 @@ import {
     ERROR_MESSAGES,
     STATUS_MESSAGES
 } from "./constants";
+import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 
 interface ViisDeviceProtectionNodeDef extends NodeDef {
     boardId?: string;
@@ -340,12 +341,12 @@ module.exports = function (RED: NodeAPI) {
 
                 // Update global context cache (coilRegisterData)
                 try {
-                    const coilRegisterData = node.context().global.get("coilRegisterData") || {};
+                    const coilRegisterData = node.context().global.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
                     // Find coil key by address
                     const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
                     if (coilKey) {
                         coilRegisterData[coilKey] = readValue;
-                        node.context().global.set("coilRegisterData", coilRegisterData);
+                        node.context().global.set(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, coilRegisterData);
                         debugLog(`Updated coilRegisterData: ${coilKey}=${readValue}`);
                     }
                 } catch (cacheError) {

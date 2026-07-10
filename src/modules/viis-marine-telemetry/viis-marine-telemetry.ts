@@ -11,6 +11,7 @@ import { ViisMarinetTelemetryNodeDef, MarineIoTConfig } from './viis-marine-tele
 import { ViisMarinetTelemetryProcessor } from './viis-marine-telemetry-processor';
 import { createDataSource } from '../../orm/dataSource';
 import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent, DH6400DebugEvent } from '../../services/MarineIoT/DH6400PollingService';
+import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
@@ -86,7 +87,7 @@ module.exports = function (RED: NodeAPI) {
                 const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
                 try {
                     const newScaleConfigs = JSON.parse(scaleConfigsJson);
-                    const existingConfigs = (nodeContext.global.get('scaleConfigs') as any[] || []);
+                    const existingConfigs = (nodeContext.global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as any[] || []);
                     
                     // Merge using key+direction as unique identifier
                     const configMap = new Map<string, any>();
@@ -100,7 +101,7 @@ module.exports = function (RED: NodeAPI) {
                     }
                     const mergedConfigs = Array.from(configMap.values());
                     
-                    nodeContext.global.set('scaleConfigs', mergedConfigs);
+                    nodeContext.global.set(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, mergedConfigs);
                     node.log(`[Marine] Merged scale configs (${existingConfigs.length} existing + ${newScaleConfigs.length} from env = ${mergedConfigs.length} total)`);
                 } catch (error) {
                     node.warn(`[Marine] Failed to parse SCALE_CONFIGS: ${(error as Error).message}`);

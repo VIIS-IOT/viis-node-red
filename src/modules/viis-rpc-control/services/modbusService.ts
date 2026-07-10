@@ -17,6 +17,7 @@ import { Logger } from "../utils/logger";
 import { ScalingUtils } from "../utils/scaling";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import ClientRegistry from "../../../core/client-registry";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 
 export class ModbusService implements IModbusService {
     private defaultModbusClient: any; // Default client for single-board or fallback
@@ -397,17 +398,17 @@ export class ModbusService implements IModbusService {
 
             if (fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {
                 // Update holding register cache
-                const holdingData = globalContext.get('holdingRegisterData') || {};
+                const holdingData = globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
                 holdingData[key] = value;
                 holdingData.ts = Date.now(); // Update timestamp
-                globalContext.set('holdingRegisterData', holdingData);
+                globalContext.set(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, holdingData);
                 this.logger.debug(`Updated global cache - holdingRegisterData.${key} = ${value}`);
             } else if (fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
                 // Update coil register cache
-                const coilData = globalContext.get('coilRegisterData') || {};
+                const coilData = globalContext.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
                 coilData[key] = value;
                 coilData.ts = Date.now(); // Update timestamp
-                globalContext.set('coilRegisterData', coilData);
+                globalContext.set(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, coilData);
                 this.logger.debug(`Updated global cache - coilRegisterData.${key} = ${value}`);
             }
         } catch (error) {
