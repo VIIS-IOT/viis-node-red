@@ -236,7 +236,7 @@ module.exports = function (RED: NodeAPI) {
         );
 
         // Setup input message handler
-        setupInputHandler(node, telemetryProcessor, flowContext, debugLogKey, thresholdConfigKey);
+        setupInputHandler(node, telemetryProcessor, flowContext, debugLogKey, thresholdConfigKey, pollingService);
 
         // Setup cleanup handler
         setupCleanupHandler(
@@ -441,7 +441,8 @@ module.exports = function (RED: NodeAPI) {
     telemetryProcessor: ViisTelemetryProcessor,
     _flowContext: NodeContext,
     _debugLogKey: string,
-    _thresholdConfigKey: string
+    _thresholdConfigKey: string,
+    pollingService: ViisTelemetryPollingService
   ): void {
     node.on('input', (msg: any) => {
       try {
@@ -460,7 +461,14 @@ module.exports = function (RED: NodeAPI) {
             newThresholdConfig = {};
           }
 
-          telemetryProcessor.updateThresholdConfig(newThresholdConfig);
+          // PMR-005: bracket the config update with setConfigUpdating so the polling
+          // service's finally-blocks fire resetPreviousState() on the next poll cycle.
+          pollingService.setConfigUpdating(true);
+          try {
+            telemetryProcessor.updateThresholdConfig(newThresholdConfig);
+          } finally {
+            pollingService.setConfigUpdating(false);
+          }
         }
       } catch (error) {
         node.error(`Failed to process input message: ${(error as Error).message}`);
