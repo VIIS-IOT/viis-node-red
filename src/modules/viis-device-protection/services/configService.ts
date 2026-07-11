@@ -15,6 +15,7 @@
 
 import { Node } from "node-red";
 import { CONTEXT_KEYS, DEVICE_LABEL_MAP } from "../constants";
+import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 
 export interface ProtectionConfig {
     bypass: boolean;
@@ -182,7 +183,7 @@ export class ConfigService {
      * Get coil data from global context
      */
     getCoilData(): Record<string, boolean> {
-        return this.globalContext.get(CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
+        return this.globalContext.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
     }
 
     /**

@@ -18,6 +18,7 @@
 import { Node, NodeAPI, NodeDef } from 'node-red';
 import { ErrorNotificationService, BusinessLogicError } from '../../services/error-notification.service';
 import { GlobalContextHelper } from '../../ultils/global-context-helper';
+import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
 
 interface FlowErrorMonitorConfig extends NodeDef {
     name: string;
@@ -145,9 +146,9 @@ module.exports = function (RED: NodeAPI) {
                 const now = moment().add(7, 'hours');
 
                 // Get data from global context
-                const inputRegisterData = globalContext.get('inputRegisterData') || {};
-                const holdingRegisterData = globalContext.get('holdingRegisterData') || {};
-                const coilRegisterData = globalContext.get('coilRegisterData') || {};
+                const inputRegisterData = globalContext.get(GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA) || {};
+                const holdingRegisterData = globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
+                const coilRegisterData = globalContext.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
                 const errMapping = globalContext.get('modbusErrMap') || {};
                 const modbusCoils = globalContext.get('modbusCoils') || {};
                 const deviceLabel = globalContext.get('device_label') || globalHelper.getEnvVar('DEVICE_ID', 'unknown');

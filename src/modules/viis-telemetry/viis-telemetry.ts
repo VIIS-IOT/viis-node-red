@@ -21,7 +21,7 @@ import {
   TelemetryProcessorConfig,
   PeriodicSnapshotConfig
 } from './viis-telemetry-processor';
-import { CONTEXT_KEYS } from './viis-telemetry-constants';
+import { CONTEXT_KEYS, GLOBAL_CONTEXT_KEYS } from './viis-telemetry-constants';
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 
 /**
@@ -120,7 +120,7 @@ module.exports = function (RED: NodeAPI) {
         const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
         try {
             const newScaleConfigs = JSON.parse(scaleConfigsJson);
-            const existingConfigs = (nodeContext.global.get('scaleConfigs') as any[] || []);
+            const existingConfigs = (nodeContext.global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as any[] || []);
             
             // Merge using key+direction as unique identifier
             const configMap = new Map<string, any>();
@@ -134,7 +134,7 @@ module.exports = function (RED: NodeAPI) {
             }
             const mergedConfigs = Array.from(configMap.values());
             
-            nodeContext.global.set('scaleConfigs', mergedConfigs);
+            nodeContext.global.set(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, mergedConfigs);
             node.log(`Merged scale configs (${existingConfigs.length} existing + ${newScaleConfigs.length} from env = ${mergedConfigs.length} total)`);
         } catch (error) {
             node.warn(`Failed to parse SCALE_CONFIGS: ${(error as Error).message}`);
@@ -236,7 +236,7 @@ module.exports = function (RED: NodeAPI) {
         );
 
         // Setup input message handler
-        setupInputHandler(node, telemetryProcessor, flowContext, debugLogKey, thresholdConfigKey);
+        setupInputHandler(node, telemetryProcessor, flowContext, debugLogKey, thresholdConfigKey, pollingService);
 
         // Setup cleanup handler
         setupCleanupHandler(
@@ -441,7 +441,8 @@ module.exports = function (RED: NodeAPI) {
     telemetryProcessor: ViisTelemetryProcessor,
     _flowContext: NodeContext,
     _debugLogKey: string,
-    _thresholdConfigKey: string
+    _thresholdConfigKey: string,
+    pollingService: ViisTelemetryPollingService
   ): void {
     node.on('input', (msg: any) => {
       try {
@@ -460,7 +461,14 @@ module.exports = function (RED: NodeAPI) {
             newThresholdConfig = {};
           }
 
-          telemetryProcessor.updateThresholdConfig(newThresholdConfig);
+          // PMR-005: bracket the config update with setConfigUpdating so the polling
+          // service's finally-blocks fire resetPreviousState() on the next poll cycle.
+          pollingService.setConfigUpdating(true);
+          try {
+            telemetryProcessor.updateThresholdConfig(newThresholdConfig);
+          } finally {
+            pollingService.setConfigUpdating(false);
+          }
         }
       } catch (error) {
         node.error(`Failed to process input message: ${(error as Error).message}`);

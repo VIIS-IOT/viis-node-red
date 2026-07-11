@@ -56,6 +56,7 @@ import {
     ERROR_CODES,
 } from './constants';
 import { ModbusRegisterHelper } from './utils/ModbusRegisterHelper';
+import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
 
 
 module.exports = function (RED: NodeAPI) {
@@ -321,7 +322,7 @@ module.exports = function (RED: NodeAPI) {
         async function readSensors(): Promise<SensorReadings | null> {
             try {
                 // Read from global context instead of direct Modbus polling
-                let holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                let holdingData = globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) as Record<string, any> | undefined;
 
                 // Handle multi-board structure: {board1: {...}, board2: {...}}
                 if (holdingData && currentBoardId && holdingData[currentBoardId]) {
@@ -385,7 +386,7 @@ module.exports = function (RED: NodeAPI) {
         // This prioritizes live config data over input message
         function getEcSetpointFromRegisters(): number | null {
             try {
-                let holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                let holdingData = globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) as Record<string, any> | undefined;
 
                 // Handle multi-board structure
                 if (holdingData && currentBoardId && holdingData[currentBoardId]) {
@@ -407,7 +408,7 @@ module.exports = function (RED: NodeAPI) {
         // Used when lookup table has no data (manual user set via RPC)
         function getValveTimesFromRegisters(defaults: ValveTimes): ValveTimes | null {
             try {
-                let holdingData = globalContext.get(EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY) as Record<string, any> | undefined;
+                let holdingData = globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) as Record<string, any> | undefined;
 
                 // Handle multi-board structure
                 if (holdingData && currentBoardId && holdingData[currentBoardId]) {

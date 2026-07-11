@@ -11,6 +11,7 @@ import { DatabaseService } from './database.service';
 import { GlobalContextHelper } from '../../../ultils/global-context-helper';
 import { TabiotSchedule, TabiotScheduleLog } from '../../../orm/entities/schedule/TabiotSchedule';
 import { ApiError, ErrorType } from '../types/common.types';
+import { GLOBAL_CONTEXT_KEYS } from '../../viis-telemetry/viis-telemetry-constants';
 
 /**
  * Interface for active schedule tracking
@@ -182,7 +183,7 @@ export class ScheduleCompletionMonitorService extends BaseService {
         try {
             // Get current coil register data from global context
             // This data is stored by the telemetry polling service
-            const coilRegisterData: any = this.node.context().global.get('coilRegisterData') || {};
+            const coilRegisterData: any = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
             const currentCoilAutoTron = coilRegisterData.COIL_AUTO_TRON;
 
             // Check each active schedule

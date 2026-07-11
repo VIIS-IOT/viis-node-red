@@ -8,6 +8,7 @@
  */
 
 import { NodeContext } from "node-red";
+import { GLOBAL_CONTEXT_KEYS } from "../modules/viis-telemetry/viis-telemetry-constants";
 
 /**
  * Environment variable mapping from process.env names to global context names
@@ -367,7 +368,7 @@ export class GlobalContextHelper {
    * @returns Holding register data object
    */
   getGlobalHoldingRegisterData(): Record<string, any> {
-    return this.globalContext.get('holdingRegisterData') || {};
+    return this.globalContext.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
   }
 
   /**

@@ -3,10 +3,12 @@
  * Centralized configuration and magic numbers
  */
 
+import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
+
 // Context keys for storing data
 export const CONTEXT_KEYS = {
     // Flow context keys (node-specific)
-    GLOBAL_SCALE_CONFIGS: "scaleConfigs",
+    GLOBAL_SCALE_CONFIGS: GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS,
     GLOBAL_MANUAL_OVERRIDES: "manualModbusOverrides",
 
     // Global context keys (shared across nodes)

@@ -17,6 +17,7 @@ import {
 import { DataSourceManager } from "../../orm/dataSource";
 import { TabiotCoilTrackingSession } from "../../orm/entities/coil-tracking/TabiotCoilTrackingSession";
 import { Repository } from "typeorm";
+import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 
 export class CoilTrackerService {
     private activeSessions: Map<string, TrackingSession> = new Map();
@@ -98,7 +99,7 @@ export class CoilTrackerService {
 
         try {
             // Get current coil register data from global context
-            const coilRegisterData: Record<string, any> = this.node.context().global.get('coilRegisterData') || {};
+            const coilRegisterData: Record<string, any> = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
 
             // Check each tracking rule
             for (const rule of this.trackingRules) {
@@ -259,8 +260,8 @@ export class CoilTrackerService {
         const relatedData: Record<string, any> = {};
 
         if (rule.captureRelatedData && rule.captureRelatedData.length > 0) {
-            const inputRegisterData = this.node.context().global.get('inputRegisterData') || {};
-            const holdingRegisterData = this.node.context().global.get('holdingRegisterData') || {};
+            const inputRegisterData = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA) || {};
+            const holdingRegisterData = this.node.context().global.get(GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
 
             for (const key of rule.captureRelatedData) {
                 if (coilRegisterData[key] !== undefined) {
