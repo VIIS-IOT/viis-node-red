@@ -1,0 +1,136 @@
+<script type="text/javascript">
+  RED.nodes.registerType("viis-modbus-poller", {
+    category: "VIIS",
+    color: "#44c4a1",
+    defaults: {
+      name: { value: "" },
+      boardId: { value: "board1" },
+      maxGap: { value: "5", validate: RED.validators.number() },
+      maxCoilsPerRead: { value: "64", validate: RED.validators.number() },
+      maxRegistersPerRead: { value: "32", validate: RED.validators.number() },
+      staleLockMs: { value: "5000", validate: RED.validators.number() },
+      publishFullSnapshotOnFirstRead: { value: true },
+      enableDiagnostics: { value: true },
+      scaleConfigOverrides: {
+        value: "[]",
+        validate: function (value) {
+          try {
+            return Array.isArray(JSON.parse(value || "[]"));
+          } catch (error) {
+            return false;
+          }
+        },
+      },
+    },
+    inputs: 1,
+    outputs: 3,
+    outputLabels: ["Local EMQX", "ThingsBoard", "Diagnostics"],
+    icon: "font-awesome/fa-refresh",
+    label: function () {
+      return this.name || "viis-modbus-poller";
+    },
+    labelStyle: function () {
+      return this.name ? "node_label_italic" : "";
+    },
+    oneditprepare: function () {
+      var overrides = $("#node-input-scaleConfigOverrides");
+      try {
+        var parsed = JSON.parse(overrides.val() || "[]");
+        overrides.val(JSON.stringify(parsed, null, 2));
+      } catch (error) {
+        // Leave invalid JSON visible so the editor validation can show it.
+      }
+    },
+    oneditsave: function () {
+      var overrides = $("#node-input-scaleConfigOverrides");
+      try {
+        var parsed = JSON.parse(overrides.val() || "[]");
+        overrides.val(JSON.stringify(parsed));
+      } catch (error) {
+        // Node-RED validation handles invalid JSON.
+      }
+    },
+  });
+</script>
+
+<script type="text/html" data-template-name="viis-modbus-poller">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-boardId"><i class="fa fa-microchip"></i> Board ID</label>
+    <input type="text" id="node-input-boardId" placeholder="board1">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-maxGap"><i class="fa fa-arrows-h"></i> Max Gap</label>
+    <input type="number" id="node-input-maxGap" min="0" step="1" style="width: 120px;">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-maxCoilsPerRead"><i class="fa fa-toggle-on"></i> Max Coils</label>
+    <input type="number" id="node-input-maxCoilsPerRead" min="1" step="1" style="width: 120px;">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-maxRegistersPerRead"><i class="fa fa-list-ol"></i> Max Registers</label>
+    <input type="number" id="node-input-maxRegistersPerRead" min="1" step="1" style="width: 120px;">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-staleLockMs"><i class="fa fa-clock-o"></i> Lock Timeout</label>
+    <input type="number" id="node-input-staleLockMs" min="1000" step="100" style="width: 120px;">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-publishFullSnapshotOnFirstRead"><i class="fa fa-camera"></i> First Read</label>
+    <input
+      type="checkbox"
+      id="node-input-publishFullSnapshotOnFirstRead"
+      style="display: inline-block; width: auto; vertical-align: top;"
+    >
+    <span style="margin-left: 5px;">Publish full snapshot</span>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-enableDiagnostics"><i class="fa fa-stethoscope"></i> Diagnostics</label>
+    <input
+      type="checkbox"
+      id="node-input-enableDiagnostics"
+      style="display: inline-block; width: auto; vertical-align: top;"
+    >
+    <span style="margin-left: 5px;">Enable third output</span>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-scaleConfigOverrides"><i class="fa fa-balance-scale"></i> Scale Overrides</label>
+    <textarea
+      id="node-input-scaleConfigOverrides"
+      rows="8"
+      style="width: 70%; font-family: monospace;"
+      placeholder='[]'
+    ></textarea>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="viis-modbus-poller">
+  <p>Polls configured Modbus groups through the shared VIIS Modbus client and emits telemetry deltas.</p>
+
+  <h3>Inputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">any</span></dt>
+    <dd>Any incoming message triggers one scheduler tick. Group intervals are read from device config.</dd>
+  </dl>
+
+  <h3>Outputs</h3>
+  <ol class="node-ports">
+    <li>Local EMQX telemetry message.</li>
+    <li>ThingsBoard telemetry message.</li>
+    <li>Diagnostics message.</li>
+  </ol>
+
+  <h3>Configuration</h3>
+  <p>The node reads <code>modbusPollGroups</code>, <code>modbusMappings</code>, <code>modbusPublishThresholds</code>, and <code>vt_scaleConfigs</code> from global context.</p>
+</script>
