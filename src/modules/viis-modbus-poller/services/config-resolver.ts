@@ -131,9 +131,14 @@ function readScaleConfigs(
     globalContext.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS),
     `global context key ${GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS}`,
   );
+  const envLoaderScaleConfigs = parseOptionalArray(
+    readGlobal(globalContext, ["scale_configs", "scaleConfigs", "SCALE_CONFIGS"]).value,
+    "global context scale configs",
+  );
   const overrides = parseOptionalArray(nodeConfig.scaleConfigOverrides, "node config scaleConfigOverrides");
+  const mergedGlobalConfigs = mergeScaleConfigs(globalScaleConfigs, envLoaderScaleConfigs);
 
-  return mergeScaleConfigs(globalScaleConfigs, overrides);
+  return mergeScaleConfigs(mergedGlobalConfigs, overrides);
 }
 
 export function resolvePollerConfig(

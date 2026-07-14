@@ -2,8 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectChangedData = detectChangedData;
 function hasMetNumericThreshold(currentValue, previousValue, threshold) {
-    const safeThreshold = Number.isFinite(threshold) ? threshold : 0;
-    return Math.abs(currentValue - previousValue) >= safeThreshold;
+    const delta = Math.abs(currentValue - previousValue);
+    const safeThreshold = Number.isFinite(threshold) && threshold > 0 ? threshold : 0;
+    return delta > 0 && delta >= safeThreshold;
 }
 function detectChangedData(input) {
     const changed = {};

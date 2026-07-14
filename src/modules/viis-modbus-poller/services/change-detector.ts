@@ -12,8 +12,9 @@ function hasMetNumericThreshold(
   previousValue: number,
   threshold: number | undefined,
 ): boolean {
-  const safeThreshold = Number.isFinite(threshold) ? threshold : 0;
-  return Math.abs(currentValue - previousValue) >= safeThreshold;
+  const delta = Math.abs(currentValue - previousValue);
+  const safeThreshold = Number.isFinite(threshold) && threshold > 0 ? threshold : 0;
+  return delta > 0 && delta >= safeThreshold;
 }
 
 export function detectChangedData(input: DetectChangedDataInput): Record<string, TelemetryValue> {

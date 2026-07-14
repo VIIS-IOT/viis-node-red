@@ -77,8 +77,10 @@ function readMappings(globalContext, boardId) {
 }
 function readScaleConfigs(nodeConfig, globalContext) {
     const globalScaleConfigs = parseOptionalArray(globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS), `global context key ${viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS}`);
+    const envLoaderScaleConfigs = parseOptionalArray(readGlobal(globalContext, ["scale_configs", "scaleConfigs", "SCALE_CONFIGS"]).value, "global context scale configs");
     const overrides = parseOptionalArray(nodeConfig.scaleConfigOverrides, "node config scaleConfigOverrides");
-    return (0, scale_config_merger_1.mergeScaleConfigs)(globalScaleConfigs, overrides);
+    const mergedGlobalConfigs = (0, scale_config_merger_1.mergeScaleConfigs)(globalScaleConfigs, envLoaderScaleConfigs);
+    return (0, scale_config_merger_1.mergeScaleConfigs)(mergedGlobalConfigs, overrides);
 }
 function resolvePollerConfig(nodeConfig, globalContext) {
     const boardId = readBoardId(nodeConfig, globalContext);

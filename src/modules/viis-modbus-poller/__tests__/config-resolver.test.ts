@@ -76,6 +76,44 @@ describe("resolvePollerConfig", () => {
     });
   });
 
+  it("uses env-loader scale configs when telemetry namespace configs are stale", () => {
+    const global = makeGlobal({
+      modbusPollGroups: { sensors: { interval: 5000, input: ["current_ec"] } },
+      modbusPublishThresholds: { current_ec: 0.1 },
+      modbusMappings: {
+        board1: {
+          coils: {},
+          inputRegisters: { current_ec: 14 },
+          holdingRegisters: {},
+        },
+      },
+      vt_scaleConfigs: [
+        {
+          key: "fertigation_monitor_current_ec",
+          operation: "divide",
+          factor: 1000,
+          direction: "read",
+        },
+        { key: "current_ec", operation: "divide", factor: 10, direction: "read" },
+      ],
+      scale_configs: JSON.stringify([
+        { key: "current_ec", operation: "divide", factor: 1000, direction: "read" },
+      ]),
+    });
+
+    const resolved = resolvePollerConfig({ scaleConfigOverrides: "" }, global);
+
+    expect(resolved.scaleConfigs).toEqual([
+      {
+        key: "fertigation_monitor_current_ec",
+        operation: "divide",
+        factor: 1000,
+        direction: "read",
+      },
+      { key: "current_ec", operation: "divide", factor: 1000, direction: "read" },
+    ]);
+  });
+
   it("uses unknown_device when no device id is present", () => {
     const global = makeGlobal({
       modbus_poll_groups: { realtime: { interval: 2000, coils: ["pump_1"] } },
