@@ -5,6 +5,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MODBUS_CONFIG = exports.MODBUS_FUNCTION_CODES = exports.ERROR_MESSAGES = exports.STATUS_MESSAGES = exports.ENV_KEYS = exports.CONFIG_KEYS = exports.CURTAIN_CONFIG = exports.WATER_PUMP_CONFIG = exports.FAN_DAO_CONFIG = exports.FAN_CONFIG = exports.CONTROL_CONFIG = exports.CONTEXT_KEYS = void 0;
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Flow context keys (node-specific)
@@ -17,8 +18,8 @@ exports.CONTEXT_KEYS = {
     LAST_CONTROL_EXECUTION: "lastControlExecution",
     // Global context keys (shared across nodes)
     GLOBAL_CONFIG_VALUES: "configKeyValues",
-    GLOBAL_HOLDING_REGISTER_DATA: "holdingRegisterData",
-    GLOBAL_COIL_REGISTER_DATA: "coilRegisterData",
+    GLOBAL_HOLDING_REGISTER_DATA: viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA,
+    GLOBAL_COIL_REGISTER_DATA: viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA,
     GLOBAL_MODBUS_COILS: "modbusCoils",
     GLOBAL_MODBUS_HOLDING_REGISTERS: "modbusHoldingRegisters",
 };

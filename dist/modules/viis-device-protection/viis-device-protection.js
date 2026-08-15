@@ -21,6 +21,7 @@ const protection_manager_1 = require("./protection-manager");
 const protection_gate_service_1 = require("./services/protection-gate-service");
 const configService_1 = require("./services/configService");
 const constants_1 = require("./constants");
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 module.exports = function (RED) {
     function ViisDeviceProtectionNode(config) {
         RED.nodes.createNode(this, config);
@@ -303,12 +304,12 @@ module.exports = function (RED) {
                 debugLog(`Read-back verification for coil ${address}: ${readValue} (expected: ${value})`);
                 // Update global context cache (coilRegisterData)
                 try {
-                    const coilRegisterData = node.context().global.get("coilRegisterData") || {};
+                    const coilRegisterData = node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
                     // Find coil key by address
                     const coilKey = Object.keys(modbusCoils).find(key => modbusCoils[key] === address);
                     if (coilKey) {
                         coilRegisterData[coilKey] = readValue;
-                        node.context().global.set("coilRegisterData", coilRegisterData);
+                        node.context().global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, coilRegisterData);
                         debugLog(`Updated coilRegisterData: ${coilKey}=${readValue}`);
                     }
                 }

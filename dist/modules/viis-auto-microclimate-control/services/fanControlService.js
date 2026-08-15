@@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FanControlService = void 0;
 const types_1 = require("../interfaces/types");
 const constants_1 = require("../constants");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const logger_1 = require("../utils/logger");
 const groupUtils_1 = require("../utils/groupUtils");
 const timeUtils_1 = require("../utils/timeUtils");
@@ -951,7 +952,7 @@ class FanControlService {
      * Get current device status from global context
      */
     getCurrentDeviceStatus() {
-        const coilData = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA) || {};
+        const coilData = this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
         const deviceStatus = {};
         // Map coil data to device status
         const coilMapping = this.getCoilMapping();

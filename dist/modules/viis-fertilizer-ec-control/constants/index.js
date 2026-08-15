@@ -7,6 +7,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TB_ATTRIBUTES = exports.API_ENDPOINTS = exports.ENV_KEYS = exports.ERROR_CODES = exports.LOOKUP_DATA_TYPE = exports.RUN_STATUS = exports.TELEMETRY_KEY_MAP = exports.EC_CONTROL_DEFAULTS = exports.CONTROL_MODES = exports.MODBUS_COIL_KEYS = exports.MODBUS_REGISTER_KEYS = void 0;
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 // ========================================
 // Modbus Register Keys (for Global Context Lookup)
 // ========================================
@@ -150,9 +151,9 @@ exports.EC_CONTROL_DEFAULTS = {
     /** Maximum age of global context data before considered stale (ms) */
     GLOBAL_DATA_MAX_AGE: 10000,
     /** Global context key for holding register data (from polling flow) */
-    GLOBAL_HOLDING_DATA_KEY: 'holdingRegisterData',
+    GLOBAL_HOLDING_DATA_KEY: viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA,
     /** Global context key for coil data (from polling flow) */
-    GLOBAL_COIL_DATA_KEY: 'coilRegisterData',
+    GLOBAL_COIL_DATA_KEY: viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA,
 };
 // ========================================
 // Telemetry Key Mapping (Edge → Server)

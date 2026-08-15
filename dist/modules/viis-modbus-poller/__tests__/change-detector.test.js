@@ -47,4 +47,13 @@ describe("detectChangedData", () => {
         });
         expect(changed).toEqual({});
     });
+    it("does not publish unchanged numeric values when threshold is zero", () => {
+        const changed = (0, change_detector_1.detectChangedData)({
+            current: { pump_error: 0, valve_program: 0 },
+            previous: { pump_error: 0, valve_program: 0 },
+            thresholds: { pump_error: 0, valve_program: 0 },
+            publishFullSnapshot: false,
+        });
+        expect(changed).toEqual({});
+    });
 });

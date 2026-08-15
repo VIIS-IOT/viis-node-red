@@ -6,6 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SensorService = void 0;
 const constants_1 = require("../constants");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const logger_1 = require("../utils/logger");
 class SensorService {
     constructor(options) {
@@ -27,7 +28,7 @@ class SensorService {
                 return this.cachedSensorData;
             }
             // Read fresh data from global context
-            const holdingRegisterData = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_HOLDING_REGISTER_DATA);
+            const holdingRegisterData = this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA);
             if (!holdingRegisterData || typeof holdingRegisterData !== 'object') {
                 this.logger.warn("No sensor data found in global context");
                 return null;
@@ -68,7 +69,7 @@ class SensorService {
                 return this.cachedDeviceStatus;
             }
             // Read fresh data from global context
-            const coilRegisterData = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_COIL_REGISTER_DATA);
+            const coilRegisterData = this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA);
             if (!coilRegisterData || typeof coilRegisterData !== 'object') {
                 this.logger.warn("No device status data found in global context");
                 return null;

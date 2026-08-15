@@ -12,6 +12,7 @@ exports.GlobalContextHelper = void 0;
 exports.createGlobalContextHelper = createGlobalContextHelper;
 exports.getEnvVar = getEnvVar;
 exports.getJsonEnvVar = getJsonEnvVar;
+const viis_telemetry_constants_1 = require("../modules/viis-telemetry/viis-telemetry-constants");
 /**
  * Environment variable mapping from process.env names to global context names
  */
@@ -332,7 +333,7 @@ class GlobalContextHelper {
      * @returns Holding register data object
      */
     getGlobalHoldingRegisterData() {
-        return this.globalContext.get('holdingRegisterData') || {};
+        return this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
     }
     /**
      * Gets debug information about the helper state

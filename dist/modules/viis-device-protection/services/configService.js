@@ -16,6 +16,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigService = void 0;
 const constants_1 = require("../constants");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 class ConfigService {
     constructor(node) {
         this.node = node;
@@ -154,7 +155,7 @@ class ConfigService {
      * Get coil data from global context
      */
     getCoilData() {
-        return this.globalContext.get(constants_1.CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
+        return this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
     }
     /**
      * Get sensor data from global context

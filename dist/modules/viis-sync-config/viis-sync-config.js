@@ -49,6 +49,7 @@ const client_registry_1 = __importDefault(require("../../core/client-registry"))
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const axios_1 = __importDefault(require("axios"));
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 const RPC_METHOD = 'sync-full-config';
 const TOPIC_RPC_REQUEST = 'v1/devices/me/rpc/request/+';
 const TB_DEFAULT_HOST = 'mqtt.viis.tech';
@@ -308,7 +309,7 @@ module.exports = function (RED) {
                 ctx.set('modbusThresholds', config.modbusPublishThresholds);
             }
             if (config.scaleConfigs !== undefined) {
-                ctx.set('scaleConfigs', config.scaleConfigs);
+                ctx.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, config.scaleConfigs);
             }
             log.info(node, 'Global context updated');
         }

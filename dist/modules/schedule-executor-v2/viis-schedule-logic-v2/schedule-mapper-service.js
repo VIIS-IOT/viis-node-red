@@ -14,6 +14,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleMapperService = void 0;
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const schedule_utils_1 = require("../common/schedule-utils");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 class ScheduleMapperService {
     constructor(node, debugEnable = false) {
         this.luoiMapping = {
@@ -182,7 +183,7 @@ class ScheduleMapperService {
      * @returns Scaled value or original if no config
      */
     scaleValue(key, value, direction) {
-        const scaleConfigs = this.node.context().global.get("scaleConfigs") || [];
+        const scaleConfigs = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
             this.debugLog(`No scale config for ${key} in ${direction}, returning ${value}`);

@@ -4,6 +4,9 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ENV_KEYS = exports.CONNECTION_TIMEOUT = exports.REGISTER_TYPES = exports.GLOBAL_CONTEXT_KEYS = exports.CONTEXT_KEYS = exports.MQTT_TOPICS = exports.DEFAULT_REGISTER_CONFIG = exports.DEFAULT_POLLING_INTERVALS = exports.RETRY_DELAY = exports.MAX_RETRY_ATTEMPTS = exports.POLLING_BACKOFF_TIME = exports.MAX_CONSECUTIVE_FAILURES = exports.DEFAULT_CHANGE_THRESHOLD = exports.MIN_PUBLISH_INTERVAL = exports.MIN_POLLING_INTERVAL = void 0;
+/**
+ * VIIS Telemetry global context keys.
+ */
 /** Minimum polling interval to prevent system overload */
 exports.MIN_POLLING_INTERVAL = 500;
 /** Minimum publish interval to prevent spam */

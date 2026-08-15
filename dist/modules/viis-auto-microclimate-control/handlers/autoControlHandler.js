@@ -6,6 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AutoControlHandler = void 0;
 const constants_1 = require("../constants");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const logger_1 = require("../utils/logger");
 const timeUtils_1 = require("../utils/timeUtils");
 class AutoControlHandler {
@@ -273,7 +274,7 @@ class AutoControlHandler {
                 requiredFanCount = 2;
             }
             // Get current device status
-            const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
+            const deviceStatus = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
             const currentActiveFans = Object.keys(deviceStatus).filter(key => deviceStatus[key] === true && ['quat_1', 'quat_2', 'quat_3', 'quat_4', 'quat_5', 'quat_6'].includes(key));
             // Get rotation state information
             const rotationInfo = this.getRotationStateInfo(config, requiredFanCount);
@@ -449,7 +450,7 @@ class AutoControlHandler {
                 };
             }
             // Get current device status
-            const deviceStatus = this.node.context().global.get('coilRegisterData') || {};
+            const deviceStatus = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
             // Get tolerance timers from flow context
             const toleranceTimers = this.flowContext.get(constants_1.CONTEXT_KEYS.CURTAIN_TOLERANCE_TIMERS) || [];
             // Build luoi details

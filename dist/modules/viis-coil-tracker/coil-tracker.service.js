@@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CoilTrackerService = void 0;
 const dataSource_1 = require("../../orm/dataSource");
 const TabiotCoilTrackingSession_1 = require("../../orm/entities/coil-tracking/TabiotCoilTrackingSession");
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 class CoilTrackerService {
     constructor(node, globalHelper, mysqlClient, mqttClient) {
         this.node = node;
@@ -78,7 +79,7 @@ class CoilTrackerService {
         }
         try {
             // Get current coil register data from global context
-            const coilRegisterData = this.node.context().global.get('coilRegisterData') || {};
+            const coilRegisterData = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
             // Check each tracking rule
             for (const rule of this.trackingRules) {
                 this.checkSingleCoilState(rule, coilRegisterData);
@@ -215,8 +216,8 @@ class CoilTrackerService {
     captureRelatedData(rule, coilRegisterData) {
         const relatedData = {};
         if (rule.captureRelatedData && rule.captureRelatedData.length > 0) {
-            const inputRegisterData = this.node.context().global.get('inputRegisterData') || {};
-            const holdingRegisterData = this.node.context().global.get('holdingRegisterData') || {};
+            const inputRegisterData = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA) || {};
+            const holdingRegisterData = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
             for (const key of rule.captureRelatedData) {
                 if (coilRegisterData[key] !== undefined) {
                     relatedData[key] = coilRegisterData[key];

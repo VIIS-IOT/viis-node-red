@@ -4,11 +4,6 @@
 
 /**
  * VIIS Telemetry global context keys.
- * NOTE: Values are prefixed with `vt_` since 2026-07-10 to namespace telemetry globals
- *       away from flow-function-node hardcoded keys (`coilRegisterData`, etc.).
- *       This prevents concurrent-write collisions between viis-telemetry module and
- *       flow function nodes like Process Holding Threshold.
- *       Do NOT remove the prefix without coordinating with PMR-004 / .plans/poll-modbus-flow-robustness.md.
  */
 
 /** Minimum polling interval to prevent system overload */
@@ -73,10 +68,10 @@ export const CONTEXT_KEYS = {
 
 /** Global context keys for data storage */
 export const GLOBAL_CONTEXT_KEYS = {
-  SCALE_CONFIGS: 'vt_scaleConfigs',
-  COIL_REGISTER_DATA: 'vt_coilRegisterData',
-  INPUT_REGISTER_DATA: 'vt_inputRegisterData',
-  HOLDING_REGISTER_DATA: 'vt_holdingRegisterData',
+  SCALE_CONFIGS: 'scaleConfigs',
+  COIL_REGISTER_DATA: 'coilRegisterData',
+  INPUT_REGISTER_DATA: 'inputRegisterData',
+  HOLDING_REGISTER_DATA: 'holdingRegisterData',
 } as const;
 
 /** Register types */

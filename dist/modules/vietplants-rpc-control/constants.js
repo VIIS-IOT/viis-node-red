@@ -5,10 +5,11 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Flow context keys (node-specific)
-    GLOBAL_SCALE_CONFIGS: "scaleConfigs",
+    GLOBAL_SCALE_CONFIGS: viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS,
     GLOBAL_MANUAL_OVERRIDES: "manualModbusOverrides",
     // Global context keys (shared across nodes)
     GLOBAL_CONFIG_KEYS: "configKeys",

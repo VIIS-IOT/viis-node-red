@@ -97,7 +97,7 @@ module.exports = function (RED) {
                 const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
                 try {
                     const newScaleConfigs = JSON.parse(scaleConfigsJson);
-                    const existingConfigs = (nodeContext.global.get('scaleConfigs') || []);
+                    const existingConfigs = (nodeContext.global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) || []);
                     // Merge using key+direction as unique identifier
                     const configMap = new Map();
                     for (const config of existingConfigs) {
@@ -109,7 +109,7 @@ module.exports = function (RED) {
                         configMap.set(uniqueKey, config);
                     }
                     const mergedConfigs = Array.from(configMap.values());
-                    nodeContext.global.set('scaleConfigs', mergedConfigs);
+                    nodeContext.global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, mergedConfigs);
                     node.log(`Merged scale configs (${existingConfigs.length} existing + ${newScaleConfigs.length} from env = ${mergedConfigs.length} total)`);
                 }
                 catch (error) {
@@ -175,7 +175,7 @@ module.exports = function (RED) {
                 // Setup event handlers
                 setupEventHandlers(node, connectionManager, pollingService, telemetryProcessor, pollingConfig, envConfig);
                 // Setup input message handler
-                setupInputHandler(node, telemetryProcessor, flowContext, debugLogKey, thresholdConfigKey);
+                setupInputHandler(node, telemetryProcessor, flowContext, debugLogKey, thresholdConfigKey, pollingService);
                 // Setup cleanup handler
                 setupCleanupHandler(node, pollingService, connectionManager, thingsboardMqttClient, flowContext, debugLogKey, thresholdConfigKey, isMultiBoardMode, currentBoardId);
                 // Start polling if all clients are connected
@@ -335,7 +335,7 @@ module.exports = function (RED) {
     /**
      * Setup input message handler for dynamic configuration updates
      */
-    function setupInputHandler(node, telemetryProcessor, _flowContext, _debugLogKey, _thresholdConfigKey) {
+    function setupInputHandler(node, telemetryProcessor, _flowContext, _debugLogKey, _thresholdConfigKey, pollingService) {
         node.on('input', (msg) => {
             try {
                 // Handle debug log setting update
@@ -350,7 +350,15 @@ module.exports = function (RED) {
                     if (typeof newThresholdConfig !== 'object' || Array.isArray(newThresholdConfig)) {
                         newThresholdConfig = {};
                     }
-                    telemetryProcessor.updateThresholdConfig(newThresholdConfig);
+                    // PMR-005: bracket the config update with setConfigUpdating so the polling
+                    // service's finally-blocks fire resetPreviousState() on the next poll cycle.
+                    pollingService.setConfigUpdating(true);
+                    try {
+                        telemetryProcessor.updateThresholdConfig(newThresholdConfig);
+                    }
+                    finally {
+                        pollingService.setConfigUpdating(false);
+                    }
                 }
             }
             catch (error) {

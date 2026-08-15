@@ -19,6 +19,7 @@ const base_service_1 = require("./base.service");
 const notification_service_1 = require("./notification.service");
 const database_service_1 = require("./database.service");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 /**
  * Schedule Completion Monitoring service class
  * Monitors global context for COIL_AUTO_TRON status changes to detect schedule completion
@@ -139,7 +140,7 @@ let ScheduleCompletionMonitorService = class ScheduleCompletionMonitorService ex
         try {
             // Get current coil register data from global context
             // This data is stored by the telemetry polling service
-            const coilRegisterData = this.node.context().global.get('coilRegisterData') || {};
+            const coilRegisterData = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
             const currentCoilAutoTron = coilRegisterData.COIL_AUTO_TRON;
             // Check each active schedule
             const scheduleEntries = Array.from(this.activeSchedules.entries());

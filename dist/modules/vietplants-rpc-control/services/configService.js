@@ -6,6 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigService = void 0;
 const constants_1 = require("../constants");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const logger_1 = require("../utils/logger");
 class ConfigService {
     constructor(options) {
@@ -22,7 +23,7 @@ class ConfigService {
      * Get scale configurations from flow context
      */
     getScaleConfigs() {
-        return this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS) || [];
+        return this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) || [];
     }
     /**
      * Get configuration key values from global context
@@ -63,7 +64,7 @@ class ConfigService {
             configMap.set(uniqueKey, config);
         }
         const mergedConfigs = Array.from(configMap.values());
-        this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, mergedConfigs);
+        this.globalContext.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, mergedConfigs);
         this.logger.log(`Merged scale configs (${existingConfigs.length} existing + ${newConfigs.length} new = ${mergedConfigs.length} total): ${JSON.stringify(mergedConfigs)}`);
     }
     /**
@@ -206,7 +207,7 @@ class ConfigService {
      * Clear all configurations for this node
      */
     clearNodeConfigs() {
-        this.globalContext.set(constants_1.CONTEXT_KEYS.GLOBAL_SCALE_CONFIGS, []);
+        this.globalContext.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, []);
         this.logger.log("Cleared node-specific configurations");
     }
     /**

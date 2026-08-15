@@ -5,11 +5,12 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.DEVICE_LABEL_MAP = exports.DEVICE_TYPES = exports.PROTECTION_CONFIG = exports.MODBUS_CONFIG = exports.ENV_KEYS = exports.CONTEXT_KEYS = void 0;
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
     // Global context keys (shared across nodes)
     GLOBAL_CONFIG_VALUES: "configKeyValues",
-    COIL_REGISTER_DATA: "coilRegisterData",
+    COIL_REGISTER_DATA: viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA,
     SENSOR_REGISTER_DATA: "sensorRegisterData",
 };
 // Environment variable keys

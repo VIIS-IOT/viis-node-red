@@ -13,6 +13,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ModbusExecutorService = void 0;
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 class ModbusExecutorService {
     constructor(node, verifyAfterWrite = true, debugEnable = false) {
         this.node = node;
@@ -32,7 +33,7 @@ class ModbusExecutorService {
      * Scale a value based on configuration
      */
     scaleValue(key, value, direction) {
-        const scaleConfigs = this.node.context().global.get("scaleConfigs") || [];
+        const scaleConfigs = this.node.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
             return value;

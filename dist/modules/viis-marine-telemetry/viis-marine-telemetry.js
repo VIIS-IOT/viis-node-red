@@ -12,6 +12,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const viis_marine_telemetry_processor_1 = require("./viis-marine-telemetry-processor");
 const dataSource_1 = require("../../orm/dataSource");
 const DH6400PollingService_1 = require("../../services/MarineIoT/DH6400PollingService");
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 process.on('unhandledRejection', (reason, promise) => {
     console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -73,7 +74,7 @@ module.exports = function (RED) {
                 const scaleConfigsJson = globalHelper.getEnvVar('SCALE_CONFIGS', '[]');
                 try {
                     const newScaleConfigs = JSON.parse(scaleConfigsJson);
-                    const existingConfigs = (nodeContext.global.get('scaleConfigs') || []);
+                    const existingConfigs = (nodeContext.global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) || []);
                     // Merge using key+direction as unique identifier
                     const configMap = new Map();
                     for (const config of existingConfigs) {
@@ -85,7 +86,7 @@ module.exports = function (RED) {
                         configMap.set(uniqueKey, config);
                     }
                     const mergedConfigs = Array.from(configMap.values());
-                    nodeContext.global.set('scaleConfigs', mergedConfigs);
+                    nodeContext.global.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS, mergedConfigs);
                     node.log(`[Marine] Merged scale configs (${existingConfigs.length} existing + ${newScaleConfigs.length} from env = ${mergedConfigs.length} total)`);
                 }
                 catch (error) {

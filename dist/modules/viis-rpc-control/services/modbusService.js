@@ -12,6 +12,7 @@ const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
+const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 class ModbusService {
     constructor(options, modbusClient, scalingUtils) {
         this.defaultModbusClient = modbusClient;
@@ -338,18 +339,18 @@ class ModbusService {
             const globalContext = this.node.context().global;
             if (fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_REGISTER) {
                 // Update holding register cache
-                const holdingData = globalContext.get('holdingRegisterData') || {};
+                const holdingData = globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA) || {};
                 holdingData[key] = value;
                 holdingData.ts = Date.now(); // Update timestamp
-                globalContext.set('holdingRegisterData', holdingData);
+                globalContext.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, holdingData);
                 this.logger.debug(`Updated global cache - holdingRegisterData.${key} = ${value}`);
             }
             else if (fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL) {
                 // Update coil register cache
-                const coilData = globalContext.get('coilRegisterData') || {};
+                const coilData = globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA) || {};
                 coilData[key] = value;
                 coilData.ts = Date.now(); // Update timestamp
-                globalContext.set('coilRegisterData', coilData);
+                globalContext.set(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, coilData);
                 this.logger.debug(`Updated global cache - coilRegisterData.${key} = ${value}`);
             }
         }

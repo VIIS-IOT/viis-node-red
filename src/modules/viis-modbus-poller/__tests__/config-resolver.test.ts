@@ -22,7 +22,7 @@ describe("resolvePollerConfig", () => {
       }),
       device_id: "device-from-lowercase",
       modbusDefaultBoard: "board2",
-      vt_scaleConfigs: JSON.stringify([
+      scaleConfigs: JSON.stringify([
         { key: "current_ec", operation: "divide", factor: 1000, direction: "read" },
       ]),
     });
@@ -87,7 +87,7 @@ describe("resolvePollerConfig", () => {
           holdingRegisters: {},
         },
       },
-      vt_scaleConfigs: [
+      scaleConfigs: [
         {
           key: "fertigation_monitor_current_ec",
           operation: "divide",

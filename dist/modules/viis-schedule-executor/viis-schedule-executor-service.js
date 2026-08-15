@@ -55,6 +55,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const resilience_utils_1 = require("./resilience-utils");
 const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // require('dotenv').config();
 /**
  * Configuration parameter keys that should be excluded from command overlap checking.
@@ -190,7 +191,7 @@ let ScheduleService = class ScheduleService {
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
     scaleValue(key, value, direction) {
         var _a;
-        const scaleConfigs = ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get("scaleConfigs")) || [];
+        const scaleConfigs = ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS)) || [];
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
             this.debugLog(`No scale config for ${key} in ${direction}, returning ${value}`);

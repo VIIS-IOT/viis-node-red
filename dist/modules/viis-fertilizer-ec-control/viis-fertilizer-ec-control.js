@@ -36,6 +36,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const services_1 = require("./services");
 const constants_1 = require("./constants");
 const ModbusRegisterHelper_1 = require("./utils/ModbusRegisterHelper");
+const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 module.exports = function (RED) {
     function ViisFertilizerEcControlNode(config) {
         var _a;
@@ -265,7 +266,7 @@ module.exports = function (RED) {
             var _a, _b, _c, _d, _e;
             try {
                 // Read from global context instead of direct Modbus polling
-                let holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                let holdingData = globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA);
                 // Handle multi-board structure: {board1: {...}, board2: {...}}
                 if (holdingData && currentBoardId && holdingData[currentBoardId]) {
                     holdingData = holdingData[currentBoardId];
@@ -321,7 +322,7 @@ module.exports = function (RED) {
         // This prioritizes live config data over input message
         function getEcSetpointFromRegisters() {
             try {
-                let holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                let holdingData = globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA);
                 // Handle multi-board structure
                 if (holdingData && currentBoardId && holdingData[currentBoardId]) {
                     holdingData = holdingData[currentBoardId];
@@ -341,7 +342,7 @@ module.exports = function (RED) {
         // Used when lookup table has no data (manual user set via RPC)
         function getValveTimesFromRegisters(defaults) {
             try {
-                let holdingData = globalContext.get(constants_1.EC_CONTROL_DEFAULTS.GLOBAL_HOLDING_DATA_KEY);
+                let holdingData = globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA);
                 // Handle multi-board structure
                 if (holdingData && currentBoardId && holdingData[currentBoardId]) {
                     holdingData = holdingData[currentBoardId];
