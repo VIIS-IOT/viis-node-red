@@ -723,7 +723,7 @@ let ScheduleService = class ScheduleService {
         const isFinishing = schedule && schedule.status === 'finished';
         if (isStarting) {
             if (this.node) {
-                this.node.warn(`🔧 START ${schedule.name}: valve(${valveCoils.length}) → other(${otherCoils.length}) → 5s → pump(${pumpCoils.length}) → power(${powerCoils.length})`);
+                this.node.warn(`🔧 START ${schedule.name}: valve(${valveCoils.length}) → other(${otherCoils.length}) → 10s → pump(${pumpCoils.length}) → power(${powerCoils.length})`);
             }
             for (const cmd of valveCoils) {
                 try {
@@ -750,7 +750,7 @@ let ScheduleService = class ScheduleService {
             }
             if (pumpCoils.length > 0 || powerCoils.length > 0) {
                 if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ 5s delay before PUMP/POWER...`);
+                    this.node.warn(`[MODBUS] ⏱️ 10s delay before PUMP/POWER...`);
                 await this.delay(WATER_HAMMER_DELAY_MS);
             }
             for (const cmd of pumpCoils) {
@@ -779,7 +779,7 @@ let ScheduleService = class ScheduleService {
         }
         else if (isFinishing) {
             if (this.node) {
-                this.node.warn(`🛑 FINISH ${schedule.name}: pump(${pumpCoils.length}) → other(${otherCoils.length}) → power(${powerCoils.length}) → 5s → valve(${valveCoils.length})`);
+                this.node.warn(`🛑 FINISH ${schedule.name}: pump(${pumpCoils.length}) → other(${otherCoils.length}) → power(${powerCoils.length}) → 10s → valve(${valveCoils.length})`);
             }
             for (const cmd of pumpCoils) {
                 try {
@@ -814,7 +814,7 @@ let ScheduleService = class ScheduleService {
             }
             if (valveCoils.length > 0) {
                 if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ 5s delay before VALVE close...`);
+                    this.node.warn(`[MODBUS] ⏱️ 10s delay before VALVE close...`);
                 await this.delay(WATER_HAMMER_DELAY_MS);
                 for (const cmd of valveCoils) {
                     try {
@@ -1297,7 +1297,7 @@ let ScheduleService = class ScheduleService {
             }
         }
         if (isFinishing) {
-            // Ordered reset: pump+power_A* → other → power → 5s → valve
+            // Ordered reset: pump+power_A* → other → power → 10s → valve
             for (const cmd of pumpCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
@@ -1333,7 +1333,7 @@ let ScheduleService = class ScheduleService {
             }
             if (valveCoils.length > 0) {
                 if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ 5s delay before VALVE reset...`);
+                    this.node.warn(`[MODBUS] ⏱️ 10s delay before VALVE reset...`);
                 await this.delay(WATER_HAMMER_DELAY_MS);
                 for (const cmd of valveCoils) {
                     try {

@@ -154,7 +154,7 @@ Schedule bắt đầu khi:
 │    b. Coils theo thứ tự START:                              │
 │       ┌─────────────────────────────────────────┐           │
 │       │ valve coils → other coils                │           │
-│       │ ────── delay 5 seconds ──────            │           │
+│       │ ────── delay 10 seconds ──────           │           │
 │       │ pump + power_A* coils → power (coil 30)  │           │
 │       └─────────────────────────────────────────┘           │
 │    c. verifyModbusWrite() sau mỗi lần ghi                   │
@@ -179,7 +179,7 @@ Schedule bắt đầu khi:
 ```
 Step 1: valve coils          ← Mở van tưới trước
 Step 2: other coils          ← Các thiết bị khác
-  ──── 5 second delay ────
+  ──── 10 second delay ────
 Step 3: pump + power_A*      ← Bơm nước + kênh châm phân
 Step 4: power (exact key)    ← Bật iri.power / coil 30 sau cùng
 ```
@@ -214,7 +214,7 @@ Schedule kết thúc khi: đang `running` nhưng không còn `isDue` (đã quá 
 │      ┌─────────────────────────────────────────┐            │
 │      │ Holding registers → ghi 0               │            │
 │      │ pump + power_A* → other → power         │            │
-│      │ ────── delay 5 seconds ──────           │            │
+│      │ ────── delay 10 seconds ──────          │            │
 │      │ valve coils                             │            │
 │      └─────────────────────────────────────────┘            │
 ├──────────────────────────────────────────────────────────────┤
@@ -244,7 +244,7 @@ Schedule kết thúc khi: đang `running` nhưng không còn `isDue` (đã quá 
 Step 1: pump + power_A*      ← Tắt bơm + kênh châm phân
 Step 2: other coils          ← Tắt thiết bị khác
 Step 3: power (exact key)    ← Cắt iri.power trước delay (tránh IDLE && power → bơm tự bật)
-  ──── 5 second delay ────
+  ──── 10 second delay ────
 Step 4: valve coils          ← Đóng van tưới sau cùng
 ```
 
@@ -255,7 +255,7 @@ Khi `schedule.status === 'finished'`, thứ tự reset luôn là:
 2. Pump + `power_A*` coils → ghi `false`
 3. Other coils → ghi `false`
 4. `power` (coil 30) → ghi `false`
-5. **Delay 5 seconds**
+5. **Delay 10 seconds**
 6. Valve coils → ghi `false`
 
 Mỗi lệnh: delay 100ms. Nếu có lỗi → `allSuccessful = false`.
@@ -267,7 +267,7 @@ Mỗi lệnh: delay 100ms. Nếu có lỗi → `allSuccessful = false`.
 | Aspect | START | FINISH |
 |---|---|---|
 | **Holding registers** | Ghi giá trị từ action (FC=6, scaled) | Ghi **0** (FC=6) |
-| **Coil order** | valve → other → 5s → **pump+power_A*** → **power** | pump+power_A* → other → **power** → 5s → valve |
+| **Coil order** | valve → other → 10s → **pump+power_A*** → **power** | pump+power_A* → other → **power** → 10s → valve |
 | **Coil values** | Giá trị từ action (ON) | **false** (OFF) |
 | **Config keys** | Store + publish MQTT | Reset về falsy defaults + publish |
 | **Reset unused keys** | `time_valve_*`, `set_flow*` không trong action → 0 | `time_valve_*`, `set_flow*` tất cả → 0 |
@@ -334,9 +334,9 @@ schedule.action (JSON string)
     │
     └──► executeModbusCommands(modbusClient, commands, schedule)
             │
-            ├── START:  valve→other→5s→pump+power_A*→power
+            ├── START:  valve→other→10s→pump+power_A*→power
             │
-            └── FINISH: pump+power_A*→other→power→5s→valve
+            └── FINISH: pump+power_A*→other→power→10s→valve
                     │
                     └── resetModbusCommands() → ghi 0/false
 ```
