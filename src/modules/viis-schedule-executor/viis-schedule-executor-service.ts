@@ -29,6 +29,27 @@ import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants"
  * Configuration parameter keys that should be excluded from command overlap checking.
  * These parameters are stored in global context and do not conflict with Modbus commands.
  */
+/** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
+const WATER_HAMMER_DELAY_MS = 10000;
+
+/** Firmware system enable (coil 30 / iri.power). Not a pump relay. */
+const isSystemPowerKey = (key: string): boolean => key === 'power';
+
+/** Fertilizer channel coils (power_A1, power_B3, ...). Grouped with pump. */
+const isChannelPowerKey = (key: string): boolean => key.includes('power') && key !== 'power';
+
+const isPumpKey = (key: string): boolean => key.includes('pump');
+const isValveKey = (key: string): boolean => key.includes('valve_');
+
+function classifyCoils<T extends { key: string }>(commands: T[]) {
+    const powerCoils = commands.filter(cmd => isSystemPowerKey(cmd.key));
+    const pumpCoils = commands.filter(cmd => isPumpKey(cmd.key) || isChannelPowerKey(cmd.key));
+    const valveCoils = commands.filter(cmd => isValveKey(cmd.key));
+    const otherCoils = commands.filter(cmd =>
+        !isSystemPowerKey(cmd.key) && !isChannelPowerKey(cmd.key) && !isPumpKey(cmd.key) && !isValveKey(cmd.key));
+    return { powerCoils, pumpCoils, valveCoils, otherCoils };
+}
+
 const CONFIG_PARAMETER_KEYS = new Set([
     'iri_time',
     'set_ec',
@@ -744,30 +765,14 @@ export class ScheduleService {
             }
         }
 
-        // Classify coil commands
-        const powerCoils = commands.coilCommands.filter(cmd => cmd.key.includes('power'));
-        const pumpCoils = commands.coilCommands.filter(cmd => cmd.key.includes('pump'));
-        const valveCoils = commands.coilCommands.filter(cmd => cmd.key.includes('valve_'));
-        const otherCoils = commands.coilCommands.filter(cmd =>
-            !cmd.key.includes('power') && !cmd.key.includes('pump') && !cmd.key.includes('valve_'));
+        const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(commands.coilCommands);
 
         const isStarting = schedule && schedule.status === 'running';
         const isFinishing = schedule && schedule.status === 'finished';
 
         if (isStarting) {
             if (this.node) {
-                this.node.warn(`🔧 START ${schedule.name}: power(${powerCoils.length}) → valve(${valveCoils.length}) → other(${otherCoils.length}) → 5s → pump(${pumpCoils.length})`);
-            }
-
-            for (const cmd of powerCoils) {
-                try {
-                    const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written) this.logModbusCmd('START', cmd);
-                    await this.delay(100);
-                } catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${(error as Error).message}`);
-                }
+                this.node.warn(`🔧 START ${schedule.name}: valve(${valveCoils.length}) → other(${otherCoils.length}) → 5s → pump(${pumpCoils.length}) → power(${powerCoils.length})`);
             }
 
             for (const cmd of valveCoils) {
@@ -791,22 +796,34 @@ export class ScheduleService {
                 }
             }
 
-            if (pumpCoils.length > 0) {
-                if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before PUMP...`);
-                await this.delay(5000);
-                for (const cmd of pumpCoils) {
-                    try {
-                        const written = await this.writeCoilWithGate(modbusClient, cmd);
-                        if (written) this.logModbusCmd('START', cmd);
-                        await this.delay(100);
-                    } catch (error) {
-                        this.logModbusCmd('FAIL', cmd);
-                    }
+            if (pumpCoils.length > 0 || powerCoils.length > 0) {
+                if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before PUMP/POWER...`);
+                await this.delay(WATER_HAMMER_DELAY_MS);
+            }
+
+            for (const cmd of pumpCoils) {
+                try {
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) this.logModbusCmd('START', cmd);
+                    await this.delay(100);
+                } catch (error) {
+                    this.logModbusCmd('FAIL', cmd);
+                }
+            }
+
+            for (const cmd of powerCoils) {
+                try {
+                    const written = await this.writeCoilWithGate(modbusClient, cmd);
+                    if (written) this.logModbusCmd('START', cmd);
+                    await this.delay(100);
+                } catch (error) {
+                    this.logModbusCmd('FAIL', cmd);
+                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${(error as Error).message}`);
                 }
             }
         } else if (isFinishing) {
             if (this.node) {
-                this.node.warn(`🛑 FINISH ${schedule.name}: pump(${pumpCoils.length}) → other(${otherCoils.length}) → 5s → valve(${valveCoils.length}) → power(${powerCoils.length})`);
+                this.node.warn(`🛑 FINISH ${schedule.name}: pump(${pumpCoils.length}) → other(${otherCoils.length}) → power(${powerCoils.length}) → 5s → valve(${valveCoils.length})`);
             }
 
             for (const cmd of pumpCoils) {
@@ -830,9 +847,19 @@ export class ScheduleService {
                 }
             }
 
+            for (const cmd of powerCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+                    this.logModbusCmd('FINISH', cmd);
+                    await this.delay(100);
+                } catch (error) {
+                    this.logModbusCmd('FAIL', cmd);
+                }
+            }
+
             if (valveCoils.length > 0) {
                 if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before VALVE close...`);
-                await this.delay(5000);
+                await this.delay(WATER_HAMMER_DELAY_MS);
                 for (const cmd of valveCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
@@ -841,16 +868,6 @@ export class ScheduleService {
                     } catch (error) {
                         this.logModbusCmd('FAIL', cmd);
                     }
-                }
-            }
-
-            for (const cmd of powerCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.logModbusCmd('FINISH', cmd);
-                    await this.delay(100);
-                } catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
                 }
             }
         } else {
@@ -1372,11 +1389,8 @@ export class ScheduleService {
     async resetModbusCommands(modbusClient: ModbusClientCore, commands: ModbusCmd[], schedule?: TabiotSchedule, isFinishing: boolean = false): Promise<boolean> {
         let allSuccessful = true;
 
-        const powerCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('power'));
-        const pumpCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('pump'));
-        const valveCoils = commands.filter(cmd => cmd.fc === 5 && cmd.key.includes('valve_'));
-        const otherCoils = commands.filter(cmd => cmd.fc === 5 &&
-            !cmd.key.includes('power') && !cmd.key.includes('pump') && !cmd.key.includes('valve_'));
+        const coilCommands = commands.filter(cmd => cmd.fc === 5);
+        const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
 
         if (this.node) {
@@ -1396,7 +1410,7 @@ export class ScheduleService {
         }
 
         if (isFinishing) {
-            // Ordered reset: pump → other → 5s delay → valve → power
+            // Ordered reset: pump+power_A* → other → power → 5s → valve
             for (const cmd of pumpCoils) {
                 try {
                     await modbusClient.writeCoil(cmd.address, false);
@@ -1419,9 +1433,20 @@ export class ScheduleService {
                 }
             }
 
+            for (const cmd of powerCoils) {
+                try {
+                    await modbusClient.writeCoil(cmd.address, false);
+                    this.logModbusCmd('RESET', { ...cmd, value: false });
+                    await this.delay(100);
+                } catch (error) {
+                    this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
+                    allSuccessful = false;
+                }
+            }
+
             if (valveCoils.length > 0) {
                 if (this.node) this.node.warn(`[MODBUS] ⏱️ 5s delay before VALVE reset...`);
-                await this.delay(5000);
+                await this.delay(WATER_HAMMER_DELAY_MS);
                 for (const cmd of valveCoils) {
                     try {
                         await modbusClient.writeCoil(cmd.address, false);
@@ -1431,17 +1456,6 @@ export class ScheduleService {
                         this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
                         allSuccessful = false;
                     }
-                }
-            }
-
-            for (const cmd of powerCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, false);
-                    this.logModbusCmd('RESET', { ...cmd, value: false });
-                    await this.delay(100);
-                } catch (error) {
-                    this.logModbusCmd('RESET_FAIL', { ...cmd, value: false });
-                    allSuccessful = false;
                 }
             }
         } else {

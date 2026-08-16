@@ -153,9 +153,9 @@ Schedule bắt đầu khi:
 │    a. Holding registers (FC=6) — mỗi lệnh delay 100ms       │
 │    b. Coils theo thứ tự START:                              │
 │       ┌─────────────────────────────────────────┐           │
-│       │ power coils → valve coils → other coils  │           │
+│       │ valve coils → other coils                │           │
 │       │ ────── delay 5 seconds ──────            │           │
-│       │ pump coils                               │           │
+│       │ pump + power_A* coils → power (coil 30)  │           │
 │       └─────────────────────────────────────────┘           │
 │    c. verifyModbusWrite() sau mỗi lần ghi                   │
 │    d. Nếu verify pass → storeActiveCommands()               │
@@ -177,12 +177,14 @@ Schedule bắt đầu khi:
 ### 4.3 Coil Execution Order — START
 
 ```
-Step 1: power coils     ← Bật nguồn trước
-Step 2: valve coils     ← Mở van
-Step 3: other coils     ← Các thiết bị khác
+Step 1: valve coils          ← Mở van tưới trước
+Step 2: other coils          ← Các thiết bị khác
   ──── 5 second delay ────
-Step 4: pump coils      ← Bật bơm sau cùng (chờ hệ thống ổn định)
+Step 3: pump + power_A*      ← Bơm nước + kênh châm phân
+Step 4: power (exact key)    ← Bật iri.power / coil 30 sau cùng
 ```
+
+`power` (coil 30) tách khỏi `power_A*`/`power_B*`. Firmware `IDLE && power==true` sẽ `setMainPump(ON)` ngay, nên không bật `power` trước van.
 
 Mỗi lệnh coil: delay 100ms giữa các lệnh.
 
@@ -211,9 +213,9 @@ Schedule kết thúc khi: đang `running` nhưng không còn `isDue` (đã quá 
 │    - Thứ tự RESET (ngược với START):                        │
 │      ┌─────────────────────────────────────────┐            │
 │      │ Holding registers → ghi 0               │            │
-│      │ pump coils → other coils                │            │
+│      │ pump + power_A* → other → power         │            │
 │      │ ────── delay 5 seconds ──────           │            │
-│      │ valve coils → power coils               │            │
+│      │ valve coils                             │            │
 │      └─────────────────────────────────────────┘            │
 ├──────────────────────────────────────────────────────────────┤
 │ 3. CLEAR STATE                                               │
@@ -239,22 +241,22 @@ Schedule kết thúc khi: đang `running` nhưng không còn `isDue` (đã quá 
 ### 5.3 Coil Execution Order — FINISH (ngược Start)
 
 ```
-Step 1: pump coils      ← Tắt bơm trước (an toàn thủy lực)
-Step 2: other coils     ← Tắt thiết bị khác
+Step 1: pump + power_A*      ← Tắt bơm + kênh châm phân
+Step 2: other coils          ← Tắt thiết bị khác
+Step 3: power (exact key)    ← Cắt iri.power trước delay (tránh IDLE && power → bơm tự bật)
   ──── 5 second delay ────
-Step 3: valve coils     ← Đóng van
-Step 4: power coils     ← Cắt nguồn sau cùng
+Step 4: valve coils          ← Đóng van tưới sau cùng
 ```
 
 ### 5.4 resetModbusCommands Detail (`service:1402-1451`)
 
 Khi `schedule.status === 'finished'`, thứ tự reset luôn là:
 1. Holding registers → ghi `0`
-2. Pump coils → ghi `false`
+2. Pump + `power_A*` coils → ghi `false`
 3. Other coils → ghi `false`
-4. **Delay 5 seconds**
-5. Valve coils → ghi `false`
-6. Power coils → ghi `false`
+4. `power` (coil 30) → ghi `false`
+5. **Delay 5 seconds**
+6. Valve coils → ghi `false`
 
 Mỗi lệnh: delay 100ms. Nếu có lỗi → `allSuccessful = false`.
 
@@ -265,7 +267,7 @@ Mỗi lệnh: delay 100ms. Nếu có lỗi → `allSuccessful = false`.
 | Aspect | START | FINISH |
 |---|---|---|
 | **Holding registers** | Ghi giá trị từ action (FC=6, scaled) | Ghi **0** (FC=6) |
-| **Coil order** | power → valve → other → 5s → **pump** | pump → other → 5s → valve → **power** |
+| **Coil order** | valve → other → 5s → **pump+power_A*** → **power** | pump+power_A* → other → **power** → 5s → valve |
 | **Coil values** | Giá trị từ action (ON) | **false** (OFF) |
 | **Config keys** | Store + publish MQTT | Reset về falsy defaults + publish |
 | **Reset unused keys** | `time_valve_*`, `set_flow*` không trong action → 0 | `time_valve_*`, `set_flow*` tất cả → 0 |
@@ -332,9 +334,9 @@ schedule.action (JSON string)
     │
     └──► executeModbusCommands(modbusClient, commands, schedule)
             │
-            ├── START:  power→valve→other→5s→pump
+            ├── START:  valve→other→5s→pump+power_A*→power
             │
-            └── FINISH: pump→other→5s→valve→power
+            └── FINISH: pump+power_A*→other→power→5s→valve
                     │
                     └── resetModbusCommands() → ghi 0/false
 ```
