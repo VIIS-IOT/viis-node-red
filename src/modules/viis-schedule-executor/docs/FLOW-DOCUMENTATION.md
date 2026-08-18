@@ -465,15 +465,15 @@ graph LR
 
 After writing commands, the node **reads back** all values to verify:
 
-- **Coils (FC=5)**: ALWAYS verified, regardless of `verifyAfterWrite` setting
-- **Holding Registers (FC=6)**: Verified only if `verifyAfterWrite = true` (default)
+- **Coils (FC=5)**: verified per key only when `skipCoilVerify = false`
+- **Holding Registers (FC=6)**: verified per key only when `verifyAfterWrite = true` (default)
 - **Scaling**: Read values are scaled back using the reverse operation (divide vs multiply)
 
 If verification fails:
-- The node retries up to **3 times** for start sequence
-- **Start failure**: Status set to "finished", error notification sent ONCE
-- **Finish failure**: Status set to "finished", error notification sent ONCE
-- No duplicate notifications - state machine prevents re-execution once status is "finished"
+- That key is retried up to **3 times**; later keys still run
+- **Start**: status stays `running`; one HTTP noti per failed key
+- **Finish**: status still `finished`; one HTTP noti per failed key
+- Lifecycle start/complete notifications stay one-per-transition
 
 ---
 

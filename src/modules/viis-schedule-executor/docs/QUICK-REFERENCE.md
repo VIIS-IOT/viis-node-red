@@ -29,7 +29,8 @@ The **viis-schedule-executor** node manages time-based automation schedules for 
 |----------|---------|-------------|
 | Name | `""` | Display name |
 | Debug Enable | `false` | Enable verbose logging |
-| Verify After Write | `true` | Verify holding registers |
+| Verify After Write | `true` | Per-key holding read-back only; does not gate status |
+| Skip Coil Verify | `true` | Skip per-key coil read-back (default) |
 | Cleanup Interval | `15` | Minutes for stale cleanup |
 
 ---

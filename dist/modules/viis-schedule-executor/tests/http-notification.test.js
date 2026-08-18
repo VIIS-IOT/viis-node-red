@@ -304,4 +304,52 @@ describe('HTTP Notification to Backend', () => {
             expect(mockEmqxClient.publish).toHaveBeenCalled();
         });
     });
+    describe('sendKeyVerifyFailNotification', () => {
+        test('posts even when debugEnable is false', async () => {
+            const quietService = new viis_schedule_executor_service_1.ScheduleService(mockNode, true, false);
+            mockedAxios.post.mockResolvedValue({ status: 200, data: { status: 'success' } });
+            const result = await quietService.sendKeyVerifyFailNotification(createTestSchedule(), 'start', {
+                key: 'set_ec',
+                phase: 'set_holding',
+                fc: 6,
+                address: 17,
+                expected: 2.5,
+                read: 0,
+                status: 'fail',
+                attempts: 3,
+            });
+            expect(result).toBe(true);
+            expect(mockedAxios.post).toHaveBeenCalled();
+        });
+        test('uses unique tb_alarm_id and message_params.key', async () => {
+            mockedAxios.post.mockResolvedValue({ status: 200, data: { status: 'success' } });
+            await scheduleService.sendKeyVerifyFailNotification(createTestSchedule(), 'start', {
+                key: 'set_ec',
+                phase: 'set_holding',
+                fc: 6,
+                address: 17,
+                expected: 2.5,
+                read: 0,
+                status: 'fail',
+                attempts: 3,
+            });
+            expect(mockedAxios.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                tb_alarm_id: 'test-schedule-001:verify:start:set_ec',
+                message_key: 'iot.notification.schedule.verify_failed',
+                message_params: expect.objectContaining({ key: 'set_ec' }),
+            }), expect.any(Object));
+        });
+        test('axios reject returns false and does not throw', async () => {
+            mockedAxios.post.mockRejectedValue(new Error('network'));
+            await expect(scheduleService.sendKeyVerifyFailNotification(createTestSchedule(), 'end', {
+                key: 'main_pump',
+                phase: 'start_pumps',
+                fc: 5,
+                address: 0,
+                expected: true,
+                status: 'fail',
+                attempts: 3,
+            })).resolves.toBe(false);
+        });
+    });
 });

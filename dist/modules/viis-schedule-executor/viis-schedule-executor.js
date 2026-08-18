@@ -6,6 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("./viis-schedule-executor-service");
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const schedule_execution_types_1 = require("./schedule-execution-types");
+const schedule_side_effects_1 = require("./schedule-side-effects");
+const uuid_1 = require("uuid");
 module.exports = function (RED) {
     function ScheduleExecutorNode(config) {
         RED.nodes.createNode(this, config);
@@ -347,68 +350,48 @@ module.exports = function (RED) {
                         const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        const allResetCommands = [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands];
-                        let resetSuccess = true; // Track reset result
+                        const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]);
+                        const rpcRunId = (0, uuid_1.v4)();
+                        let rpcReport = {
+                            runId: rpcRunId,
+                            action: 'end',
+                            scheduleId: schedule.name,
+                            steps: [],
+                        };
                         if (allResetCommands.length > 0) {
-                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands);
+                            const resetResult = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true, { runId: rpcRunId });
+                            rpcReport = resetResult.report;
                             scheduleService.clearActiveCommands(schedule.name);
-                            debugLog(`Cleared active commands for schedule ${schedule.name} via RPC - Success: ${resetSuccess}`);
+                            debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
-                        // CRITICAL FIX: Only set status to "finished" if reset succeeded
-                        // If reset failed, keep status as "running" so users know devices are still ON
-                        if (resetSuccess) {
-                            const statusChanged = hasStatusChanged(schedule.name, "finished");
-                            schedule.status = "finished";
-                            schedule.enable = 0;
-                            // Reset config key values to falsy defaults and get the reset values for telemetry
-                            const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
-                            await scheduleService.updateScheduleStatus(schedule, "finished");
-                            // Clear status history after successful finish so next run will trigger notification
-                            clearStatusHistory(schedule.name);
-                            if (statusChanged) {
-                                // Send HTTP notification - success case
-                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                                await scheduleService.syncScheduleLog(schedule, true);
-                                // Publish telemetry with reset commands and cleared config values
-                                try {
-                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
-                                }
-                                catch (telemetryError) {
-                                    debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
-                                }
-                                // Publish audit log for RPC disable (success)
-                                try {
-                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                    await scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, true);
-                                }
-                                catch (auditError) {
-                                    debugLog(`Failed to publish audit log for RPC disable: ${auditError.message}`);
-                                }
+                        const statusChanged = hasStatusChanged(schedule.name, "finished");
+                        schedule.status = "finished";
+                        schedule.enable = 0;
+                        const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
+                        await scheduleService.updateScheduleStatus(schedule, "finished");
+                        clearStatusHistory(schedule.name);
+                        const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                        const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                        if (statusChanged) {
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                            await scheduleService.syncScheduleLog(schedule, true);
+                            try {
+                                await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
+                            }
+                            catch (telemetryError) {
+                                debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
+                            }
+                            try {
+                                await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
+                            }
+                            catch (auditError) {
+                                debugLog(`Failed to publish audit log for RPC disable: ${auditError.message}`);
                             }
                         }
                         else {
-                            // Reset failed via RPC - keep status as "running" and send error notification
-                            debugLog(`⚠️ CRITICAL: RPC disable ${schedule.name} FAILED to turn off devices - keeping status as "running"`);
-                            // Disable schedule but keep status running to indicate devices are still ON
-                            schedule.enable = 0;
-                            await scheduleService.updateScheduleStatus(schedule, "running"); // Keep as running!
-                            // Send error notification
-                            await scheduleService.sendNotificationToBackend(schedule, 'end', false);
-                            await scheduleService.syncScheduleLog(schedule, false);
-                            // Publish audit log for RPC disable (failure)
-                            try {
-                                const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                                const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                await scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, false, 'RPC disable: Không thể tắt thiết bị - Lỗi ghi Modbus');
+                            for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(rpcReport)) {
+                                await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
                             }
-                            catch (auditError) {
-                                debugLog(`Failed to publish audit log for failed RPC disable: ${auditError.message}`);
-                            }
-                            // Log critical warning
-                            node.warn(`🚨 CRITICAL: RPC disable ${schedule.name} cannot turn off devices - MANUAL INTERVENTION REQUIRED`);
                         }
                     }
                     else {
@@ -607,16 +590,21 @@ module.exports = function (RED) {
                             address: Number(address),
                             quantity: 1
                         }));
+                        const startRunId = (0, uuid_1.v4)();
+                        let unusedResetSteps = [];
                         if (resetKeys.length > 0) {
-                            await scheduleService.resetModbusCommands(modbusClient, resetKeys);
+                            const unusedReset = await scheduleService.resetModbusCommands(modbusClient, resetKeys, schedule, false, { runId: startRunId, unusedHoldingReset: true });
+                            unusedResetSteps = unusedReset.report.steps;
                         }
                         const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
+                        const publishedConfigParams = [];
                         if (configParameters && configParameters.length > 0) {
                             // Clear dedup cache for config keys to ensure publish goes through
                             scheduleService.clearPublishedValueCacheForKeys(configParameters.map(cp => cp.key));
                             for (const configParam of configParameters) {
                                 try {
                                     await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                    publishedConfigParams.push(configParam);
                                     debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
                                 }
                                 catch (error) {
@@ -626,34 +614,17 @@ module.exports = function (RED) {
                         }
                         if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                             await scheduleService.updateScheduleStatus(schedule, "running");
-                            let writeSuccess = false;
-                            let attempt = 0;
-                            while (!writeSuccess && attempt < 3) {
-                                attempt++;
-                                try {
-                                    await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands }, schedule);
-                                    writeSuccess = await scheduleService.verifyModbusWrite(modbusClient, [...holdingCommands, ...coilCommands]);
-                                    if (writeSuccess) {
-                                        scheduleService.storeActiveCommands(schedule.name, [...holdingCommands, ...coilCommands]);
-                                    }
-                                }
-                                catch (error) {
-                                    node.error(`Error writing modbus: ${error.message}`);
-                                }
+                            const startReport = await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands }, schedule, { runId: startRunId });
+                            if (publishedConfigParams.length > 0) {
+                                startReport.steps = [(0, schedule_side_effects_1.configParamsToStep)(publishedConfigParams), ...startReport.steps];
                             }
-                            // If write failed after retries, set status to finished to prevent stuck "running"
-                            if (!writeSuccess) {
-                                debugLog(`⚠️ CRITICAL: Schedule ${schedule.name} failed to start after ${attempt} retries - setting to finished`);
-                                scheduleService.clearActiveCommands(schedule.name);
-                                scheduleService.clearScheduleConfigValues(schedule.name);
-                                await scheduleService.updateScheduleStatus(schedule, "finished");
-                                clearStatusHistory(schedule.name);
+                            if (unusedResetSteps.length > 0) {
+                                startReport.steps = [...unusedResetSteps, ...startReport.steps];
                             }
+                            scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
                             if (statusChanged) {
-                                // Send HTTP notification (success or error)
-                                await scheduleService.sendNotificationToBackend(schedule, 'start', writeSuccess);
-                                await scheduleService.syncScheduleLog(schedule, writeSuccess);
-                                // Publish telemetry with all Modbus keys written (matching viis-rpc-control format)
+                                await scheduleService.sendNotificationToBackend(schedule, 'start', true);
+                                await scheduleService.syncScheduleLog(schedule, true);
                                 try {
                                     const configValuesForTelemetry = {};
                                     for (const cp of configParameters) {
@@ -664,12 +635,16 @@ module.exports = function (RED) {
                                 catch (telemetryError) {
                                     debugLog(`Failed to publish schedule start telemetry: ${telemetryError.message}`);
                                 }
-                                // Publish audit log for schedule start
                                 try {
-                                    await scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands }, writeSuccess, writeSuccess ? undefined : 'Không thể ghi dữ liệu Modbus sau 3 lần thử');
+                                    await (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands });
                                 }
                                 catch (auditError) {
                                     debugLog(`Failed to publish audit log for schedule start: ${auditError.message}`);
+                                }
+                            }
+                            else {
+                                for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(startReport)) {
+                                    await scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome);
                                 }
                             }
                         }
@@ -696,64 +671,44 @@ module.exports = function (RED) {
                         const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        const allResetCommands = [...activeCommands, ...extraResetCommands];
-                        let resetSuccess = true; // Track reset result
+                        const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
+                        const finishRunId = (0, uuid_1.v4)();
+                        let finishReport = {
+                            runId: finishRunId,
+                            action: 'end',
+                            scheduleId: schedule.name,
+                            steps: [],
+                        };
                         if (allResetCommands.length > 0) {
-                            resetSuccess = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true);
+                            const resetResult = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true, { runId: finishRunId });
+                            finishReport = resetResult.report;
                         }
-                        // Always clear active commands and set status to "finished"
-                        // This prevents notification spam - error notification only fires once when status changes
                         scheduleService.clearActiveCommands(schedule.name);
                         const statusChanged = hasStatusChanged(schedule.name, "finished");
-                        // Reset config key values to falsy defaults and get the reset values for telemetry
                         const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
-                        // ALWAYS set to finished - prevents stuck "running" status and notification spam
                         await scheduleService.updateScheduleStatus(schedule, "finished");
-                        // Clear status history after finish so next day's run will trigger notification
                         clearStatusHistory(schedule.name);
+                        const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                        const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
                         if (statusChanged) {
-                            if (resetSuccess) {
-                                // Success case - send normal finish notification
-                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                                await scheduleService.syncScheduleLog(schedule, true);
-                                // Publish telemetry with reset commands and cleared config values
-                                try {
-                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
-                                }
-                                catch (telemetryError) {
-                                    debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
-                                }
-                                // Publish audit log for schedule end (success)
-                                try {
-                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                    await scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, true);
-                                }
-                                catch (auditError) {
-                                    debugLog(`Failed to publish audit log for schedule end: ${auditError.message}`);
-                                }
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                            await scheduleService.syncScheduleLog(schedule, true);
+                            try {
+                                await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
                             }
-                            else {
-                                // Reset failed - send error notification ONCE (statusChanged ensures this)
-                                debugLog(`⚠️ CRITICAL: Schedule ${schedule.name} time ended but FAILED to turn off devices - Modbus reset failed`);
-                                // Send error notification immediately (only once due to statusChanged check)
-                                await scheduleService.sendNotificationToBackend(schedule, 'end', false);
-                                await scheduleService.syncScheduleLog(schedule, false);
-                                // Publish audit log for schedule end (failure)
-                                try {
-                                    const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                                    const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                    await scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, false, 'Không thể tắt thiết bị sau khi kết thúc lịch trình - Lỗi ghi Modbus');
-                                }
-                                catch (auditError) {
-                                    debugLog(`Failed to publish audit log for failed schedule end: ${auditError.message}`);
-                                }
-                                // Log critical warning
-                                if (node) {
-                                    node.warn(`🚨 CRITICAL: Schedule ${schedule.name} cannot turn off devices via Modbus - MANUAL INTERVENTION MAY BE REQUIRED`);
-                                }
+                            catch (telemetryError) {
+                                debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
+                            }
+                            try {
+                                await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
+                            }
+                            catch (auditError) {
+                                debugLog(`Failed to publish audit log for schedule end: ${auditError.message}`);
+                            }
+                        }
+                        else {
+                            for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(finishReport)) {
+                                await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
                             }
                         }
                     }
@@ -773,7 +728,7 @@ module.exports = function (RED) {
                 for (const scheduleId in activeModbusCommands) {
                     if (!enabledScheduleIds.includes(scheduleId)) {
                         const commands = activeModbusCommands[scheduleId];
-                        const resetSuccess = await scheduleService.resetModbusCommands(modbusClient, commands);
+                        const { allSuccessful: resetSuccess } = await scheduleService.resetModbusCommands(modbusClient, commands);
                         if (resetSuccess) {
                             scheduleService.clearActiveCommands(scheduleId);
                             debugLog(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);

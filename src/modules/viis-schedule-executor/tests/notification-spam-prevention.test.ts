@@ -121,43 +121,16 @@ async function simulateScheduleExecution(
         // Update status to running
         currentStatus = 'running';
         
-        // Try to write Modbus (with retries)
-        let writeSuccess = false;
-        let attempts = 0;
-        const maxRetries = 3;
+        // Verify no longer gates status: always stay running and store commands.
+        globalStore.activeModbusCommands[schedule.name] = [
+            { key: 'pump_air', value: true, fc: 5, address: 0 },
+            { key: 'valve_1', value: true, fc: 5, address: 1 },
+        ];
+        currentStatus = 'running';
         
-        while (!writeSuccess && attempts < maxRetries) {
-            attempts++;
-            try {
-                // Simulate Modbus write
-                if (modbusWriteSuccess) {
-                    writeSuccess = true;
-                } else {
-                    throw new Error('Modbus write failed');
-                }
-            } catch (error) {
-                // Retry
-            }
-        }
-        
-        // CRITICAL FIX: If write failed, set status to finished
-        if (!writeSuccess) {
-            currentStatus = 'finished';
-            globalStore.activeModbusCommands = {};
-            globalStore.configKeyValues = {};
-        } else {
-            // Success - store commands, keep status as running until finish time
-            globalStore.activeModbusCommands[schedule.name] = [
-                { key: 'pump_air', value: true, fc: 5, address: 0 },
-                { key: 'valve_1', value: true, fc: 5, address: 1 },
-            ];
-            currentStatus = 'running';
-        }
-        
-        // Send notification (success or error)
         notifications.push({
             action: 'start',
-            success: writeSuccess,
+            success: true,
             scheduleName: schedule.name
         });
         
@@ -200,7 +173,7 @@ async function simulateScheduleExecution(
         if (statusChanged) {
             notifications.push({
                 action: 'end',
-                success: resetSuccess,
+                success: true,
                 scheduleName: schedule.name
             });
         }
@@ -227,8 +200,8 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
         resetGlobalStore();
     });
 
-    describe('Case 1: Start fails → Status becomes finished → Notification sent ONCE', () => {
-        it('should set status to finished when Modbus write fails after retries', async () => {
+    describe('Case 1: Start verify fail → status stays running and commands are stored', () => {
+        it('should keep status running when Modbus verify fails', async () => {
             const schedule = createMockSchedule('sch-1', 'stopped');
             
             const result = await simulateScheduleExecution(
@@ -237,11 +210,11 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
                 false // modbusWriteSuccess = false
             );
             
-            expect(result.finalStatus).toBe('finished');
-            expect(schedule.status).toBe('finished');
+            expect(result.finalStatus).toBe('running');
+            expect(schedule.status).toBe('running');
         });
 
-        it('should send error notification exactly once on start failure', async () => {
+        it('should send start lifecycle notification as success', async () => {
             const schedule = createMockSchedule('sch-1', 'stopped');
             
             const result = await simulateScheduleExecution(
@@ -253,12 +226,12 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             expect(result.notifications).toHaveLength(1);
             expect(result.notifications[0]).toEqual({
                 action: 'start',
-                success: false,
+                success: true,
                 scheduleName: 'sch-1'
             });
         });
 
-        it('should clear active commands on start failure', async () => {
+        it('should store active commands even when verify fails', async () => {
             const schedule = createMockSchedule('sch-1', 'stopped');
             
             await simulateScheduleExecution(
@@ -267,10 +240,10 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
                 false
             );
             
-            expect(globalStore.activeModbusCommands).toEqual({});
+            expect(globalStore.activeModbusCommands['sch-1']).toHaveLength(2);
         });
 
-        it('should clear config values on start failure', async () => {
+        it('should keep config values when start verify fails', async () => {
             // Setup: Some config values exist
             globalStore.configKeyValues = {
                 irrigation_mode: 'drip',
@@ -285,13 +258,15 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
                 false
             );
             
-            expect(globalStore.configKeyValues).toEqual({});
+            expect(globalStore.configKeyValues).toEqual({
+                irrigation_mode: 'drip',
+                user_id: 123
+            });
         });
 
-        it('should NOT send notification on subsequent triggers (status already finished)', async () => {
+        it('should NOT send lifecycle notification on subsequent due ticks while running', async () => {
             const schedule = createMockSchedule('sch-1', 'stopped');
             
-            // First trigger: Start fails → status becomes finished
             const result1 = await simulateScheduleExecution(
                 schedule,
                 true,
@@ -299,19 +274,17 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             );
             
             expect(result1.notifications).toHaveLength(1);
-            expect(result1.finalStatus).toBe('finished');
+            expect(result1.finalStatus).toBe('running');
             
-            // Second trigger: Status is already finished → skip
             const result2 = await simulateScheduleExecution(
                 schedule,
-                true, // Still "due" but status is finished
+                true,
                 false
             );
             
             expect(result2.notifications).toHaveLength(0);
-            expect(result2.finalStatus).toBe('finished');
+            expect(result2.finalStatus).toBe('running');
             
-            // Third trigger: Still no notifications
             const result3 = await simulateScheduleExecution(
                 schedule,
                 true,
@@ -319,7 +292,7 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             );
             
             expect(result3.notifications).toHaveLength(0);
-            expect(result3.finalStatus).toBe('finished');
+            expect(result3.finalStatus).toBe('running');
         });
     });
 
@@ -343,7 +316,7 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             expect(schedule.status).toBe('finished');
         });
 
-        it('should send error notification exactly once on finish failure', async () => {
+        it('should send completed lifecycle notification exactly once on finish', async () => {
             const schedule = createMockSchedule('sch-1', 'running');
             globalStore.activeModbusCommands['sch-1'] = [
                 { key: 'pump_air', value: true, fc: 5, address: 0 },
@@ -358,7 +331,7 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             expect(result.notifications).toHaveLength(1);
             expect(result.notifications[0]).toEqual({
                 action: 'end',
-                success: false,
+                success: true,
                 scheduleName: 'sch-1'
             });
         });
@@ -494,11 +467,10 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
     });
 
     describe('Case 4: Rapid consecutive triggers do not cause spam', () => {
-        it('should send exactly 1 notification even with 50 rapid triggers on start failure', async () => {
+        it('should send exactly 1 start lifecycle notification even with 50 rapid due ticks', async () => {
             const schedule = createMockSchedule('sch-1', 'stopped');
             let totalNotifications = 0;
             
-            // Simulate 50 rapid triggers (like inject node every 10-15 seconds)
             for (let i = 0; i < 50; i++) {
                 const result = await simulateScheduleExecution(
                     schedule,
@@ -508,9 +480,8 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
                 totalNotifications += result.notifications.length;
             }
             
-            // Should have exactly 1 notification (the first failure)
             expect(totalNotifications).toBe(1);
-            expect(schedule.status).toBe('finished');
+            expect(schedule.status).toBe('running');
         });
 
         it('should send exactly 1 notification even with 50 rapid triggers on finish failure', async () => {
@@ -539,20 +510,17 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             const schedule = createMockSchedule('sch-1', 'stopped');
             let totalNotifications = 0;
             
-            // Trigger 1: Start fails → status finished
             const result1 = await simulateScheduleExecution(schedule, true, false);
             totalNotifications += result1.notifications.length;
-            expect(result1.finalStatus).toBe('finished');
+            expect(result1.finalStatus).toBe('running');
             
-            // Trigger 2-10: Status finished, skip
             for (let i = 0; i < 9; i++) {
                 const result = await simulateScheduleExecution(schedule, true, false);
                 totalNotifications += result.notifications.length;
             }
             
-            expect(totalNotifications).toBe(1); // Only first failure
+            expect(totalNotifications).toBe(1);
             
-            // Manually reset to "stopped" (simulating next day, fresh schedule)
             schedule.status = 'stopped';
             
             // Trigger 11: Start succeeds → status running
@@ -587,9 +555,9 @@ describe('Notification Spam Prevention - Modbus Failure Handling', () => {
             
             await simulateScheduleExecution(schedule, true, false);
             
-            expect(globalStore.activeModbusCommands).toEqual({});
-            expect(globalStore.configKeyValues).toEqual({});
-            expect(schedule.status).toBe('finished');
+            expect(globalStore.activeModbusCommands['sch-1']).toHaveLength(2);
+            expect(globalStore.configKeyValues).toEqual({ irrigation_mode: 'drip' });
+            expect(schedule.status).toBe('running');
         });
 
         it('should have clean state after finish failure', async () => {

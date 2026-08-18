@@ -56,6 +56,11 @@ const resilience_utils_1 = require("./resilience-utils");
 const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
+const schedule_coil_classify_1 = require("./schedule-coil-classify");
+const schedule_key_writer_1 = require("./schedule-key-writer");
+const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
+const schedule_execution_types_1 = require("./schedule-execution-types");
+const schedule_valve_program_1 = require("./schedule-valve-program");
 // require('dotenv').config();
 /**
  * Configuration parameter keys that should be excluded from command overlap checking.
@@ -63,19 +68,6 @@ const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-con
  */
 /** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
 const WATER_HAMMER_DELAY_MS = 7000;
-/** Firmware system enable (coil 30 / iri.power). Not a pump relay. */
-const isSystemPowerKey = (key) => key === 'power';
-/** Fertilizer channel coils (power_A1, power_B3, ...). Grouped with pump. */
-const isChannelPowerKey = (key) => key.includes('power') && key !== 'power';
-const isPumpKey = (key) => key.includes('pump');
-const isValveKey = (key) => key.includes('valve_');
-function classifyCoils(commands) {
-    const powerCoils = commands.filter(cmd => isSystemPowerKey(cmd.key));
-    const pumpCoils = commands.filter(cmd => isPumpKey(cmd.key) || isChannelPowerKey(cmd.key));
-    const valveCoils = commands.filter(cmd => isValveKey(cmd.key));
-    const otherCoils = commands.filter(cmd => !isSystemPowerKey(cmd.key) && !isChannelPowerKey(cmd.key) && !isPumpKey(cmd.key) && !isValveKey(cmd.key));
-    return { powerCoils, pumpCoils, valveCoils, otherCoils };
-}
 const CONFIG_PARAMETER_KEYS = new Set([
     'iri_time',
     'set_ec',
@@ -410,6 +402,20 @@ let ScheduleService = class ScheduleService {
     getAllModbusHoldingRegisters() {
         return this.loadAllModbusHoldingRegisters();
     }
+    getMergedHoldingMaps() {
+        var _a, _b;
+        const loaded = this.loadAllModbusHoldingRegisters();
+        const board1Holdings = ((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getJsonEnvVar('MODBUS_BOARD1_HOLDING_REGISTERS', {})) || {};
+        const legacyHoldings = ((_b = this.globalHelper) === null || _b === void 0 ? void 0 : _b.getJsonEnvVar('MODBUS_HOLDING_REGISTERS', {})) || {};
+        return (0, schedule_valve_program_1.mergeHoldingMaps)(legacyHoldings, board1Holdings, loaded);
+    }
+    mergeValveProgramOffCommand(commands) {
+        const off = (0, schedule_valve_program_1.buildValveProgramOffCommand)(this.getMergedHoldingMaps());
+        if (!off || commands.some(cmd => cmd.key === 'valve_program')) {
+            return commands;
+        }
+        return [off, ...commands];
+    }
     /**
      * Lấy danh sách schedule từ DB
      */
@@ -555,7 +561,8 @@ let ScheduleService = class ScheduleService {
  * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
  */
     mapScheduleToModbus(schedule) {
-        const holdingCommands = [];
+        var _a;
+        let holdingCommands = [];
         const coilCommands = [];
         const configParameters = [];
         if (!schedule.action) {
@@ -604,6 +611,9 @@ let ScheduleService = class ScheduleService {
             const modbusHolding = this.loadAllModbusHoldingRegisters();
             for (const key in expandedActionObj) {
                 if (expandedActionObj.hasOwnProperty(key)) {
+                    if (key === 'valve_program') {
+                        continue;
+                    }
                     let value = expandedActionObj[key];
                     // Chuyển đổi chuỗi boolean thành kiểu boolean
                     if (typeof value === "string") {
@@ -667,11 +677,67 @@ let ScheduleService = class ScheduleService {
                     }
                 }
             }
+            const mergedHoldings = this.getMergedHoldingMaps();
+            const valveProgramCmd = (0, schedule_valve_program_1.buildValveProgramCommand)(expandedActionObj, mergedHoldings);
+            const hasNumberedValves = Array.from({ length: 16 }, (_, i) => `valve_${i}`)
+                .some(key => Object.prototype.hasOwnProperty.call(expandedActionObj, key));
+            if (valveProgramCmd && hasNumberedValves) {
+                holdingCommands = holdingCommands.filter(cmd => cmd.key !== 'valve_program');
+                holdingCommands.unshift(valveProgramCmd);
+            }
+            else if (hasNumberedValves && !valveProgramCmd) {
+                (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
+            }
         }
         catch (error) {
             console.error(`Error parsing action for schedule ${schedule.name}: ${error.message}`);
         }
         return { holdingCommands, coilCommands, configParameters };
+    }
+    verifyEnabledFor(cmd) {
+        return cmd.fc === 5 ? !this.skipCoilVerify : this.verifyAfterWrite;
+    }
+    makeKeyWriterDeps(modbusClient) {
+        return {
+            writeCoil: async (cmd) => {
+                const written = await this.writeCoilWithGate(modbusClient, cmd);
+                return written ? 'written' : 'blocked';
+            },
+            writeRegister: (address, raw) => modbusClient.writeRegister(address, raw),
+            readCoil: async (address) => {
+                const result = await modbusClient.readCoils(address, 1);
+                return Boolean(result.data[0]);
+            },
+            readHolding: async (address) => {
+                const result = await modbusClient.readHoldingRegisters(address, 1);
+                return Number(result.data[0]);
+            },
+            scaleWrite: (key, value) => this.scaleValue(key, value, 'write'),
+            scaleRead: (key, value) => this.scaleValue(key, value, 'read'),
+            delay: (ms) => this.delay(ms),
+        };
+    }
+    async writeCommandGroup(cmds, deps, phase, logAction) {
+        var _a;
+        const outcomes = [];
+        for (const cmd of cmds) {
+            const outcome = await (0, schedule_key_writer_1.writeAndVerifyKey)(cmd, deps, {
+                phase,
+                verifyEnabled: this.verifyEnabledFor(cmd),
+            });
+            if (outcome.status === 'blocked') {
+                this.logModbusCmd('BLOCKED', cmd);
+            }
+            else if (outcome.status === 'fail') {
+                this.logModbusCmd('FAIL', cmd);
+            }
+            else {
+                this.logModbusCmd(logAction, Object.assign(Object.assign({}, cmd), { value: (_a = outcome.rawWritten) !== null && _a !== void 0 ? _a : cmd.value }));
+            }
+            outcomes.push(outcome);
+            await this.delay(100);
+        }
+        return outcomes;
     }
     /**
      * Write a single coil with protection gate check.
@@ -700,147 +766,58 @@ let ScheduleService = class ScheduleService {
     /**
  * Gửi các lệnh modbus qua modbusClient
  */
-    async executeModbusCommands(modbusClient, commands, schedule) {
-        // Log summary of all commands before execution
+    async executeModbusCommands(modbusClient, commands, schedule, options) {
+        var _a, _b;
+        const buffer = new schedule_execution_buffer_1.ExecutionStepBuffer((_a = options === null || options === void 0 ? void 0 : options.runId) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)(), 'start', (_b = schedule === null || schedule === void 0 ? void 0 : schedule.name) !== null && _b !== void 0 ? _b : 'unknown');
+        const deps = this.makeKeyWriterDeps(modbusClient);
         if (this.node && (commands.holdingCommands.length > 0 || commands.coilCommands.length > 0)) {
             this.node.warn(`[MODBUS] EXEC ${(schedule === null || schedule === void 0 ? void 0 : schedule.name) || '?'}: ${commands.holdingCommands.length} registers + ${commands.coilCommands.length} coils`);
         }
-        // Holding registers first
-        for (const cmd of commands.holdingCommands) {
-            try {
-                const writeValue = this.scaleValue(cmd.key, cmd.value, 'write');
-                await modbusClient.writeRegister(cmd.address, Number(writeValue));
-                this.logModbusCmd('WRITE', Object.assign(Object.assign({}, cmd), { value: writeValue }));
-                await this.delay(100);
-            }
-            catch (error) {
-                this.logModbusCmd('FAIL', cmd);
-                console.error(`Modbus HOLD write failed: ${cmd.key}@${cmd.address} - ${error.message}`);
-            }
+        const valveProgramCmds = commands.holdingCommands.filter(cmd => cmd.key === 'valve_program');
+        const otherHoldingCmds = commands.holdingCommands.filter(cmd => cmd.key !== 'valve_program');
+        if (valveProgramCmds.length > 0) {
+            const keys = await this.writeCommandGroup(valveProgramCmds, deps, 'set_valve_program', 'WRITE');
+            buffer.pushPhase({ phase: 'set_valve_program', keys });
         }
-        const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(commands.coilCommands);
+        if (otherHoldingCmds.length > 0) {
+            const keys = await this.writeCommandGroup(otherHoldingCmds, deps, 'set_holding', 'WRITE');
+            buffer.pushPhase({ phase: 'set_holding', keys });
+        }
+        const { powerCoils, pumpCoils, valveCoils, otherCoils } = (0, schedule_coil_classify_1.classifyCoils)(commands.coilCommands);
         const isStarting = schedule && schedule.status === 'running';
-        const isFinishing = schedule && schedule.status === 'finished';
         if (isStarting) {
             if (this.node) {
-                this.node.warn(`🔧 START ${schedule.name}: valve(${valveCoils.length}) → other(${otherCoils.length}) → 10s → pump(${pumpCoils.length}) → power(${powerCoils.length})`);
+                this.node.warn(`🔧 START ${schedule.name}: valve(${valveCoils.length}) → other(${otherCoils.length}) → delay → pump(${pumpCoils.length}) → power(${powerCoils.length})`);
             }
-            for (const cmd of valveCoils) {
-                try {
-                    const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written)
-                        this.logModbusCmd('START', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${error.message}`);
-                }
+            if (valveCoils.length > 0) {
+                const keys = await this.writeCommandGroup(valveCoils, deps, 'open_valves', 'START');
+                buffer.pushPhase({ phase: 'open_valves', keys });
             }
-            for (const cmd of otherCoils) {
-                try {
-                    const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written)
-                        this.logModbusCmd('START', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                }
+            if (otherCoils.length > 0) {
+                const keys = await this.writeCommandGroup(otherCoils, deps, 'other_coils', 'START');
+                buffer.pushPhase({ phase: 'other_coils', keys });
             }
             if (pumpCoils.length > 0 || powerCoils.length > 0) {
                 if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ 10s delay before PUMP/POWER...`);
+                    this.node.warn(`[MODBUS] ⏱️ delay before PUMP/POWER...`);
+                const t0 = Date.now();
                 await this.delay(WATER_HAMMER_DELAY_MS);
+                buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
             }
-            for (const cmd of pumpCoils) {
-                try {
-                    const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written)
-                        this.logModbusCmd('START', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                }
+            if (pumpCoils.length > 0) {
+                const keys = await this.writeCommandGroup(pumpCoils, deps, 'start_pumps', 'START');
+                buffer.pushPhase({ phase: 'start_pumps', keys });
             }
-            for (const cmd of powerCoils) {
-                try {
-                    const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written)
-                        this.logModbusCmd('START', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${error.message}`);
-                }
+            if (powerCoils.length > 0) {
+                const keys = await this.writeCommandGroup(powerCoils, deps, 'system_power', 'START');
+                buffer.pushPhase({ phase: 'system_power', keys });
             }
         }
-        else if (isFinishing) {
-            if (this.node) {
-                this.node.warn(`🛑 FINISH ${schedule.name}: pump(${pumpCoils.length}) → other(${otherCoils.length}) → power(${powerCoils.length}) → 10s → valve(${valveCoils.length})`);
-            }
-            for (const cmd of pumpCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.logModbusCmd('FINISH', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                    console.error(`Modbus COIL write failed: ${cmd.key}@${cmd.address} - ${error.message}`);
-                }
-            }
-            for (const cmd of otherCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.logModbusCmd('FINISH', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                }
-            }
-            for (const cmd of powerCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                    this.logModbusCmd('FINISH', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                }
-            }
-            if (valveCoils.length > 0) {
-                if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ 10s delay before VALVE close...`);
-                await this.delay(WATER_HAMMER_DELAY_MS);
-                for (const cmd of valveCoils) {
-                    try {
-                        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
-                        this.logModbusCmd('FINISH', cmd);
-                        await this.delay(100);
-                    }
-                    catch (error) {
-                        this.logModbusCmd('FAIL', cmd);
-                    }
-                }
-            }
+        else if (commands.coilCommands.length > 0) {
+            const keys = await this.writeCommandGroup(commands.coilCommands, deps, 'other_coils', 'WRITE');
+            buffer.pushPhase({ phase: 'other_coils', keys });
         }
-        else {
-            for (const cmd of commands.coilCommands) {
-                try {
-                    const written = await this.writeCoilWithGate(modbusClient, cmd);
-                    if (written)
-                        this.logModbusCmd('WRITE', cmd);
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('FAIL', cmd);
-                }
-            }
-        }
+        return buffer.toReport();
     }
     /**
      * Xác thực việc ghi modbus
@@ -1014,16 +991,24 @@ let ScheduleService = class ScheduleService {
      * Publish audit log for schedule execution
      * This logs which function keys were changed and why (schedule start/end)
      */
-    async publishAuditLog(thingsboardClient, emqxClient, schedule, action, commands, success = true, errorMessage) {
+    async publishAuditLog(thingsboardClient, emqxClient, schedule, action, commands, success = true, errorMessage, extras) {
+        var _a, _b, _c;
         try {
             const requestId = (0, uuid_1.v4)();
             const allCommands = [...commands.holdingCommands, ...commands.coilCommands];
+            const steps = (_a = extras === null || extras === void 0 ? void 0 : extras.steps) !== null && _a !== void 0 ? _a : [];
+            const envelopeSuccess = steps.length > 0 ? (0, schedule_execution_types_1.failedOutcomes)({
+                runId: (_b = extras === null || extras === void 0 ? void 0 : extras.runId) !== null && _b !== void 0 ? _b : requestId,
+                action,
+                scheduleId: schedule.name,
+                steps,
+            }).length === 0 : success;
             // Build human-readable message
             const actionText = action === 'start' ? 'bắt đầu' : 'kết thúc';
-            const statusText = success ? 'thành công' : 'thất bại';
+            const statusText = envelopeSuccess ? 'thành công' : 'thất bại';
             const changedKeys = allCommands.map(cmd => `${cmd.key}=${cmd.value}`).join(', ');
             let message;
-            if (success) {
+            if (envelopeSuccess) {
                 message = `Lịch trình "${schedule.label || schedule.name}" ${actionText}: ${changedKeys || 'không có thay đổi'}`;
             }
             else {
@@ -1035,16 +1020,18 @@ let ScheduleService = class ScheduleService {
                 requestId: requestId,
                 message: message,
                 metadata: {
-                    status: success ? "SUCCESS" : "FAIL",
+                    status: envelopeSuccess ? "SUCCESS" : "FAIL",
                     schedule_id: schedule.name,
                     schedule_label: schedule.label,
                     action: action,
+                    run_id: (_c = extras === null || extras === void 0 ? void 0 : extras.runId) !== null && _c !== void 0 ? _c : requestId,
                     changed_keys: allCommands.map(cmd => ({
                         key: cmd.key,
                         value: cmd.value,
                         address: cmd.address,
                         fc: cmd.fc
                     })),
+                    steps,
                     timestamp: Date.now(),
                     error: errorMessage || null
                 }
@@ -1253,7 +1240,7 @@ let ScheduleService = class ScheduleService {
                     if (this.node) {
                         this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
                     }
-                    const resetSuccess = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
+                    const { allSuccessful: resetSuccess } = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
                         this.clearScheduleConfigValues(schedule.name);
@@ -1276,93 +1263,51 @@ let ScheduleService = class ScheduleService {
     /**
      * Reset lại các lệnh modbus
      */
-    async resetModbusCommands(modbusClient, commands, schedule, isFinishing = false) {
-        let allSuccessful = true;
+    async resetModbusCommands(modbusClient, commands, schedule, isFinishing = false, options) {
+        var _a, _b;
+        const buffer = new schedule_execution_buffer_1.ExecutionStepBuffer((_a = options === null || options === void 0 ? void 0 : options.runId) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)(), isFinishing || (options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? ((options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? 'start' : 'end') : 'end', (_b = schedule === null || schedule === void 0 ? void 0 : schedule.name) !== null && _b !== void 0 ? _b : 'unknown');
+        const deps = this.makeKeyWriterDeps(modbusClient);
         const coilCommands = commands.filter(cmd => cmd.fc === 5);
-        const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilCommands);
+        const { powerCoils, pumpCoils, valveCoils, otherCoils } = (0, schedule_coil_classify_1.classifyCoils)(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
+        const holdingPhase = (options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? 'reset_unused_holding' : 'reset_holding';
         if (this.node) {
-            this.node.warn(`[MODBUS] RESET ${(schedule === null || schedule === void 0 ? void 0 : schedule.name) || '?'}: ${holdingRegisters.length} registers + ${commands.filter(c => c.fc === 5).length} coils (ordered=${isFinishing})`);
+            this.node.warn(`[MODBUS] RESET ${(schedule === null || schedule === void 0 ? void 0 : schedule.name) || '?'}: ${holdingRegisters.length} registers + ${coilCommands.length} coils (ordered=${isFinishing})`);
         }
-        // Reset holding registers to 0
-        for (const cmd of holdingRegisters) {
-            try {
-                await modbusClient.writeRegister(cmd.address, 0);
-                this.logModbusCmd('RESET', Object.assign(Object.assign({}, cmd), { value: 0 }));
-                await this.delay(100);
-            }
-            catch (error) {
-                this.logModbusCmd('RESET_FAIL', Object.assign(Object.assign({}, cmd), { value: 0 }));
-                allSuccessful = false;
-            }
+        if (holdingRegisters.length > 0) {
+            const offHoldings = holdingRegisters.map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+            const keys = await this.writeCommandGroup(offHoldings, deps, holdingPhase, 'RESET');
+            buffer.pushPhase({ phase: holdingPhase, keys });
         }
         if (isFinishing) {
-            // Ordered reset: pump+power_A* → other → power → 10s → valve
-            for (const cmd of pumpCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, false);
-                    this.logModbusCmd('RESET', Object.assign(Object.assign({}, cmd), { value: false }));
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('RESET_FAIL', Object.assign(Object.assign({}, cmd), { value: false }));
-                    allSuccessful = false;
-                }
+            if (pumpCoils.length > 0) {
+                const keys = await this.writeCommandGroup(pumpCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'stop_pumps', 'RESET');
+                buffer.pushPhase({ phase: 'stop_pumps', keys });
             }
-            for (const cmd of otherCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, false);
-                    this.logModbusCmd('RESET', Object.assign(Object.assign({}, cmd), { value: false }));
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('RESET_FAIL', Object.assign(Object.assign({}, cmd), { value: false }));
-                    allSuccessful = false;
-                }
+            if (otherCoils.length > 0) {
+                const keys = await this.writeCommandGroup(otherCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'other_coils', 'RESET');
+                buffer.pushPhase({ phase: 'other_coils', keys });
             }
-            for (const cmd of powerCoils) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, false);
-                    this.logModbusCmd('RESET', Object.assign(Object.assign({}, cmd), { value: false }));
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('RESET_FAIL', Object.assign(Object.assign({}, cmd), { value: false }));
-                    allSuccessful = false;
-                }
+            if (powerCoils.length > 0) {
+                const keys = await this.writeCommandGroup(powerCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'system_power', 'RESET');
+                buffer.pushPhase({ phase: 'system_power', keys });
             }
             if (valveCoils.length > 0) {
                 if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ 10s delay before VALVE reset...`);
+                    this.node.warn(`[MODBUS] ⏱️ delay before VALVE reset...`);
+                const t0 = Date.now();
                 await this.delay(WATER_HAMMER_DELAY_MS);
-                for (const cmd of valveCoils) {
-                    try {
-                        await modbusClient.writeCoil(cmd.address, false);
-                        this.logModbusCmd('RESET', Object.assign(Object.assign({}, cmd), { value: false }));
-                        await this.delay(100);
-                    }
-                    catch (error) {
-                        this.logModbusCmd('RESET_FAIL', Object.assign(Object.assign({}, cmd), { value: false }));
-                        allSuccessful = false;
-                    }
-                }
+                buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
+                const keys = await this.writeCommandGroup(valveCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'close_valves', 'RESET');
+                buffer.pushPhase({ phase: 'close_valves', keys });
             }
         }
-        else {
-            // Default order — no ordering
-            for (const cmd of commands.filter(cmd => cmd.fc === 5)) {
-                try {
-                    await modbusClient.writeCoil(cmd.address, false);
-                    this.logModbusCmd('RESET', Object.assign(Object.assign({}, cmd), { value: false }));
-                    await this.delay(100);
-                }
-                catch (error) {
-                    this.logModbusCmd('RESET_FAIL', Object.assign(Object.assign({}, cmd), { value: false }));
-                    allSuccessful = false;
-                }
-            }
+        else if (coilCommands.length > 0) {
+            const keys = await this.writeCommandGroup(coilCommands.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'other_coils', 'RESET');
+            buffer.pushPhase({ phase: 'other_coils', keys });
         }
-        return allSuccessful;
+        const report = buffer.toReport();
+        return { report, allSuccessful: (0, schedule_execution_types_1.failedOutcomes)(report).length === 0 };
     }
     /**
      * Check if commands can be executed without overlapping with active commands
@@ -1449,12 +1394,11 @@ let ScheduleService = class ScheduleService {
             return false;
         }
         // Thực thi các lệnh cần cập nhật
-        await this.executeModbusCommands(modbusClient, {
+        const report = await this.executeModbusCommands(modbusClient, {
             holdingCommands: holdingCommandsToExecute,
             coilCommands: coilCommandsToExecute
         });
-        // Xác minh lại sau khi ghi
-        const writeSuccess = await this.verifyModbusWrite(modbusClient, [...holdingCommandsToExecute, ...coilCommandsToExecute]);
+        const writeSuccess = (0, schedule_execution_types_1.failedOutcomes)(report).length === 0;
         if (writeSuccess) {
             this.debugLog(`Successfully re-executed necessary commands for schedule ${schedule.name}`);
         }
@@ -1471,6 +1415,9 @@ let ScheduleService = class ScheduleService {
         activeModbusCommands[scheduleId] = commands;
         this.node.context().global.set("activeModbusCommands", activeModbusCommands);
         this.debugLog(`Stored active commands for schedule ${scheduleId}: ${JSON.stringify(commands)}`);
+    }
+    applyStartCommandStore(scheduleName, commands) {
+        this.storeActiveCommands(scheduleName, commands);
     }
     /**
      * Retrieve active commands for a schedule
@@ -2163,6 +2110,86 @@ let ScheduleService = class ScheduleService {
                 : error.message;
             if (this.node) {
                 this.node.warn(`❌ HTTP NOTIFICATION FAILED: ${schedule.name} | ${errorMessage}`);
+            }
+            return false;
+        }
+    }
+    async sendKeyVerifyFailNotification(schedule, action, outcome) {
+        var _a, _b, _c, _d;
+        const backendUrl = this.globalHelper
+            ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
+            : '';
+        const deviceAccessToken = this.globalHelper
+            ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '')
+            : '';
+        const deviceId = this.globalHelper
+            ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown')
+            : 'unknown';
+        if (!backendUrl || !deviceAccessToken) {
+            if (this.node) {
+                this.node.warn('⚠️ HTTP NOTIFICATION SKIPPED: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+            }
+            return false;
+        }
+        const payload = {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${(_a = outcome.read) !== null && _a !== void 0 ? _a : 'n/a'} attempts=${outcome.attempts}`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: {
+                scheduleName: schedule.label || schedule.name,
+                key: outcome.key,
+                expected: outcome.expected,
+                read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null,
+                attempts: outcome.attempts,
+                action,
+                error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null,
+            },
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
+            alarm_status: 'Pending',
+            clear_by: '',
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+        const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+        try {
+            await this.executeWithResilience(async () => {
+                const response = await axios_1.default.post(url, payload, {
+                    params: {
+                        device_access_token: deviceAccessToken
+                    },
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                });
+                if (response.status !== 200 && response.status !== 201) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.data;
+            }, {
+                maxRetries: 3,
+                baseDelay: 1000,
+                maxDelay: 10000,
+                timeout: 10000,
+                circuitBreakerKey: 'backend-notification',
+                circuitBreakerThreshold: 5,
+                circuitBreakerTimeout: 30000
+            });
+            if (this.node) {
+                this.node.warn(`📡 HTTP VERIFY FAIL: ${schedule.name} | ${outcome.key} | ${action}`);
+            }
+            return true;
+        }
+        catch (error) {
+            const errorMessage = error instanceof axios_1.AxiosError
+                ? `${error.message} (${((_d = error.response) === null || _d === void 0 ? void 0 : _d.status) || 'N/A'})`
+                : error.message;
+            if (this.node) {
+                this.node.warn(`❌ HTTP VERIFY FAIL NOTIFICATION: ${schedule.name} | ${errorMessage}`);
             }
             return false;
         }

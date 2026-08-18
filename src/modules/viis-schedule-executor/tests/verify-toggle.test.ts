@@ -80,7 +80,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(true);
             expect(mockModbusClient.readCoils).toHaveBeenCalledWith(10, 1);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('✅ VERIFICATION SUCCESS')
+                expect.stringContaining('→ ✅')
             );
         });
 
@@ -98,7 +98,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(true);
             expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledWith(20, 1);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('✅ VERIFICATION SUCCESS')
+                expect.stringContaining('→ ✅')
             );
         });
 
@@ -116,7 +116,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(false);
             expect(mockModbusClient.readCoils).toHaveBeenCalledWith(15, 1);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('❌ VERIFICATION FAILED')
+                expect.stringContaining('→ ❌')
             );
         });
 
@@ -134,7 +134,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(false);
             expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledWith(25, 1);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('❌ VERIFICATION FAILED')
+                expect.stringContaining('→ ❌')
             );
         });
 
@@ -184,7 +184,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
 
             expect(result).toBe(false);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('❌ VERIFICATION ERROR')
+                expect.stringContaining('[MODBUS] VERIFY ERROR')
             );
         });
     });
@@ -211,7 +211,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(mockModbusClient.readCoils).toHaveBeenCalledWith(10, 1); // Coils ARE verified
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('🔍 VERIFYING COILS')
+                expect.stringContaining('[MODBUS] VERIFY')
             );
         });
 
@@ -231,9 +231,6 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(true);
             expect(mockModbusClient.readCoils).toHaveBeenCalledTimes(2); // Coils ARE verified
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled(); // Holding registers skipped
-            expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('HOLDING REGISTER VERIFICATION SKIPPED: 1 commands')
-            );
         });
 
         test('should skip holding register verification even if actual values would differ', async () => {
@@ -251,9 +248,6 @@ describe('ScheduleService - Verify After Write Toggle', () => {
 
             expect(result).toBe(true);
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled(); // Holding registers not verified
-            expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('HOLDING REGISTER VERIFICATION SKIPPED')
-            );
         });
 
         test('should return true for empty command array', async () => {
@@ -280,7 +274,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(false);
             expect(mockModbusClient.readCoils).toHaveBeenCalled(); // Coils are still verified
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('❌ VERIFICATION FAILED')
+                expect.stringContaining('→ ❌')
             );
         });
     });
@@ -397,7 +391,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
 
             expect(result).toBe(false);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('❌ VERIFICATION ERROR')
+                expect.stringContaining('[MODBUS] VERIFY ERROR')
             );
         });
 
@@ -415,7 +409,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
 
             expect(result).toBe(false); // Should still fail because coils are always verified
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('❌ VERIFICATION ERROR')
+                expect.stringContaining('[MODBUS] VERIFY ERROR')
             );
         });
     });
@@ -470,10 +464,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             await service.verifyModbusWrite(mockModbusClient as ModbusClientCore, [...coilCommands, ...holdingCommands]);
 
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('HOLDING REGISTER VERIFICATION SKIPPED: 10 commands')
-            );
-            expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('🔍 VERIFYING COILS: 3 commands')
+                expect.stringContaining('[MODBUS] VERIFY 3 commands')
             );
         });
     });

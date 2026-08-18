@@ -149,28 +149,20 @@ Schedule bắt đầu khi:
 ├──────────────────────────────────────────────────────────────┤
 │ 4. UPDATE STATUS → "running" (DB + sync server)              │
 ├──────────────────────────────────────────────────────────────┤
-│ 5. EXECUTE MODBUS COMMANDS (3 retries)                       │
-│    a. Holding registers (FC=6) — mỗi lệnh delay 100ms       │
-│    b. Coils theo thứ tự START:                              │
-│       ┌─────────────────────────────────────────┐           │
-│       │ valve coils → other coils                │           │
-│       │ ────── delay 10 seconds ──────           │           │
-│       │ pump + power_A* coils → power (coil 30)  │           │
-│       └─────────────────────────────────────────┘           │
-│    c. verifyModbusWrite() sau mỗi lần ghi                   │
-│    d. Nếu verify pass → storeActiveCommands()               │
+│ 5. EXECUTE MODBUS (per-key write → optional read → retry 3) │
+│    a. valve_program (HR) then other holdings                │
+│    b. Coils: valve → other → WATER_HAMMER_DELAY_MS          │
+│       → pump + power_A* → power                             │
+│    c. Always storeActiveCommands (incl. valve_program)      │
 ├──────────────────────────────────────────────────────────────┤
-│ 6. ON FAILURE (sau 3 retries)                                │
-│    - clearActiveCommands()                                   │
-│    - clearScheduleConfigValues()                             │
-│    - updateScheduleStatus("finished")                        │
-│    - clearStatusHistory()                                    │
+│ 6. VERIFY FAIL does NOT change status                       │
+│    - one HTTP noti per failed key                           │
+│    - schedule stays running                                 │
 ├──────────────────────────────────────────────────────────────┤
-│ 7. ON SUCCESS (statusChanged = true)                         │
-│    - sendNotificationToBackend('start', success)             │
-│    - syncScheduleLog(schedule, success)                      │
-│    - publishScheduleTelemetry('start', holding+coil, config) │
-│    - publishAuditLog('start', holding+coil, success)         │
+│ 7. ON TRANSITION (statusChanged = true)                      │
+│    - sendNotificationToBackend('start', true)               │
+│    - syncScheduleLog / telemetry                            │
+│    - publishAuditLog with metadata.steps[] + run_id         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -272,8 +264,8 @@ Mỗi lệnh: delay 100ms. Nếu có lỗi → `allSuccessful = false`.
 | **Config keys** | Store + publish MQTT | Reset về falsy defaults + publish |
 | **Reset unused keys** | `time_valve_*`, `set_flow*` không trong action → 0 | `time_valve_*`, `set_flow*` tất cả → 0 |
 | **Telemetry** | `start` event + config values | `end` event + reset values |
-| **Retries** | 3 lần, nếu fail → auto-finish | Không retry trực tiếp (auto-recovery check) |
-| **Verification** | Verify sau mỗi lần ghi (coils skip, holding verify) | Không verify |
+| **Retries** | Per-key max 3; status stays running | Per-key max 3; status still finished |
+| **Verification** | Immediate per-key read-back; does not gate status | Same flags; failed OFF keys still finish |
 
 ---
 
@@ -294,15 +286,16 @@ Chạy trên mỗi input trigger, kiểm tra schedule bị stuck "running":
 
 ---
 
-## 8. Verification (`service:864-952`)
+## 8. Verification (per-key)
 
 | Config | Coil Verify | Holding Verify |
 |---|---|---|
 | Default | **Bỏ qua** (`skipCoilVerify = true`) | **Bật** (`verifyAfterWrite = true`) |
 
-- Đọc lại giá trị từ Modbus sau khi ghi
-- So sánh với `cmd.value`
-- Nếu mismatch → return `false` ngay (fail lần đầu)
+- Verify is per-key immediately after that key's write (not a batch after the sequence)
+- Retry is that key only (max 3). Status `running`/`finished` is never gated by verify
+- Audit MQTT envelopes include `metadata.steps[]` and `metadata.run_id`
+- START writes derived `valve_program` (valve_0…15 bitmask) before coil `power` when address 20 is free
 
 ---
 

@@ -110,7 +110,7 @@ describe('ScheduleService - Protection Gate Integration', () => {
             expect(mockModbus.writeCoil).not.toHaveBeenCalled();
             expect(mockGate.updateState).not.toHaveBeenCalled();
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('[PROTECTION] Schedule coil blocked: lamp_control_1')
+                expect.stringContaining('[PROTECTION] BLOCKED: lamp_control_1')
             );
         });
     });

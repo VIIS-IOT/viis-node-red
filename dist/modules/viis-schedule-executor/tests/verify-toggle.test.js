@@ -69,7 +69,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(true);
             expect(mockModbusClient.readCoils).toHaveBeenCalledWith(10, 1);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('✅ VERIFICATION SUCCESS'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('→ ✅'));
         });
         test('should verify holding register write and return true when values match', async () => {
             const commands = [
@@ -81,7 +81,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(true);
             expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledWith(20, 1);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('✅ VERIFICATION SUCCESS'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('→ ✅'));
         });
         test('should return false when coil verification fails (value mismatch)', async () => {
             const commands = [
@@ -93,7 +93,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(false);
             expect(mockModbusClient.readCoils).toHaveBeenCalledWith(15, 1);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION FAILED'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('→ ❌'));
         });
         test('should return false when holding register verification fails (value mismatch)', async () => {
             const commands = [
@@ -105,7 +105,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(false);
             expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalledWith(25, 1);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION FAILED'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('→ ❌'));
         });
         test('should verify multiple commands correctly', async () => {
             const commands = [
@@ -140,7 +140,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             mockModbusClient.readCoils.mockRejectedValue(new Error('Connection timeout'));
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(false);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION ERROR'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('[MODBUS] VERIFY ERROR'));
         });
     });
     describe('verifyModbusWrite - When Verification Disabled', () => {
@@ -159,7 +159,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(true);
             expect(mockModbusClient.readCoils).toHaveBeenCalledWith(10, 1); // Coils ARE verified
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('🔍 VERIFYING COILS'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('[MODBUS] VERIFY'));
         });
         test('should verify coils but skip holding registers', async () => {
             const commands = [
@@ -174,7 +174,6 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(result).toBe(true);
             expect(mockModbusClient.readCoils).toHaveBeenCalledTimes(2); // Coils ARE verified
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled(); // Holding registers skipped
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('HOLDING REGISTER VERIFICATION SKIPPED: 1 commands'));
         });
         test('should skip holding register verification even if actual values would differ', async () => {
             // This tests the scenario where write/read values differ normally
@@ -188,7 +187,6 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(true);
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled(); // Holding registers not verified
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('HOLDING REGISTER VERIFICATION SKIPPED'));
         });
         test('should return true for empty command array', async () => {
             const commands = [];
@@ -207,7 +205,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(false);
             expect(mockModbusClient.readCoils).toHaveBeenCalled(); // Coils are still verified
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION FAILED'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('→ ❌'));
         });
     });
     describe('Edge Cases and Boundary Conditions', () => {
@@ -292,7 +290,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             mockModbusClient.readCoils.mockRejectedValue(new Error('Modbus exception: Illegal data address'));
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(false);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION ERROR'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('[MODBUS] VERIFY ERROR'));
         });
         test('should handle transient read errors for coils even when verification disabled', async () => {
             const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false, false, false);
@@ -302,7 +300,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             mockModbusClient.readCoils.mockRejectedValue(new Error('Modbus exception: Illegal data address'));
             const result = await service.verifyModbusWrite(mockModbusClient, commands);
             expect(result).toBe(false); // Should still fail because coils are always verified
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION ERROR'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('[MODBUS] VERIFY ERROR'));
         });
     });
     describe('Performance and Behavior Tests', () => {
@@ -347,8 +345,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             mockModbusClient.readCoils
                 .mockResolvedValue({ data: [true] });
             await service.verifyModbusWrite(mockModbusClient, [...coilCommands, ...holdingCommands]);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('HOLDING REGISTER VERIFICATION SKIPPED: 10 commands'));
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('🔍 VERIFYING COILS: 3 commands'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('[MODBUS] VERIFY 3 commands'));
         });
     });
 });

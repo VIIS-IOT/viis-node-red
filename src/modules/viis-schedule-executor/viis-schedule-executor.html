@@ -21,14 +21,14 @@
         <label for="node-input-verifyAfterWrite"><i class="fa fa-check-circle"></i> Verify After Write</label>
         <input type="checkbox" id="node-input-verifyAfterWrite" style="width: auto;">
         <div style="margin-left: 105px; color: #666; font-size: 11px;">
-            Enable holding register verification after write. <strong>Note:</strong> Coils verification is controlled separately below.
+            Verify After Write / Skip Coil Verify control read-back only. Failed keys notify the user; the schedule still goes running/finished.
         </div>
     </div>
     <div class="form-row">
         <label for="node-input-skipCoilVerify"><i class="fa fa-toggle-on"></i> Skip Coil Verify</label>
         <input type="checkbox" id="node-input-skipCoilVerify" style="width: auto;">
         <div style="margin-left: 105px; color: #666; font-size: 11px;">
-            Skip coil (FC=5) verification after write. Default: enabled (skip). Disable to verify coils after each write.
+            Skip coil (FC=5) read-back after that key's write. Default: enabled (skip). Does not change running/finished status.
         </div>
     </div>
     <div class="form-row">
@@ -72,8 +72,9 @@
     <p>
         The <b>VIIS Schedule Executor</b> node is designed to process scheduled actions.
         It reads schedules from the database, checks if they are due based on the defined time range,
-        maps schedule actions to Modbus commands, executes these commands (with retry and verification),
+        maps schedule actions to Modbus commands, writes each key (optional read-back + per-key retry),
         and synchronizes schedule status with MQTT notifications and backend logs.
+        Verify After Write / Skip Coil Verify control read-back only. Failed keys notify the user; the schedule still goes running/finished.
     </p>
     <p>
         <b>MQTT Publishing:</b> Automatically publishes schedule status to both ThingsBoard and EMQX Local brokers.
