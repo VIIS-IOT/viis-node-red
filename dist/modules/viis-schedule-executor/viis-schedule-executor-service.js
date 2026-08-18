@@ -62,7 +62,7 @@ const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-con
  * These parameters are stored in global context and do not conflict with Modbus commands.
  */
 /** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
-const WATER_HAMMER_DELAY_MS = 70000;
+const WATER_HAMMER_DELAY_MS = 7000;
 /** Firmware system enable (coil 30 / iri.power). Not a pump relay. */
 const isSystemPowerKey = (key) => key === 'power';
 /** Fertilizer channel coils (power_A1, power_B3, ...). Grouped with pump. */

@@ -30,7 +30,7 @@ import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants"
  * These parameters are stored in global context and do not conflict with Modbus commands.
  */
 /** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
-const WATER_HAMMER_DELAY_MS = 70000;
+const WATER_HAMMER_DELAY_MS = 7000;
 
 /** Firmware system enable (coil 30 / iri.power). Not a pump relay. */
 const isSystemPowerKey = (key: string): boolean => key === 'power';
