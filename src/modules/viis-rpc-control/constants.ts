@@ -168,6 +168,9 @@ export const STATUS_MESSAGES = {
     RPC_INPUT_ERROR: "RPC input error",
 } as const;
 
+export const WATER_HAMMER_DELAY_MS = 7000;
+export const FERTIGATION_KEY_DELAY_MS = 100;
+
 // Default values
 export const DEFAULTS = {
     DEVICE_ID: "unknown",
