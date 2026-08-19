@@ -13,9 +13,15 @@ import {
     IMqttService
 } from "../interfaces/types";
 import { LuoiMappingHandler } from "../luoi-mapping-handler";
-import { ERROR_MESSAGES, STATUS_MESSAGES } from "../constants";
+import { ERROR_MESSAGES, STATUS_MESSAGES, FERTIGATION_KEY_DELAY_MS } from "../constants";
 import { Logger } from "../utils/logger";
 import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
+import {
+    FertigationWriteOp,
+    isFertigationBatch,
+    planFertigationStartWrites,
+} from "../../shared/fertigation-start-sequence";
+import { isValveOn } from "../../viis-schedule-executor/schedule-valve-program";
 
 export class RpcHandler implements IRpcHandler {
     private readonly maxBatchSize = 100;
@@ -47,13 +53,19 @@ export class RpcHandler implements IRpcHandler {
 
     static getCommandPriority(key: string): number {
         const lower = key.toLowerCase();
-        for (const [keyword, priority] of Object.entries(RpcHandler.COMMAND_PRIORITY)) {
-            if (lower.includes(keyword)) {
-                return priority;
-            }
+        if (/^valve_\d+$/i.test(key)) {
+            return RpcHandler.COMMAND_PRIORITY.valve;
+        }
+        if (lower.includes("pump")) {
+            return RpcHandler.COMMAND_PRIORITY.pump;
+        }
+        if (lower.includes("power")) {
+            return RpcHandler.COMMAND_PRIORITY.power;
         }
         return 3;
     }
+
+    sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
     constructor(
         options: ServiceOptions,
@@ -171,14 +183,19 @@ export class RpcHandler implements IRpcHandler {
         }
 
         const batchId = params.batch_id || params.batchId || `batch_${Date.now()}`;
-        const sortedCommands = [...commands].sort((a, b) => {
-            const aOrder = typeof a?.order === "number" ? a.order : Number.MAX_SAFE_INTEGER;
-            const bOrder = typeof b?.order === "number" ? b.order : Number.MAX_SAFE_INTEGER;
-            const aPriority = RpcHandler.getCommandPriority(String(a?.key || ""));
-            const bPriority = RpcHandler.getCommandPriority(String(b?.key || ""));
-            const priorityDiff = aPriority - bPriority;
-            return priorityDiff !== 0 ? priorityDiff : aOrder - bOrder;
-        });
+        const holdings = this.modbusService.getModbusHoldingRegisters() || {};
+        const coils = this.modbusService.getModbusCoils() || {};
+        const commandKeys = commands.map((cmd: any) => String(cmd?.key || ""));
+        const sortedCommands = isFertigationBatch(commandKeys)
+            ? this.buildFertigationBatchCommands(commands, holdings, coils)
+            : [...commands].sort((a, b) => {
+                const aOrder = typeof a?.order === "number" ? a.order : Number.MAX_SAFE_INTEGER;
+                const bOrder = typeof b?.order === "number" ? b.order : Number.MAX_SAFE_INTEGER;
+                const aPriority = RpcHandler.getCommandPriority(String(a?.key || ""));
+                const bPriority = RpcHandler.getCommandPriority(String(b?.key || ""));
+                const priorityDiff = aPriority - bPriority;
+                return priorityDiff !== 0 ? priorityDiff : aOrder - bOrder;
+            });
 
         const results: Array<{
             order: number;
@@ -192,6 +209,10 @@ export class RpcHandler implements IRpcHandler {
 
         for (let i = 0; i < sortedCommands.length; i++) {
             const cmd = sortedCommands[i] || {};
+            if (cmd.kind === "delay") {
+                await this.sleep(Number(cmd.ms) || 0);
+                continue;
+            }
             const key = String(cmd.key || "");
             const order = typeof cmd.order === "number" ? cmd.order : i;
 
@@ -244,8 +265,17 @@ export class RpcHandler implements IRpcHandler {
                 }
             }
 
-            if (i < sortedCommands.length - 1 && Number(options.modbus_delay_ms) > 0) {
-                await new Promise(resolve => setTimeout(resolve, Number(options.modbus_delay_ms)));
+            if (i < sortedCommands.length - 1) {
+                const next = sortedCommands[i + 1];
+                if (next?.kind === "delay") {
+                    continue;
+                }
+                const delayMs = isFertigationBatch(commandKeys)
+                    ? FERTIGATION_KEY_DELAY_MS
+                    : Number(options.modbus_delay_ms);
+                if (delayMs > 0) {
+                    await this.sleep(delayMs);
+                }
             }
         }
 
@@ -255,11 +285,12 @@ export class RpcHandler implements IRpcHandler {
             : successCount > 0
                 ? "partial"
                 : "failed";
+        const writeCount = sortedCommands.filter((cmd: any) => cmd?.kind !== "delay").length;
 
         await this.mqttService.publishConfigUpdate("rpc_batch_result", {
             batch_id: batchId,
             status: overallStatus,
-            total: sortedCommands.length,
+            total: writeCount,
             success_count: successCount,
             failed_count: results.length - successCount,
             results,
@@ -267,7 +298,39 @@ export class RpcHandler implements IRpcHandler {
         }, "set_state_batch completed");
 
         this.node.status({ fill: overallStatus === "success" ? "green" : "yellow", shape: "dot", text: `batch ${overallStatus}` });
-        this.logger.log(`Batch ${batchId} completed: ${overallStatus} (${successCount}/${sortedCommands.length})`);
+        this.logger.log(`Batch ${batchId} completed: ${overallStatus} (${successCount}/${writeCount})`);
+    }
+
+    private buildFertigationBatchCommands(
+        commands: Array<{ key?: string; value?: unknown; order?: number }>,
+        holdings: Record<string, number>,
+        coils: Record<string, number>
+    ): Array<{ key?: string; value?: unknown; order?: number; kind?: string; ms?: number }> {
+        const ops = planFertigationStartWrites({
+            commands: commands.map((cmd) => ({ key: String(cmd?.key || ""), value: cmd?.value })),
+            holdings,
+            coils,
+        });
+        const plannedKeys = new Set(
+            ops
+                .filter((op): op is Extract<FertigationWriteOp, { kind: "write" }> => op.kind === "write")
+                .map((op) => op.key)
+        );
+        const sequenced: Array<{ key?: string; value?: unknown; order?: number; kind?: string; ms?: number }> = [];
+        for (const op of ops) {
+            if (op.kind === "delay") {
+                sequenced.push({ kind: "delay", ms: op.ms });
+                continue;
+            }
+            sequenced.push({ key: op.key, value: op.value, order: sequenced.length });
+        }
+        for (const cmd of commands) {
+            const key = String(cmd?.key || "");
+            if (!key || plannedKeys.has(key)) continue;
+            if (Object.prototype.hasOwnProperty.call(coils, key) && !isValveOn(cmd.value)) continue;
+            sequenced.push({ key, value: cmd.value, order: sequenced.length });
+        }
+        return sequenced;
     }
 
     /**
@@ -308,12 +371,19 @@ export class RpcHandler implements IRpcHandler {
     }
 
     private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-        return Promise.race([
-            promise,
-            new Promise<T>((_, reject) => {
-                setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-            }),
-        ]);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            return await Promise.race([
+                promise,
+                new Promise<T>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+                }),
+            ]);
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
     }
 
     /**

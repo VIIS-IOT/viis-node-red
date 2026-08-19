@@ -1,3 +1,12 @@
+<script type="text/html" data-help-name="viis-rpc-control">
+    <p>Fertigation <code>set_state_batch</code> follows the same START order as <code>viis-schedule-executor</code>:
+    unused <code>time_valve_*</code> / <code>set_flow*</code> reset → derived <code>valve_program</code> (address-20 gate) →
+    other holdings → valve coils → other coils → 7s water-hammer → pumps + <code>power_A*</code>/<code>power_B*</code> →
+    <code>power</code> last → unmapped config (<code>iri_time</code>).</p>
+    <p>Clients should keep omitting falsy coils and do not need to send <code>valve_program</code>.
+    Non-fertigation batches still use generic sequential writes and client <code>modbus_delay_ms</code>.</p>
+</script>
+
 <script type="text/html" data-template-name="viis-rpc-control">
     <div class="form-row">
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
