@@ -7,13 +7,19 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.RpcHandler = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const fertigation_start_sequence_1 = require("../../shared/fertigation-start-sequence");
+const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
 class RpcHandler {
     static getCommandPriority(key) {
         const lower = key.toLowerCase();
-        for (const [keyword, priority] of Object.entries(RpcHandler.COMMAND_PRIORITY)) {
-            if (lower.includes(keyword)) {
-                return priority;
-            }
+        if (/^valve_\d+$/i.test(key)) {
+            return RpcHandler.COMMAND_PRIORITY.valve;
+        }
+        if (lower.includes("pump")) {
+            return RpcHandler.COMMAND_PRIORITY.pump;
+        }
+        if (lower.includes("power")) {
+            return RpcHandler.COMMAND_PRIORITY.power;
         }
         return 3;
     }
@@ -30,6 +36,7 @@ class RpcHandler {
             rollback_on_fail: false,
             continue_on_error: false,
         };
+        this.sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
         this.configService = configService;
         this.validationService = validationService;
         this.modbusService = modbusService;
@@ -119,18 +126,27 @@ class RpcHandler {
             options.sequential = true;
         }
         const batchId = params.batch_id || params.batchId || `batch_${Date.now()}`;
-        const sortedCommands = [...commands].sort((a, b) => {
-            const aOrder = typeof (a === null || a === void 0 ? void 0 : a.order) === "number" ? a.order : Number.MAX_SAFE_INTEGER;
-            const bOrder = typeof (b === null || b === void 0 ? void 0 : b.order) === "number" ? b.order : Number.MAX_SAFE_INTEGER;
-            const aPriority = RpcHandler.getCommandPriority(String((a === null || a === void 0 ? void 0 : a.key) || ""));
-            const bPriority = RpcHandler.getCommandPriority(String((b === null || b === void 0 ? void 0 : b.key) || ""));
-            const priorityDiff = aPriority - bPriority;
-            return priorityDiff !== 0 ? priorityDiff : aOrder - bOrder;
-        });
+        const holdings = this.modbusService.getModbusHoldingRegisters() || {};
+        const coils = this.modbusService.getModbusCoils() || {};
+        const commandKeys = commands.map((cmd) => String((cmd === null || cmd === void 0 ? void 0 : cmd.key) || ""));
+        const sortedCommands = (0, fertigation_start_sequence_1.isFertigationBatch)(commandKeys)
+            ? this.buildFertigationBatchCommands(commands, holdings, coils)
+            : [...commands].sort((a, b) => {
+                const aOrder = typeof (a === null || a === void 0 ? void 0 : a.order) === "number" ? a.order : Number.MAX_SAFE_INTEGER;
+                const bOrder = typeof (b === null || b === void 0 ? void 0 : b.order) === "number" ? b.order : Number.MAX_SAFE_INTEGER;
+                const aPriority = RpcHandler.getCommandPriority(String((a === null || a === void 0 ? void 0 : a.key) || ""));
+                const bPriority = RpcHandler.getCommandPriority(String((b === null || b === void 0 ? void 0 : b.key) || ""));
+                const priorityDiff = aPriority - bPriority;
+                return priorityDiff !== 0 ? priorityDiff : aOrder - bOrder;
+            });
         const results = [];
         const successfulCommands = [];
         for (let i = 0; i < sortedCommands.length; i++) {
             const cmd = sortedCommands[i] || {};
+            if (cmd.kind === "delay") {
+                await this.sleep(Number(cmd.ms) || 0);
+                continue;
+            }
             const key = String(cmd.key || "");
             const order = typeof cmd.order === "number" ? cmd.order : i;
             if (!key) {
@@ -173,8 +189,17 @@ class RpcHandler {
                     break;
                 }
             }
-            if (i < sortedCommands.length - 1 && Number(options.modbus_delay_ms) > 0) {
-                await new Promise(resolve => setTimeout(resolve, Number(options.modbus_delay_ms)));
+            if (i < sortedCommands.length - 1) {
+                const next = sortedCommands[i + 1];
+                if ((next === null || next === void 0 ? void 0 : next.kind) === "delay") {
+                    continue;
+                }
+                const delayMs = (0, fertigation_start_sequence_1.isFertigationBatch)(commandKeys)
+                    ? constants_1.FERTIGATION_KEY_DELAY_MS
+                    : Number(options.modbus_delay_ms);
+                if (delayMs > 0) {
+                    await this.sleep(delayMs);
+                }
             }
         }
         const successCount = results.filter(r => r.status === "success").length;
@@ -183,17 +208,45 @@ class RpcHandler {
             : successCount > 0
                 ? "partial"
                 : "failed";
+        const writeCount = sortedCommands.filter((cmd) => (cmd === null || cmd === void 0 ? void 0 : cmd.kind) !== "delay").length;
         await this.mqttService.publishConfigUpdate("rpc_batch_result", {
             batch_id: batchId,
             status: overallStatus,
-            total: sortedCommands.length,
+            total: writeCount,
             success_count: successCount,
             failed_count: results.length - successCount,
             results,
             completed_at: new Date().toISOString(),
         }, "set_state_batch completed");
         this.node.status({ fill: overallStatus === "success" ? "green" : "yellow", shape: "dot", text: `batch ${overallStatus}` });
-        this.logger.log(`Batch ${batchId} completed: ${overallStatus} (${successCount}/${sortedCommands.length})`);
+        this.logger.log(`Batch ${batchId} completed: ${overallStatus} (${successCount}/${writeCount})`);
+    }
+    buildFertigationBatchCommands(commands, holdings, coils) {
+        const ops = (0, fertigation_start_sequence_1.planFertigationStartWrites)({
+            commands: commands.map((cmd) => ({ key: String((cmd === null || cmd === void 0 ? void 0 : cmd.key) || ""), value: cmd === null || cmd === void 0 ? void 0 : cmd.value })),
+            holdings,
+            coils,
+        });
+        const plannedKeys = new Set(ops
+            .filter((op) => op.kind === "write")
+            .map((op) => op.key));
+        const sequenced = [];
+        for (const op of ops) {
+            if (op.kind === "delay") {
+                sequenced.push({ kind: "delay", ms: op.ms });
+                continue;
+            }
+            sequenced.push({ key: op.key, value: op.value, order: sequenced.length });
+        }
+        for (const cmd of commands) {
+            const key = String((cmd === null || cmd === void 0 ? void 0 : cmd.key) || "");
+            if (!key || plannedKeys.has(key))
+                continue;
+            if (Object.prototype.hasOwnProperty.call(coils, key) && !(0, schedule_valve_program_1.isValveOn)(cmd.value))
+                continue;
+            sequenced.push({ key, value: cmd.value, order: sequenced.length });
+        }
+        return sequenced;
     }
     /**
      * Best-effort rollback for commands that were already applied.
@@ -235,12 +288,20 @@ class RpcHandler {
         return null;
     }
     async withTimeout(promise, timeoutMs, timeoutMessage) {
-        return Promise.race([
-            promise,
-            new Promise((_, reject) => {
-                setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-            }),
-        ]);
+        let timer;
+        try {
+            return await Promise.race([
+                promise,
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+                }),
+            ]);
+        }
+        finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
     }
     /**
      * Check if an error is retryable

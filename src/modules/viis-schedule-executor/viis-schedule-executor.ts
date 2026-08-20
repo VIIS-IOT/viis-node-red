@@ -11,6 +11,14 @@ import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
 import { ExecutionReport, failedOutcomes } from "./schedule-execution-types";
 import { configParamsToStep, emitEndSideEffects, emitStartSideEffects } from "./schedule-side-effects";
+import {
+    SCHEDULE_IN_FLIGHT_KEY,
+    clearAllScheduleTransitions,
+    createSerializedQueue,
+    endScheduleTransition,
+    isScheduleTransitionInFlight,
+    tryBeginScheduleTransition,
+} from "./schedule-tick-guard";
 import { v4 as uuidv4 } from "uuid";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
@@ -93,6 +101,12 @@ module.exports = function (RED: NodeAPI) {
             if (!globalContext.get("configKeyValues")) {
                 globalContext.set("configKeyValues", {} as Record<string, any>);
             }
+        }
+
+        if (isStartupRecovery) {
+            clearAllScheduleTransitions(globalContext);
+        } else if (!globalContext.get(SCHEDULE_IN_FLIGHT_KEY)) {
+            globalContext.set(SCHEDULE_IN_FLIGHT_KEY, {});
         }
 
         node.name = config.name;
@@ -313,7 +327,10 @@ module.exports = function (RED: NodeAPI) {
             node.error(`Failed to initialize Modbus client: ${error.message}`);
         });
 
-        node.on("input", async function (msg, send, done) {
+        const enqueueInput = createSerializedQueue();
+
+        node.on("input", function (msg, send, done) {
+            enqueueInput(async () => {
             try {
                 // Ensure Modbus client is ready before processing
                 if (!modbusClient) {
@@ -659,6 +676,11 @@ module.exports = function (RED: NodeAPI) {
                 };
 
                 for (const schedule of schedules) {
+                    if (isScheduleTransitionInFlight(globalContext, schedule.name)) {
+                        debugLog(`Skip ${schedule.name}: start/finish already in flight`);
+                        continue;
+                    }
+
                     const isDue = scheduleService.isScheduleDue(schedule);
 
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
@@ -673,6 +695,11 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
+                        if (!tryBeginScheduleTransition(globalContext, schedule.name, "start")) {
+                            debugLog(`Skip start for ${schedule.name}: transition already in flight`);
+                            continue;
+                        }
+                        try {
                         const statusChanged = hasStatusChanged(schedule.name, "running");
 
                         const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
@@ -774,9 +801,17 @@ module.exports = function (RED: NodeAPI) {
                                 }
                             }
                         }
+                        } finally {
+                            endScheduleTransition(globalContext, schedule.name);
+                        }
                     } else if (schedule.status === "running" && isDue) {
                         // Schedule still running and still due — no action needed
                     } else if (schedule.status === "running" && !isDue) {
+                        if (!tryBeginScheduleTransition(globalContext, schedule.name, "finish")) {
+                            debugLog(`Skip finish for ${schedule.name}: transition already in flight`);
+                            continue;
+                        }
+                        try {
                         const lastCheckTimestamps: Record<string, number> = (globalContext.get("scheduleLastCheckTimestamps") as Record<string, number>) || {};
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
@@ -857,6 +892,9 @@ module.exports = function (RED: NodeAPI) {
                                 await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
                             }
                         }
+                        } finally {
+                            endScheduleTransition(globalContext, schedule.name);
+                        }
                     } else {
                         debugLog(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
                     }
@@ -865,7 +903,10 @@ module.exports = function (RED: NodeAPI) {
                 // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
                 // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
                 try {
-                    await scheduleService.checkAndRecoverStuckSchedules(modbusClient, schedules);
+                    const recoverableSchedules = schedules.filter(
+                        (schedule) => !isScheduleTransitionInFlight(globalContext, schedule.name)
+                    );
+                    await scheduleService.checkAndRecoverStuckSchedules(modbusClient, recoverableSchedules);
                 } catch (error) {
                     debugLog(`Error in recovery check: ${(error as Error).message}`);
                 }
@@ -901,6 +942,7 @@ module.exports = function (RED: NodeAPI) {
                 node.status({ fill: "red", shape: "ring", text: "Processing error" });
                 done(err);
             }
+            });
         });
 
         node.on("close", function (done: () => void) {
