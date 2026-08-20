@@ -84,7 +84,7 @@ function buildProcessor(): MockStores {
     tbMqtt as any,
     {
       emqxTopic: 'viis/test/telemetry',
-      thingsboardTopic: 'v1/devices/me/telemetry',
+      thingsboardTopic: 'v1/device/test-device/telemetry',
       debugLogKey: CONTEXT_KEYS.DEBUG_LOG,
       thresholdConfigKey: CONTEXT_KEYS.THRESHOLD_CONFIG,
     },

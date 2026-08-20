@@ -10,6 +10,7 @@ import { resolvePollerConfig } from "./services/config-resolver";
 import { validateResolvedConfig } from "./services/config-validator";
 import { runPollTick } from "./services/poll-runner";
 import { BoardMappings, PollingConfig, ResolvedPollerConfig } from "./types";
+import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
 
 interface ViisModbusPollerNodeDef extends NodeDef {
   name: string;
@@ -301,13 +302,13 @@ function buildTelemetryMessages(
 
   return [
     {
-      topic: `v1/devices/me/telemetry/${config.deviceId}`,
+      topic: buildDeviceTelemetryTopic(config.deviceId),
       payload,
       qos: 0,
       retain: false,
     },
     {
-      topic: "v1/devices/me/telemetry",
+      topic: buildDeviceTelemetryTopic(config.deviceId),
       payload,
       qos: 0,
       retain: false,

@@ -108,7 +108,7 @@ let ThingsBoardController = class ThingsBoardController {
      *   "method": "setTelemetry",
      *   "telemetryRecordsCount": 4,
      *   "mqttPublished": true,
-     *   "mqttTopic": "v1/devices/me/rpc/request/device123",
+     *   "mqttTopic": "v1/device/device123/rpc/+",
      *   "processingTime": 150
      * }
      * ```

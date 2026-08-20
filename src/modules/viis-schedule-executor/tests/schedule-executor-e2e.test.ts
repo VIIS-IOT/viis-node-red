@@ -260,12 +260,12 @@ describe('ScheduleService - End-to-End Tests with Unmapped Keys', () => {
 
             // Verify ThingsBoard publishes
             expect(mockMqttClient.publish).toHaveBeenCalledWith(
-                'v1/devices/me/telemetry',
+                'v1/device/test-device-001/telemetry',
                 expect.stringContaining('"custom_setting":"test_value"')
             );
 
             expect(mockMqttClient.publish).toHaveBeenCalledWith(
-                'v1/devices/me/telemetry',
+                'v1/device/test-device-001/telemetry',
                 expect.stringContaining('"debug_enabled":true')
             );
 

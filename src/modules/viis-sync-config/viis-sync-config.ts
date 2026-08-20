@@ -17,6 +17,11 @@ import * as path from 'path';
 import axios, { AxiosError } from 'axios';
 import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
 import { resolveViisBackendUrl } from '../../ultils/resolve-backend-url';
+import {
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
+    buildDeviceRpcSubscribeTopic,
+} from '../../core/demeter-mqtt-topics';
 
 interface ViisSyncConfigNodeDef extends NodeDef {
     configFile: string;
@@ -24,9 +29,8 @@ interface ViisSyncConfigNodeDef extends NodeDef {
 }
 
 const RPC_METHOD = 'sync-full-config';
-const TOPIC_RPC_REQUEST = 'v1/devices/me/rpc/request/+';
-const TB_DEFAULT_HOST = 'mqtt.viis.tech';
-const TB_DEFAULT_PORT = '1883';
+const TB_DEFAULT_HOST = DEFAULT_MQTT_HOST;
+const TB_DEFAULT_PORT = DEFAULT_MQTT_PORT;
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
 const CONFIGS_DIR = '/usr/src/app/env/configs';
@@ -91,6 +95,7 @@ export = function (RED: NodeAPI) {
                 const tbPort = globalHelper.getEnvVar('THINGSBOARD_PORT', TB_DEFAULT_PORT);
                 const mqttConfig: MqttConfig = {
                     broker: `mqtt://${tbHost}:${tbPort}`,
+                    deviceId,
                     clientId: `node-red-sync-config-${Math.random().toString(16).substring(2, 10)}`,
                     username: accessToken,
                     password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
@@ -107,8 +112,9 @@ export = function (RED: NodeAPI) {
                 }
 
                 // Subscribe to RPC topic
-                await mqttClient.subscribe(TOPIC_RPC_REQUEST);
-                log.info(node, `Subscribed to ${TOPIC_RPC_REQUEST}`);
+                const rpcSubscribeTopic = buildDeviceRpcSubscribeTopic(deviceId);
+                await mqttClient.subscribe(rpcSubscribeTopic);
+                log.info(node, `Subscribed to ${rpcSubscribeTopic}`);
 
                 // Listen for messages
                 mqttClient.on('mqtt-message', handleMqttMessage);

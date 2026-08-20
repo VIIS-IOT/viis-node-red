@@ -10,6 +10,7 @@ import {
   MQTT_TOPICS
 } from "./viis-telemetry-constants";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
 
 /** Extended node definition for viis-telemetry */
 export interface ViisTelemetryNodeDef extends NodeDef {
@@ -115,7 +116,7 @@ export class ViisTelemetryConfigManager {
   getMqttTopicConfig(deviceId: string): MqttTopicConfig {
     return {
       emqx: MQTT_TOPICS.EMQX_PATTERN.replace('{deviceId}', deviceId),
-      thingsboard: MQTT_TOPICS.THINGSBOARD,
+      thingsboard: buildDeviceTelemetryTopic(deviceId),
     };
   }
 

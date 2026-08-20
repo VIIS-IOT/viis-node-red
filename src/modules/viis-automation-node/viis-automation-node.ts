@@ -13,6 +13,11 @@ import {
     DeviceCredentials
 } from "./interfaces/types";
 import { Logger } from "./utils/logger";
+import {
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
+    buildDeviceRpcSubscribeTopic,
+} from "../../core/demeter-mqtt-topics";
 
 // Global flag to ensure error handlers are setup only once
 let globalErrorHandlersInitialized = false;
@@ -28,10 +33,9 @@ const ENV_KEYS = {
 // MQTT config defaults
 const MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: "mqtt.viis.tech",
-        DEFAULT_PORT: "1883",
+        DEFAULT_HOST: DEFAULT_MQTT_HOST,
+        DEFAULT_PORT: DEFAULT_MQTT_PORT,
         QOS: 1 as 0 | 1 | 2,
-        SUBSCRIBE_TOPIC: "v1/devices/me/rpc/request/+"
     }
 };
 
@@ -98,6 +102,7 @@ module.exports = function (RED: NodeAPI) {
                 // Initialize MQTT client configuration (ThingsBoard MQTT)
                 const mqttConfig: MqttConfig = {
                     broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                    deviceId,
                     clientId: `node-red-automation-${Math.random().toString(16).substring(2, 10)}`,
                     username: credentials.accessToken, // Use device access token
                     password: "",
@@ -105,8 +110,7 @@ module.exports = function (RED: NodeAPI) {
                     healthCheckInterval: 0 // Disable health check to prevent false positive reconnects
                 };
 
-                // Define MQTT topic for intent updates (use wildcard for subscription)
-                const subscribeTopic = MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC;
+                const subscribeTopic = buildDeviceRpcSubscribeTopic(deviceId);
 
                 logger.log(`MQTT config: ${mqttConfig.broker}, topic: ${subscribeTopic}`);
 

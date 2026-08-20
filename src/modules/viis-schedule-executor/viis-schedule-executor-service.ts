@@ -38,6 +38,7 @@ import {
     buildValveProgramOffCommand,
     mergeHoldingMaps,
 } from "./schedule-valve-program";
+import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
 
 // require('dotenv').config();
 
@@ -970,7 +971,9 @@ export class ScheduleService {
             const payloadString = JSON.stringify(payload);
 
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = buildDeviceTelemetryTopic(
+                this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown"
+            );
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
 
@@ -1062,7 +1065,9 @@ export class ScheduleService {
             const payloadString = JSON.stringify(telemetryData);
 
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = buildDeviceTelemetryTopic(
+                this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown"
+            );
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published schedule telemetry to ThingsBoard for ${schedule.name} (${action})`);
 
@@ -1163,7 +1168,9 @@ export class ScheduleService {
             const payloadString = JSON.stringify(telemetryPayload);
 
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = buildDeviceTelemetryTopic(
+                this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown"
+            );
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published audit log to ThingsBoard for schedule ${schedule.name} (${action})`);
 
@@ -1953,7 +1960,9 @@ export class ScheduleService {
             const payloadString = JSON.stringify(payload);
 
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = buildDeviceTelemetryTopic(
+                this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown"
+            );
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
 
@@ -2109,7 +2118,9 @@ export class ScheduleService {
 
         // Publish to ThingsBoard with retry
         try {
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = buildDeviceTelemetryTopic(
+                this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown"
+            );
             await this.executeWithExponentialBackoff(
                 () => thingsboardClient.publish(thingsboardTopic, payloadString),
                 maxRetries,
@@ -2203,7 +2214,9 @@ export class ScheduleService {
 
         // Try ThingsBoard
         try {
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = buildDeviceTelemetryTopic(
+                this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown"
+            );
             await this.executeWithExponentialBackoff(
                 () => thingsboardClient.publish(thingsboardTopic, payloadString),
                 maxRetries,

@@ -53,8 +53,9 @@ const auditLog = {
 };
 
 // Build output for viis-mqtt-client
+const deviceId = global.get("device_id") || "unknown";
 msg.payload = {
-    topic: "v1/devices/me/telemetry",
+    topic: `v1/device/${deviceId}/telemetry`,
     payload: JSON.stringify({ logs: auditLog })
 };
 

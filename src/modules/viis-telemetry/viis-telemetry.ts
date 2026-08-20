@@ -23,6 +23,7 @@ import {
 } from './viis-telemetry-processor';
 import { CONTEXT_KEYS, GLOBAL_CONTEXT_KEYS } from './viis-telemetry-constants';
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from "../../core/demeter-mqtt-topics";
 
 /**
  * Register viis-telemetry node with Node-RED
@@ -161,7 +162,7 @@ module.exports = function (RED: NodeAPI) {
             node.log(`Single-board mode`);
         }
         const localMqttConfig = createLocalMqttConfig(globalHelper, envConfig.deviceId);
-        const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
+        const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper, envConfig.deviceId);
         const mysqlConfig = createMySqlConfig(globalHelper);
 
         // Get clients from registry
@@ -336,9 +337,9 @@ module.exports = function (RED: NodeAPI) {
   /**
    * Create ThingsBoard MQTT configuration with validation
    */
-  function createThingsboardMqttConfig(globalHelper: GlobalContextHelper): MqttConfig {
-    const host = globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
-    const port = globalHelper.getEnvVar('THINGSBOARD_PORT', '1883');
+  function createThingsboardMqttConfig(globalHelper: GlobalContextHelper, deviceId: string): MqttConfig {
+    const host = globalHelper.getEnvVar('THINGSBOARD_HOST', DEFAULT_MQTT_HOST);
+    const port = globalHelper.getEnvVar('THINGSBOARD_PORT', DEFAULT_MQTT_PORT);
     const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
     const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
 
@@ -352,6 +353,7 @@ module.exports = function (RED: NodeAPI) {
 
     return {
       broker: `mqtt://${host}:${port}`,
+      deviceId,
       clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substring(2, 10)}`,
       username: deviceToken,
       password: password,

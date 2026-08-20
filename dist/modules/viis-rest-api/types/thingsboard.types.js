@@ -23,11 +23,11 @@ var RpcMethod;
  * ThingsBoard topic patterns
  */
 exports.THINGSBOARD_TOPICS = {
-    RPC_REQUEST: 'v1/devices/me/rpc/request',
-    RPC_RESPONSE: 'v1/devices/me/rpc/response',
-    TELEMETRY: 'v1/devices/me/telemetry',
-    ATTRIBUTES: 'v1/devices/me/attributes',
-    DEVICE_STATUS: 'v1/devices/me/attributes'
+    RPC_REQUEST: 'v1/device',
+    RPC_RESPONSE: 'v1/device',
+    TELEMETRY: 'v1/device',
+    ATTRIBUTES: 'v1/device',
+    DEVICE_STATUS: 'v1/device'
 };
 /**
  * Default RPC processing options

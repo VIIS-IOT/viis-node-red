@@ -10,6 +10,7 @@ import { MqttClientCore } from "../../../core/mqtt-client";
 import { ModbusCmd, TabiotSchedule, ConfigParameter } from "../common/types";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import { v4 as uuidv4 } from "uuid";
+import { buildDeviceTelemetryTopic } from "../../../core/demeter-mqtt-topics";
 
 export class ScheduleNotificationService {
     private node: Node;
@@ -67,7 +68,7 @@ export class ScheduleNotificationService {
     }
 
     private getThingsboardTopic(): string {
-        return "v1/devices/me/telemetry";
+        return buildDeviceTelemetryTopic(this.getDeviceId());
     }
 
     private getEmqxTopic(): string {

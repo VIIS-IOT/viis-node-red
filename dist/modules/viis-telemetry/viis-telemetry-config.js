@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ViisTelemetryConfigManager = void 0;
 const viis_telemetry_constants_1 = require("./viis-telemetry-constants");
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 /**
  * Configuration manager for viis-telemetry node
  */
@@ -46,7 +47,7 @@ class ViisTelemetryConfigManager {
     getMqttTopicConfig(deviceId) {
         return {
             emqx: viis_telemetry_constants_1.MQTT_TOPICS.EMQX_PATTERN.replace('{deviceId}', deviceId),
-            thingsboard: viis_telemetry_constants_1.MQTT_TOPICS.THINGSBOARD,
+            thingsboard: (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(deviceId),
         };
     }
     /**

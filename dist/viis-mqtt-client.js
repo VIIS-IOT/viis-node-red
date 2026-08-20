@@ -7,14 +7,13 @@ const device_1 = require("./core/device");
 const client_registry_1 = __importDefault(require("./core/client-registry"));
 const global_context_helper_1 = require("./ultils/global-context-helper");
 const mqtt_topic_matcher_1 = require("./core/mqtt-topic-matcher");
+const demeter_mqtt_topics_1 = require("./core/demeter-mqtt-topics");
 const dayjs_1 = __importDefault(require("dayjs"));
 const MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: "mqtt.viis.tech",
-        DEFAULT_PORT: "1883",
+        DEFAULT_HOST: demeter_mqtt_topics_1.DEFAULT_MQTT_HOST,
+        DEFAULT_PORT: demeter_mqtt_topics_1.DEFAULT_MQTT_PORT,
         QOS: 1,
-        PUBLISH_TOPIC: "v1/devices/me/telemetry",
-        SUBSCRIBE_TOPIC: "v1/devices/me/rpc/request/+"
     },
     INIT_TIMEOUT_MS: 30000,
     POLL_INTERVAL_MS: 100,
@@ -36,14 +35,15 @@ module.exports = function (RED) {
         let mqttClient = null;
         let mqttReady = false;
         let isSubscribed = false;
+        let topic = "";
         let statusHandler = null;
         let messageHandler = null;
         const pendingMessages = [];
         const backupLimit = config.backupLimit;
         // Determine topic based on mode and configuration
-        const topic = config.mode === "publish"
-            ? (config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC)
-            : (config.topic || MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC);
+        const resolveDefaultTopic = (deviceId) => config.mode === "publish"
+            ? (config.topic || (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(deviceId))
+            : (config.topic || (0, demeter_mqtt_topics_1.buildDeviceRpcSubscribeTopic)(deviceId));
         /**
          * Initialize MQTT connection with the given device credentials.
          * Called either immediately or after credentials become available.
@@ -51,8 +51,10 @@ module.exports = function (RED) {
         function initializeMqtt(device) {
             node.log(`Using device: ${device.id} for telemetry ${config.mode}`);
             if (config.protocol === "MQTT") {
+                topic = resolveDefaultTopic(device.id);
                 const mqttConfig = {
                     broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar('THINGSBOARD_PORT', MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                    deviceId: device.id,
                     clientId: `node-red-upload-${config.mode}-${Math.random().toString(16).substring(2, 10)}`,
                     username: device.accessToken,
                     password: "",
@@ -128,7 +130,7 @@ module.exports = function (RED) {
                         while (pendingMessages.length > 0) {
                             const queuedMsg = pendingMessages.shift();
                             try {
-                                const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
+                                const publishTopic = config.topic || (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(device.id);
                                 await mqttClient.publish(publishTopic, JSON.stringify(queuedMsg.payload));
                                 node.send({
                                     payload: {
@@ -227,7 +229,7 @@ module.exports = function (RED) {
                     return;
                 }
                 try {
-                    const publishTopic = config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC;
+                    const publishTopic = config.topic || (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)((selectedDevice === null || selectedDevice === void 0 ? void 0 : selectedDevice.id) || "");
                     await mqttClient.publish(publishTopic, JSON.stringify(msg.payload));
                     node.send({
                         payload: {
@@ -247,7 +249,7 @@ module.exports = function (RED) {
                         node.context().set(backupKey, {
                             ts: (0, dayjs_1.default)().valueOf(),
                             data: msg.payload,
-                            topic: config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC,
+                            topic: config.topic || (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)((selectedDevice === null || selectedDevice === void 0 ? void 0 : selectedDevice.id) || ""),
                         });
                         node.warn(`Message backed up to context: ${backupKey}`);
                     }

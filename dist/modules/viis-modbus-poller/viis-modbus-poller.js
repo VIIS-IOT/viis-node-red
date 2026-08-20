@@ -10,6 +10,7 @@ const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-con
 const config_resolver_1 = require("./services/config-resolver");
 const config_validator_1 = require("./services/config-validator");
 const poll_runner_1 = require("./services/poll-runner");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const DEFAULT_POLLER_OPTIONS = {
     maxGap: 5,
     maxCoilsPerRead: 64,
@@ -168,13 +169,13 @@ function buildTelemetryMessages(config, changedData, pollDurationMs) {
     const payload = Object.assign(Object.assign({}, changedData), { ts: Date.now(), _poll_duration_ms: pollDurationMs });
     return [
         {
-            topic: `v1/devices/me/telemetry/${config.deviceId}`,
+            topic: (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(config.deviceId),
             payload,
             qos: 0,
             retain: false,
         },
         {
-            topic: "v1/devices/me/telemetry",
+            topic: (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(config.deviceId),
             payload,
             qos: 0,
             retain: false,

@@ -9,6 +9,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_side_effects_1 = require("./schedule-side-effects");
 const uuid_1 = require("uuid");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 module.exports = function (RED) {
     function ScheduleExecutorNode(config) {
         RED.nodes.createNode(this, config);
@@ -234,7 +235,8 @@ module.exports = function (RED) {
         }
         // ThingsBoard MQTT configuration
         const thingsboardConfig = {
-            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", demeter_mqtt_topics_1.DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar("THINGSBOARD_PORT", demeter_mqtt_topics_1.DEFAULT_MQTT_PORT)}`,
+            deviceId: globalHelper.getEnvVar("DEVICE_ID", ""),
             clientId: `node-red-tb-${Math.random().toString(16).substring(2, 10)}`,
             username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
             password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),

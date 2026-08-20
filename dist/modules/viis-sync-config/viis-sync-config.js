@@ -51,10 +51,10 @@ const path = __importStar(require("path"));
 const axios_1 = __importDefault(require("axios"));
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 const resolve_backend_url_1 = require("../../ultils/resolve-backend-url");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const RPC_METHOD = 'sync-full-config';
-const TOPIC_RPC_REQUEST = 'v1/devices/me/rpc/request/+';
-const TB_DEFAULT_HOST = 'mqtt.viis.tech';
-const TB_DEFAULT_PORT = '1883';
+const TB_DEFAULT_HOST = demeter_mqtt_topics_1.DEFAULT_MQTT_HOST;
+const TB_DEFAULT_PORT = demeter_mqtt_topics_1.DEFAULT_MQTT_PORT;
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
 const CONFIGS_DIR = '/usr/src/app/env/configs';
@@ -109,6 +109,7 @@ module.exports = function (RED) {
                 const tbPort = globalHelper.getEnvVar('THINGSBOARD_PORT', TB_DEFAULT_PORT);
                 const mqttConfig = {
                     broker: `mqtt://${tbHost}:${tbPort}`,
+                    deviceId,
                     clientId: `node-red-sync-config-${Math.random().toString(16).substring(2, 10)}`,
                     username: accessToken,
                     password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
@@ -122,8 +123,9 @@ module.exports = function (RED) {
                     await mqttClient.waitForConnection(10000);
                 }
                 // Subscribe to RPC topic
-                await mqttClient.subscribe(TOPIC_RPC_REQUEST);
-                log.info(node, `Subscribed to ${TOPIC_RPC_REQUEST}`);
+                const rpcSubscribeTopic = (0, demeter_mqtt_topics_1.buildDeviceRpcSubscribeTopic)(deviceId);
+                await mqttClient.subscribe(rpcSubscribeTopic);
+                log.info(node, `Subscribed to ${rpcSubscribeTopic}`);
                 // Listen for messages
                 mqttClient.on('mqtt-message', handleMqttMessage);
                 node.status({ fill: 'green', shape: 'ring', text: 'Ready' });

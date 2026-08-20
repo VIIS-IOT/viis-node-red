@@ -20,6 +20,7 @@ const error_notification_service_1 = require("../../services/error-notification.
 const protection_manager_1 = require("./protection-manager");
 const protection_gate_service_1 = require("./services/protection-gate-service");
 const configService_1 = require("./services/configService");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const constants_1 = require("./constants");
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 module.exports = function (RED) {
@@ -68,7 +69,8 @@ module.exports = function (RED) {
                 const mqttBroker = "thingsboard"; // Default to ThingsBoard
                 const mqttConfig = mqttBroker === "thingsboard"
                     ? {
-                        broker: `mqtt://${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_HOST, "mqtt.viis.tech")}:${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PORT, "1883")}`,
+                        broker: `mqtt://${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_HOST, demeter_mqtt_topics_1.DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PORT, demeter_mqtt_topics_1.DEFAULT_MQTT_PORT)}`,
+                        deviceId,
                         clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
                         password: globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PASSWORD, ""),
@@ -81,9 +83,7 @@ module.exports = function (RED) {
                         password: globalHelper.getEnvVar(constants_1.ENV_KEYS.EMQX_PASSWORD, ""),
                         qos: 1,
                     };
-                publishTopic = mqttBroker === "thingsboard"
-                    ? `v1/devices/me/telemetry`
-                    : `v1/devices/me/telemetry/${deviceId}`;
+                publishTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(deviceId);
                 mqttClient = mqttBroker === "thingsboard"
                     ? await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node)
                     : await client_registry_1.default.getLocalMqttClient(mqttConfig, node);

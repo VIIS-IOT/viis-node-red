@@ -57,7 +57,7 @@ describe('ScheduleService - MQTT Integration for Config Parameters', () => {
             };
             await scheduleService.publishConfigUpdate(mockMqttClient, mockMqttClient, configParam);
             // Verify ThingsBoard publish
-            expect(mockMqttClient.publish).toHaveBeenCalledWith('v1/devices/me/telemetry', expect.stringContaining('"test_parameter":42'));
+            expect(mockMqttClient.publish).toHaveBeenCalledWith('v1/device/test-device-001/telemetry', expect.stringContaining('"test_parameter":42'));
             // Verify EMQX publish (device ID may be UUID or test-device-001)
             expect(mockMqttClient.publish).toHaveBeenCalledWith(expect.stringMatching(/viis\/things\/v2\/.+\/telemetry/), expect.stringContaining('"test_parameter":42'));
             // Verify payload structure

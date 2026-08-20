@@ -3,6 +3,7 @@
  * Centralized configuration and magic numbers
  */
 
+import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from "../../core/demeter-mqtt-topics";
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 
 // Context keys for storing data
@@ -25,10 +26,8 @@ export const DEBOUNCE_CONFIG = {
 // MQTT configuration defaults
 export const MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: "mqtt.viis.tech",
-        DEFAULT_PORT: "1883",
-        SUBSCRIBE_TOPIC: "v1/devices/me/rpc/request/+",
-        PUBLISH_TOPIC: "v1/devices/me/telemetry",
+        DEFAULT_HOST: DEFAULT_MQTT_HOST,
+        DEFAULT_PORT: DEFAULT_MQTT_PORT,
         QOS: 1,
     },
     LOCAL: {

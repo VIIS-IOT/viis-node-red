@@ -19,6 +19,11 @@ import { ProtectionGateService } from "./services/protection-gate-service";
 import { ConfigService } from "./services/configService";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import {
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
+    buildDeviceTelemetryTopic,
+} from "../../core/demeter-mqtt-topics";
+import {
     CONTEXT_KEYS,
     ENV_KEYS,
     MODBUS_CONFIG,
@@ -91,7 +96,8 @@ module.exports = function (RED: NodeAPI) {
 
                 const mqttConfig: MqttConfig = mqttBroker === "thingsboard"
                     ? {
-                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, "mqtt.viis.tech")}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, "1883")}`,
+                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, DEFAULT_MQTT_PORT)}`,
+                        deviceId,
                         clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
                         password: globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PASSWORD, ""),
@@ -105,9 +111,7 @@ module.exports = function (RED: NodeAPI) {
                         qos: 1,
                     };
 
-                publishTopic = mqttBroker === "thingsboard"
-                    ? `v1/devices/me/telemetry`
-                    : `v1/devices/me/telemetry/${deviceId}`;
+                publishTopic = buildDeviceTelemetryTopic(deviceId);
 
                 mqttClient = mqttBroker === "thingsboard"
                     ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)

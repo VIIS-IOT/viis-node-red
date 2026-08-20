@@ -52,7 +52,6 @@ export const DEFAULT_REGISTER_CONFIG = {
 
 /** MQTT topics */
 export const MQTT_TOPICS = {
-  THINGSBOARD: 'v1/devices/me/telemetry',
   EMQX_PATTERN: 'viis/things/v2/{deviceId}/telemetry',
 } as const;
 

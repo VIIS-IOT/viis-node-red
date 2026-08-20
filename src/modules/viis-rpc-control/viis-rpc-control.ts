@@ -15,6 +15,10 @@ import { ValidationService } from "./services/validationService";
 import { Logger } from "./utils/logger";
 import { ScalingUtils } from "./utils/scaling";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import {
+    buildDeviceRpcSubscribeTopic,
+    buildDeviceTelemetryTopic,
+} from "../../core/demeter-mqtt-topics";
 import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
 import {
     MQTT_CONFIG,
@@ -172,6 +176,7 @@ module.exports = function (RED: NodeAPI) {
                 const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
                     ? {
                         broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                        deviceId,
                         clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
                         password: globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PASSWORD, ""),
@@ -187,12 +192,8 @@ module.exports = function (RED: NodeAPI) {
 
                 // Define MQTT topics
                 // Always use wildcard for RPC requests to receive all RPC commands
-                const subscribeTopic = config.mqttBroker === "thingsboard"
-                    ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC  // "v1/devices/me/rpc/request/+"
-                    : MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC; // Also use wildcard for local MQTT
-                const publishTopic = config.mqttBroker === "thingsboard"
-                    ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
-                    : `v1/devices/me/telemetry/${deviceId}`;
+                const subscribeTopic = buildDeviceRpcSubscribeTopic(deviceId);
+                const publishTopic = buildDeviceTelemetryTopic(deviceId);
 
                 // Initialize clients with better error handling
                 let modbusClient: any;

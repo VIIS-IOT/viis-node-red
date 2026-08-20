@@ -222,8 +222,8 @@ describe('ScheduleService - End-to-End Tests with Unmapped Keys', () => {
             // custom_setting and debug_enabled are truthy, iri_time is auto-added
             expect(mockMqttClient.publish).toHaveBeenCalledTimes(4);
             // Verify ThingsBoard publishes
-            expect(mockMqttClient.publish).toHaveBeenCalledWith('v1/devices/me/telemetry', expect.stringContaining('"custom_setting":"test_value"'));
-            expect(mockMqttClient.publish).toHaveBeenCalledWith('v1/devices/me/telemetry', expect.stringContaining('"debug_enabled":true'));
+            expect(mockMqttClient.publish).toHaveBeenCalledWith('v1/device/test-device-001/telemetry', expect.stringContaining('"custom_setting":"test_value"'));
+            expect(mockMqttClient.publish).toHaveBeenCalledWith('v1/device/test-device-001/telemetry', expect.stringContaining('"debug_enabled":true'));
             // Verify EMQX publishes
             expect(mockMqttClient.publish).toHaveBeenCalledWith('viis/things/v2/test-device-001/telemetry', expect.stringContaining('"custom_setting":"test_value"'));
         });

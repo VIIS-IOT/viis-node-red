@@ -2,9 +2,15 @@ import { Node } from "node-red";
 import mqtt, { MqttClient, IClientOptions, IClientPublishOptions } from "mqtt";
 import { EventEmitter } from "events";
 import { ConnectionMonitor } from "./connection-monitor";
+import {
+    buildDeviceAttributesTopic,
+    buildDeviceTelemetryTopic,
+} from "./demeter-mqtt-topics";
 
 export interface MqttConfig {
     broker?: string;
+    /** Virtual device UUID — required for Demeter topic ACL / LWT. */
+    deviceId?: string;
     clientId?: string;
     username?: string;
     password?: string;
@@ -124,14 +130,16 @@ export class MqttClientCore extends EventEmitter {
             reconnectPeriod: 0, // Disable auto-reconnect, we handle it manually
             connectTimeout: this.config.connectTimeout,
             keepalive: this.config.keepalive,
-            clean: true, // Clean session for ThingsBoard compatibility
-            will: {
-                topic: `v1/devices/me/attributes`,
+            clean: true,
+        };
+        if (this.config.deviceId) {
+            options.will = {
+                topic: buildDeviceAttributesTopic(this.config.deviceId),
                 payload: JSON.stringify({ status: "offline" }),
                 qos: 1,
-                retain: false
-            }
-        };
+                retain: false,
+            };
+        }
 
         try {
             this.client = mqtt.connect(this.config.broker!, options);
@@ -400,9 +408,10 @@ export class MqttClientCore extends EventEmitter {
             clientId: this.config.clientId
         };
 
+        if (!this.config.deviceId) return;
         try {
             await this.publishMessage(
-                "v1/devices/me/attributes",
+                buildDeviceAttributesTopic(this.config.deviceId),
                 JSON.stringify(statusMessage),
                 { qos: 1, retain: false }
             );
@@ -421,8 +430,9 @@ export class MqttClientCore extends EventEmitter {
             memory: process.memoryUsage().heapUsed
         };
 
+        if (!this.config.deviceId) return;
         this.publishMessage(
-            "v1/devices/me/telemetry",
+            buildDeviceTelemetryTopic(this.config.deviceId),
             JSON.stringify(healthData),
             { qos: 0, retain: false }
         ).catch((error: Error) => {

@@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const cron_1 = require("cron");
 const FlowAccumulationService_1 = require("../../services/MarineIoT/FlowAccumulationService");
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const dataSource_1 = require("../../orm/dataSource");
 module.exports = function (RED) {
     /**
@@ -336,9 +337,9 @@ module.exports = function (RED) {
         /**
          * Create ThingsBoard MQTT configuration
          */
-        function createThingsboardMqttConfig(globalHelper) {
-            const host = globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
-            const port = globalHelper.getEnvVar('THINGSBOARD_PORT', '1883');
+        function createThingsboardMqttConfig(globalHelper, deviceId) {
+            const host = globalHelper.getEnvVar('THINGSBOARD_HOST', demeter_mqtt_topics_1.DEFAULT_MQTT_HOST);
+            const port = globalHelper.getEnvVar('THINGSBOARD_PORT', demeter_mqtt_topics_1.DEFAULT_MQTT_PORT);
             const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
             const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
             if (!deviceToken || deviceToken.trim() === '') {
@@ -346,6 +347,7 @@ module.exports = function (RED) {
             }
             return {
                 broker: `mqtt://${host}:${port}`,
+                deviceId,
                 clientId: `node-red-flow-accumulation-${Math.random().toString(16).substring(2, 10)}`,
                 username: deviceToken,
                 password: password,

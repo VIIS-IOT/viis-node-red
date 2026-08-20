@@ -55,7 +55,7 @@ function buildProcessor() {
     };
     const processor = new viis_telemetry_processor_1.ViisTelemetryProcessor(node, nodeContext, flowContext, localMqtt, tbMqtt, {
         emqxTopic: 'viis/test/telemetry',
-        thingsboardTopic: 'v1/devices/me/telemetry',
+        thingsboardTopic: 'v1/device/test-device/telemetry',
         debugLogKey: viis_telemetry_constants_1.CONTEXT_KEYS.DEBUG_LOG,
         thresholdConfigKey: viis_telemetry_constants_1.CONTEXT_KEYS.THRESHOLD_CONFIG,
     }, { coil: 0, input: 0, holding: 0 } // disable periodic snapshots in these tests

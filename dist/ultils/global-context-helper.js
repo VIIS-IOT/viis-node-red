@@ -54,6 +54,7 @@ const ENV_TO_GLOBAL_MAPPING = {
     'THINGSBOARD_PASSWORD': 'thingsboard_password',
     'THINGSBOARD_URL': 'thingsboard_url',
     'THINGSBOARD_MQTT_BROKER': 'thingsboard_mqtt_broker',
+    'IOT_DEVICE_TOPIC_BASE': 'iot_device_topic_base',
     // EMQX configuration
     'EMQX_HOST': 'emqx_host',
     'EMQX_PORT': 'emqx_port',

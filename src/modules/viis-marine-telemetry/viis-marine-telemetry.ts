@@ -12,6 +12,12 @@ import { ViisMarinetTelemetryProcessor } from './viis-marine-telemetry-processor
 import { createDataSource } from '../../orm/dataSource';
 import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent, DH6400DebugEvent } from '../../services/MarineIoT/DH6400PollingService';
 import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
+import {
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
+    buildDeviceTelemetryTopic,
+    buildMqttBrokerUrl,
+} from "../../core/demeter-mqtt-topics";
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
@@ -70,7 +76,7 @@ module.exports = function (RED: NodeAPI) {
                 node.log(`[Marine] Device ID: ${deviceId}`);
 
                 // Create MQTT clients (after env-loader has completed)
-                const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
+                const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper, deviceId);
                 thingsboardMqttClient = await ClientRegistry.getThingsboardMqttClient(thingsboardMqttConfig, node);
 
                 if (!thingsboardMqttClient) {
@@ -139,7 +145,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Setup DH6400 event handlers
                 if (dh6400PollingService && marineProcessor) {
-                    setupDH6400EventHandlers(node, dh6400PollingService, marineProcessor, thingsboardMqttClient, publishState);
+                    setupDH6400EventHandlers(node, dh6400PollingService, marineProcessor, thingsboardMqttClient, publishState, deviceId);
                 }
 
                 // Setup input message handler
@@ -175,8 +181,11 @@ module.exports = function (RED: NodeAPI) {
     /**
      * Create ThingsBoard MQTT configuration
      */
-    function createThingsboardMqttConfig(globalHelper: GlobalContextHelper): MqttConfig {
-        const broker = globalHelper.getEnvVar('THINGSBOARD_MQTT_BROKER', 'mqtt://localhost:1883');
+    function createThingsboardMqttConfig(globalHelper: GlobalContextHelper, deviceId: string): MqttConfig {
+        const broker = globalHelper.getEnvVar(
+            'THINGSBOARD_MQTT_BROKER',
+            buildMqttBrokerUrl(DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT)
+        );
         const username = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
 
         console.log('[Marine] MQTT Config - Broker:', broker);
@@ -184,6 +193,7 @@ module.exports = function (RED: NodeAPI) {
 
         return {
             broker,
+            deviceId,
             username,
             password: '',
             clientId: `thingsboard_${Date.now()}`,
@@ -233,7 +243,8 @@ module.exports = function (RED: NodeAPI) {
             tfsPublishInterval: number;
             latestFlowData: any;
             latestTfsData: any;
-        }
+        },
+        deviceId: string
     ): void {
         // Handle DH6400 telemetry data
         dh6400Service.on('telemetry-data', async (event: DH6400TelemetryEvent) => {
@@ -282,7 +293,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Publish to ThingsBoard if there's data to send
                 if (shouldPublish && Object.keys(telemetryPayload).length > 0) {
-                    const topic = 'v1/devices/me/telemetry';
+                    const topic = buildDeviceTelemetryTopic(deviceId);
                     
                     // Wrap publish in try-catch to prevent crash when network is down
                     try {

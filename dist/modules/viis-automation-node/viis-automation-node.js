@@ -11,6 +11,7 @@ const processingService_1 = require("./services/processingService");
 const mqttService_1 = require("./services/mqttService");
 const automationHandler_1 = require("./handlers/automationHandler");
 const logger_1 = require("./utils/logger");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 // Global flag to ensure error handlers are setup only once
 let globalErrorHandlersInitialized = false;
 // Environment keys
@@ -23,10 +24,9 @@ const ENV_KEYS = {
 // MQTT config defaults
 const MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: "mqtt.viis.tech",
-        DEFAULT_PORT: "1883",
+        DEFAULT_HOST: demeter_mqtt_topics_1.DEFAULT_MQTT_HOST,
+        DEFAULT_PORT: demeter_mqtt_topics_1.DEFAULT_MQTT_PORT,
         QOS: 1,
-        SUBSCRIBE_TOPIC: "v1/devices/me/rpc/request/+"
     }
 };
 module.exports = function (RED) {
@@ -79,14 +79,14 @@ module.exports = function (RED) {
                 // Initialize MQTT client configuration (ThingsBoard MQTT)
                 const mqttConfig = {
                     broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                    deviceId,
                     clientId: `node-red-automation-${Math.random().toString(16).substring(2, 10)}`,
                     username: credentials.accessToken, // Use device access token
                     password: "",
                     qos: MQTT_CONFIG.THINGSBOARD.QOS,
                     healthCheckInterval: 0 // Disable health check to prevent false positive reconnects
                 };
-                // Define MQTT topic for intent updates (use wildcard for subscription)
-                const subscribeTopic = MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC;
+                const subscribeTopic = (0, demeter_mqtt_topics_1.buildDeviceRpcSubscribeTopic)(deviceId);
                 logger.log(`MQTT config: ${mqttConfig.broker}, topic: ${subscribeTopic}`);
                 // Initialize MQTT client from ClientRegistry (ThingsBoard)
                 let mqttClient;

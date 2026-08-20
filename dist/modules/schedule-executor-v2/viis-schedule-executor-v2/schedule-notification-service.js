@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleNotificationService = void 0;
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const uuid_1 = require("uuid");
+const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 class ScheduleNotificationService {
     constructor(node, debugEnable = false) {
         this.PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorV2PublishedValueCache";
@@ -54,7 +55,7 @@ class ScheduleNotificationService {
         return this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown";
     }
     getThingsboardTopic() {
-        return "v1/devices/me/telemetry";
+        return (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.getDeviceId());
     }
     getEmqxTopic() {
         return `viis/things/v2/${this.getDeviceId()}/telemetry`;

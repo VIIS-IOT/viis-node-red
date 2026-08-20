@@ -44,7 +44,6 @@ exports.DEFAULT_REGISTER_CONFIG = {
 };
 /** MQTT topics */
 exports.MQTT_TOPICS = {
-    THINGSBOARD: 'v1/devices/me/telemetry',
     EMQX_PATTERN: 'viis/things/v2/{deviceId}/telemetry',
 };
 /** Context keys for flow storage */

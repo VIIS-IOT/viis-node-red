@@ -8,6 +8,7 @@ exports.CoilTrackerService = void 0;
 const dataSource_1 = require("../../orm/dataSource");
 const TabiotCoilTrackingSession_1 = require("../../orm/entities/coil-tracking/TabiotCoilTrackingSession");
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 class CoilTrackerService {
     constructor(node, globalHelper, mysqlClient, mqttClient) {
         this.node = node;
@@ -240,7 +241,7 @@ class CoilTrackerService {
     async publishMqttEvent(event) {
         var _a, _b, _c, _d;
         try {
-            const topic = `v1/devices/me/telemetry/${this.deviceId}`;
+            const topic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.deviceId);
             const now = new Date();
             const elapsedSeconds = Math.floor((now.getTime() - event.startTime.getTime()) / 1000);
             // Calculate delta between start and end snapshots

@@ -45,8 +45,8 @@ exports.MQTT_CONFIG = {
         RECONNECT_PERIOD: 5000
     },
     THINGSBOARD: {
-        DEFAULT_HOST: "mqtt.viis.tech",
-        DEFAULT_PORT: "1883",
+        DEFAULT_HOST: "host.docker.internal",
+        DEFAULT_PORT: "11883",
         QOS: 1,
         KEEPALIVE: 60,
         CONNECT_TIMEOUT: 30000,

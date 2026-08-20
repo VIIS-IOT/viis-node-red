@@ -3,6 +3,11 @@ import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { ModbusData } from "../../core/modbus-client";
 import { MqttConfig, MqttClientCore, MqttMessage } from "../../core/mqtt-client";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import {
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
+    buildDeviceTelemetryTopic,
+} from "../../core/demeter-mqtt-topics";
 
 interface ViisRpcControlFromInputNodeDef extends NodeDef {
     configKeys: string;
@@ -189,7 +194,8 @@ module.exports = function (RED: NodeAPI) {
         // MQTT config from global context
         const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
             ? {
-                broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech')}:${globalHelper.getNumericEnvVar('THINGSBOARD_PORT', 1883)}`,
+                broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', DEFAULT_MQTT_HOST)}:${globalHelper.getNumericEnvVar('THINGSBOARD_PORT', Number(DEFAULT_MQTT_PORT))}`,
+                deviceId,
                 clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substr(2, 8)}`,
                 username: globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', ''),
                 password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
@@ -203,9 +209,7 @@ module.exports = function (RED: NodeAPI) {
                 qos: 1,
             };
             
-        const publishTopic = config.mqttBroker === "thingsboard"
-            ? "v1/devices/me/telemetry"
-            : `v1/devices/me/telemetry/${deviceId}`;
+        const publishTopic = buildDeviceTelemetryTopic(deviceId);
             
         // Lấy clients  
         let modbusClient;

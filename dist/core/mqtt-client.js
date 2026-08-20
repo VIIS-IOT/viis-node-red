@@ -7,6 +7,7 @@ exports.MqttClientCore = void 0;
 const mqtt_1 = __importDefault(require("mqtt"));
 const events_1 = require("events");
 const connection_monitor_1 = require("./connection-monitor");
+const demeter_mqtt_topics_1 = require("./demeter-mqtt-topics");
 // Enhanced MQTT Client with Google IoT standards compliance
 class MqttClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -60,14 +61,16 @@ class MqttClientCore extends events_1.EventEmitter {
             reconnectPeriod: 0, // Disable auto-reconnect, we handle it manually
             connectTimeout: this.config.connectTimeout,
             keepalive: this.config.keepalive,
-            clean: true, // Clean session for ThingsBoard compatibility
-            will: {
-                topic: `v1/devices/me/attributes`,
+            clean: true,
+        };
+        if (this.config.deviceId) {
+            options.will = {
+                topic: (0, demeter_mqtt_topics_1.buildDeviceAttributesTopic)(this.config.deviceId),
                 payload: JSON.stringify({ status: "offline" }),
                 qos: 1,
-                retain: false
-            }
-        };
+                retain: false,
+            };
+        }
         try {
             this.client = mqtt_1.default.connect(this.config.broker, options);
             this.setupEventHandlers();
@@ -288,8 +291,10 @@ class MqttClientCore extends events_1.EventEmitter {
             timestamp: Date.now(),
             clientId: this.config.clientId
         };
+        if (!this.config.deviceId)
+            return;
         try {
-            await this.publishMessage("v1/devices/me/attributes", JSON.stringify(statusMessage), { qos: 1, retain: false });
+            await this.publishMessage((0, demeter_mqtt_topics_1.buildDeviceAttributesTopic)(this.config.deviceId), JSON.stringify(statusMessage), { qos: 1, retain: false });
         }
         catch (error) {
             this.node.warn(`Failed to publish device status: ${error.message}`);
@@ -304,7 +309,9 @@ class MqttClientCore extends events_1.EventEmitter {
             uptime: process.uptime(),
             memory: process.memoryUsage().heapUsed
         };
-        this.publishMessage("v1/devices/me/telemetry", JSON.stringify(healthData), { qos: 0, retain: false }).catch((error) => {
+        if (!this.config.deviceId)
+            return;
+        this.publishMessage((0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.config.deviceId), JSON.stringify(healthData), { qos: 0, retain: false }).catch((error) => {
             // Don't trigger reconnection on health check failure
             // Health check failures can be false positives and cause unnecessary reconnects
             this.node.warn(`Health check failed: ${error.message}`);

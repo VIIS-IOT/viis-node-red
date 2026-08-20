@@ -15,6 +15,7 @@ const typeorm_1 = require("typeorm");
 const viis_schedule_executor_service_1 = require("../../viis-schedule-executor/viis-schedule-executor-service");
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
+const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 class ScheduleHandler {
     constructor(dbService, node) {
         this.node = node;
@@ -304,7 +305,8 @@ class ScheduleHandler {
                     try {
                         // Create MQTT configs
                         const thingsboardConfig = {
-                            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+                            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", demeter_mqtt_topics_1.DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar("THINGSBOARD_PORT", demeter_mqtt_topics_1.DEFAULT_MQTT_PORT)}`,
+                            deviceId: globalHelper.getEnvVar("DEVICE_ID", ""),
                             clientId: `node-red-tb-api-${Math.random().toString(16).substring(2, 10)}`,
                             username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
                             password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),

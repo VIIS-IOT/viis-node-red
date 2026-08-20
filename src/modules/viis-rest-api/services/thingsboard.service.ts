@@ -23,13 +23,13 @@ import {
     RpcExecutionResult,
     RpcProcessingContext,
     TypeDetectionResult,
-    THINGSBOARD_TOPICS,
     DEFAULT_RPC_OPTIONS,
     DEFAULT_RETRY_CONFIG,
     ThingsBoardConfig,
     RpcValidationResult
 } from '../types/thingsboard.types';
 import { ThingsBoardRpcRequestDto, RpcExecutionResultDto } from '../dto/thingsboard.dto';
+import { buildDeviceRpcTopic } from '../../../core/demeter-mqtt-topics';
 import { ScheduleActivationService, UserContext } from './schedule-activation.service';
 
 /**
@@ -367,7 +367,7 @@ export class ThingsBoardService extends BaseService {
      */
     private buildMqttTopic(deviceId: string, method: string): string {
         // Use ThingsBoard RPC request topic pattern
-        return `${THINGSBOARD_TOPICS.RPC_REQUEST}/${deviceId}`;
+        return buildDeviceRpcTopic(deviceId);
     }
 
     /**

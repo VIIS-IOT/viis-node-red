@@ -11,6 +11,7 @@ import { TabiotFlowAccumulation } from "../../orm/entities/flow-accumulation/Tab
 import { MqttClientCore } from "../../core/mqtt-client";
 import ClientRegistry from "../../core/client-registry";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
+import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from "../../core/demeter-mqtt-topics";
 import { createDataSource } from "../../orm/dataSource";
 import {
     ViisFlowAccumulationNodeDef,
@@ -405,9 +406,9 @@ module.exports = function (RED: NodeAPI) {
         /**
          * Create ThingsBoard MQTT configuration
          */
-        function createThingsboardMqttConfig(globalHelper: GlobalContextHelper) {
-            const host = globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
-            const port = globalHelper.getEnvVar('THINGSBOARD_PORT', '1883');
+        function createThingsboardMqttConfig(globalHelper: GlobalContextHelper, deviceId: string) {
+            const host = globalHelper.getEnvVar('THINGSBOARD_HOST', DEFAULT_MQTT_HOST);
+            const port = globalHelper.getEnvVar('THINGSBOARD_PORT', DEFAULT_MQTT_PORT);
             const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
             const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
 
@@ -417,6 +418,7 @@ module.exports = function (RED: NodeAPI) {
 
             return {
                 broker: `mqtt://${host}:${port}`,
+                deviceId,
                 clientId: `node-red-flow-accumulation-${Math.random().toString(16).substring(2, 10)}`,
                 username: deviceToken,
                 password: password,

@@ -72,7 +72,7 @@ describe('ScheduleService - MQTT Integration for Config Parameters', () => {
 
             // Verify ThingsBoard publish
             expect(mockMqttClient.publish).toHaveBeenCalledWith(
-                'v1/devices/me/telemetry',
+                'v1/device/test-device-001/telemetry',
                 expect.stringContaining('"test_parameter":42')
             );
 

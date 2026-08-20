@@ -14,6 +14,7 @@ const validationService_1 = require("./services/validationService");
 const logger_1 = require("./utils/logger");
 const scaling_1 = require("./utils/scaling");
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const constants_1 = require("./constants");
 module.exports = function (RED) {
     function ViisRpcControlNode(config) {
@@ -143,6 +144,7 @@ module.exports = function (RED) {
                 const mqttConfig = config.mqttBroker === "thingsboard"
                     ? {
                         broker: `mqtt://${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_HOST, constants_1.MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PORT, constants_1.MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                        deviceId,
                         clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),
                         password: globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PASSWORD, ""),
@@ -157,12 +159,8 @@ module.exports = function (RED) {
                     };
                 // Define MQTT topics
                 // Always use wildcard for RPC requests to receive all RPC commands
-                const subscribeTopic = config.mqttBroker === "thingsboard"
-                    ? constants_1.MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC // "v1/devices/me/rpc/request/+"
-                    : constants_1.MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC; // Also use wildcard for local MQTT
-                const publishTopic = config.mqttBroker === "thingsboard"
-                    ? constants_1.MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
-                    : `v1/devices/me/telemetry/${deviceId}`;
+                const subscribeTopic = (0, demeter_mqtt_topics_1.buildDeviceRpcSubscribeTopic)(deviceId);
+                const publishTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(deviceId);
                 // Initialize clients with better error handling
                 let modbusClient;
                 let mqttClient;

@@ -18,6 +18,7 @@ import { DataSourceManager } from "../../orm/dataSource";
 import { TabiotCoilTrackingSession } from "../../orm/entities/coil-tracking/TabiotCoilTrackingSession";
 import { Repository } from "typeorm";
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
+import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
 
 export class CoilTrackerService {
     private activeSessions: Map<string, TrackingSession> = new Map();
@@ -285,7 +286,7 @@ export class CoilTrackerService {
      */
     private async publishMqttEvent(event: StateChangeEvent): Promise<void> {
         try {
-            const topic = `v1/devices/me/telemetry/${this.deviceId}`;
+            const topic = buildDeviceTelemetryTopic(this.deviceId);
             const now = new Date();
             const elapsedSeconds = Math.floor((now.getTime() - event.startTime.getTime()) / 1000);
 

@@ -29,6 +29,7 @@ const constants_1 = require("../constants");
 const container_setup_1 = require("../container/container.setup");
 const circuit_breaker_1 = require("../utils/circuit-breaker");
 const thingsboard_types_1 = require("../types/thingsboard.types");
+const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 const schedule_activation_service_1 = require("./schedule-activation.service");
 /**
  * ThingsBoard RPC service class
@@ -311,7 +312,7 @@ let ThingsBoardService = class ThingsBoardService extends base_service_1.BaseSer
      */
     buildMqttTopic(deviceId, method) {
         // Use ThingsBoard RPC request topic pattern
-        return `${thingsboard_types_1.THINGSBOARD_TOPICS.RPC_REQUEST}/${deviceId}`;
+        return (0, demeter_mqtt_topics_1.buildDeviceRpcTopic)(deviceId);
     }
     /**
      * Publish telemetry data to MQTT broker with Circuit Breaker protection

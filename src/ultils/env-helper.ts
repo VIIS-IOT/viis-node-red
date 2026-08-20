@@ -104,11 +104,11 @@ export function loadMqttServerConfig(
 ): { host: string; port: number } {
   const host = providedUrl && providedUrl.trim() !== ''
     ? providedUrl
-    : getEnvVar(context, 'MQTT_SERVER_URL', 'mqtt.viis.tech');
+    : getEnvVar(context, 'MQTT_SERVER_URL', 'host.docker.internal');
 
   const port = providedPort && providedPort > 0
     ? providedPort
-    : getEnvVarInt(context, 'THINGSBOARD_PORT', 1883);
+    : getEnvVarInt(context, 'THINGSBOARD_PORT', 11883);
 
   return { host, port };
 }

@@ -14,6 +14,7 @@ const viis_telemetry_polling_service_1 = require("./viis-telemetry-polling-servi
 const viis_telemetry_processor_1 = require("./viis-telemetry-processor");
 const viis_telemetry_constants_1 = require("./viis-telemetry-constants");
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 /**
  * Register viis-telemetry node with Node-RED
  */
@@ -135,7 +136,7 @@ module.exports = function (RED) {
                     node.log(`Single-board mode`);
                 }
                 const localMqttConfig = createLocalMqttConfig(globalHelper, envConfig.deviceId);
-                const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper);
+                const thingsboardMqttConfig = createThingsboardMqttConfig(globalHelper, envConfig.deviceId);
                 const mysqlConfig = createMySqlConfig(globalHelper);
                 // Get clients from registry
                 let modbusClient;
@@ -259,9 +260,9 @@ module.exports = function (RED) {
     /**
      * Create ThingsBoard MQTT configuration with validation
      */
-    function createThingsboardMqttConfig(globalHelper) {
-        const host = globalHelper.getEnvVar('THINGSBOARD_HOST', 'mqtt.viis.tech');
-        const port = globalHelper.getEnvVar('THINGSBOARD_PORT', '1883');
+    function createThingsboardMqttConfig(globalHelper, deviceId) {
+        const host = globalHelper.getEnvVar('THINGSBOARD_HOST', demeter_mqtt_topics_1.DEFAULT_MQTT_HOST);
+        const port = globalHelper.getEnvVar('THINGSBOARD_PORT', demeter_mqtt_topics_1.DEFAULT_MQTT_PORT);
         const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
         const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
         // Validate critical configuration
@@ -272,6 +273,7 @@ module.exports = function (RED) {
         console.log(`[THINGSBOARD-CONFIG] Host: ${host}:${port}, Token: ${deviceToken.substring(0, 8)}...`);
         return {
             broker: `mqtt://${host}:${port}`,
+            deviceId,
             clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substring(2, 10)}`,
             username: deviceToken,
             password: password,

@@ -61,6 +61,7 @@ const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_valve_program_1 = require("./schedule-valve-program");
+const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 // require('dotenv').config();
 /**
  * Configuration parameter keys that should be excluded from command overlap checking.
@@ -888,7 +889,7 @@ let ScheduleService = class ScheduleService {
             const payload = { "active_schedule": JSON.stringify(active_schedule) };
             const payloadString = JSON.stringify(payload);
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown");
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
             // Publish to EMQX local
@@ -961,7 +962,7 @@ let ScheduleService = class ScheduleService {
             }
             const payloadString = JSON.stringify(telemetryData);
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown");
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published schedule telemetry to ThingsBoard for ${schedule.name} (${action})`);
             // Publish to EMQX local
@@ -1042,7 +1043,7 @@ let ScheduleService = class ScheduleService {
             };
             const payloadString = JSON.stringify(telemetryPayload);
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown");
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published audit log to ThingsBoard for schedule ${schedule.name} (${action})`);
             // Publish to EMQX local
@@ -1760,7 +1761,7 @@ let ScheduleService = class ScheduleService {
             };
             const payloadString = JSON.stringify(payload);
             // Publish to ThingsBoard
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown");
             await thingsboardClient.publish(thingsboardTopic, payloadString);
             this.debugLog(`Published config update to ThingsBoard: ${configParam.key}=${configParam.value}`);
             // Publish to EMQX local
@@ -1867,7 +1868,7 @@ let ScheduleService = class ScheduleService {
         }
         // Publish to ThingsBoard with retry
         try {
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown");
             await this.executeWithExponentialBackoff(() => thingsboardClient.publish(thingsboardTopic, payloadString), maxRetries, baseDelay, 30000, useExponentialBackoff);
             thingsboardSuccess = true;
             this.debugLog(`Published MQTT notification to ThingsBoard for ${schedule.name}`);
@@ -1937,7 +1938,7 @@ let ScheduleService = class ScheduleService {
         let success = false;
         // Try ThingsBoard
         try {
-            const thingsboardTopic = "v1/devices/me/telemetry";
+            const thingsboardTopic = (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "unknown") : "unknown");
             await this.executeWithExponentialBackoff(() => thingsboardClient.publish(thingsboardTopic, payloadString), maxRetries, baseDelay);
             success = true;
         }
