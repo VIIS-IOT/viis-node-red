@@ -4,7 +4,7 @@
  * Centralized configuration and magic numbers
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
+exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.FERTIGATION_KEY_DELAY_MS = exports.WATER_HAMMER_DELAY_MS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
@@ -162,6 +162,8 @@ exports.STATUS_MESSAGES = {
     PROCESSING_RPC_INPUT: "Processing RPC input",
     RPC_INPUT_ERROR: "RPC input error",
 };
+exports.WATER_HAMMER_DELAY_MS = 7000;
+exports.FERTIGATION_KEY_DELAY_MS = 100;
 // Default values
 exports.DEFAULTS = {
     DEVICE_ID: "unknown",

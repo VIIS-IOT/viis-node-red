@@ -8,6 +8,7 @@ const client_registry_1 = __importDefault(require("../../core/client-registry"))
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_side_effects_1 = require("./schedule-side-effects");
+const schedule_tick_guard_1 = require("./schedule-tick-guard");
 const uuid_1 = require("uuid");
 module.exports = function (RED) {
     function ScheduleExecutorNode(config) {
@@ -82,6 +83,12 @@ module.exports = function (RED) {
             if (!globalContext.get("configKeyValues")) {
                 globalContext.set("configKeyValues", {});
             }
+        }
+        if (isStartupRecovery) {
+            (0, schedule_tick_guard_1.clearAllScheduleTransitions)(globalContext);
+        }
+        else if (!globalContext.get(schedule_tick_guard_1.SCHEDULE_IN_FLIGHT_KEY)) {
+            globalContext.set(schedule_tick_guard_1.SCHEDULE_IN_FLIGHT_KEY, {});
         }
         node.name = config.name;
         const debugEnable = config.debugEnable; // Read debugEnable from config
@@ -274,487 +281,513 @@ module.exports = function (RED) {
         }).catch(error => {
             node.error(`Failed to initialize Modbus client: ${error.message}`);
         });
-        node.on("input", async function (msg, send, done) {
-            var _a;
-            try {
-                // Ensure Modbus client is ready before processing
-                if (!modbusClient) {
-                    await modbusClientPromise.then(({ client, unitId }) => {
-                        modbusClient = client;
-                        modbusUnitId = unitId;
-                    });
-                }
-                // Initialize MQTT clients
-                const thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, node);
-                const emqxClient = await client_registry_1.default.getLocalMqttClient(emqxConfig, node);
-                debugLog(`MQTT TB connected: ${thingsboardClient.isConnected()}, EMQX connected: ${emqxClient.isConnected()}`);
-                client_registry_1.default.logConnectionCounts(node);
-                // Check and clear overrides if no schedules are running
-                const activeModbusCommands = node.context().global.get("activeModbusCommands") || {};
-                if (Object.keys(activeModbusCommands).length === 0) {
-                    node.context().global.set("manualModbusOverrides", {});
-                    debugLog("No schedules running. Cleared manualModbusOverrides.");
-                }
-                // Handle RPC command
-                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "schedule-disable-by-backend") {
-                    const payload = msg.payload;
-                    const params = payload.params || {};
-                    const scheduleId = params.scheduleId;
-                    if (!scheduleId) {
-                        node.error("Missing scheduleId in schedule-disable-by-backend RPC command");
-                        node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
-                        done(new Error("Missing scheduleId"));
-                        return;
+        const enqueueInput = (0, schedule_tick_guard_1.createSerializedQueue)();
+        node.on("input", function (msg, send, done) {
+            enqueueInput(async () => {
+                var _a;
+                try {
+                    // Ensure Modbus client is ready before processing
+                    if (!modbusClient) {
+                        await modbusClientPromise.then(({ client, unitId }) => {
+                            modbusClient = client;
+                            modbusUnitId = unitId;
+                        });
                     }
-                    const schedules = await scheduleService.getDueSchedules();
-                    const schedule = schedules.find(s => s.name === scheduleId);
-                    if (!schedule) {
-                        debugLog(`Schedule with id ${scheduleId} not found`);
-                        node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
-                        send(msg);
-                        done();
-                        return;
+                    // Initialize MQTT clients
+                    const thingsboardClient = await client_registry_1.default.getThingsboardMqttClient(thingsboardConfig, node);
+                    const emqxClient = await client_registry_1.default.getLocalMqttClient(emqxConfig, node);
+                    debugLog(`MQTT TB connected: ${thingsboardClient.isConnected()}, EMQX connected: ${emqxClient.isConnected()}`);
+                    client_registry_1.default.logConnectionCounts(node);
+                    // Check and clear overrides if no schedules are running
+                    const activeModbusCommands = node.context().global.get("activeModbusCommands") || {};
+                    if (Object.keys(activeModbusCommands).length === 0) {
+                        node.context().global.set("manualModbusOverrides", {});
+                        debugLog("No schedules running. Cleared manualModbusOverrides.");
                     }
-                    if (schedule.status === "running") {
-                        // Clear timestamp when schedule is disabled via RPC
-                        const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
-                        delete lastCheckTimestamps[schedule.name];
-                        globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
-                        const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
-                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        // Publish configuration parameters if any
-                        if (configParameters && configParameters.length > 0) {
-                            for (const configParam of configParameters) {
+                    // Handle RPC command
+                    if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "schedule-disable-by-backend") {
+                        const payload = msg.payload;
+                        const params = payload.params || {};
+                        const scheduleId = params.scheduleId;
+                        if (!scheduleId) {
+                            node.error("Missing scheduleId in schedule-disable-by-backend RPC command");
+                            node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
+                            done(new Error("Missing scheduleId"));
+                            return;
+                        }
+                        const schedules = await scheduleService.getDueSchedules();
+                        const schedule = schedules.find(s => s.name === scheduleId);
+                        if (!schedule) {
+                            debugLog(`Schedule with id ${scheduleId} not found`);
+                            node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
+                            send(msg);
+                            done();
+                            return;
+                        }
+                        if (schedule.status === "running") {
+                            // Clear timestamp when schedule is disabled via RPC
+                            const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
+                            delete lastCheckTimestamps[schedule.name];
+                            globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
+                            const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
+                            const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                            // Publish configuration parameters if any
+                            if (configParameters && configParameters.length > 0) {
+                                for (const configParam of configParameters) {
+                                    try {
+                                        await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                        debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                    }
+                                    catch (error) {
+                                        node.error(`Failed to publish config parameter ${configParam.key}: ${error.message}`);
+                                    }
+                                }
+                            }
+                            // Reset time_valve_ and set_flow keys
+                            const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
+                            debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
+                            const extraResetKeys = Object.entries(holdingRegisters)
+                                .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
+                                .map(([key, address]) => ({
+                                key,
+                                value: 0,
+                                fc: 6,
+                                unitid: modbusUnitId,
+                                address: Number(address),
+                                quantity: 1
+                            }));
+                            const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
+                            const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
+                            const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                            const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]);
+                            const rpcRunId = (0, uuid_1.v4)();
+                            let rpcReport = {
+                                runId: rpcRunId,
+                                action: 'end',
+                                scheduleId: schedule.name,
+                                steps: [],
+                            };
+                            if (allResetCommands.length > 0) {
+                                const resetResult = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true, { runId: rpcRunId });
+                                rpcReport = resetResult.report;
+                                scheduleService.clearActiveCommands(schedule.name);
+                                debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
+                            }
+                            const statusChanged = hasStatusChanged(schedule.name, "finished");
+                            schedule.status = "finished";
+                            schedule.enable = 0;
+                            const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
+                            await scheduleService.updateScheduleStatus(schedule, "finished");
+                            clearStatusHistory(schedule.name);
+                            const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                            const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                            if (statusChanged) {
+                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                                await scheduleService.syncScheduleLog(schedule, true);
                                 try {
-                                    await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
-                                    debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
                                 }
-                                catch (error) {
-                                    node.error(`Failed to publish config parameter ${configParam.key}: ${error.message}`);
+                                catch (telemetryError) {
+                                    debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
+                                }
+                                try {
+                                    await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
+                                }
+                                catch (auditError) {
+                                    debugLog(`Failed to publish audit log for RPC disable: ${auditError.message}`);
                                 }
                             }
-                        }
-                        // Reset time_valve_ and set_flow keys
-                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
-                        debugLog(`debug holdingRegisters: ${JSON.stringify(holdingRegisters)}`);
-                        const extraResetKeys = Object.entries(holdingRegisters)
-                            .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
-                            .map(([key, address]) => ({
-                            key,
-                            value: 0,
-                            fc: 6,
-                            unitid: modbusUnitId,
-                            address: Number(address),
-                            quantity: 1
-                        }));
-                        const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
-                        const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
-                        const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]);
-                        const rpcRunId = (0, uuid_1.v4)();
-                        let rpcReport = {
-                            runId: rpcRunId,
-                            action: 'end',
-                            scheduleId: schedule.name,
-                            steps: [],
-                        };
-                        if (allResetCommands.length > 0) {
-                            const resetResult = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true, { runId: rpcRunId });
-                            rpcReport = resetResult.report;
-                            scheduleService.clearActiveCommands(schedule.name);
-                            debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
-                        }
-                        const statusChanged = hasStatusChanged(schedule.name, "finished");
-                        schedule.status = "finished";
-                        schedule.enable = 0;
-                        const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-                        clearStatusHistory(schedule.name);
-                        const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                        const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                        if (statusChanged) {
-                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                            await scheduleService.syncScheduleLog(schedule, true);
-                            try {
-                                await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
-                            }
-                            catch (telemetryError) {
-                                debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
-                            }
-                            try {
-                                await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
-                            }
-                            catch (auditError) {
-                                debugLog(`Failed to publish audit log for RPC disable: ${auditError.message}`);
+                            else {
+                                for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(rpcReport)) {
+                                    await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
+                                }
                             }
                         }
                         else {
-                            for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(rpcReport)) {
-                                await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
+                            debugLog(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
+                            schedule.enable = 0;
+                            await scheduleService.updateScheduleStatus(schedule, schedule.status);
+                        }
+                        node.status({ fill: "green", shape: "dot", text: "RPC processed" });
+                        send(msg);
+                        done();
+                        return;
+                    }
+                    // Handle RPC command: confirm-devices-off
+                    // User manually confirms that devices have been turned off (for recovery from stuck 'running' status)
+                    if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "confirm-devices-off") {
+                        const payload = msg.payload;
+                        const params = payload.params || {};
+                        const scheduleId = params.scheduleId;
+                        const verifyDevices = params.verifyDevices !== false; // Default to true
+                        if (!scheduleId) {
+                            node.error("Missing scheduleId in confirm-devices-off RPC command");
+                            node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
+                            done(new Error("Missing scheduleId"));
+                            return;
+                        }
+                        const schedules = await scheduleService.getDueSchedules();
+                        const schedule = schedules.find(s => s.name === scheduleId);
+                        if (!schedule) {
+                            debugLog(`Schedule with id ${scheduleId} not found`);
+                            node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
+                            send(msg);
+                            done();
+                            return;
+                        }
+                        if (schedule.status !== "running") {
+                            node.warn(`Schedule ${scheduleId} is not running (status: ${schedule.status})`);
+                            node.status({ fill: "yellow", shape: "ring", text: "Not running" });
+                            send(msg);
+                            done();
+                            return;
+                        }
+                        let confirmSuccess = true;
+                        // If verifyDevices is true, read Modbus to confirm devices are actually OFF
+                        if (verifyDevices) {
+                            const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                            if (activeCommands.length > 0) {
+                                for (const cmd of activeCommands) {
+                                    try {
+                                        let readResult;
+                                        let currentValue;
+                                        if (cmd.fc === 5) {
+                                            readResult = await modbusClient.readCoils(cmd.address, 1);
+                                            currentValue = Boolean(readResult.data[0]);
+                                            if (currentValue !== false) {
+                                                confirmSuccess = false;
+                                                node.warn(`⚠️ Device at coil ${cmd.address} (${cmd.key}) is still ON`);
+                                            }
+                                        }
+                                        else if (cmd.fc === 6) {
+                                            readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                                            currentValue = Number(readResult.data[0]);
+                                            if (currentValue !== 0) {
+                                                confirmSuccess = false;
+                                                node.warn(`⚠️ Register at ${cmd.address} (${cmd.key}) is still ${currentValue}`);
+                                            }
+                                        }
+                                    }
+                                    catch (error) {
+                                        node.error(`Error verifying device status: ${error.message}`);
+                                        confirmSuccess = false;
+                                    }
+                                }
                             }
                         }
-                    }
-                    else {
-                        debugLog(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
-                        schedule.enable = 0;
-                        await scheduleService.updateScheduleStatus(schedule, schedule.status);
-                    }
-                    node.status({ fill: "green", shape: "dot", text: "RPC processed" });
-                    send(msg);
-                    done();
-                    return;
-                }
-                // Handle RPC command: confirm-devices-off
-                // User manually confirms that devices have been turned off (for recovery from stuck 'running' status)
-                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload && msg.payload.method === "confirm-devices-off") {
-                    const payload = msg.payload;
-                    const params = payload.params || {};
-                    const scheduleId = params.scheduleId;
-                    const verifyDevices = params.verifyDevices !== false; // Default to true
-                    if (!scheduleId) {
-                        node.error("Missing scheduleId in confirm-devices-off RPC command");
-                        node.status({ fill: "red", shape: "ring", text: "Missing scheduleId" });
-                        done(new Error("Missing scheduleId"));
+                        if (confirmSuccess) {
+                            // Update status to finished
+                            schedule.status = "finished";
+                            schedule.enable = 0;
+                            // Reset config key values to falsy defaults and get the reset values for telemetry
+                            const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
+                            scheduleService.clearActiveCommands(schedule.name);
+                            await scheduleService.updateScheduleStatus(schedule, "finished");
+                            // Clear status history after successful finish so next run will trigger notification
+                            clearStatusHistory(schedule.name);
+                            // Send success notification
+                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                            await scheduleService.syncScheduleLog(schedule, true);
+                            // Publish telemetry for manual recovery (all config values cleared)
+                            try {
+                                const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                                const resetCoilCommands = activeCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                                const resetHoldingCommands = activeCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                                await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
+                            }
+                            catch (telemetryError) {
+                                debugLog(`Failed to publish manual recovery telemetry: ${telemetryError.message}`);
+                            }
+                            node.warn(`✅ MANUAL RECOVERY: Schedule ${schedule.name} confirmed OFF and set to finished`);
+                            node.status({ fill: "green", shape: "dot", text: "Confirmed OFF" });
+                        }
+                        else {
+                            node.warn(`❌ MANUAL RECOVERY FAILED: Some devices are still ON for ${schedule.name}`);
+                            node.status({ fill: "red", shape: "ring", text: "Devices still ON" });
+                        }
+                        send(msg);
+                        done();
                         return;
+                    }
+                    // Handle RPC command: control (general Modbus control)
+                    if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
+                        const payload = msg.payload;
+                        if (payload.method === "control" && payload.params) {
+                            const results = [];
+                            for (const [key, value] of Object.entries(payload.params)) {
+                                if (key === 'scheduleId')
+                                    continue;
+                                const result = scheduleService.processRpcControlCommand(key, value);
+                                results.push(Object.assign({ key }, result));
+                                if (result.success && result.action === 'config') {
+                                    debugLog(`RPC control: ${key}=${value} stored in configKeyValues`);
+                                }
+                                else if (result.success && result.action === 'modbus') {
+                                    debugLog(`RPC control: ${key}=${value} should be handled by modbus (address: ${(_a = result.result) === null || _a === void 0 ? void 0 : _a.address})`);
+                                }
+                                else {
+                                    node.error(`RPC control failed for ${key}=${value}`);
+                                }
+                            }
+                            const responseMsg = Object.assign(Object.assign({}, msg), { payload: {
+                                    method: payload.method,
+                                    results: results,
+                                    timestamp: Date.now()
+                                } });
+                            node.status({ fill: "green", shape: "dot", text: "RPC control processed" });
+                            send(responseMsg);
+                            done();
+                            return;
+                        }
+                        debugLog(`Unknown RPC method: ${payload.method}`);
+                        return null;
                     }
                     const schedules = await scheduleService.getDueSchedules();
-                    const schedule = schedules.find(s => s.name === scheduleId);
-                    if (!schedule) {
-                        debugLog(`Schedule with id ${scheduleId} not found`);
-                        node.status({ fill: "yellow", shape: "ring", text: "Schedule not found" });
-                        send(msg);
-                        done();
-                        return;
-                    }
-                    if (schedule.status !== "running") {
-                        node.warn(`Schedule ${scheduleId} is not running (status: ${schedule.status})`);
-                        node.status({ fill: "yellow", shape: "ring", text: "Not running" });
-                        send(msg);
-                        done();
-                        return;
-                    }
-                    let confirmSuccess = true;
-                    // If verifyDevices is true, read Modbus to confirm devices are actually OFF
-                    if (verifyDevices) {
-                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        if (activeCommands.length > 0) {
-                            for (const cmd of activeCommands) {
-                                try {
-                                    let readResult;
-                                    let currentValue;
-                                    if (cmd.fc === 5) {
-                                        readResult = await modbusClient.readCoils(cmd.address, 1);
-                                        currentValue = Boolean(readResult.data[0]);
-                                        if (currentValue !== false) {
-                                            confirmSuccess = false;
-                                            node.warn(`⚠️ Device at coil ${cmd.address} (${cmd.key}) is still ON`);
-                                        }
-                                    }
-                                    else if (cmd.fc === 6) {
-                                        readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
-                                        currentValue = Number(readResult.data[0]);
-                                        if (currentValue !== 0) {
-                                            confirmSuccess = false;
-                                            node.warn(`⚠️ Register at ${cmd.address} (${cmd.key}) is still ${currentValue}`);
-                                        }
-                                    }
-                                }
-                                catch (error) {
-                                    node.error(`Error verifying device status: ${error.message}`);
-                                    confirmSuccess = false;
-                                }
-                            }
-                        }
-                    }
-                    if (confirmSuccess) {
-                        // Update status to finished
-                        schedule.status = "finished";
-                        schedule.enable = 0;
-                        // Reset config key values to falsy defaults and get the reset values for telemetry
-                        const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
-                        scheduleService.clearActiveCommands(schedule.name);
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-                        // Clear status history after successful finish so next run will trigger notification
-                        clearStatusHistory(schedule.name);
-                        // Send success notification
-                        await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                        await scheduleService.syncScheduleLog(schedule, true);
-                        // Publish telemetry for manual recovery (all config values cleared)
-                        try {
-                            const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                            const resetCoilCommands = activeCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                            const resetHoldingCommands = activeCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                            await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
-                        }
-                        catch (telemetryError) {
-                            debugLog(`Failed to publish manual recovery telemetry: ${telemetryError.message}`);
-                        }
-                        node.warn(`✅ MANUAL RECOVERY: Schedule ${schedule.name} confirmed OFF and set to finished`);
-                        node.status({ fill: "green", shape: "dot", text: "Confirmed OFF" });
-                    }
-                    else {
-                        node.warn(`❌ MANUAL RECOVERY FAILED: Some devices are still ON for ${schedule.name}`);
-                        node.status({ fill: "red", shape: "ring", text: "Devices still ON" });
-                    }
-                    send(msg);
-                    done();
-                    return;
-                }
-                // Handle RPC command: control (general Modbus control)
-                if (msg.payload && typeof msg.payload === 'object' && 'method' in msg.payload) {
-                    const payload = msg.payload;
-                    if (payload.method === "control" && payload.params) {
-                        const results = [];
-                        for (const [key, value] of Object.entries(payload.params)) {
-                            if (key === 'scheduleId')
-                                continue;
-                            const result = scheduleService.processRpcControlCommand(key, value);
-                            results.push(Object.assign({ key }, result));
-                            if (result.success && result.action === 'config') {
-                                debugLog(`RPC control: ${key}=${value} stored in configKeyValues`);
-                            }
-                            else if (result.success && result.action === 'modbus') {
-                                debugLog(`RPC control: ${key}=${value} should be handled by modbus (address: ${(_a = result.result) === null || _a === void 0 ? void 0 : _a.address})`);
-                            }
-                            else {
-                                node.error(`RPC control failed for ${key}=${value}`);
-                            }
-                        }
-                        const responseMsg = Object.assign(Object.assign({}, msg), { payload: {
-                                method: payload.method,
-                                results: results,
-                                timestamp: Date.now()
-                            } });
-                        node.status({ fill: "green", shape: "dot", text: "RPC control processed" });
-                        send(responseMsg);
-                        done();
-                        return;
-                    }
-                    debugLog(`Unknown RPC method: ${payload.method}`);
-                    return null;
-                }
-                const schedules = await scheduleService.getDueSchedules();
-                // Run hourly cleanup of stale status history entries
-                cleanStaleStatusHistory();
-                const allModbusCoils = scheduleService.getAllModbusCoils();
-                const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
-                const hasMappedModbusCommands = (schedule) => {
-                    let actionObj = {};
-                    if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
-                        try {
-                            actionObj = JSON.parse(schedule.action);
-                        }
-                        catch (_a) {
-                            return false;
-                        }
-                    }
-                    else if (typeof schedule.action === 'object' && schedule.action !== null) {
-                        actionObj = schedule.action;
-                    }
-                    else {
-                        return false;
-                    }
-                    return Object.entries(actionObj).some(([key, value]) => Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key));
-                };
-                for (const schedule of schedules) {
-                    const isDue = scheduleService.isScheduleDue(schedule);
-                    // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
-                    // This happens after power outage when activeModbusCommands was cleared on startup
-                    const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
-                    const isStaleRunningStatus = schedule.status === "running" &&
-                        existingActiveCommands.length === 0 &&
-                        hasMappedModbusCommands(schedule);
-                    if (isStaleRunningStatus && isDue) {
-                        node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
-                    }
-                    if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
-                        const statusChanged = hasStatusChanged(schedule.name, "running");
-                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
+                    // Run hourly cleanup of stale status history entries
+                    cleanStaleStatusHistory();
+                    const allModbusCoils = scheduleService.getAllModbusCoils();
+                    const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
+                    const hasMappedModbusCommands = (schedule) => {
                         let actionObj = {};
                         if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
                             try {
                                 actionObj = JSON.parse(schedule.action);
                             }
-                            catch (err) { /* ignore parse error */ }
+                            catch (_a) {
+                                return false;
+                            }
                         }
                         else if (typeof schedule.action === 'object' && schedule.action !== null) {
                             actionObj = schedule.action;
                         }
-                        const resetKeys = Object.entries(holdingRegisters)
-                            .filter(([key, _]) => (key.startsWith('time_valve_') || key.startsWith('set_flow')) && (!actionObj[key] || actionObj[key] === 0))
-                            .map(([key, address]) => ({
-                            key,
-                            value: 0,
-                            fc: 6,
-                            unitid: modbusUnitId,
-                            address: Number(address),
-                            quantity: 1
-                        }));
-                        const startRunId = (0, uuid_1.v4)();
-                        let unusedResetSteps = [];
-                        if (resetKeys.length > 0) {
-                            const unusedReset = await scheduleService.resetModbusCommands(modbusClient, resetKeys, schedule, false, { runId: startRunId, unusedHoldingReset: true });
-                            unusedResetSteps = unusedReset.report.steps;
+                        else {
+                            return false;
                         }
-                        const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
-                        const publishedConfigParams = [];
-                        if (configParameters && configParameters.length > 0) {
-                            // Clear dedup cache for config keys to ensure publish goes through
-                            scheduleService.clearPublishedValueCacheForKeys(configParameters.map(cp => cp.key));
-                            for (const configParam of configParameters) {
-                                try {
-                                    await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
-                                    publishedConfigParams.push(configParam);
-                                    debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
-                                }
-                                catch (error) {
-                                    node.error(`Failed to publish config parameter ${configParam.key}: ${error.message}`);
-                                }
-                            }
+                        return Object.entries(actionObj).some(([key, value]) => Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key));
+                    };
+                    for (const schedule of schedules) {
+                        if ((0, schedule_tick_guard_1.isScheduleTransitionInFlight)(globalContext, schedule.name)) {
+                            debugLog(`Skip ${schedule.name}: start/finish already in flight`);
+                            continue;
                         }
-                        if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
-                            await scheduleService.updateScheduleStatus(schedule, "running");
-                            const startReport = await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands }, schedule, { runId: startRunId });
-                            if (publishedConfigParams.length > 0) {
-                                startReport.steps = [(0, schedule_side_effects_1.configParamsToStep)(publishedConfigParams), ...startReport.steps];
+                        const isDue = scheduleService.isScheduleDue(schedule);
+                        // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
+                        // This happens after power outage when activeModbusCommands was cleared on startup
+                        const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
+                        const isStaleRunningStatus = schedule.status === "running" &&
+                            existingActiveCommands.length === 0 &&
+                            hasMappedModbusCommands(schedule);
+                        if (isStaleRunningStatus && isDue) {
+                            node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
+                        }
+                        if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
+                            if (!(0, schedule_tick_guard_1.tryBeginScheduleTransition)(globalContext, schedule.name, "start")) {
+                                debugLog(`Skip start for ${schedule.name}: transition already in flight`);
+                                continue;
                             }
-                            if (unusedResetSteps.length > 0) {
-                                startReport.steps = [...unusedResetSteps, ...startReport.steps];
-                            }
-                            scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
-                            if (statusChanged) {
-                                await scheduleService.sendNotificationToBackend(schedule, 'start', true);
-                                await scheduleService.syncScheduleLog(schedule, true);
-                                try {
-                                    const configValuesForTelemetry = {};
-                                    for (const cp of configParameters) {
-                                        configValuesForTelemetry[cp.key] = cp.value;
+                            try {
+                                const statusChanged = hasStatusChanged(schedule.name, "running");
+                                const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
+                                let actionObj = {};
+                                if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
+                                    try {
+                                        actionObj = JSON.parse(schedule.action);
                                     }
-                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands }, configValuesForTelemetry);
+                                    catch (err) { /* ignore parse error */ }
                                 }
-                                catch (telemetryError) {
-                                    debugLog(`Failed to publish schedule start telemetry: ${telemetryError.message}`);
+                                else if (typeof schedule.action === 'object' && schedule.action !== null) {
+                                    actionObj = schedule.action;
                                 }
-                                try {
-                                    await (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands });
+                                const resetKeys = Object.entries(holdingRegisters)
+                                    .filter(([key, _]) => (key.startsWith('time_valve_') || key.startsWith('set_flow')) && (!actionObj[key] || actionObj[key] === 0))
+                                    .map(([key, address]) => ({
+                                    key,
+                                    value: 0,
+                                    fc: 6,
+                                    unitid: modbusUnitId,
+                                    address: Number(address),
+                                    quantity: 1
+                                }));
+                                const startRunId = (0, uuid_1.v4)();
+                                let unusedResetSteps = [];
+                                if (resetKeys.length > 0) {
+                                    const unusedReset = await scheduleService.resetModbusCommands(modbusClient, resetKeys, schedule, false, { runId: startRunId, unusedHoldingReset: true });
+                                    unusedResetSteps = unusedReset.report.steps;
                                 }
-                                catch (auditError) {
-                                    debugLog(`Failed to publish audit log for schedule start: ${auditError.message}`);
+                                const { holdingCommands, coilCommands, configParameters } = scheduleService.mapScheduleToModbus(schedule);
+                                const publishedConfigParams = [];
+                                if (configParameters && configParameters.length > 0) {
+                                    // Clear dedup cache for config keys to ensure publish goes through
+                                    scheduleService.clearPublishedValueCacheForKeys(configParameters.map(cp => cp.key));
+                                    for (const configParam of configParameters) {
+                                        try {
+                                            await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                            publishedConfigParams.push(configParam);
+                                            debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
+                                        }
+                                        catch (error) {
+                                            node.error(`Failed to publish config parameter ${configParam.key}: ${error.message}`);
+                                        }
+                                    }
                                 }
+                                if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
+                                    await scheduleService.updateScheduleStatus(schedule, "running");
+                                    const startReport = await scheduleService.executeModbusCommands(modbusClient, { holdingCommands, coilCommands }, schedule, { runId: startRunId });
+                                    if (publishedConfigParams.length > 0) {
+                                        startReport.steps = [(0, schedule_side_effects_1.configParamsToStep)(publishedConfigParams), ...startReport.steps];
+                                    }
+                                    if (unusedResetSteps.length > 0) {
+                                        startReport.steps = [...unusedResetSteps, ...startReport.steps];
+                                    }
+                                    scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
+                                    if (statusChanged) {
+                                        await scheduleService.sendNotificationToBackend(schedule, 'start', true);
+                                        await scheduleService.syncScheduleLog(schedule, true);
+                                        try {
+                                            const configValuesForTelemetry = {};
+                                            for (const cp of configParameters) {
+                                                configValuesForTelemetry[cp.key] = cp.value;
+                                            }
+                                            await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands }, configValuesForTelemetry);
+                                        }
+                                        catch (telemetryError) {
+                                            debugLog(`Failed to publish schedule start telemetry: ${telemetryError.message}`);
+                                        }
+                                        try {
+                                            await (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands });
+                                        }
+                                        catch (auditError) {
+                                            debugLog(`Failed to publish audit log for schedule start: ${auditError.message}`);
+                                        }
+                                    }
+                                    else {
+                                        for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(startReport)) {
+                                            await scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome);
+                                        }
+                                    }
+                                }
+                            }
+                            finally {
+                                (0, schedule_tick_guard_1.endScheduleTransition)(globalContext, schedule.name);
+                            }
+                        }
+                        else if (schedule.status === "running" && isDue) {
+                            // Schedule still running and still due — no action needed
+                        }
+                        else if (schedule.status === "running" && !isDue) {
+                            if (!(0, schedule_tick_guard_1.tryBeginScheduleTransition)(globalContext, schedule.name, "finish")) {
+                                debugLog(`Skip finish for ${schedule.name}: transition already in flight`);
+                                continue;
+                            }
+                            try {
+                                const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
+                                delete lastCheckTimestamps[schedule.name];
+                                globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
+                                const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                                const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
+                                const extraResetKeys = Object.entries(holdingRegisters)
+                                    .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
+                                    .map(([key, address]) => ({
+                                    key,
+                                    value: 0,
+                                    fc: 6,
+                                    unitid: modbusUnitId,
+                                    address: Number(address),
+                                    quantity: 1
+                                }));
+                                const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
+                                const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
+                                const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                                const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
+                                const finishRunId = (0, uuid_1.v4)();
+                                let finishReport = {
+                                    runId: finishRunId,
+                                    action: 'end',
+                                    scheduleId: schedule.name,
+                                    steps: [],
+                                };
+                                if (allResetCommands.length > 0) {
+                                    const resetResult = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true, { runId: finishRunId });
+                                    finishReport = resetResult.report;
+                                }
+                                scheduleService.clearActiveCommands(schedule.name);
+                                const statusChanged = hasStatusChanged(schedule.name, "finished");
+                                const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
+                                await scheduleService.updateScheduleStatus(schedule, "finished");
+                                clearStatusHistory(schedule.name);
+                                const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
+                                const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
+                                if (statusChanged) {
+                                    await scheduleService.sendNotificationToBackend(schedule, 'end', true);
+                                    await scheduleService.syncScheduleLog(schedule, true);
+                                    try {
+                                        await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
+                                    }
+                                    catch (telemetryError) {
+                                        debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
+                                    }
+                                    try {
+                                        await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
+                                    }
+                                    catch (auditError) {
+                                        debugLog(`Failed to publish audit log for schedule end: ${auditError.message}`);
+                                    }
+                                }
+                                else {
+                                    for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(finishReport)) {
+                                        await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
+                                    }
+                                }
+                            }
+                            finally {
+                                (0, schedule_tick_guard_1.endScheduleTransition)(globalContext, schedule.name);
+                            }
+                        }
+                        else {
+                            debugLog(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
+                        }
+                    }
+                    // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
+                    // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
+                    try {
+                        const recoverableSchedules = schedules.filter((schedule) => !(0, schedule_tick_guard_1.isScheduleTransitionInFlight)(globalContext, schedule.name));
+                        await scheduleService.checkAndRecoverStuckSchedules(modbusClient, recoverableSchedules);
+                    }
+                    catch (error) {
+                        debugLog(`Error in recovery check: ${error.message}`);
+                    }
+                    const enabledScheduleIds = schedules.map(s => s.name);
+                    for (const scheduleId in activeModbusCommands) {
+                        if (!enabledScheduleIds.includes(scheduleId)) {
+                            const commands = activeModbusCommands[scheduleId];
+                            const { allSuccessful: resetSuccess } = await scheduleService.resetModbusCommands(modbusClient, commands);
+                            if (resetSuccess) {
+                                scheduleService.clearActiveCommands(scheduleId);
+                                debugLog(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
                             }
                             else {
-                                for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(startReport)) {
-                                    await scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome);
-                                }
+                                debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
                             }
                         }
                     }
-                    else if (schedule.status === "running" && isDue) {
-                        // Schedule still running and still due — no action needed
-                    }
-                    else if (schedule.status === "running" && !isDue) {
-                        const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
-                        delete lastCheckTimestamps[schedule.name];
-                        globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
-                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
-                        const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
-                        const extraResetKeys = Object.entries(holdingRegisters)
-                            .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
-                            .map(([key, address]) => ({
-                            key,
-                            value: 0,
-                            fc: 6,
-                            unitid: modbusUnitId,
-                            address: Number(address),
-                            quantity: 1
-                        }));
-                        const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
-                        const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
-                        const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
-                        const finishRunId = (0, uuid_1.v4)();
-                        let finishReport = {
-                            runId: finishRunId,
-                            action: 'end',
-                            scheduleId: schedule.name,
-                            steps: [],
-                        };
-                        if (allResetCommands.length > 0) {
-                            const resetResult = await scheduleService.resetModbusCommands(modbusClient, allResetCommands, schedule, true, { runId: finishRunId });
-                            finishReport = resetResult.report;
-                        }
-                        scheduleService.clearActiveCommands(schedule.name);
-                        const statusChanged = hasStatusChanged(schedule.name, "finished");
-                        const resetConfigValues = scheduleService.clearScheduleConfigValues(schedule.name);
-                        await scheduleService.updateScheduleStatus(schedule, "finished");
-                        clearStatusHistory(schedule.name);
-                        const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
-                        const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                        if (statusChanged) {
-                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                            await scheduleService.syncScheduleLog(schedule, true);
-                            try {
-                                await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
-                            }
-                            catch (telemetryError) {
-                                debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
-                            }
-                            try {
-                                await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
-                            }
-                            catch (auditError) {
-                                debugLog(`Failed to publish audit log for schedule end: ${auditError.message}`);
-                            }
-                        }
-                        else {
-                            for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(finishReport)) {
-                                await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
-                            }
+                    const statusHistory = globalContext.get("scheduleStatusHistory") || {};
+                    for (const scheduleId in statusHistory) {
+                        if (!enabledScheduleIds.includes(scheduleId)) {
+                            delete statusHistory[scheduleId];
+                            debugLog(`Cleaned up status history for disabled schedule ${scheduleId}`);
                         }
                     }
-                    else {
-                        debugLog(`Schedule ${schedule.name} skipped (status: ${schedule.status}, due: ${isDue})`);
-                    }
+                    globalContext.set("scheduleStatusHistory", statusHistory);
+                    node.status({ fill: "green", shape: "dot", text: "Schedules processed" });
+                    send(msg);
+                    done();
                 }
-                // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
-                // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
-                try {
-                    await scheduleService.checkAndRecoverStuckSchedules(modbusClient, schedules);
+                catch (err) {
+                    node.error("Error processing schedules: " + err.message);
+                    node.status({ fill: "red", shape: "ring", text: "Processing error" });
+                    done(err);
                 }
-                catch (error) {
-                    debugLog(`Error in recovery check: ${error.message}`);
-                }
-                const enabledScheduleIds = schedules.map(s => s.name);
-                for (const scheduleId in activeModbusCommands) {
-                    if (!enabledScheduleIds.includes(scheduleId)) {
-                        const commands = activeModbusCommands[scheduleId];
-                        const { allSuccessful: resetSuccess } = await scheduleService.resetModbusCommands(modbusClient, commands);
-                        if (resetSuccess) {
-                            scheduleService.clearActiveCommands(scheduleId);
-                            debugLog(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
-                        }
-                        else {
-                            debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
-                        }
-                    }
-                }
-                const statusHistory = globalContext.get("scheduleStatusHistory") || {};
-                for (const scheduleId in statusHistory) {
-                    if (!enabledScheduleIds.includes(scheduleId)) {
-                        delete statusHistory[scheduleId];
-                        debugLog(`Cleaned up status history for disabled schedule ${scheduleId}`);
-                    }
-                }
-                globalContext.set("scheduleStatusHistory", statusHistory);
-                node.status({ fill: "green", shape: "dot", text: "Schedules processed" });
-                send(msg);
-                done();
-            }
-            catch (err) {
-                node.error("Error processing schedules: " + err.message);
-                node.status({ fill: "red", shape: "ring", text: "Processing error" });
-                done(err);
-            }
+            });
         });
         node.on("close", function (done) {
             // Release Modbus client (multi-board aware)
