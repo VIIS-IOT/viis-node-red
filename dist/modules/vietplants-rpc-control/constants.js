@@ -5,7 +5,6 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
-const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
@@ -24,8 +23,6 @@ exports.DEBOUNCE_CONFIG = {
 // MQTT configuration defaults
 exports.MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: demeter_mqtt_topics_1.DEFAULT_MQTT_HOST,
-        DEFAULT_PORT: demeter_mqtt_topics_1.DEFAULT_MQTT_PORT,
         QOS: 1,
     },
     LOCAL: {

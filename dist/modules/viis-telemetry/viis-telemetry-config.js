@@ -47,7 +47,7 @@ class ViisTelemetryConfigManager {
     getMqttTopicConfig(deviceId) {
         return {
             emqx: viis_telemetry_constants_1.MQTT_TOPICS.EMQX_PATTERN.replace('{deviceId}', deviceId),
-            thingsboard: (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(deviceId),
+            thingsboard: (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(deviceId, this.globalHelper),
         };
     }
     /**

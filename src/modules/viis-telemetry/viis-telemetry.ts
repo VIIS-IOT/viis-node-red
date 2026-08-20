@@ -23,7 +23,7 @@ import {
 } from './viis-telemetry-processor';
 import { CONTEXT_KEYS, GLOBAL_CONTEXT_KEYS } from './viis-telemetry-constants';
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
-import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from "../../core/demeter-mqtt-topics";
+import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 /**
  * Register viis-telemetry node with Node-RED
@@ -338,8 +338,7 @@ module.exports = function (RED: NodeAPI) {
    * Create ThingsBoard MQTT configuration with validation
    */
   function createThingsboardMqttConfig(globalHelper: GlobalContextHelper, deviceId: string): MqttConfig {
-    const host = globalHelper.getEnvVar('THINGSBOARD_HOST', DEFAULT_MQTT_HOST);
-    const port = globalHelper.getEnvVar('THINGSBOARD_PORT', DEFAULT_MQTT_PORT);
+    const broker = resolveThingsboardMqttBroker(globalHelper);
     const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
     const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
 
@@ -347,12 +346,15 @@ module.exports = function (RED: NodeAPI) {
     if (!deviceToken || deviceToken.trim() === '') {
       throw new Error('DEVICE_ACCESS_TOKEN is required for ThingsBoard MQTT connection');
     }
+    if (!broker) {
+      throw new Error('THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is required. Load common.json via env-loader.');
+    }
 
     // Log configuration for debugging (without sensitive data)
-    console.log(`[THINGSBOARD-CONFIG] Host: ${host}:${port}, Token: ${deviceToken.substring(0, 8)}...`);
+    console.log(`[THINGSBOARD-CONFIG] Broker: ${broker}, Token: ${deviceToken.substring(0, 8)}...`);
 
     return {
-      broker: `mqtt://${host}:${port}`,
+      broker,
       deviceId,
       clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substring(2, 10)}`,
       username: deviceToken,

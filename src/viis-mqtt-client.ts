@@ -5,8 +5,7 @@ import { MqttConfig } from "./core/mqtt-client";
 import { GlobalContextHelper } from "./ultils/global-context-helper";
 import { matchTopic, MAX_PENDING_MESSAGES } from "./core/mqtt-topic-matcher";
 import {
-    DEFAULT_MQTT_HOST,
-    DEFAULT_MQTT_PORT,
+    resolveThingsboardMqttBroker,
     buildDeviceRpcSubscribeTopic,
     buildDeviceTelemetryTopic,
 } from "./core/demeter-mqtt-topics";
@@ -23,8 +22,6 @@ interface MyNodeDef extends NodeDef {
 
 const MQTT_CONFIG = {
   THINGSBOARD: {
-    DEFAULT_HOST: DEFAULT_MQTT_HOST,
-    DEFAULT_PORT: DEFAULT_MQTT_PORT,
     QOS: 1 as 0 | 1 | 2,
   },
   INIT_TIMEOUT_MS: 30000,
@@ -72,8 +69,14 @@ module.exports = function (RED: NodeAPI) {
 
       if (config.protocol === "MQTT") {
         topic = resolveDefaultTopic(device.id);
+        const broker = resolveThingsboardMqttBroker(globalHelper);
+        if (!broker) {
+          node.error("THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is not set. Load common.json via env-loader.");
+          node.status({ fill: "red", shape: "ring", text: "Missing MQTT broker env" });
+          return;
+        }
         const mqttConfig: MqttConfig = {
-          broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar('THINGSBOARD_PORT', MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+          broker,
           deviceId: device.id,
           clientId: `node-red-upload-${config.mode}-${Math.random().toString(16).substring(2, 10)}`,
           username: device.accessToken,

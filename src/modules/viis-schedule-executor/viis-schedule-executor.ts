@@ -12,7 +12,7 @@ import { ProtectionGateService } from "../viis-device-protection/services/protec
 import { ExecutionReport, failedOutcomes } from "./schedule-execution-types";
 import { configParamsToStep, emitEndSideEffects, emitStartSideEffects } from "./schedule-side-effects";
 import { v4 as uuidv4 } from "uuid";
-import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from "../../core/demeter-mqtt-topics";
+import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 module.exports = function (RED: NodeAPI) {
     function ScheduleExecutorNode(this: Node, config: ScheduleExecutorNodeDef) {
@@ -268,7 +268,7 @@ module.exports = function (RED: NodeAPI) {
 
         // ThingsBoard MQTT configuration
         const thingsboardConfig: MqttConfig = {
-            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar("THINGSBOARD_PORT", DEFAULT_MQTT_PORT)}`,
+            broker: resolveThingsboardMqttBroker(globalHelper),
             deviceId: globalHelper.getEnvVar("DEVICE_ID", ""),
             clientId: `node-red-tb-${Math.random().toString(16).substring(2, 10)}`,
             username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),

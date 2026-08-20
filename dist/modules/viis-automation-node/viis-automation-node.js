@@ -16,16 +16,11 @@ const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 let globalErrorHandlersInitialized = false;
 // Environment keys
 const ENV_KEYS = {
-    DEVICE_ID: "device_id",
-    DEVICE_ACCESS_TOKEN: "device_access_token",
-    THINGSBOARD_HOST: "thingsboard_mqtt_broker",
-    THINGSBOARD_PORT: "thingsboard_mqtt_port"
+    DEVICE_ID: "DEVICE_ID",
+    DEVICE_ACCESS_TOKEN: "DEVICE_ACCESS_TOKEN",
 };
-// MQTT config defaults
 const MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: demeter_mqtt_topics_1.DEFAULT_MQTT_HOST,
-        DEFAULT_PORT: demeter_mqtt_topics_1.DEFAULT_MQTT_PORT,
         QOS: 1,
     }
 };
@@ -77,8 +72,14 @@ module.exports = function (RED) {
                 // Load device ID from environment
                 const deviceId = globalHelper.getEnvVar(ENV_KEYS.DEVICE_ID, credentials.id);
                 // Initialize MQTT client configuration (ThingsBoard MQTT)
+                const broker = (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper);
+                if (!broker) {
+                    logger.error("THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is not set. Load common.json via env-loader.");
+                    node.status({ fill: "red", shape: "ring", text: "Missing MQTT broker env" });
+                    return;
+                }
                 const mqttConfig = {
-                    broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                    broker,
                     deviceId,
                     clientId: `node-red-automation-${Math.random().toString(16).substring(2, 10)}`,
                     username: credentials.accessToken, // Use device access token

@@ -261,18 +261,20 @@ module.exports = function (RED) {
      * Create ThingsBoard MQTT configuration with validation
      */
     function createThingsboardMqttConfig(globalHelper, deviceId) {
-        const host = globalHelper.getEnvVar('THINGSBOARD_HOST', demeter_mqtt_topics_1.DEFAULT_MQTT_HOST);
-        const port = globalHelper.getEnvVar('THINGSBOARD_PORT', demeter_mqtt_topics_1.DEFAULT_MQTT_PORT);
+        const broker = (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper);
         const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
         const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
         // Validate critical configuration
         if (!deviceToken || deviceToken.trim() === '') {
             throw new Error('DEVICE_ACCESS_TOKEN is required for ThingsBoard MQTT connection');
         }
+        if (!broker) {
+            throw new Error('THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is required. Load common.json via env-loader.');
+        }
         // Log configuration for debugging (without sensitive data)
-        console.log(`[THINGSBOARD-CONFIG] Host: ${host}:${port}, Token: ${deviceToken.substring(0, 8)}...`);
+        console.log(`[THINGSBOARD-CONFIG] Broker: ${broker}, Token: ${deviceToken.substring(0, 8)}...`);
         return {
-            broker: `mqtt://${host}:${port}`,
+            broker,
             deviceId,
             clientId: `node-red-thingsboard-telemetry-${Math.random().toString(16).substring(2, 10)}`,
             username: deviceToken,

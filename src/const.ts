@@ -1,4 +1,4 @@
-// Default server URLs - use GlobalContextHelper.getEnvVar() to get actual values from global context
+// Last-resort HTTP fallback when common.json has not loaded. MQTT broker has no host fallback — resolveThingsboardMqttBroker() reads THINGSBOARD_* from env-loader.
 export const DEFAULT_HTTP_SERVER_URL = "https://iot.viis.tech";
-export const DEFAULT_MQTT_SERVER_URL = "host.docker.internal";
+export const DEFAULT_MQTT_SERVER_URL = "";
 

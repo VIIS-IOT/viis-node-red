@@ -305,7 +305,7 @@ class ScheduleHandler {
                     try {
                         // Create MQTT configs
                         const thingsboardConfig = {
-                            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", demeter_mqtt_topics_1.DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar("THINGSBOARD_PORT", demeter_mqtt_topics_1.DEFAULT_MQTT_PORT)}`,
+                            broker: (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper),
                             deviceId: globalHelper.getEnvVar("DEVICE_ID", ""),
                             clientId: `node-red-tb-api-${Math.random().toString(16).substring(2, 10)}`,
                             username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),

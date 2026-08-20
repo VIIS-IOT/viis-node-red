@@ -16,6 +16,7 @@ import { Logger } from "./utils/logger";
 import { ScalingUtils } from "./utils/scaling";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import {
+    resolveThingsboardMqttBroker,
     buildDeviceRpcSubscribeTopic,
     buildDeviceTelemetryTopic,
 } from "../../core/demeter-mqtt-topics";
@@ -175,7 +176,7 @@ module.exports = function (RED: NodeAPI) {
                 // Initialize MQTT client configuration
                 const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
                     ? {
-                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                        broker: resolveThingsboardMqttBroker(globalHelper),
                         deviceId,
                         clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),

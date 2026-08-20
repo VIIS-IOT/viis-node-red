@@ -69,7 +69,7 @@ module.exports = function (RED) {
                 const mqttBroker = "thingsboard"; // Default to ThingsBoard
                 const mqttConfig = mqttBroker === "thingsboard"
                     ? {
-                        broker: `mqtt://${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_HOST, demeter_mqtt_topics_1.DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar(constants_1.ENV_KEYS.THINGSBOARD_PORT, demeter_mqtt_topics_1.DEFAULT_MQTT_PORT)}`,
+                        broker: (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper),
                         deviceId,
                         clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(constants_1.ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),

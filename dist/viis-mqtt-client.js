@@ -11,8 +11,6 @@ const demeter_mqtt_topics_1 = require("./core/demeter-mqtt-topics");
 const dayjs_1 = __importDefault(require("dayjs"));
 const MQTT_CONFIG = {
     THINGSBOARD: {
-        DEFAULT_HOST: demeter_mqtt_topics_1.DEFAULT_MQTT_HOST,
-        DEFAULT_PORT: demeter_mqtt_topics_1.DEFAULT_MQTT_PORT,
         QOS: 1,
     },
     INIT_TIMEOUT_MS: 30000,
@@ -52,8 +50,14 @@ module.exports = function (RED) {
             node.log(`Using device: ${device.id} for telemetry ${config.mode}`);
             if (config.protocol === "MQTT") {
                 topic = resolveDefaultTopic(device.id);
+                const broker = (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper);
+                if (!broker) {
+                    node.error("THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is not set. Load common.json via env-loader.");
+                    node.status({ fill: "red", shape: "ring", text: "Missing MQTT broker env" });
+                    return;
+                }
                 const mqttConfig = {
-                    broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', MQTT_CONFIG.THINGSBOARD.DEFAULT_HOST)}:${globalHelper.getEnvVar('THINGSBOARD_PORT', MQTT_CONFIG.THINGSBOARD.DEFAULT_PORT)}`,
+                    broker,
                     deviceId: device.id,
                     clientId: `node-red-upload-${config.mode}-${Math.random().toString(16).substring(2, 10)}`,
                     username: device.accessToken,

@@ -11,7 +11,7 @@ import { TabiotFlowAccumulation } from "../../orm/entities/flow-accumulation/Tab
 import { MqttClientCore } from "../../core/mqtt-client";
 import ClientRegistry from "../../core/client-registry";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
-import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from "../../core/demeter-mqtt-topics";
+import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 import { createDataSource } from "../../orm/dataSource";
 import {
     ViisFlowAccumulationNodeDef,
@@ -158,7 +158,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
                 // if (config.publishToMqtt && thingsboardMqttClient) {
-                //     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
+                //     const topic = config.mqttTopic || buildDeviceTelemetryTopic(deviceId);
                 //     thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
                 //     node.log(`[FlowAccumulation] Published to ${topic}: ${results.length} sensors`);
                 // }
@@ -260,7 +260,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Direct MQTT publishing disabled - data will be sent via viis-thingsboard-telemetry node
                 // if (config.publishToMqtt && thingsboardMqttClient && formattedPayload) {
-                //     const topic = config.mqttTopic || 'v1/devices/me/telemetry';
+                //     const topic = config.mqttTopic || buildDeviceTelemetryTopic(deviceId);
                 //     thingsboardMqttClient.publish(topic, JSON.stringify(formattedPayload));
                 // }
 
@@ -407,17 +407,19 @@ module.exports = function (RED: NodeAPI) {
          * Create ThingsBoard MQTT configuration
          */
         function createThingsboardMqttConfig(globalHelper: GlobalContextHelper, deviceId: string) {
-            const host = globalHelper.getEnvVar('THINGSBOARD_HOST', DEFAULT_MQTT_HOST);
-            const port = globalHelper.getEnvVar('THINGSBOARD_PORT', DEFAULT_MQTT_PORT);
+            const broker = resolveThingsboardMqttBroker(globalHelper);
             const deviceToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
             const password = globalHelper.getEnvVar('THINGSBOARD_PASSWORD', '');
 
             if (!deviceToken || deviceToken.trim() === '') {
                 throw new Error('DEVICE_ACCESS_TOKEN is required for ThingsBoard MQTT connection');
             }
+            if (!broker) {
+                throw new Error('THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is required. Load common.json via env-loader.');
+            }
 
             return {
-                broker: `mqtt://${host}:${port}`,
+                broker,
                 deviceId,
                 clientId: `node-red-flow-accumulation-${Math.random().toString(16).substring(2, 10)}`,
                 username: deviceToken,

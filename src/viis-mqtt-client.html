@@ -41,9 +41,9 @@
   function toggleTopicField() {
     const mode = $("#node-input-mode").val();
     if (mode === "subscribe") {
-      $("#node-input-topic").attr("placeholder", "v1/devices/me/rpc/request/+ (default)");
+      $("#node-input-topic").attr("placeholder", "empty = v1/device/{deviceId}/rpc/+");
     } else {
-      $("#node-input-topic").attr("placeholder", "v1/devices/me/telemetry (default)");
+      $("#node-input-topic").attr("placeholder", "empty = v1/device/{deviceId}/telemetry");
     }
   }
 
@@ -135,8 +135,8 @@
     <dd>
       MQTT topic to publish/subscribe to. Leave empty for defaults:
       <ul>
-        <li>Publish: <code>v1/devices/me/telemetry</code></li>
-        <li>Subscribe: <code>v1/devices/me/rpc/request/+</code></li>
+        <li>Publish: <code>v1/device/{deviceId}/telemetry</code></li>
+        <li>Subscribe: <code>v1/device/{deviceId}/rpc/+</code></li>
       </ul>
     </dd>
   </dl>

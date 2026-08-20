@@ -99,7 +99,7 @@
         <dd>Telemetry data as key-value pairs (numbers or booleans) sent to ThingsBoard and EMQX local.</dd>
     </dl>
     <h3>Details</h3>
-    <p>This node uses a shared instance of ModbusClientCore and two MqttClientCore instances (one for ThingsBoard, one for EMQX local) to poll data from Modbus mappings defined in environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>). It publishes changes to <code>v1/devices/me/telemetry</code> (ThingsBoard) and <code>v1/devices/me/telemetry/${deviceId}</code> (EMQX local).</p>
+    <p>This node uses a shared instance of ModbusClientCore and two MqttClientCore instances (one for ThingsBoard/TBMQ, one for EMQX local) to poll data from Modbus mappings defined in environment variables (<code>MODBUS_COILS</code>, <code>MODBUS_INPUT_REGISTERS</code>, <code>MODBUS_HOLDING_REGISTERS</code>). It publishes changes to <code>v1/device/{deviceId}/telemetry</code> (Demeter TBMQ) and the local EMQX device telemetry topic.</p>
 </script>
 
 <!-- CodeMirror dependencies removed as they are no longer used -->

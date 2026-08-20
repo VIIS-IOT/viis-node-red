@@ -4,8 +4,7 @@ import { ModbusData } from "../../core/modbus-client";
 import { MqttConfig, MqttClientCore, MqttMessage } from "../../core/mqtt-client";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import {
-    DEFAULT_MQTT_HOST,
-    DEFAULT_MQTT_PORT,
+    resolveThingsboardMqttBroker,
     buildDeviceTelemetryTopic,
 } from "../../core/demeter-mqtt-topics";
 
@@ -194,7 +193,7 @@ module.exports = function (RED: NodeAPI) {
         // MQTT config from global context
         const mqttConfig: MqttConfig = config.mqttBroker === "thingsboard"
             ? {
-                broker: `mqtt://${globalHelper.getEnvVar('THINGSBOARD_HOST', DEFAULT_MQTT_HOST)}:${globalHelper.getNumericEnvVar('THINGSBOARD_PORT', Number(DEFAULT_MQTT_PORT))}`,
+                broker: resolveThingsboardMqttBroker(globalHelper),
                 deviceId,
                 clientId: `node-red-thingsboard-rpc-${Math.random().toString(16).substr(2, 8)}`,
                 username: globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', ''),

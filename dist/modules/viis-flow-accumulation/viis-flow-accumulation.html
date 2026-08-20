@@ -49,7 +49,7 @@
         <label for="node-input-mqttTopic">
             <i class="fa fa-tag"></i> MQTT Topic
         </label>
-        <input type="text" id="node-input-mqttTopic" placeholder="v1/devices/me/telemetry">
+        <input type="text" id="node-input-mqttTopic" placeholder="leave empty for v1/device/{deviceId}/telemetry">
         <span class="form-tips">ThingsBoard topic for accumulation data</span>
     </div>
 
@@ -100,7 +100,7 @@
         <dd>Send accumulation results to ThingsBoard via MQTT</dd>
 
         <dt>MQTT Topic</dt>
-        <dd>ThingsBoard topic (default: "v1/devices/me/telemetry")</dd>
+        <dd>ThingsBoard topic (leave empty to use v1/device/{deviceId}/telemetry)</dd>
     </dl>
 
     <h3>Input Messages</h3>
@@ -214,7 +214,7 @@
             enableAutoCalculation: { value: true },
             cronSchedule: { value: "5 * * * *", required: true },
             publishToMqtt: { value: true },
-            mqttTopic: { value: "v1/devices/me/telemetry" },
+            mqttTopic: { value: "" },
             useTfsKeyFormat: { value: false },
             enableBackfill: { value: false },
         },

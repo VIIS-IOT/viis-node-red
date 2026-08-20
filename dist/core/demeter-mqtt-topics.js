@@ -6,11 +6,12 @@
  *   v1/device/{deviceId}/telemetry
  *   v1/device/{deviceId}/rpc/+
  *
- * ThingsBoard used session-aliased `v1/devices/me/...`. Demeter TBMQ routes by UUID.
- * Deploy only changes common.json (THINGSBOARD_HOST/PORT, IOT_DEVICE_TOPIC_BASE).
+ * Broker host/port come from common.json via env-loader:
+ *   THINGSBOARD_MQTT_BROKER, or THINGSBOARD_HOST + THINGSBOARD_PORT.
+ * Do not default to host.docker.internal / 11883 — those are local compose values.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_MQTT_PORT = exports.DEFAULT_MQTT_HOST = exports.DEFAULT_DEVICE_TOPIC_BASE = void 0;
+exports.MQTT_PROTOCOL_DEFAULT_PORT = exports.DEFAULT_DEVICE_TOPIC_BASE = void 0;
 exports.getDeviceTopicBase = getDeviceTopicBase;
 exports.safeDeviceTopicSegment = safeDeviceTopicSegment;
 exports.buildDeviceTelemetryTopic = buildDeviceTelemetryTopic;
@@ -20,12 +21,17 @@ exports.buildDeviceRpcSubscribeTopic = buildDeviceRpcSubscribeTopic;
 exports.buildDeviceRpcTopic = buildDeviceRpcTopic;
 exports.buildDeviceRpcResponseTopic = buildDeviceRpcResponseTopic;
 exports.buildMqttBrokerUrl = buildMqttBrokerUrl;
+exports.resolveThingsboardMqttBroker = resolveThingsboardMqttBroker;
 exports.DEFAULT_DEVICE_TOPIC_BASE = 'v1/device';
-exports.DEFAULT_MQTT_HOST = 'host.docker.internal';
-exports.DEFAULT_MQTT_PORT = '11883';
-function getDeviceTopicBase() {
-    const fromEnv = (process.env.IOT_DEVICE_TOPIC_BASE || exports.DEFAULT_DEVICE_TOPIC_BASE).trim();
-    return fromEnv.replace(/^\/+|\/+$/g, '') || exports.DEFAULT_DEVICE_TOPIC_BASE;
+/** MQTT spec default when common.json sets host but omits port. */
+exports.MQTT_PROTOCOL_DEFAULT_PORT = '1883';
+function getDeviceTopicBase(helper) {
+    const fromHelper = helper
+        ? String(helper.getEnvVar('IOT_DEVICE_TOPIC_BASE', '') || '').trim()
+        : '';
+    const fromEnv = (process.env.IOT_DEVICE_TOPIC_BASE || '').trim();
+    const base = fromHelper || fromEnv || exports.DEFAULT_DEVICE_TOPIC_BASE;
+    return base.replace(/^\/+|\/+$/g, '') || exports.DEFAULT_DEVICE_TOPIC_BASE;
 }
 function safeDeviceTopicSegment(value) {
     const cleaned = String(value || '')
@@ -34,29 +40,45 @@ function safeDeviceTopicSegment(value) {
         .slice(0, 180);
     return cleaned || '_none';
 }
-function joinDeviceTopic(deviceId, suffix) {
-    return [getDeviceTopicBase(), safeDeviceTopicSegment(deviceId), suffix.replace(/^\/+/, '')].join('/');
+function joinDeviceTopic(deviceId, suffix, helper) {
+    return [getDeviceTopicBase(helper), safeDeviceTopicSegment(deviceId), suffix.replace(/^\/+/, '')].join('/');
 }
-function buildDeviceTelemetryTopic(deviceId) {
-    return joinDeviceTopic(deviceId, 'telemetry');
+function buildDeviceTelemetryTopic(deviceId, helper) {
+    return joinDeviceTopic(deviceId, 'telemetry', helper);
 }
-function buildDeviceAttributesTopic(deviceId) {
-    return joinDeviceTopic(deviceId, 'attributes');
+function buildDeviceAttributesTopic(deviceId, helper) {
+    return joinDeviceTopic(deviceId, 'attributes', helper);
 }
-function buildDeviceLifecycleTopic(deviceId) {
-    return joinDeviceTopic(deviceId, 'lifecycle');
+function buildDeviceLifecycleTopic(deviceId, helper) {
+    return joinDeviceTopic(deviceId, 'lifecycle', helper);
 }
-function buildDeviceRpcSubscribeTopic(deviceId) {
-    return joinDeviceTopic(deviceId, 'rpc/+');
+function buildDeviceRpcSubscribeTopic(deviceId, helper) {
+    return joinDeviceTopic(deviceId, 'rpc/+', helper);
 }
-function buildDeviceRpcTopic(deviceId, commandId = '+') {
-    return joinDeviceTopic(deviceId, `rpc/${safeDeviceTopicSegment(commandId)}`);
+function buildDeviceRpcTopic(deviceId, commandId = '+', helper) {
+    return joinDeviceTopic(deviceId, `rpc/${safeDeviceTopicSegment(commandId)}`, helper);
 }
-function buildDeviceRpcResponseTopic(deviceId, commandId = '+') {
-    return joinDeviceTopic(deviceId, `rpc/response/${safeDeviceTopicSegment(commandId)}`);
+function buildDeviceRpcResponseTopic(deviceId, commandId = '+', helper) {
+    return joinDeviceTopic(deviceId, `rpc/response/${safeDeviceTopicSegment(commandId)}`, helper);
 }
 function buildMqttBrokerUrl(host, port) {
-    const resolvedHost = (host || exports.DEFAULT_MQTT_HOST).trim() || exports.DEFAULT_MQTT_HOST;
-    const resolvedPort = String(port || exports.DEFAULT_MQTT_PORT).trim() || exports.DEFAULT_MQTT_PORT;
+    const resolvedHost = (host || '').trim();
+    if (!resolvedHost) {
+        return '';
+    }
+    const resolvedPort = String(port || exports.MQTT_PROTOCOL_DEFAULT_PORT).trim() || exports.MQTT_PROTOCOL_DEFAULT_PORT;
     return `mqtt://${resolvedHost}:${resolvedPort}`;
+}
+/**
+ * Resolve the Demeter/TBMQ MQTT broker URL from Node-RED global context (common.json).
+ * Empty string means env-loader has not loaded THINGSBOARD_* yet.
+ */
+function resolveThingsboardMqttBroker(helper) {
+    const full = String(helper.getEnvVar('THINGSBOARD_MQTT_BROKER', '') || '').trim();
+    if (full) {
+        return /^mqtts?:\/\//i.test(full) ? full.replace(/\/$/, '') : `mqtt://${full.replace(/\/$/, '')}`;
+    }
+    const host = String(helper.getEnvVar('THINGSBOARD_HOST', '') || '').trim();
+    const port = String(helper.getEnvVar('THINGSBOARD_PORT', '') || '').trim();
+    return buildMqttBrokerUrl(host, port);
 }

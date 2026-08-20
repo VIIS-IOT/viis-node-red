@@ -13,10 +13,8 @@ import { createDataSource } from '../../orm/dataSource';
 import { DH6400PollingService, DH6400PollingConfig, DH6400TelemetryEvent, DH6400PollingErrorEvent, DH6400DebugEvent } from '../../services/MarineIoT/DH6400PollingService';
 import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
 import {
-    DEFAULT_MQTT_HOST,
-    DEFAULT_MQTT_PORT,
+    resolveThingsboardMqttBroker,
     buildDeviceTelemetryTopic,
-    buildMqttBrokerUrl,
 } from "../../core/demeter-mqtt-topics";
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -182,10 +180,7 @@ module.exports = function (RED: NodeAPI) {
      * Create ThingsBoard MQTT configuration
      */
     function createThingsboardMqttConfig(globalHelper: GlobalContextHelper, deviceId: string): MqttConfig {
-        const broker = globalHelper.getEnvVar(
-            'THINGSBOARD_MQTT_BROKER',
-            buildMqttBrokerUrl(DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT)
-        );
+        const broker = resolveThingsboardMqttBroker(globalHelper);
         const username = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
 
         console.log('[Marine] MQTT Config - Broker:', broker);

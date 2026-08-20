@@ -147,7 +147,7 @@ module.exports = function (RED) {
      * Create ThingsBoard MQTT configuration
      */
     function createThingsboardMqttConfig(globalHelper, deviceId) {
-        const broker = globalHelper.getEnvVar('THINGSBOARD_MQTT_BROKER', (0, demeter_mqtt_topics_1.buildMqttBrokerUrl)(demeter_mqtt_topics_1.DEFAULT_MQTT_HOST, demeter_mqtt_topics_1.DEFAULT_MQTT_PORT));
+        const broker = (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper);
         const username = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
         console.log('[Marine] MQTT Config - Broker:', broker);
         console.log('[Marine] MQTT Config - Token:', username ? '***' + username.slice(-4) : 'NOT_SET');

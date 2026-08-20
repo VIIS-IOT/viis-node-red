@@ -21,7 +21,7 @@ import { ScheduleService } from '../../viis-schedule-executor/viis-schedule-exec
 import ClientRegistry from '../../../core/client-registry';
 import { GlobalContextHelper } from '../../../ultils/global-context-helper';
 import { MqttClientCore } from '../../../core/mqtt-client';
-import { DEFAULT_MQTT_HOST, DEFAULT_MQTT_PORT } from '../../../core/demeter-mqtt-topics';
+import { resolveThingsboardMqttBroker } from '../../../core/demeter-mqtt-topics';
 
 export class ScheduleHandler {
     private scheduleRepo: Repository<TabiotSchedule>;
@@ -360,7 +360,7 @@ export class ScheduleHandler {
                     try {
                         // Create MQTT configs
                         const thingsboardConfig = {
-                            broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar("THINGSBOARD_PORT", DEFAULT_MQTT_PORT)}`,
+                            broker: resolveThingsboardMqttBroker(globalHelper),
                             deviceId: globalHelper.getEnvVar("DEVICE_ID", ""),
                             clientId: `node-red-tb-api-${Math.random().toString(16).substring(2, 10)}`,
                             username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),

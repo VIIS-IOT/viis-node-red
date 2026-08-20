@@ -27,7 +27,8 @@ function getEnvVar(context, envVarName, defaultValue = "") {
             'DEVICE_ACCESS_TOKEN': ['device_access_token', 'access_token'],
             'THINGSBOARD_HOST': ['thingsboard_host'],
             'THINGSBOARD_PORT': ['thingsboard_port'],
-            'MQTT_SERVER_URL': ['mqtt_server_url', 'mqtt_host'],
+            'THINGSBOARD_MQTT_BROKER': ['thingsboard_mqtt_broker'],
+            'MQTT_SERVER_URL': ['mqtt_server_url', 'mqtt_host', 'thingsboard_host'],
             'HTTP_SERVER_URL': ['http_server_url', 'api_url']
         };
         // Try global context first - check all possible names
@@ -95,10 +96,10 @@ function loadDeviceCredentials(context, providedDeviceId, providedAccessToken) {
 function loadMqttServerConfig(context, providedUrl, providedPort) {
     const host = providedUrl && providedUrl.trim() !== ''
         ? providedUrl
-        : getEnvVar(context, 'MQTT_SERVER_URL', 'host.docker.internal');
+        : getEnvVar(context, 'THINGSBOARD_HOST', getEnvVar(context, 'MQTT_SERVER_URL', ''));
     const port = providedPort && providedPort > 0
         ? providedPort
-        : getEnvVarInt(context, 'THINGSBOARD_PORT', 11883);
+        : getEnvVarInt(context, 'THINGSBOARD_PORT', 1883);
     return { host, port };
 }
 /**

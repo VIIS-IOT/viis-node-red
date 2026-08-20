@@ -19,8 +19,7 @@ import { ProtectionGateService } from "./services/protection-gate-service";
 import { ConfigService } from "./services/configService";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import {
-    DEFAULT_MQTT_HOST,
-    DEFAULT_MQTT_PORT,
+    resolveThingsboardMqttBroker,
     buildDeviceTelemetryTopic,
 } from "../../core/demeter-mqtt-topics";
 import {
@@ -96,7 +95,7 @@ module.exports = function (RED: NodeAPI) {
 
                 const mqttConfig: MqttConfig = mqttBroker === "thingsboard"
                     ? {
-                        broker: `mqtt://${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_HOST, DEFAULT_MQTT_HOST)}:${globalHelper.getEnvVar(ENV_KEYS.THINGSBOARD_PORT, DEFAULT_MQTT_PORT)}`,
+                        broker: resolveThingsboardMqttBroker(globalHelper),
                         deviceId,
                         clientId: `node-red-protection-${Math.random().toString(16).substring(2, 10)}`,
                         username: globalHelper.getEnvVar(ENV_KEYS.DEVICE_ACCESS_TOKEN, ""),

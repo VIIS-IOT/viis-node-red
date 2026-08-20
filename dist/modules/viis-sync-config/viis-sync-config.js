@@ -53,8 +53,6 @@ const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-con
 const resolve_backend_url_1 = require("../../ultils/resolve-backend-url");
 const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 const RPC_METHOD = 'sync-full-config';
-const TB_DEFAULT_HOST = demeter_mqtt_topics_1.DEFAULT_MQTT_HOST;
-const TB_DEFAULT_PORT = demeter_mqtt_topics_1.DEFAULT_MQTT_PORT;
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
 const CONFIGS_DIR = '/usr/src/app/env/configs';
@@ -105,17 +103,19 @@ module.exports = function (RED) {
         // ── Initialize MQTT subscription ──────────────────────────────────────
         (async () => {
             try {
-                const tbHost = globalHelper.getEnvVar('THINGSBOARD_HOST', TB_DEFAULT_HOST);
-                const tbPort = globalHelper.getEnvVar('THINGSBOARD_PORT', TB_DEFAULT_PORT);
+                const broker = (0, demeter_mqtt_topics_1.resolveThingsboardMqttBroker)(globalHelper);
+                if (!broker) {
+                    throw new Error('THINGSBOARD_HOST / THINGSBOARD_MQTT_BROKER is not set. Load common.json via env-loader.');
+                }
                 const mqttConfig = {
-                    broker: `mqtt://${tbHost}:${tbPort}`,
+                    broker,
                     deviceId,
                     clientId: `node-red-sync-config-${Math.random().toString(16).substring(2, 10)}`,
                     username: accessToken,
                     password: globalHelper.getEnvVar('THINGSBOARD_PASSWORD', ''),
                     qos: 1,
                 };
-                log.info(node, `Connecting to MQTT: mqtt://${tbHost}:${tbPort}`);
+                log.info(node, `Connecting to MQTT: ${broker}`);
                 mqttClient = await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
                 // Wait for connection
                 if (!mqttClient.isConnected()) {
