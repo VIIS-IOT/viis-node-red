@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import axios, { AxiosError } from 'axios';
 import { GLOBAL_CONTEXT_KEYS } from '../viis-telemetry/viis-telemetry-constants';
+import { resolveViisBackendUrl } from '../../ultils/resolve-backend-url';
 
 interface ViisSyncConfigNodeDef extends NodeDef {
     configFile: string;
@@ -69,22 +70,18 @@ export = function (RED: NodeAPI) {
             return;
         }
 
-        const backendUrl =
-            config.backendUrl ||
-            globalHelper.getEnvVar('VIIS_BACKEND', '') ||
-            globalHelper.getEnvVar('BACKEND_URL', '') ||
-            'https://iot.viis.tech';
+        function resolveBackendUrl(): string {
+            return resolveViisBackendUrl(node, config.backendUrl);
+        }
 
         let isSyncing = false;
         let mqttClient: any = null;
 
         log.info(node, `Initialized. Config file: ${configPath}`);
-        log.info(node, `Backend URL resolved: ${backendUrl}`);
+        log.info(node, 'Backend URL is resolved at request time from VIIS_BACKEND/BACKEND_URL (common.json via env-loader)');
         log.info(node, `  config.backendUrl: "${config.backendUrl}"`);
-        log.info(node, `  VIIS_BACKEND: "${globalHelper.getEnvVar('VIIS_BACKEND', '')}"`);
-        log.info(node, `  BACKEND_URL: "${globalHelper.getEnvVar('BACKEND_URL', '')}"`);
-        log.info(node, `  server_url (global): "${globalHelper.getGlobalVar('server_url', '')}"`);
-        log.info(node, `  backend_url (global): "${globalHelper.getGlobalVar('backend_url', '')}"`);
+        log.info(node, `  VIIS_BACKEND (at init): "${globalHelper.getEnvVar('VIIS_BACKEND', '')}"`);
+        log.info(node, `  BACKEND_URL (at init): "${globalHelper.getEnvVar('BACKEND_URL', '')}"`);
         log.info(node, `Device ID: ${deviceId}`);
 
         // ── Initialize MQTT subscription ──────────────────────────────────────
@@ -155,8 +152,8 @@ export = function (RED: NodeAPI) {
 
             try {
                 // Step 1: Build config URL
-                // Prefer local backendUrl (from config/env) over RPC configUrl
-                // RPC configUrl may be wrong if backend BACKEND_URL env var is misconfigured
+                // Prefer editor override, then common.json via env-loader (lazy — after node construct)
+                const backendUrl = resolveBackendUrl();
                 const configUrl = `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
 
                 log.info(node, `Config URL: ${configUrl}`);

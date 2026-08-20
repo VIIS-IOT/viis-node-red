@@ -11,6 +11,7 @@ exports.ApiService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const logger_1 = require("../utils/logger");
 const offline_resilience_1 = require("../../../core/offline-resilience");
+const resolve_backend_url_1 = require("../../../ultils/resolve-backend-url");
 /**
  * Service for API operations related to customer users
  */
@@ -23,18 +24,17 @@ class ApiService {
      * @param showDetailedLogs - Whether to show detailed logs
      */
     constructor(deviceId, maxRetries = 3, node = null, showDetailedLogs = false) {
-        var _a, _b;
         this.deviceId = deviceId;
         this.node = node;
         this.showDetailedLogs = showDetailedLogs;
-        // Use global context instead of process.env for hot-reload capability
-        const globalContext = ((_b = (_a = global).get) === null || _b === void 0 ? void 0 : _b.call(_a)) || {};
-        this.baseUrl = globalContext.VIIS_BACKEND || globalContext.API_URL || 'https://iot.viis.tech';
         this.maxRetries = maxRetries;
         if (this.node) {
-            logger_1.logger.info(this.node, `API Service initialized with baseURL: ${this.baseUrl}, maxRetries: ${this.maxRetries}`);
+            logger_1.logger.info(this.node, `API Service initialized; baseURL resolved from VIIS_BACKEND/BACKEND_URL at request time, maxRetries: ${this.maxRetries}`);
             logger_1.logger.debug(this.node, `Device ID: ${this.deviceId}`, this.showDetailedLogs);
         }
+    }
+    resolveBaseUrl() {
+        return (0, resolve_backend_url_1.resolveViisBackendUrl)(this.node);
     }
     /**
      * Gets all customers and their users from the server
@@ -57,7 +57,7 @@ class ApiService {
             device_id: this.deviceId,
             includeUsers: 'true'
         });
-        const apiUrl = `${this.baseUrl}/api/v2/iot-customer/customers?${queryParams.toString()}`;
+        const apiUrl = `${this.resolveBaseUrl()}/api/v2/iot-customer/customers?${queryParams.toString()}`;
         if (this.node) {
             logger_1.logger.apiRequest(this.node, 'GET', apiUrl, config, this.showDetailedLogs);
             logger_1.logger.debug(this.node, `Query parameters: ${JSON.stringify(Object.fromEntries(queryParams))}`, this.showDetailedLogs);

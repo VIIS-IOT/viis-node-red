@@ -8,6 +8,7 @@ import { Node } from 'node-red';
 import { ServerCustomer } from '../interfaces/types';
 import { logger } from '../utils/logger';
 import { executeOfflineSafe, ExternalServiceCircuitBreaker } from '../../../core/offline-resilience';
+import { resolveViisBackendUrl } from '../../../ultils/resolve-backend-url';
 
 /**
  * Service for API operations related to customer users
@@ -15,8 +16,6 @@ import { executeOfflineSafe, ExternalServiceCircuitBreaker } from '../../../core
 export class ApiService {
     /** Device ID for API authentication */
     private readonly deviceId: string;
-    /** Base URL for API calls */
-    private readonly baseUrl: string;
     /** Maximum number of retries for failed API calls */
     private readonly maxRetries: number;
     /** Node-RED node instance for logging */
@@ -35,16 +34,16 @@ export class ApiService {
         this.deviceId = deviceId;
         this.node = node;
         this.showDetailedLogs = showDetailedLogs;
-
-        // Use global context instead of process.env for hot-reload capability
-        const globalContext = (global as any).get?.() || {};
-        this.baseUrl = globalContext.VIIS_BACKEND || globalContext.API_URL || 'https://iot.viis.tech';
         this.maxRetries = maxRetries;
 
         if (this.node) {
-            logger.info(this.node, `API Service initialized with baseURL: ${this.baseUrl}, maxRetries: ${this.maxRetries}`);
+            logger.info(this.node, `API Service initialized; baseURL resolved from VIIS_BACKEND/BACKEND_URL at request time, maxRetries: ${this.maxRetries}`);
             logger.debug(this.node, `Device ID: ${this.deviceId}`, this.showDetailedLogs);
         }
+    }
+
+    private resolveBaseUrl(): string {
+        return resolveViisBackendUrl(this.node);
     }
 
     /**
@@ -70,7 +69,7 @@ export class ApiService {
             includeUsers: 'true'
         });
 
-        const apiUrl = `${this.baseUrl}/api/v2/iot-customer/customers?${queryParams.toString()}`;
+        const apiUrl = `${this.resolveBaseUrl()}/api/v2/iot-customer/customers?${queryParams.toString()}`;
 
         if (this.node) {
             logger.apiRequest(this.node, 'GET', apiUrl, config, this.showDetailedLogs);

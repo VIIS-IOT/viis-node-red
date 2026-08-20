@@ -11,6 +11,7 @@ exports.ApiService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const logger_1 = require("../utils/logger");
 const offline_resilience_1 = require("../../../core/offline-resilience");
+const resolve_backend_url_1 = require("../../../ultils/resolve-backend-url");
 /**
  * Service for API operations related to production functions
  */
@@ -23,18 +24,17 @@ class ApiService {
      * @param showDetailedLogs - Whether to show detailed logs
      */
     constructor(thingsboardAccessToken, maxRetries = 3, node = null, showDetailedLogs = false) {
-        var _a, _b;
         this.thingsboardAccessToken = thingsboardAccessToken;
         this.node = node;
         this.showDetailedLogs = showDetailedLogs;
-        // Use global context instead of process.env for hot-reload capability
-        const globalContext = ((_b = (_a = global).get) === null || _b === void 0 ? void 0 : _b.call(_a)) || {};
-        this.baseUrl = globalContext.VIIS_BACKEND || globalContext.API_URL || 'https://iot.viis.tech';
         this.maxRetries = maxRetries;
         if (this.node) {
-            logger_1.logger.info(this.node, `API Service initialized with baseURL: ${this.baseUrl}, maxRetries: ${this.maxRetries}`);
+            logger_1.logger.info(this.node, `API Service initialized; baseURL resolved from VIIS_BACKEND/BACKEND_URL at request time, maxRetries: ${this.maxRetries}`);
             logger_1.logger.debug(this.node, `ThingsBoard Access Token: ${this.thingsboardAccessToken.substring(0, 8)}...`, this.showDetailedLogs);
         }
+    }
+    resolveBaseUrl() {
+        return (0, resolve_backend_url_1.resolveViisBackendUrl)(this.node);
     }
     /**
      * Syncs production functions from the server
@@ -52,7 +52,7 @@ class ApiService {
                 thingsboard_access_token: this.thingsboardAccessToken
             }
         };
-        const apiUrl = `${this.baseUrl}/api/v2/device/sync-production-functions`;
+        const apiUrl = `${this.resolveBaseUrl()}/api/v2/device/sync-production-functions`;
         if (this.node) {
             logger_1.logger.apiRequest(this.node, 'POST', apiUrl, config, this.showDetailedLogs);
         }

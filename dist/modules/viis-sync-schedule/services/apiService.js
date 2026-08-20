@@ -10,9 +10,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApiService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const logger_1 = require("../utils/logger");
-const configs_1 = require("../../../configs");
 const constants_1 = require("../constants");
 const retry_1 = require("../utils/retry");
+const resolve_backend_url_1 = require("../../../ultils/resolve-backend-url");
 /**
  * Service for making API requests to the server
  */
@@ -23,9 +23,8 @@ class ApiService {
      * @param nodeContext - Optional Node-RED context for hot reload support
      */
     constructor(accessToken, nodeContext) {
-        this.configs = (0, configs_1.createConfig)(nodeContext);
+        this.nodeContext = nodeContext;
         const config = {
-            baseURL: 'https://iot.viis.tech',
             timeout: constants_1.SYNC_DEFAULTS.TIMEOUT,
             headers: {
                 'Content-Type': 'application/json',
@@ -33,7 +32,10 @@ class ApiService {
         };
         this.instance = axios_1.default.create(config);
         this.accessToken = accessToken;
-        logger_1.logger.info(null, `API Service initialized with baseURL: ${config.baseURL}`);
+        logger_1.logger.info(null, 'API Service initialized; baseURL resolved from VIIS_BACKEND/BACKEND_URL at request time');
+    }
+    resolveBaseUrl() {
+        return (0, resolve_backend_url_1.resolveViisBackendUrl)(this.nodeContext);
     }
     /**
      * Fetches all schedule plans and their schedules for the device
@@ -44,7 +46,8 @@ class ApiService {
         const url = `/api/v2${constants_1.API_PATHS.SCHEDULE_PLAN_ALL}/${this.accessToken}`;
         return (0, retry_1.withRetry)(async () => {
             try {
-                logger_1.logger.debug(null, `Making GET request to: ${url}`);
+                this.instance.defaults.baseURL = this.resolveBaseUrl();
+                logger_1.logger.debug(null, `Making GET request to: ${this.instance.defaults.baseURL}${url}`);
                 const response = await this.instance.get(url);
                 const plansCount = response.data.result.data.length || 0;
                 logger_1.logger.info(null, `Received ${plansCount} schedule plans from server`);

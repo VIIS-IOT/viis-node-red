@@ -50,6 +50,7 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const axios_1 = __importDefault(require("axios"));
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
+const resolve_backend_url_1 = require("../../ultils/resolve-backend-url");
 const RPC_METHOD = 'sync-full-config';
 const TOPIC_RPC_REQUEST = 'v1/devices/me/rpc/request/+';
 const TB_DEFAULT_HOST = 'mqtt.viis.tech';
@@ -90,19 +91,16 @@ module.exports = function (RED) {
             node.status({ fill: 'red', shape: 'ring', text: 'Missing DEVICE_ACCESS_TOKEN' });
             return;
         }
-        const backendUrl = config.backendUrl ||
-            globalHelper.getEnvVar('VIIS_BACKEND', '') ||
-            globalHelper.getEnvVar('BACKEND_URL', '') ||
-            'https://iot.viis.tech';
+        function resolveBackendUrl() {
+            return (0, resolve_backend_url_1.resolveViisBackendUrl)(node, config.backendUrl);
+        }
         let isSyncing = false;
         let mqttClient = null;
         log.info(node, `Initialized. Config file: ${configPath}`);
-        log.info(node, `Backend URL resolved: ${backendUrl}`);
+        log.info(node, 'Backend URL is resolved at request time from VIIS_BACKEND/BACKEND_URL (common.json via env-loader)');
         log.info(node, `  config.backendUrl: "${config.backendUrl}"`);
-        log.info(node, `  VIIS_BACKEND: "${globalHelper.getEnvVar('VIIS_BACKEND', '')}"`);
-        log.info(node, `  BACKEND_URL: "${globalHelper.getEnvVar('BACKEND_URL', '')}"`);
-        log.info(node, `  server_url (global): "${globalHelper.getGlobalVar('server_url', '')}"`);
-        log.info(node, `  backend_url (global): "${globalHelper.getGlobalVar('backend_url', '')}"`);
+        log.info(node, `  VIIS_BACKEND (at init): "${globalHelper.getEnvVar('VIIS_BACKEND', '')}"`);
+        log.info(node, `  BACKEND_URL (at init): "${globalHelper.getEnvVar('BACKEND_URL', '')}"`);
         log.info(node, `Device ID: ${deviceId}`);
         // ── Initialize MQTT subscription ──────────────────────────────────────
         (async () => {
@@ -166,8 +164,8 @@ module.exports = function (RED) {
             node.status({ fill: 'blue', shape: 'dot', text: 'Syncing...' });
             try {
                 // Step 1: Build config URL
-                // Prefer local backendUrl (from config/env) over RPC configUrl
-                // RPC configUrl may be wrong if backend BACKEND_URL env var is misconfigured
+                // Prefer editor override, then common.json via env-loader (lazy — after node construct)
+                const backendUrl = resolveBackendUrl();
                 const configUrl = `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
                 log.info(node, `Config URL: ${configUrl}`);
                 log.info(node, `Device ID in URL: ${deviceId}`);

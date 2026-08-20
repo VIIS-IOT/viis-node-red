@@ -6,10 +6,10 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 import { ServerResponse, ServerSchedulePlan } from '../interfaces/types';
 import { logger } from '../utils/logger';
-import { createConfig } from '../../../configs';
 import { API_PATHS, SYNC_DEFAULTS } from '../constants';
 import { withRetry } from '../utils/retry';
 import { NodeContext } from 'node-red';
+import { resolveViisBackendUrl } from '../../../ultils/resolve-backend-url';
 
 /**
  * Service for making API requests to the server
@@ -19,8 +19,8 @@ export class ApiService {
     private readonly instance: AxiosInstance;
     /** Device access token for authentication */
     private readonly accessToken: string;
-    /** Configuration object with hot reload support */
-    private readonly configs: any;
+    /** Node-RED context so VIIS_BACKEND can load after env-loader */
+    private readonly nodeContext?: NodeContext;
 
     /**
      * Creates a new API service instance
@@ -28,9 +28,8 @@ export class ApiService {
      * @param nodeContext - Optional Node-RED context for hot reload support
      */
     constructor(accessToken: string, nodeContext?: NodeContext) {
-        this.configs = createConfig(nodeContext);
+        this.nodeContext = nodeContext;
         const config: AxiosRequestConfig = {
-            baseURL: 'https://iot.viis.tech',
             timeout: SYNC_DEFAULTS.TIMEOUT,
             headers: {
                 'Content-Type': 'application/json',
@@ -40,7 +39,11 @@ export class ApiService {
         this.instance = axios.create(config);
         this.accessToken = accessToken;
 
-        logger.info(null, `API Service initialized with baseURL: ${config.baseURL}`);
+        logger.info(null, 'API Service initialized; baseURL resolved from VIIS_BACKEND/BACKEND_URL at request time');
+    }
+
+    private resolveBaseUrl(): string {
+        return resolveViisBackendUrl(this.nodeContext);
     }
 
     /**
@@ -53,7 +56,8 @@ export class ApiService {
         
         return withRetry(async () => {
             try {
-                logger.debug(null, `Making GET request to: ${url}`);
+                this.instance.defaults.baseURL = this.resolveBaseUrl();
+                logger.debug(null, `Making GET request to: ${this.instance.defaults.baseURL}${url}`);
                 const response = await this.instance.get<ServerResponse<ServerSchedulePlan[]>>(url);
                 const plansCount = response.data.result.data.length || 0;
                 logger.info(null, `Received ${plansCount} schedule plans from server`);
