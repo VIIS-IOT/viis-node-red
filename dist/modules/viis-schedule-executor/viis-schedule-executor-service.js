@@ -1275,12 +1275,24 @@ let ScheduleService = class ScheduleService {
         if (this.node) {
             this.node.warn(`[MODBUS] RESET ${(schedule === null || schedule === void 0 ? void 0 : schedule.name) || '?'}: ${holdingRegisters.length} registers + ${coilCommands.length} coils (ordered=${isFinishing})`);
         }
-        if (holdingRegisters.length > 0) {
+        const resetHoldings = async () => {
+            if (holdingRegisters.length === 0) {
+                return;
+            }
             const offHoldings = holdingRegisters.map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
             const keys = await this.writeCommandGroup(offHoldings, deps, holdingPhase, 'RESET');
             buffer.pushPhase({ phase: holdingPhase, keys });
-        }
+        };
         if (isFinishing) {
+            if (valveCoils.length > 0) {
+                const keys = await this.writeCommandGroup(valveCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'close_valves', 'RESET');
+                buffer.pushPhase({ phase: 'close_valves', keys });
+                if (this.node)
+                    this.node.warn(`[MODBUS] ⏱️ delay after VALVE close...`);
+                const t0 = Date.now();
+                await this.delay(WATER_HAMMER_DELAY_MS);
+                buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
+            }
             if (pumpCoils.length > 0) {
                 const keys = await this.writeCommandGroup(pumpCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'stop_pumps', 'RESET');
                 buffer.pushPhase({ phase: 'stop_pumps', keys });
@@ -1293,19 +1305,14 @@ let ScheduleService = class ScheduleService {
                 const keys = await this.writeCommandGroup(powerCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'system_power', 'RESET');
                 buffer.pushPhase({ phase: 'system_power', keys });
             }
-            if (valveCoils.length > 0) {
-                if (this.node)
-                    this.node.warn(`[MODBUS] ⏱️ delay before VALVE reset...`);
-                const t0 = Date.now();
-                await this.delay(WATER_HAMMER_DELAY_MS);
-                buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
-                const keys = await this.writeCommandGroup(valveCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'close_valves', 'RESET');
-                buffer.pushPhase({ phase: 'close_valves', keys });
-            }
+            await resetHoldings();
         }
-        else if (coilCommands.length > 0) {
-            const keys = await this.writeCommandGroup(coilCommands.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'other_coils', 'RESET');
-            buffer.pushPhase({ phase: 'other_coils', keys });
+        else {
+            await resetHoldings();
+            if (coilCommands.length > 0) {
+                const keys = await this.writeCommandGroup(coilCommands.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'other_coils', 'RESET');
+                buffer.pushPhase({ phase: 'other_coils', keys });
+            }
         }
         const report = buffer.toReport();
         return { report, allSuccessful: (0, schedule_execution_types_1.failedOutcomes)(report).length === 0 };
