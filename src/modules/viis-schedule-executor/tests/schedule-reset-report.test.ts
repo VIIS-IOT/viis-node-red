@@ -44,11 +44,55 @@ test('FINISH pump OFF verify fail still closes valves after delay', async () => 
     expect(writeCoil.mock.calls.filter((c: any[]) => c[0] === 0)).toHaveLength(3);
     expect(writeCoil.mock.calls.filter((c: any[]) => c[0] === 1)).toHaveLength(1);
     expect(report.steps.map(s => s.phase)).toEqual([
-        'stop_pumps',
-        'water_hammer_delay',
         'close_valves',
+        'water_hammer_delay',
+        'stop_pumps',
     ]);
     expect(report.steps.find(s => s.phase === 'stop_pumps')?.ok).toBe(false);
     expect(report.steps.find(s => s.phase === 'close_valves')?.ok).toBe(true);
     expect(allSuccessful).toBe(false);
+});
+
+test('FINISH closes valves before pumps/power and zeros holdings last', async () => {
+    const service = createService();
+    const writeCoil = jest.fn().mockResolvedValue(undefined);
+    const writeRegister = jest.fn().mockResolvedValue(undefined);
+    const modbusClient = {
+        writeCoil,
+        writeRegister,
+        readCoils: jest.fn().mockResolvedValue({ data: [false] }),
+        readHoldingRegisters: jest.fn().mockResolvedValue({ data: [0] }),
+    } as unknown as ModbusClientCore;
+
+    const { report } = await service.resetModbusCommands(
+        modbusClient,
+        [
+            { key: 'valve_program', value: 4200, fc: 6, unitid: 1, address: 20, quantity: 1 },
+            { key: 'control_mode', value: 1, fc: 6, unitid: 1, address: 1, quantity: 1 },
+            { key: 'main_pump', value: true, fc: 5, unitid: 1, address: 0, quantity: 1 },
+            { key: 'power', value: true, fc: 5, unitid: 1, address: 30, quantity: 1 },
+            { key: 'valve_3', value: true, fc: 5, unitid: 1, address: 12, quantity: 1 },
+        ],
+        { name: 'finish-order' } as TabiotSchedule,
+        true
+    );
+
+    expect(report.steps.map(s => s.phase)).toEqual([
+        'close_valves',
+        'water_hammer_delay',
+        'stop_pumps',
+        'system_power',
+        'reset_holding',
+    ]);
+
+    const firstValve = writeCoil.mock.calls.findIndex((c: any[]) => c[0] === 12);
+    const firstPump = writeCoil.mock.calls.findIndex((c: any[]) => c[0] === 0);
+    const firstPower = writeCoil.mock.calls.findIndex((c: any[]) => c[0] === 30);
+    const firstValveProgramOff = writeRegister.mock.calls.findIndex((c: any[]) => c[0] === 20 && c[1] === 0);
+    expect(firstValve).toBeGreaterThanOrEqual(0);
+    expect(firstPump).toBeGreaterThan(firstValve);
+    expect(firstPower).toBeGreaterThan(firstPump);
+    expect(firstValveProgramOff).toBeGreaterThanOrEqual(0);
+    expect(writeRegister.mock.invocationCallOrder[firstValveProgramOff])
+        .toBeGreaterThan(writeCoil.mock.invocationCallOrder[firstPower]);
 });
