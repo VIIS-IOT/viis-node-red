@@ -35,15 +35,15 @@ test('FINISH pump OFF verify fail still closes valves after delay', async () => 
     expect(writeCoil.mock.calls.filter((c) => c[0] === 0)).toHaveLength(3);
     expect(writeCoil.mock.calls.filter((c) => c[0] === 1)).toHaveLength(1);
     expect(report.steps.map(s => s.phase)).toEqual([
-        'close_valves',
-        'water_hammer_delay',
         'stop_pumps',
+        'water_hammer_delay',
+        'close_valves',
     ]);
     expect((_a = report.steps.find(s => s.phase === 'stop_pumps')) === null || _a === void 0 ? void 0 : _a.ok).toBe(false);
     expect((_b = report.steps.find(s => s.phase === 'close_valves')) === null || _b === void 0 ? void 0 : _b.ok).toBe(true);
     expect(allSuccessful).toBe(false);
 });
-test('FINISH closes valves before pumps/power and zeros holdings last', async () => {
+test('FINISH stops pumps, delays, closes valves, then zeros holdings and power', async () => {
     const service = createService();
     const writeCoil = jest.fn().mockResolvedValue(undefined);
     const writeRegister = jest.fn().mockResolvedValue(undefined);
@@ -61,20 +61,22 @@ test('FINISH closes valves before pumps/power and zeros holdings last', async ()
         { key: 'valve_3', value: true, fc: 5, unitid: 1, address: 12, quantity: 1 },
     ], { name: 'finish-order' }, true);
     expect(report.steps.map(s => s.phase)).toEqual([
-        'close_valves',
-        'water_hammer_delay',
         'stop_pumps',
-        'system_power',
+        'water_hammer_delay',
+        'close_valves',
         'reset_holding',
+        'system_power',
     ]);
     const firstValve = writeCoil.mock.calls.findIndex((c) => c[0] === 12);
     const firstPump = writeCoil.mock.calls.findIndex((c) => c[0] === 0);
     const firstPower = writeCoil.mock.calls.findIndex((c) => c[0] === 30);
     const firstValveProgramOff = writeRegister.mock.calls.findIndex((c) => c[0] === 20 && c[1] === 0);
-    expect(firstValve).toBeGreaterThanOrEqual(0);
-    expect(firstPump).toBeGreaterThan(firstValve);
-    expect(firstPower).toBeGreaterThan(firstPump);
+    expect(firstPump).toBeGreaterThanOrEqual(0);
+    expect(firstValve).toBeGreaterThan(firstPump);
     expect(firstValveProgramOff).toBeGreaterThanOrEqual(0);
     expect(writeRegister.mock.invocationCallOrder[firstValveProgramOff])
-        .toBeGreaterThan(writeCoil.mock.invocationCallOrder[firstPower]);
+        .toBeGreaterThan(writeCoil.mock.invocationCallOrder[firstValve]);
+    expect(firstPower).toBeGreaterThan(-1);
+    expect(writeCoil.mock.invocationCallOrder[firstPower])
+        .toBeGreaterThan(writeRegister.mock.invocationCallOrder[firstValveProgramOff]);
 });

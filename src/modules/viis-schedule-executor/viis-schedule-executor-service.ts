@@ -1437,14 +1437,6 @@ export class ScheduleService {
         };
 
         if (isFinishing) {
-            if (valveCoils.length > 0) {
-                const keys = await this.writeCommandGroup(valveCoils.map(cmd => ({ ...cmd, value: false })), deps, 'close_valves', 'RESET');
-                buffer.pushPhase({ phase: 'close_valves', keys });
-                if (this.node) this.node.warn(`[MODBUS] ⏱️ delay after VALVE close...`);
-                const t0 = Date.now();
-                await this.delay(WATER_HAMMER_DELAY_MS);
-                buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
-            }
             if (pumpCoils.length > 0) {
                 const keys = await this.writeCommandGroup(pumpCoils.map(cmd => ({ ...cmd, value: false })), deps, 'stop_pumps', 'RESET');
                 buffer.pushPhase({ phase: 'stop_pumps', keys });
@@ -1453,11 +1445,21 @@ export class ScheduleService {
                 const keys = await this.writeCommandGroup(otherCoils.map(cmd => ({ ...cmd, value: false })), deps, 'other_coils', 'RESET');
                 buffer.pushPhase({ phase: 'other_coils', keys });
             }
+            if (pumpCoils.length > 0 && valveCoils.length > 0) {
+                if (this.node) this.node.warn(`[MODBUS] ⏱️ delay after PUMP stop (valves still open)...`);
+                const t0 = Date.now();
+                await this.delay(WATER_HAMMER_DELAY_MS);
+                buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
+            }
+            if (valveCoils.length > 0) {
+                const keys = await this.writeCommandGroup(valveCoils.map(cmd => ({ ...cmd, value: false })), deps, 'close_valves', 'RESET');
+                buffer.pushPhase({ phase: 'close_valves', keys });
+            }
+            await resetHoldings();
             if (powerCoils.length > 0) {
                 const keys = await this.writeCommandGroup(powerCoils.map(cmd => ({ ...cmd, value: false })), deps, 'system_power', 'RESET');
                 buffer.pushPhase({ phase: 'system_power', keys });
             }
-            await resetHoldings();
         } else {
             await resetHoldings();
             if (coilCommands.length > 0) {
