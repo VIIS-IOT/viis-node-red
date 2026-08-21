@@ -79,6 +79,12 @@ describe('demeter-schedule-protocol', () => {
         expect(local.enable).toBe(1);
         expect(local.is_deleted).toBe(0);
         expect(local.schedule_plan_id).toBe('rk-plan-1');
+        expect(local.type).toBe('');
+    });
+
+    it('does not persist Demeter schedule type onto the gateway enum', () => {
+        expect(fromDeviceSchedule({ id: 'rk-1', name: 'x', type: 'daily' }).type).toBe('');
+        expect(fromDeviceSchedule({ id: 'rk-1', name: 'x', type: 'period' }).type).toBe('');
     });
 
     it('keeps legacy Frappe payloads that only have name as the protocol key', () => {

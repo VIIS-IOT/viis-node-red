@@ -354,7 +354,7 @@ export class ScheduleSyncHandler {
             newSchedule.end_time = serverSchedule.end_time;
             newSchedule.start_date = serverSchedule.start_date || null;
             newSchedule.end_date = serverSchedule.end_date || null;
-            newSchedule.type = (serverSchedule.type || '') as '' | 'circulate' | 'period' | 'fixed' | 'interval';
+            newSchedule.type = '';
             newSchedule.interval = serverSchedule.interval;
             newSchedule.is_synced = 1; // Mark as synced since it came from server
             newSchedule.is_from_local = 0; // Not from local
@@ -410,7 +410,7 @@ export class ScheduleSyncHandler {
                 end_time: serverSchedule.end_time,
                 start_date: serverSchedule.start_date ? new Date(serverSchedule.start_date) : null,
                 end_date: serverSchedule.end_date ? new Date(serverSchedule.end_date) : null,
-                type: (serverSchedule.type || '') as '' | 'circulate' | 'period' | 'fixed' | 'interval', // Ensure empty string instead of null
+                type: '',
                 interval: serverSchedule.interval,
                 is_synced: 1, // Mark as synced
                 is_deleted: serverSchedule.is_deleted,

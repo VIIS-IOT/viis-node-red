@@ -156,7 +156,7 @@ export function fromDeviceSchedule(row: DeviceScheduleWire | LocalScheduleLike |
         end_date: (row as DeviceScheduleWire)?.end_date ?? null,
         start_time: (row as DeviceScheduleWire)?.start_time ?? null,
         end_time: (row as DeviceScheduleWire)?.end_time ?? null,
-        type: (row as DeviceScheduleWire)?.type ?? null,
+        type: '',
         is_deleted: toEnableInt((row as DeviceScheduleWire)?.is_deleted),
         status: (row as DeviceScheduleWire)?.status ?? null,
         schedule_plan_id: (row as DeviceScheduleWire)?.schedule_plan_id ?? null,
