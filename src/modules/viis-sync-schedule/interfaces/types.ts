@@ -61,9 +61,9 @@ export interface ServerSchedulePlan {
  * Represents a schedule from the server
  */
 export interface ServerSchedule {
+    id?: string;
     /** Unique identifier */
     name: string;
-    id: string;
     /** Human-readable label */
     label: string;
     /** Device ID */

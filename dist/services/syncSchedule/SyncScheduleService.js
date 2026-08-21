@@ -13,6 +13,8 @@ exports.SyncScheduleService = void 0;
 const AxiosService_1 = require("../AxiosService");
 const configs_1 = require("../../configs");
 const typedi_1 = require("typedi");
+const demeter_schedule_protocol_1 = require("../../core/demeter-schedule-protocol");
+const resolve_backend_url_1 = require("../../ultils/resolve-backend-url");
 let SyncScheduleService = class SyncScheduleService extends AxiosService_1.AxiosService {
     constructor(nodeContext) {
         const configs = (0, configs_1.createConfig)(nodeContext);
@@ -21,17 +23,23 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
             withCredentials: true,
         });
         this.configs = configs;
+        this.nodeContext = nodeContext;
         this.accessToken = configs.deviceAccessToken || "NA";
         // Only warn if token is missing
         if (this.accessToken === "NA") {
             console.warn("⚠️ SyncScheduleService: Access token is 'NA' - check if env-loader is running and nodeContext is passed!");
         }
     }
+    tokenQuery() {
+        return `access_token=${encodeURIComponent(this.accessToken)}`;
+    }
+    applyBaseUrl() {
+        this.instance.defaults.baseURL = (0, resolve_backend_url_1.resolveViisBackendUrl)(this.nodeContext, undefined, this.configs.serverUrl || 'http://localhost:8080');
+    }
     async logSchedule(body) {
         try {
-            const response = await this.instance.post(`/api/v2/scheduleLog`, body, {
-                withCredentials: true,
-            });
+            this.applyBaseUrl();
+            const response = await this.instance.post(`/api/v2/scheduleLog/device?${this.tokenQuery()}`, (0, demeter_schedule_protocol_1.toDeviceScheduleLog)(body), { withCredentials: true });
             return { status: response.status, data: response.data };
         }
         catch (error) {
@@ -41,9 +49,9 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
     }
     async syncScheduleFromLocalToServer(body) {
         try {
-            const response = await this.instance.post(`/api/v2/scheduleSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
-                withCredentials: true,
-            });
+            this.applyBaseUrl();
+            const payload = (body || []).map((row) => (0, demeter_schedule_protocol_1.toDeviceSchedule)(row));
+            const response = await this.instance.post(`/api/v2/scheduleSync/device?${this.tokenQuery()}`, payload, { withCredentials: true });
             return { status: response.status, data: response.data };
         }
         catch (error) {
@@ -53,9 +61,9 @@ let SyncScheduleService = class SyncScheduleService extends AxiosService_1.Axios
     }
     async syncSchedulePlanFromLocalToServer(body) {
         try {
-            const response = await this.instance.post(`/api/v2/schedulePlanSync/syncLocalToServer/v2?access_token=${this.accessToken}`, body, {
-                withCredentials: true,
-            });
+            this.applyBaseUrl();
+            const payload = (body || []).map((row) => (0, demeter_schedule_protocol_1.toDeviceSchedulePlan)(row));
+            const response = await this.instance.post(`/api/v2/schedulePlanSync/device?${this.tokenQuery()}`, payload, { withCredentials: true });
             return { status: response.status, data: response.data };
         }
         catch (error) {

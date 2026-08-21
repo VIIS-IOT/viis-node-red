@@ -302,7 +302,9 @@ export class ScheduleSyncHandler {
             logger.info(this.node, `Syncing schedule: ${serverSchedule.name}`);
 
             // Check if schedule exists locally
-            const localSchedule = await this.scheduleRepo.findOneBy({ name: serverSchedule.id });
+            const localSchedule = await this.scheduleRepo.findOneBy({
+                name: serverSchedule.id || serverSchedule.name,
+            });
 
             if (!localSchedule) {
                 // Schedule doesn't exist locally, create it
@@ -332,8 +334,8 @@ export class ScheduleSyncHandler {
 
             // Create a new TabiotSchedule entity
             const newSchedule = new TabiotSchedule();
-            newSchedule.name = serverSchedule.id;
-            newSchedule.label = serverSchedule.name;
+            newSchedule.name = serverSchedule.id || serverSchedule.name;
+            newSchedule.label = serverSchedule.label || serverSchedule.name;
             newSchedule.device_id = serverSchedule.device_id;
             newSchedule.status = (serverSchedule.status as 'running' | 'stopped' | 'finished' | '') || 'finished'; // Default to 'finished' if null/empty
             newSchedule.action = typeof serverSchedule.action === 'object'
@@ -392,7 +394,7 @@ export class ScheduleSyncHandler {
 
             // Update local schedule with server data
             Object.assign(localSchedule, {
-                label: serverSchedule.name,
+                label: serverSchedule.label || serverSchedule.name,
                 modified: serverSchedule.modified || localSchedule.modified,
                 status: (serverSchedule.status as 'running' | 'stopped' | 'finished' | '') || 'finished', // Default to 'finished' if null/empty
                 action: typeof serverSchedule.action === 'object'
@@ -449,7 +451,7 @@ export class ScheduleSyncHandler {
             // Create a map of server schedule names for fast lookup
             const serverScheduleMap = new Map<string, boolean>();
             serverSchedules.forEach(schedule => {
-                serverScheduleMap.set(schedule.name, true);
+                serverScheduleMap.set(schedule.id || schedule.name, true);
             });
 
             // Find schedules that exist locally but not on server

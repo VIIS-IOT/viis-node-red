@@ -13,6 +13,7 @@ const logger_1 = require("../utils/logger");
 const constants_1 = require("../constants");
 const retry_1 = require("../utils/retry");
 const resolve_backend_url_1 = require("../../../ultils/resolve-backend-url");
+const demeter_schedule_protocol_1 = require("../../../core/demeter-schedule-protocol");
 /**
  * Service for making API requests to the server
  */
@@ -49,9 +50,18 @@ class ApiService {
                 this.instance.defaults.baseURL = this.resolveBaseUrl();
                 logger_1.logger.debug(null, `Making GET request to: ${this.instance.defaults.baseURL}${url}`);
                 const response = await this.instance.get(url);
-                const plansCount = response.data.result.data.length || 0;
-                logger_1.logger.info(null, `Received ${plansCount} schedule plans from server`);
-                return response.data;
+                const plans = (0, demeter_schedule_protocol_1.unwrapDevicePlanList)(response.data).map((plan) => {
+                    const local = (0, demeter_schedule_protocol_1.fromDeviceSchedulePlan)(plan);
+                    return Object.assign(Object.assign({}, local), { id: local.name, schedules: (local.schedules || []).map((schedule) => (Object.assign(Object.assign({}, schedule), { id: schedule.name }))) });
+                });
+                logger_1.logger.info(null, `Received ${plans.length} schedule plans from server`);
+                return {
+                    result: {
+                        status: 200,
+                        message: 'ok',
+                        data: plans,
+                    },
+                };
             }
             catch (error) {
                 this.handleApiError(error, 'fetch schedule plans');

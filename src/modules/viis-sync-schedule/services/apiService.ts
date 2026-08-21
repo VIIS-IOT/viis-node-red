@@ -10,6 +10,7 @@ import { API_PATHS, SYNC_DEFAULTS } from '../constants';
 import { withRetry } from '../utils/retry';
 import { NodeContext } from 'node-red';
 import { resolveViisBackendUrl } from '../../../ultils/resolve-backend-url';
+import { fromDeviceSchedulePlan, unwrapDevicePlanList } from '../../../core/demeter-schedule-protocol';
 
 /**
  * Service for making API requests to the server
@@ -58,11 +59,27 @@ export class ApiService {
             try {
                 this.instance.defaults.baseURL = this.resolveBaseUrl();
                 logger.debug(null, `Making GET request to: ${this.instance.defaults.baseURL}${url}`);
-                const response = await this.instance.get<ServerResponse<ServerSchedulePlan[]>>(url);
-                const plansCount = response.data.result.data.length || 0;
-                logger.info(null, `Received ${plansCount} schedule plans from server`);
-                
-                return response.data;
+                const response = await this.instance.get(url);
+                const plans = unwrapDevicePlanList(response.data).map((plan) => {
+                    const local = fromDeviceSchedulePlan(plan);
+                    return {
+                        ...local,
+                        id: local.name,
+                        schedules: (local.schedules || []).map((schedule) => ({
+                            ...schedule,
+                            id: schedule.name,
+                        })),
+                    } as unknown as ServerSchedulePlan;
+                });
+                logger.info(null, `Received ${plans.length} schedule plans from server`);
+
+                return {
+                    result: {
+                        status: 200,
+                        message: 'ok',
+                        data: plans,
+                    },
+                };
             } catch (error) {
                 this.handleApiError(error, 'fetch schedule plans');
                 throw error; // Re-throw for retry mechanism
