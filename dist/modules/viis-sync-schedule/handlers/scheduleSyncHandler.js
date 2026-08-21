@@ -9,7 +9,13 @@ const apiService_1 = require("../services/apiService");
 const logger_1 = require("../utils/logger");
 const TabiotSchedulePlan_1 = require("../../../orm/entities/schedulePlan/TabiotSchedulePlan");
 const TabiotSchedule_1 = require("../../../orm/entities/schedule/TabiotSchedule");
-const helper_1 = require("../../../ultils/helper");
+const farm_time_1 = require("../../../core/farm-time");
+function isExistingUtcSameOrAfter(existing, incoming) {
+    const existingIso = (0, farm_time_1.mysqlUtcDatetimeToIso)(existing);
+    if (!existingIso || incoming == null || incoming === '')
+        return false;
+    return new Date(existingIso).getTime() >= new Date(incoming).getTime();
+}
 const syncStateService_1 = require("../services/syncStateService");
 /**
  * Handler for synchronizing schedules and schedule plans
@@ -167,9 +173,7 @@ class ScheduleSyncHandler {
     async updateSchedulePlanIfNeeded(localPlan, serverPlan) {
         try {
             const serverModified = new Date(serverPlan.modified);
-            const localModified = localPlan.modified;
-            // Skip update if local is newer or same as server
-            if (localPlan.is_from_local === 1 && localModified >= serverModified) {
+            if (localPlan.is_from_local === 1 && isExistingUtcSameOrAfter(localPlan.modified, serverPlan.modified)) {
                 logger_1.logger.info(this.node, `Local plan ${localPlan.name} is newer or same as server, skipping update`);
                 return;
             }
@@ -282,8 +286,8 @@ class ScheduleSyncHandler {
             newSchedule.is_from_local = 0; // Not from local
             newSchedule.is_deleted = serverSchedule.is_deleted;
             newSchedule.schedule_plan_id = planName;
-            newSchedule.creation = (0, helper_1.adjustToUTC7)(new Date());
-            newSchedule.modified = (0, helper_1.adjustToUTC7)(new Date());
+            newSchedule.creation = new Date();
+            newSchedule.modified = new Date();
             await this.scheduleRepo.save(newSchedule);
             this.syncStats.schedulesCreated++;
             this.syncStats.totalSchedules++;
@@ -305,11 +309,9 @@ class ScheduleSyncHandler {
         try {
             // If local was created locally and is not deleted, only update if server version is newer
             if (localSchedule.is_from_local === 1 && localSchedule.is_deleted === 0) {
-                const serverModified = new Date(serverSchedule.modified || Date.now());
-                const localModified = localSchedule.modified;
-                if (localModified && serverModified && localModified >= serverModified) {
+                if (isExistingUtcSameOrAfter(localSchedule.modified, serverSchedule.modified || new Date())) {
                     logger_1.logger.info(this.node, `Local schedule ${localSchedule.name} is newer than server, skipping update`);
-                    this.syncStats.totalSchedules++; // Still count as processed
+                    this.syncStats.totalSchedules++;
                     return;
                 }
             }
@@ -382,7 +384,7 @@ class ScheduleSyncHandler {
             for (const deletedSchedule of deletedSchedules) {
                 logger_1.logger.info(this.node, `Marking schedule ${deletedSchedule.name} as deleted`);
                 deletedSchedule.is_deleted = 1;
-                deletedSchedule.modified = (0, helper_1.adjustToUTC7)(new Date());
+                deletedSchedule.modified = new Date();
                 await this.scheduleRepo.save(deletedSchedule);
                 this.syncStats.schedulesUpdated++;
                 this.syncStats.totalSchedules++;

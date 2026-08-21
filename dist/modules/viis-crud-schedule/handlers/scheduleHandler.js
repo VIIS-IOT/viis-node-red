@@ -167,8 +167,8 @@ class ScheduleHandler {
                 is_synced: 0,
                 is_from_local: 1,
                 deleted: null,
-                creation: (0, helper_1.adjustToUTC7)(new Date()),
-                modified: (0, helper_1.adjustToUTC7)(new Date()),
+                creation: new Date(),
+                modified: new Date(),
             };
             logger_1.logger.info(this.node, `Creating new schedule: ${JSON.stringify(scheduleData)}`);
             const schedule = this.scheduleRepo.create(scheduleData);
@@ -182,7 +182,7 @@ class ScheduleHandler {
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // Assuming syncRes indicates success if no error is thrown or specific success condition
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update({ name: savedSchedule.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                await this.scheduleRepo.update({ name: savedSchedule.name }, { is_synced: 1, modified: new Date() });
                 // Refresh savedSchedule with updated is_synced value
                 const updatedSchedule = await this.scheduleRepo.findOneBy({ name: savedSchedule.name });
                 if (updatedSchedule) {
@@ -375,7 +375,7 @@ class ScheduleHandler {
                 is_synced: 0,
                 is_deleted: 0,
                 deleted: null,
-                modified: (0, helper_1.adjustToUTC7)(new Date()),
+                modified: new Date(),
             };
             logger_1.logger.info(this.node, `Updating schedule: { name, updateData }`);
             const result = await this.scheduleRepo.update({ name }, updateData);
@@ -394,7 +394,7 @@ class ScheduleHandler {
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updated]);
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update({ name: updated.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                await this.scheduleRepo.update({ name: updated.name }, { is_synced: 1, modified: new Date() });
                 // Refresh updated with the latest is_synced value
                 const refreshedUpdated = await this.scheduleRepo.findOneBy({ name: updated.name });
                 if (refreshedUpdated) {
@@ -590,7 +590,7 @@ class ScheduleHandler {
                 is_deleted: 1,
                 is_from_local: 1,
                 is_synced: 0,
-                modified: (0, helper_1.adjustToUTC7)(new Date()),
+                modified: new Date(),
             });
             logger_1.logger.info(this.node, `Delete result: affected=${result.affected}`);
             if (result.affected === 0) {
@@ -608,7 +608,7 @@ class ScheduleHandler {
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updatedSchedule]);
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1, modified: (0, helper_1.adjustToUTC7)(new Date()) });
+                await this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1, modified: new Date() });
                 this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             }
             catch (syncError) {

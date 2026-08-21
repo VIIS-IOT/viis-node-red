@@ -50,6 +50,19 @@ describe('demeter-schedule-protocol', () => {
         expect(wire.schedule_plan_id).toBe('rk-plan-1');
         expect(wire.set_time).toBe('06:00:00');
         expect(wire.time).toBe('06:00:00');
+        expect(wire.creation).toBe('2026-08-01T00:00:00.000Z');
+        expect(wire.modified).toBe('2026-08-02T00:00:00.000Z');
+    });
+
+    it('maps Demeter ISO Z instants onto naive UTC DATETIME for local write', () => {
+        const local = fromDeviceSchedule({
+            id: 'rk-schedule-1',
+            name: 'Morning irrigation',
+            creation: '2026-08-21T04:54:13.000Z',
+            modified: '2026-08-21T05:10:00.000Z',
+        });
+        expect(local.creation).toBe('2026-08-21 04:54:13');
+        expect(local.modified).toBe('2026-08-21 05:10:00');
     });
 
     it('maps Demeter wire schedule back onto local name/label columns', () => {

@@ -11,7 +11,16 @@ import { ServerSchedule, ServerSchedulePlan } from '../interfaces/types';
 import { logger } from '../utils/logger';
 import { TabiotSchedulePlan } from '../../../orm/entities/schedulePlan/TabiotSchedulePlan';
 import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
-import { adjustToUTC7 } from '../../../ultils/helper';
+import { mysqlUtcDatetimeToIso } from '../../../core/farm-time';
+
+function isExistingUtcSameOrAfter(
+    existing: Date | string | null | undefined,
+    incoming: Date | string | null | undefined,
+): boolean {
+    const existingIso = mysqlUtcDatetimeToIso(existing);
+    if (!existingIso || incoming == null || incoming === '') return false;
+    return new Date(existingIso).getTime() >= new Date(incoming).getTime();
+}
 import { SyncStateService, SyncResult } from '../services/syncStateService';
 
 
@@ -226,10 +235,8 @@ export class ScheduleSyncHandler {
     ): Promise<void> {
         try {
             const serverModified = new Date(serverPlan.modified);
-            const localModified = localPlan.modified;
 
-            // Skip update if local is newer or same as server
-            if (localPlan.is_from_local === 1 && localModified >= serverModified) {
+            if (localPlan.is_from_local === 1 && isExistingUtcSameOrAfter(localPlan.modified, serverPlan.modified)) {
                 logger.info(this.node, `Local plan ${localPlan.name} is newer or same as server, skipping update`);
                 return;
             }
@@ -353,8 +360,8 @@ export class ScheduleSyncHandler {
             newSchedule.is_from_local = 0; // Not from local
             newSchedule.is_deleted = serverSchedule.is_deleted;
             newSchedule.schedule_plan_id = planName;
-            newSchedule.creation = adjustToUTC7(new Date());
-            newSchedule.modified = adjustToUTC7(new Date());
+            newSchedule.creation = new Date();
+            newSchedule.modified = new Date();
 
             await this.scheduleRepo.save(newSchedule);
             this.syncStats.schedulesCreated++;
@@ -380,12 +387,9 @@ export class ScheduleSyncHandler {
         try {
             // If local was created locally and is not deleted, only update if server version is newer
             if (localSchedule.is_from_local === 1 && localSchedule.is_deleted === 0) {
-                const serverModified = new Date(serverSchedule.modified || Date.now());
-                const localModified = localSchedule.modified;
-
-                if (localModified && serverModified && localModified >= serverModified) {
+                if (isExistingUtcSameOrAfter(localSchedule.modified, serverSchedule.modified || new Date())) {
                     logger.info(this.node, `Local schedule ${localSchedule.name} is newer than server, skipping update`);
-                    this.syncStats.totalSchedules++; // Still count as processed
+                    this.syncStats.totalSchedules++;
                     return;
                 }
             }
@@ -471,7 +475,7 @@ export class ScheduleSyncHandler {
                 logger.info(this.node, `Marking schedule ${deletedSchedule.name} as deleted`);
 
                 deletedSchedule.is_deleted = 1;
-                deletedSchedule.modified = adjustToUTC7(new Date());
+                deletedSchedule.modified = new Date();
 
                 await this.scheduleRepo.save(deletedSchedule);
                 this.syncStats.schedulesUpdated++;

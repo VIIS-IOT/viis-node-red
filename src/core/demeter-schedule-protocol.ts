@@ -9,6 +9,16 @@
  * Do not migrate the local PK. Map only at the HTTP/RPC edge.
  */
 
+import { isoUtcToMysqlUtcDatetime, mysqlUtcDatetimeToIso } from './farm-time';
+
+function wireInstant(value: string | Date | null | undefined): string | Date | null {
+    return mysqlUtcDatetimeToIso(value);
+}
+
+function localInstant(value: string | Date | null | undefined): string | Date | null {
+    return isoUtcToMysqlUtcDatetime(value);
+}
+
 export interface LocalScheduleLike {
     name?: string | null;
     label?: string | null;
@@ -123,8 +133,8 @@ export function toDeviceSchedule(row: LocalScheduleLike | null | undefined): Dev
         is_deleted: toEnableInt(row?.is_deleted),
         status: row?.status ?? null,
         schedule_plan_id: row?.schedule_plan_id ?? null,
-        creation: row?.creation ?? null,
-        modified: row?.modified ?? null,
+        creation: wireInstant(row?.creation),
+        modified: wireInstant(row?.modified),
     };
 }
 
@@ -150,8 +160,8 @@ export function fromDeviceSchedule(row: DeviceScheduleWire | LocalScheduleLike |
         is_deleted: toEnableInt((row as DeviceScheduleWire)?.is_deleted),
         status: (row as DeviceScheduleWire)?.status ?? null,
         schedule_plan_id: (row as DeviceScheduleWire)?.schedule_plan_id ?? null,
-        creation: (row as DeviceScheduleWire)?.creation ?? null,
-        modified: (row as DeviceScheduleWire)?.modified ?? null,
+        creation: localInstant((row as DeviceScheduleWire)?.creation),
+        modified: localInstant((row as DeviceScheduleWire)?.modified),
     };
 }
 
@@ -168,8 +178,8 @@ export function toDeviceSchedulePlan(row: LocalSchedulePlanLike | null | undefin
         device_id: row?.device_id ?? null,
         start_date: row?.start_date ?? null,
         end_date: row?.end_date ?? null,
-        creation: row?.creation ?? null,
-        modified: row?.modified ?? null,
+        creation: wireInstant(row?.creation),
+        modified: wireInstant(row?.modified),
     };
 }
 
@@ -194,8 +204,8 @@ export function fromDeviceSchedulePlan(
         device_id: (row as DeviceSchedulePlanWire)?.device_id ?? null,
         start_date: (row as DeviceSchedulePlanWire)?.start_date ?? null,
         end_date: (row as DeviceSchedulePlanWire)?.end_date ?? null,
-        creation: (row as DeviceSchedulePlanWire)?.creation ?? null,
-        modified: (row as DeviceSchedulePlanWire)?.modified ?? null,
+        creation: localInstant((row as DeviceSchedulePlanWire)?.creation),
+        modified: localInstant((row as DeviceSchedulePlanWire)?.modified),
         schedules,
     };
 }

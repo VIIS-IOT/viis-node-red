@@ -13,7 +13,6 @@ import { validateDto } from '../utils/validation';
 import { TabiotSchedulePlanDto } from '../dto/schedulePlan.dto';
 import { SyncScheduleService } from '../../../services/syncSchedule/SyncScheduleService';
 import Container from 'typedi';
-import { adjustToUTC7 } from '../../../ultils/helper'
 
 export class SchedulePlanHandler {
     private planRepo: Repository<TabiotSchedulePlan>;
@@ -223,8 +222,8 @@ export class SchedulePlanHandler {
                 is_synced: 0,
                 is_from_local: 1,
                 deleted: null,
-                creation: new Date(Date.now() + 7 * 60 * 60 * 1000),
-                modified: new Date(Date.now() + 7 * 60 * 60 * 1000),
+                creation: new Date(),
+                modified: new Date(),
             };
             const plan = this.planRepo.create(planData);
             const savedPlan = await this.planRepo.save(plan);
@@ -235,7 +234,7 @@ export class SchedulePlanHandler {
 
                 await this.planRepo.update(
                     { name: savedPlan.name },
-                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                    { is_synced: 1, modified: new Date() }
                 );
 
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
@@ -334,7 +333,7 @@ export class SchedulePlanHandler {
                 is_synced: 0,
                 is_from_local: 1,
                 deleted: null,
-                modified: adjustToUTC7(new Date()),
+                modified: new Date(),
             };
             logger.info(this.node, `Updating schedule plan ${name}`);
             const result = await this.planRepo.update(name, updateData);
@@ -354,7 +353,7 @@ export class SchedulePlanHandler {
 
                 await this.planRepo.update(
                     { name: updated.name },
-                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                    { is_synced: 1, modified: new Date() }
                 );
 
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
@@ -421,7 +420,7 @@ export class SchedulePlanHandler {
                     is_deleted: 1,
                     is_from_local: 1,
                     is_synced: 0,
-                    modified: adjustToUTC7(new Date()),
+                    modified: new Date(),
                 }
             );
 
@@ -445,7 +444,7 @@ export class SchedulePlanHandler {
                 // If sync is successful, update is_synced to 1
                 await this.planRepo.update(
                     { name: updatedPlan.name },
-                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                    { is_synced: 1, modified: new Date() }
                 );
                 this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${name}" deletion synced successfully to server`);
             } catch (syncError) {

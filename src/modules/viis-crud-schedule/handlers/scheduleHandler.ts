@@ -8,7 +8,7 @@ import { logger } from '../utils/logger';
 import { API_PATHS } from '../constants';
 import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { convertObjectArray } from '../utils/scheduleValidator';
-import { adjustToUTC7, generateHashKey } from '../../../ultils/helper';
+import { generateHashKey } from '../../../ultils/helper';
 import { plainToInstance } from 'class-transformer';
 import { TabiotScheduleDto } from '../dto/schedule.dto';
 import { validateDto } from '../utils/validation';
@@ -205,8 +205,8 @@ export class ScheduleHandler {
                 is_synced: 0,
                 is_from_local: 1,
                 deleted: null,
-                creation: adjustToUTC7(new Date()),
-                modified: adjustToUTC7(new Date()),
+                creation: new Date(),
+                modified: new Date(),
             };
 
             logger.info(this.node, `Creating new schedule: ${JSON.stringify(scheduleData)}`);
@@ -224,7 +224,7 @@ export class ScheduleHandler {
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: savedSchedule.name },
-                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                    { is_synced: 1, modified: new Date() }
                 );
                 // Refresh savedSchedule with updated is_synced value
                 const updatedSchedule = await this.scheduleRepo.findOneBy({ name: savedSchedule.name });
@@ -433,7 +433,7 @@ export class ScheduleHandler {
                 is_synced: 0,
                 is_deleted: 0,
                 deleted: null,
-                modified: adjustToUTC7(new Date()),
+                modified: new Date(),
             };
 
             logger.info(this.node, `Updating schedule: { name, updateData }`);
@@ -457,7 +457,7 @@ export class ScheduleHandler {
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: updated.name },
-                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                    { is_synced: 1, modified: new Date() }
                 );
                 // Refresh updated with the latest is_synced value
                 const refreshedUpdated = await this.scheduleRepo.findOneBy({ name: updated.name });
@@ -668,7 +668,7 @@ export class ScheduleHandler {
                     is_deleted: 1,
                     is_from_local: 1,
                     is_synced: 0,
-                    modified: adjustToUTC7(new Date()),
+                    modified: new Date(),
                 }
             );
             logger.info(this.node, `Delete result: affected=${result.affected}`);
@@ -692,7 +692,7 @@ export class ScheduleHandler {
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: updatedSchedule.name },
-                    { is_synced: 1, modified: adjustToUTC7(new Date()) }
+                    { is_synced: 1, modified: new Date() }
                 );
                 this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             } catch (syncError) {
