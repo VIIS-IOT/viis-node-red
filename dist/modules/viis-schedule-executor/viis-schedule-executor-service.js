@@ -1267,7 +1267,10 @@ let ScheduleService = class ScheduleService {
         var _a, _b;
         const buffer = new schedule_execution_buffer_1.ExecutionStepBuffer((_a = options === null || options === void 0 ? void 0 : options.runId) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)(), isFinishing || (options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? ((options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? 'start' : 'end') : 'end', (_b = schedule === null || schedule === void 0 ? void 0 : schedule.name) !== null && _b !== void 0 ? _b : 'unknown');
         const deps = this.makeKeyWriterDeps(modbusClient);
-        const coilCommands = commands.filter(cmd => cmd.fc === 5);
+        const coilCommands = [
+            ...commands.filter(cmd => cmd.fc === 5),
+            ...(isFinishing ? (0, schedule_coil_classify_1.impliedFinishPumpCommands)(commands, this.getAllModbusCoils()) : []),
+        ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = (0, schedule_coil_classify_1.classifyCoils)(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
         const holdingPhase = (options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? 'reset_unused_holding' : 'reset_holding';
@@ -1291,7 +1294,7 @@ let ScheduleService = class ScheduleService {
                 const keys = await this.writeCommandGroup(otherCoils.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))), deps, 'other_coils', 'RESET');
                 buffer.pushPhase({ phase: 'other_coils', keys });
             }
-            if (pumpCoils.length > 0 && valveCoils.length > 0) {
+            if (valveCoils.length > 0) {
                 if (this.node)
                     this.node.warn(`[MODBUS] ⏱️ delay after PUMP stop (valves still open)...`);
                 const t0 = Date.now();

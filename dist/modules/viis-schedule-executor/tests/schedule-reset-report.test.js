@@ -80,3 +80,37 @@ test('FINISH stops pumps, delays, closes valves, then zeros holdings and power',
     expect(writeCoil.mock.invocationCallOrder[firstPower])
         .toBeGreaterThan(writeRegister.mock.invocationCallOrder[firstValveProgramOff]);
 });
+test('FINISH always stops mapped main_pump when schedule only set power', async () => {
+    var _a;
+    const service = createService();
+    jest.spyOn(service, 'getAllModbusCoils').mockReturnValue({
+        main_pump: 0,
+        valve_0: 10,
+        power: 30,
+    });
+    const writeCoil = jest.fn().mockResolvedValue(undefined);
+    const writeRegister = jest.fn().mockResolvedValue(undefined);
+    const modbusClient = {
+        writeCoil,
+        writeRegister,
+        readCoils: jest.fn().mockResolvedValue({ data: [false] }),
+        readHoldingRegisters: jest.fn().mockResolvedValue({ data: [0] }),
+    };
+    const { report } = await service.resetModbusCommands(modbusClient, [
+        { key: 'power', value: true, fc: 5, unitid: 1, address: 30, quantity: 1 },
+        { key: 'valve_0', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
+    ], { name: 'power-only' }, true);
+    expect(report.steps.map(s => s.phase)).toEqual([
+        'stop_pumps',
+        'water_hammer_delay',
+        'close_valves',
+        'system_power',
+    ]);
+    expect((_a = report.steps.find(s => s.phase === 'stop_pumps')) === null || _a === void 0 ? void 0 : _a.keys.map(k => k.key)).toEqual(['main_pump']);
+    const firstPump = writeCoil.mock.calls.findIndex((c) => c[0] === 0);
+    const firstValve = writeCoil.mock.calls.findIndex((c) => c[0] === 10);
+    const firstPower = writeCoil.mock.calls.findIndex((c) => c[0] === 30);
+    expect(firstPump).toBeGreaterThanOrEqual(0);
+    expect(firstValve).toBeGreaterThan(firstPump);
+    expect(firstPower).toBeGreaterThan(firstValve);
+});
