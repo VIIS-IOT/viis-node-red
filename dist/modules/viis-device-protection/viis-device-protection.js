@@ -36,7 +36,8 @@ module.exports = function (RED) {
         const protectionManager = new protection_manager_1.ProtectionManager();
         // Initialize shared ProtectionGateService
         const protectionGate = new protection_gate_service_1.ProtectionGateService(configService.getConfigKeyValues());
-        // Store in global context so other nodes (RPC, Schedule, Intent) can access it
+        (0, protection_gate_service_1.setSharedProtectionGate)(protectionGate);
+        // localfilesystem persist drops methods; consumers use resolveProtectionGate().
         node.context().global.set('protectionGateService', protectionGate);
         node.log("ProtectionGateService initialized and stored in global context");
         // ========================================================================

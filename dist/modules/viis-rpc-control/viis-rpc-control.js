@@ -15,6 +15,7 @@ const logger_1 = require("./utils/logger");
 const scaling_1 = require("./utils/scaling");
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
+const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const constants_1 = require("./constants");
 module.exports = function (RED) {
     function ViisRpcControlNode(config) {
@@ -216,13 +217,13 @@ module.exports = function (RED) {
                 const rpcHandler = new rpcHandler_1.RpcHandler(serviceOptions, configService, validationService, modbusService, mqttService, luoiHandler);
                 // Connect to ProtectionGateService if available
                 const globalContext = node.context().global;
-                const protectionGate = globalContext.get('protectionGateService');
-                if (protectionGate) {
-                    rpcHandler.setProtectionGate(protectionGate);
+                const liveGate = (0, protection_gate_service_1.resolveProtectionGate)(globalContext.get('protectionGateService'));
+                if (liveGate) {
+                    rpcHandler.setProtectionGate(liveGate);
                     logger.log("ProtectionGateService connected to RpcHandler");
                 }
                 else {
-                    logger.log("ProtectionGateService not found in global context — protection disabled for RPC");
+                    logger.log("ProtectionGateService not live in global context — protection disabled for RPC");
                 }
                 // Set up MQTT subscription with auto-recovery
                 const setupSubscription = async (isRetry = false) => {

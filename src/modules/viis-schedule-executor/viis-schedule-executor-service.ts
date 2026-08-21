@@ -20,7 +20,7 @@ import {
 } from "./resilience-utils";
 import axios, { AxiosError } from "axios";
 import { v4 as uuidv4 } from "uuid";
-import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
+import { ProtectionGateService, resolveProtectionGate } from "../viis-device-protection/services/protection-gate-service";
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 import { classifyCoils } from "./schedule-coil-classify";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
@@ -127,6 +127,11 @@ export class ScheduleService {
 
     setProtectionGate(gate: ProtectionGateService): void {
         this.protectionGate = gate;
+    }
+
+    private resolveGate(): ProtectionGateService | null {
+        const fromGlobal = this.node?.context?.()?.global?.get?.('protectionGateService');
+        return resolveProtectionGate(fromGlobal) || resolveProtectionGate(this.protectionGate);
     }
 
     // Helper function for conditional logging
@@ -800,8 +805,9 @@ export class ScheduleService {
         source: string = 'schedule'
     ): Promise<boolean> {
         // Protection gate check — only for ON commands
-        if (this.protectionGate && cmd.fc === 5 && Boolean(cmd.value)) {
-            const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), source);
+        const protection = this.resolveGate();
+        if (protection && cmd.fc === 5 && Boolean(cmd.value)) {
+            const gate = protection.checkGate(cmd.key, Boolean(cmd.value), source);
             if (!gate.allowed) {
                 if (this.node) {
                     this.node.warn(`[PROTECTION] BLOCKED: ${cmd.key}=${cmd.value} — ${gate.reason}`);
@@ -814,8 +820,8 @@ export class ScheduleService {
         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
 
         // Update gate state after successful write
-        if (this.protectionGate && cmd.fc === 5) {
-            this.protectionGate.updateState(cmd.key, Boolean(cmd.value));
+        if (protection && cmd.fc === 5) {
+            protection.updateState(cmd.key, Boolean(cmd.value));
         }
 
         return true;

@@ -20,7 +20,7 @@ import {
     buildDeviceRpcSubscribeTopic,
     buildDeviceTelemetryTopic,
 } from "../../core/demeter-mqtt-topics";
-import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
+import { ProtectionGateService, resolveProtectionGate } from "../viis-device-protection/services/protection-gate-service";
 import {
     MQTT_CONFIG,
     MODBUS_CONFIG,
@@ -264,12 +264,12 @@ module.exports = function (RED: NodeAPI) {
 
                 // Connect to ProtectionGateService if available
                 const globalContext = node.context().global;
-                const protectionGate = globalContext.get('protectionGateService') as ProtectionGateService | undefined;
-                if (protectionGate) {
-                    rpcHandler.setProtectionGate(protectionGate);
+                const liveGate = resolveProtectionGate(globalContext.get('protectionGateService'));
+                if (liveGate) {
+                    rpcHandler.setProtectionGate(liveGate);
                     logger.log("ProtectionGateService connected to RpcHandler");
                 } else {
-                    logger.log("ProtectionGateService not found in global context — protection disabled for RPC");
+                    logger.log("ProtectionGateService not live in global context — protection disabled for RPC");
                 }
 
                 // Set up MQTT subscription with auto-recovery

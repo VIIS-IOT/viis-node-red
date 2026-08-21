@@ -49,7 +49,7 @@ class ApiService {
                 'Content-Type': 'application/json'
             },
             data: {
-                thingsboard_access_token: this.thingsboardAccessToken
+                access_token: this.thingsboardAccessToken,
             }
         };
         const apiUrl = `${this.resolveBaseUrl()}/api/v2/device/sync-production-functions`;

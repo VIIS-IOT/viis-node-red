@@ -16,6 +16,30 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProtectionGateService = void 0;
+exports.isLiveProtectionGate = isLiveProtectionGate;
+exports.setSharedProtectionGate = setSharedProtectionGate;
+exports.resolveProtectionGate = resolveProtectionGate;
+/**
+ * Node-RED localfilesystem context JSON-serializes global.set() values.
+ * After restart the key still exists but class methods are gone — callers that
+ * only check truthiness then call checkGate() crash.
+ */
+let sharedProtectionGate = null;
+function isLiveProtectionGate(value) {
+    return Boolean(value &&
+        typeof value.checkGate === 'function' &&
+        typeof value.updateState === 'function');
+}
+function setSharedProtectionGate(gate) {
+    sharedProtectionGate = gate;
+}
+function resolveProtectionGate(fromGlobal) {
+    if (isLiveProtectionGate(sharedProtectionGate))
+        return sharedProtectionGate;
+    if (isLiveProtectionGate(fromGlobal))
+        return fromGlobal;
+    return null;
+}
 class ProtectionGateService {
     constructor(configKeyValues) {
         this.coilStates = new Map();

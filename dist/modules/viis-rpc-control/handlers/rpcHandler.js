@@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.RpcHandler = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const protection_gate_service_1 = require("../../viis-device-protection/services/protection-gate-service");
 const fertigation_start_sequence_1 = require("../../shared/fertigation-start-sequence");
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
 class RpcHandler {
@@ -50,6 +51,11 @@ class RpcHandler {
      */
     setProtectionGate(gate) {
         this.protectionGate = gate;
+    }
+    resolveGate() {
+        var _a, _b, _c, _d, _e;
+        const fromGlobal = (_e = (_d = (_c = (_b = (_a = this.node) === null || _a === void 0 ? void 0 : _a.context) === null || _b === void 0 ? void 0 : _b.call(_a)) === null || _c === void 0 ? void 0 : _c.global) === null || _d === void 0 ? void 0 : _d.get) === null || _e === void 0 ? void 0 : _e.call(_d, 'protectionGateService');
+        return (0, protection_gate_service_1.resolveProtectionGate)(fromGlobal) || (0, protection_gate_service_1.resolveProtectionGate)(this.protectionGate);
     }
     /**
      * Handle incoming RPC request with retry logic
@@ -510,8 +516,9 @@ class RpcHandler {
         // Validate and convert value
         const value = this.validationService.validateAndConvertValue(key, rawValue);
         // Protection gate check for coils (fc=5)
-        if (mapping.fc === 5 && this.protectionGate) {
-            const gate = this.protectionGate.checkGate(key, Boolean(value), 'rpc');
+        const protectionGate = this.resolveGate();
+        if (mapping.fc === 5 && protectionGate) {
+            const gate = protectionGate.checkGate(key, Boolean(value), 'rpc');
             if (!gate.allowed) {
                 this.logger.warn(`[PROTECTION] Blocked ${key}=${value}: ${gate.reason}`);
                 try {
@@ -549,8 +556,8 @@ class RpcHandler {
             // Update global context cache only after successful read-back verification
             this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
             // Update protection gate state after successful coil write
-            if (mapping.fc === 5 && this.protectionGate) {
-                this.protectionGate.updateState(key, Boolean(readValue));
+            if (mapping.fc === 5 && this.resolveGate()) {
+                this.resolveGate().updateState(key, Boolean(readValue));
             }
             // Publish the confirmed read-back value
             await this.publishResultWithRetry(key, readValue);
@@ -563,8 +570,8 @@ class RpcHandler {
             await this.publishResultWithRetry(key, value);
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
             // Update gate state even on read-back failure (write succeeded)
-            if (mapping.fc === 5 && this.protectionGate) {
-                this.protectionGate.updateState(key, Boolean(value));
+            if (mapping.fc === 5 && this.resolveGate()) {
+                this.resolveGate().updateState(key, Boolean(value));
             }
         }
     }

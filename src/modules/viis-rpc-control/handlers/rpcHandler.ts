@@ -15,7 +15,7 @@ import {
 import { LuoiMappingHandler } from "../luoi-mapping-handler";
 import { ERROR_MESSAGES, STATUS_MESSAGES, FERTIGATION_KEY_DELAY_MS } from "../constants";
 import { Logger } from "../utils/logger";
-import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
+import { ProtectionGateService, resolveProtectionGate } from "../../viis-device-protection/services/protection-gate-service";
 import {
     FertigationWriteOp,
     isFertigationBatch,
@@ -89,6 +89,11 @@ export class RpcHandler implements IRpcHandler {
      */
     setProtectionGate(gate: ProtectionGateService): void {
         this.protectionGate = gate;
+    }
+
+    private resolveGate(): ProtectionGateService | null {
+        const fromGlobal = this.node?.context?.()?.global?.get?.('protectionGateService');
+        return resolveProtectionGate(fromGlobal) || resolveProtectionGate(this.protectionGate);
     }
 
     /**
@@ -622,8 +627,9 @@ export class RpcHandler implements IRpcHandler {
         const value = this.validationService.validateAndConvertValue(key, rawValue);
 
         // Protection gate check for coils (fc=5)
-        if (mapping.fc === 5 && this.protectionGate) {
-            const gate = this.protectionGate.checkGate(key, Boolean(value), 'rpc');
+        const protectionGate = this.resolveGate();
+        if (mapping.fc === 5 && protectionGate) {
+            const gate = protectionGate.checkGate(key, Boolean(value), 'rpc');
             if (!gate.allowed) {
                 this.logger.warn(`[PROTECTION] Blocked ${key}=${value}: ${gate.reason}`);
                 try {
@@ -664,8 +670,8 @@ export class RpcHandler implements IRpcHandler {
             this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
 
             // Update protection gate state after successful coil write
-            if (mapping.fc === 5 && this.protectionGate) {
-                this.protectionGate.updateState(key, Boolean(readValue));
+            if (mapping.fc === 5 && this.resolveGate()) {
+                this.resolveGate()!.updateState(key, Boolean(readValue));
             }
 
             // Publish the confirmed read-back value
@@ -680,8 +686,8 @@ export class RpcHandler implements IRpcHandler {
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
 
             // Update gate state even on read-back failure (write succeeded)
-            if (mapping.fc === 5 && this.protectionGate) {
-                this.protectionGate.updateState(key, Boolean(value));
+            if (mapping.fc === 5 && this.resolveGate()) {
+                this.resolveGate()!.updateState(key, Boolean(value));
             }
         }
     }

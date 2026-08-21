@@ -45,6 +45,31 @@ interface CoilState {
   since: number;  // timestamp when current state started
 }
 
+/**
+ * Node-RED localfilesystem context JSON-serializes global.set() values.
+ * After restart the key still exists but class methods are gone — callers that
+ * only check truthiness then call checkGate() crash.
+ */
+let sharedProtectionGate: ProtectionGateService | null = null;
+
+export function isLiveProtectionGate(value: unknown): value is ProtectionGateService {
+  return Boolean(
+    value &&
+      typeof (value as ProtectionGateService).checkGate === 'function' &&
+      typeof (value as ProtectionGateService).updateState === 'function',
+  );
+}
+
+export function setSharedProtectionGate(gate: ProtectionGateService | null): void {
+  sharedProtectionGate = gate;
+}
+
+export function resolveProtectionGate(fromGlobal?: unknown): ProtectionGateService | null {
+  if (isLiveProtectionGate(sharedProtectionGate)) return sharedProtectionGate;
+  if (isLiveProtectionGate(fromGlobal)) return fromGlobal;
+  return null;
+}
+
 export class ProtectionGateService {
   private coilStates: Map<string, CoilState> = new Map();
   private lastOffTime: Map<string, number> = new Map();

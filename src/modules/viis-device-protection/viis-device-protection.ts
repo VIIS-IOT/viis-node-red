@@ -15,7 +15,7 @@ import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ErrorNotificationService } from "../../services/error-notification.service";
 import { ProtectionManager, ProtectionResult } from "./protection-manager";
-import { ProtectionGateService } from "./services/protection-gate-service";
+import { ProtectionGateService, setSharedProtectionGate } from "./services/protection-gate-service";
 import { ConfigService } from "./services/configService";
 import { MqttConfig, MqttMessage } from "../../core/mqtt-client";
 import {
@@ -54,7 +54,8 @@ module.exports = function (RED: NodeAPI) {
 
         // Initialize shared ProtectionGateService
         const protectionGate = new ProtectionGateService(configService.getConfigKeyValues());
-        // Store in global context so other nodes (RPC, Schedule, Intent) can access it
+        setSharedProtectionGate(protectionGate);
+        // localfilesystem persist drops methods; consumers use resolveProtectionGate().
         node.context().global.set('protectionGateService', protectionGate);
         node.log("ProtectionGateService initialized and stored in global context");
 

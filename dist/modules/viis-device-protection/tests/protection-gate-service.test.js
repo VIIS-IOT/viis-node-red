@@ -420,3 +420,24 @@ describe('ProtectionGateService', () => {
         });
     });
 });
+describe('resolveProtectionGate', () => {
+    afterEach(() => {
+        (0, protection_gate_service_1.setSharedProtectionGate)(null);
+    });
+    it('rejects a filesystem-restored plain object (no methods)', () => {
+        const stale = { coilStates: {}, configKeyValues: {} };
+        expect((0, protection_gate_service_1.isLiveProtectionGate)(stale)).toBe(false);
+        expect((0, protection_gate_service_1.resolveProtectionGate)(stale)).toBeNull();
+    });
+    it('accepts a real ProtectionGateService instance', () => {
+        const live = new protection_gate_service_1.ProtectionGateService({});
+        expect((0, protection_gate_service_1.isLiveProtectionGate)(live)).toBe(true);
+        expect((0, protection_gate_service_1.resolveProtectionGate)(live)).toBe(live);
+    });
+    it('prefers the in-process singleton over a stale global object', () => {
+        const live = new protection_gate_service_1.ProtectionGateService({});
+        (0, protection_gate_service_1.setSharedProtectionGate)(live);
+        const stale = { checkGate: undefined };
+        expect((0, protection_gate_service_1.resolveProtectionGate)(stale)).toBe(live);
+    });
+});

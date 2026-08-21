@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("./viis-schedule-executor-service");
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
+const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_side_effects_1 = require("./schedule-side-effects");
 const schedule_tick_guard_1 = require("./schedule-tick-guard");
@@ -170,13 +171,13 @@ module.exports = function (RED) {
             return;
         }
         // Connect to ProtectionGateService if available
-        const protectionGate = globalContext.get('protectionGateService');
-        if (protectionGate) {
-            scheduleService.setProtectionGate(protectionGate);
+        const liveGate = (0, protection_gate_service_1.resolveProtectionGate)(globalContext.get('protectionGateService'));
+        if (liveGate) {
+            scheduleService.setProtectionGate(liveGate);
             debugLog("ProtectionGateService connected to ScheduleService");
         }
         else {
-            debugLog("ProtectionGateService not found in global context — protection disabled");
+            debugLog("ProtectionGateService not live in global context — protection disabled");
         }
         // Helper function to read Modbus config
         const readModbusConfig = () => {

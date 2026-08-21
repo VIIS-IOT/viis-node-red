@@ -55,6 +55,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const resilience_utils_1 = require("./resilience-utils");
 const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
+const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
 const schedule_key_writer_1 = require("./schedule-key-writer");
@@ -137,6 +138,11 @@ let ScheduleService = class ScheduleService {
     }
     setProtectionGate(gate) {
         this.protectionGate = gate;
+    }
+    resolveGate() {
+        var _a, _b, _c, _d, _e;
+        const fromGlobal = (_e = (_d = (_c = (_b = (_a = this.node) === null || _a === void 0 ? void 0 : _a.context) === null || _b === void 0 ? void 0 : _b.call(_a)) === null || _c === void 0 ? void 0 : _c.global) === null || _d === void 0 ? void 0 : _d.get) === null || _e === void 0 ? void 0 : _e.call(_d, 'protectionGateService');
+        return (0, protection_gate_service_1.resolveProtectionGate)(fromGlobal) || (0, protection_gate_service_1.resolveProtectionGate)(this.protectionGate);
     }
     // Helper function for conditional logging
     debugLog(message) {
@@ -747,8 +753,9 @@ let ScheduleService = class ScheduleService {
      */
     async writeCoilWithGate(modbusClient, cmd, source = 'schedule') {
         // Protection gate check — only for ON commands
-        if (this.protectionGate && cmd.fc === 5 && Boolean(cmd.value)) {
-            const gate = this.protectionGate.checkGate(cmd.key, Boolean(cmd.value), source);
+        const protection = this.resolveGate();
+        if (protection && cmd.fc === 5 && Boolean(cmd.value)) {
+            const gate = protection.checkGate(cmd.key, Boolean(cmd.value), source);
             if (!gate.allowed) {
                 if (this.node) {
                     this.node.warn(`[PROTECTION] BLOCKED: ${cmd.key}=${cmd.value} — ${gate.reason}`);
@@ -759,8 +766,8 @@ let ScheduleService = class ScheduleService {
         // Write coil
         await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
         // Update gate state after successful write
-        if (this.protectionGate && cmd.fc === 5) {
-            this.protectionGate.updateState(cmd.key, Boolean(cmd.value));
+        if (protection && cmd.fc === 5) {
+            protection.updateState(cmd.key, Boolean(cmd.value));
         }
         return true;
     }

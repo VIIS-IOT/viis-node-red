@@ -4,7 +4,7 @@
  * Tests the core gate logic with 3-level config lookup and sensor binding.
  */
 
-import { ProtectionGateService, ProtectionConfig, GateResult } from '../services/protection-gate-service';
+import { ProtectionGateService, ProtectionConfig, GateResult, isLiveProtectionGate, resolveProtectionGate, setSharedProtectionGate } from '../services/protection-gate-service';
 
 describe('ProtectionGateService', () => {
   let service: ProtectionGateService;
@@ -519,5 +519,30 @@ describe('ProtectionGateService', () => {
       expect(result.allowed).toBe(false);
       expect(result.action).toBe('block');
     });
+  });
+});
+
+describe('resolveProtectionGate', () => {
+  afterEach(() => {
+    setSharedProtectionGate(null);
+  });
+
+  it('rejects a filesystem-restored plain object (no methods)', () => {
+    const stale = { coilStates: {}, configKeyValues: {} };
+    expect(isLiveProtectionGate(stale)).toBe(false);
+    expect(resolveProtectionGate(stale)).toBeNull();
+  });
+
+  it('accepts a real ProtectionGateService instance', () => {
+    const live = new ProtectionGateService({});
+    expect(isLiveProtectionGate(live)).toBe(true);
+    expect(resolveProtectionGate(live)).toBe(live);
+  });
+
+  it('prefers the in-process singleton over a stale global object', () => {
+    const live = new ProtectionGateService({});
+    setSharedProtectionGate(live);
+    const stale = { checkGate: undefined };
+    expect(resolveProtectionGate(stale)).toBe(live);
   });
 });
