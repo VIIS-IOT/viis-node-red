@@ -1,5 +1,12 @@
 import { TabiotSchedule, TabiotScheduleLog } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
+import {
+    civilNow,
+    civilToUnixMs,
+    plannedWindowUnixMs,
+    unixMsNow,
+    unixMsToCivil,
+} from "../../core/farm-time";
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore } from "../../core/mqtt-client";
 import { AppDataSource } from "../../orm/dataSource";
@@ -48,6 +55,32 @@ import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
  */
 /** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
 const WATER_HAMMER_DELAY_MS = 7000;
+
+function civilDateOnly(value: unknown): string {
+    if (value == null || value === '') return '';
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString().slice(0, 10);
+    }
+    const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : '';
+}
+
+function civilTimeOnly(value: unknown): string {
+    if (value == null || value === '') return '';
+    const match = String(value).match(/(\d{2}:\d{2}:\d{2})/);
+    return match ? match[1] : String(value);
+}
+
+function isNowInCivilWindow(nowMs: number, farmDate: string, startTime: string, endTime: string): boolean {
+    const today = plannedWindowUnixMs(farmDate, startTime, endTime);
+    if (nowMs >= today.startMs && nowMs < today.endMs) return true;
+    if (endTime.slice(0, 8) <= startTime.slice(0, 8)) {
+        const prevDate = unixMsToCivil(civilToUnixMs(farmDate, '12:00:00') - 24 * 60 * 60 * 1000).date;
+        const prev = plannedWindowUnixMs(prevDate, startTime, endTime);
+        if (nowMs >= prev.startMs && nowMs < prev.endMs) return true;
+    }
+    return false;
+}
 
 const CONFIG_PARAMETER_KEYS = new Set([
     'iri_time',
@@ -506,47 +539,36 @@ export class ScheduleService {
                 return false;
             }
 
-            // Lấy giờ hiện tại theo múi giờ UTC+7
-            const now = moment().utc().add(7, 'hours');
-            const today = now.clone().startOf('day');
+            const farm = civilNow();
+            const nowMs = unixMsNow();
+            const startTime = civilTimeOnly(schedule.start_time);
+            const endTime = civilTimeOnly(schedule.end_time);
 
-            // Kiểm tra phạm vi start_date và end_date nếu có
-            if (schedule.start_date && schedule.end_date) {
-                const startDate = moment(schedule.start_date, "YYYY-MM-DD");
-                const endDate = moment(schedule.end_date, "YYYY-MM-DD");
-                if (!now.isBetween(startDate, endDate, 'day', '[]')) {
-                    this.debugLog(`Schedule ${schedule.name} is outside enabled range (${startDate.format('YYYY-MM-DD')} - ${endDate.format('YYYY-MM-DD')})`);
-                    return false;
-                }
+            const rangeStart = civilDateOnly(schedule.start_date);
+            const rangeEnd = civilDateOnly(schedule.end_date);
+            if (rangeStart && rangeEnd && (farm.date < rangeStart || farm.date > rangeEnd)) {
+                this.debugLog(`Schedule ${schedule.name} is outside enabled range (${rangeStart} - ${rangeEnd})`);
+                return false;
             }
 
-            // Kiểm tra interval (ngày trong tuần: 0=Sunday, 1=Monday, ..., 6=Saturday)
             if (schedule.interval && schedule.interval.trim() !== '') {
-                const currentDayOfWeek = now.day(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+                const currentDayOfWeek = farm.weekday;
                 let allowedDays: number[] = [];
 
                 try {
-                    // Parse interval - có thể là:
-                    // - Single number: "3" -> [3]
-                    // - Comma-separated: "1,3,5" -> [1, 3, 5]
-                    // - JSON array: "[1,3,5]" -> [1, 3, 5]
                     const trimmedInterval = schedule.interval.trim();
 
                     if (trimmedInterval.startsWith('[') && trimmedInterval.endsWith(']')) {
-                        // JSON array format
                         allowedDays = JSON.parse(trimmedInterval);
                     } else if (trimmedInterval.includes(',')) {
-                        // Comma-separated format
                         allowedDays = trimmedInterval.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
                     } else {
-                        // Single number format
                         const dayNum = parseInt(trimmedInterval);
                         if (!isNaN(dayNum)) {
                             allowedDays = [dayNum];
                         }
                     }
 
-                    // Kiểm tra xem ngày hiện tại có trong danh sách cho phép không
                     if (allowedDays.length > 0 && !allowedDays.includes(currentDayOfWeek)) {
                         this.debugLog(`Schedule ${schedule.name} skipped: current day ${currentDayOfWeek} not in interval ${JSON.stringify(allowedDays)}`);
                         return false;
@@ -555,44 +577,15 @@ export class ScheduleService {
                     this.debugLog(`Schedule ${schedule.name} interval check passed: day ${currentDayOfWeek} in ${JSON.stringify(allowedDays)}`);
                 } catch (error) {
                     console.error(`Error parsing interval for schedule ${schedule.name}: ${(error as Error).message}`);
-                    // Nếu parse lỗi, cho phép schedule chạy (fallback to old behavior)
                 }
             }
 
-            // Parse start_time và end_time từ chuỗi HH:mm:ss
-            const startTime = moment(schedule.start_time, "HH:mm:ss");
-            const endTime = moment(schedule.end_time, "HH:mm:ss");
-
-            // Gán ngày cho startTime và endTime
-            let startDateTime = today.clone().set({
-                hour: startTime.hour(),
-                minute: startTime.minute(),
-                second: startTime.second(),
-            });
-            let endDateTime = today.clone().set({
-                hour: endTime.hour(),
-                minute: endTime.minute(),
-                second: endTime.second(),
-            });
-
-            // Xử lý trường hợp qua ngày (cross-midnight)
-            if (startDateTime.isAfter(endDateTime)) {
-                if (now.isBefore(endDateTime)) {
-                    // Nếu giờ hiện tại nằm sau nửa đêm nhưng trước endTime, nghĩa là schedule đã bắt đầu từ ngày hôm trước.
-                    startDateTime.subtract(1, 'day');
-                } else {
-                    // Nếu giờ hiện tại sau giờ startTime, thì endTime nằm vào ngày hôm sau.
-                    endDateTime.add(1, 'day');
-                }
-            }
-
-            // Kiểm tra xem giờ hiện tại có nằm trong khoảng startDateTime và endDateTime không
-            // Sử dụng [start, end) - exclusive end boundary để tránh overlap khi 2 schedule liên tiếp nhau
-            const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[)");
+            const isDue = isNowInCivilWindow(nowMs, farm.date, startTime, endTime);
             this.debugLog(JSON.stringify({
-                now: now.format(),
-                startDateTime: startDateTime.format(),
-                endDateTime: endDateTime.format(),
+                now: farm.time,
+                farmDate: farm.date,
+                startTime,
+                endTime,
                 isDue,
             }));
             this.debugLog(`Schedule ${schedule.name} isDue: ${isDue}`);
@@ -1208,19 +1201,17 @@ export class ScheduleService {
             this.debugLog(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
 
             if (this.syncScheduleService) {
-                // Assuming schedule.start_time and schedule.end_time are in a time-only format like "HH:mm"
-                const now = moment(); // Current date and time
-                const todayDate = now.format('YYYY-MM-DD'); // Just the date portion
-
-                // Combine today's date with the schedule times and format as full datetime
-                const startTime = moment(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm')
-                    .toISOString();
-                const endTime = moment(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm')
-                    .toISOString();
+                const startedAt = unixMsNow();
+                const { date } = unixMsToCivil(startedAt);
+                const startTime = civilTimeOnly(schedule.start_time);
+                const endTime = civilTimeOnly(schedule.end_time);
+                const { endMs } = startTime && endTime
+                    ? plannedWindowUnixMs(date, startTime, endTime)
+                    : { endMs: startedAt };
 
                 const scheduleLogBody: TabiotScheduleLog = {
-                    start_time: startTime,
-                    end_time: endTime,
+                    start_time: new Date(startedAt).toISOString(),
+                    end_time: new Date(endMs).toISOString(),
                     schedule_id: schedule.name,
                     deleted: null
                 };
@@ -1271,9 +1262,7 @@ export class ScheduleService {
                 this.node.warn(`${statusIcon} STATUS CHANGE: ${schedule.name} | ${previousStatus || 'none'} → ${status} | Label: ${schedule.label}`);
             }
 
-            // Override giá trị modified, cộng thêm 7 giờ
-            const nowPlus7 = moment().utc().add(7, 'hours').toDate();
-            schedule.modified = nowPlus7;
+            schedule.modified = new Date();
 
             // Lưu entity với giá trị modified đã chỉnh sửa
             await repository.save(schedule);
@@ -1315,16 +1304,18 @@ export class ScheduleService {
         modbusClient: ModbusClientCore,
         schedules: TabiotSchedule[]
     ): Promise<void> {
-        const now = moment();
+        const nowMs = unixMsNow();
 
         for (const schedule of schedules) {
-            // Only check schedules that are "running" and past their end time
             if (schedule.status !== 'running') continue;
 
-            const endDateTime = moment(`${schedule.end_date} ${schedule.end_time}`, "YYYY-MM-DD HH:mm:ss");
-            const minutesPastEnd = now.diff(endDateTime, 'minutes');
+            const endDate = civilDateOnly(schedule.end_date);
+            const startTime = civilTimeOnly(schedule.start_time);
+            const endTime = civilTimeOnly(schedule.end_time);
+            if (!endDate || !endTime) continue;
 
-            // Only check if at least 2 minutes past end time (grace period)
+            const { endMs } = plannedWindowUnixMs(endDate, startTime || endTime, endTime);
+            const minutesPastEnd = (nowMs - endMs) / 60000;
             if (minutesPastEnd < 2) continue;
 
             this.debugLog(`🔍 RECOVERY CHECK: Schedule ${schedule.name} is stuck in "running" status ${minutesPastEnd} minutes past end time`);
