@@ -211,7 +211,7 @@ module.exports = function (RED) {
                 }
                 // Initialize services
                 const modbusService = new modbusService_1.ModbusService(serviceOptions, modbusClient, scalingUtils);
-                const mqttService = new mqttService_1.MqttService(serviceOptions, mqttClient, publishTopic);
+                const mqttService = new mqttService_1.MqttService(serviceOptions, mqttClient, publishTopic, deviceId);
                 const messageHandler = new messageHandler_1.MessageHandler(serviceOptions);
                 const luoiHandler = new luoi_mapping_handler_1.LuoiMappingHandler(node, modbusService, validationService, mqttService);
                 const rpcHandler = new rpcHandler_1.RpcHandler(serviceOptions, configService, validationService, modbusService, mqttService, luoiHandler);
@@ -339,9 +339,12 @@ module.exports = function (RED) {
                 mqttClient.on("mqtt-message", ({ message }) => {
                     try {
                         messageHandler.processMqttMessage(message, subscribeTopic, async (payload) => {
-                            // Log incoming RPC request
-                            // node.warn(`[RPC] Received: ${JSON.stringify(payload)}`);
-                            await rpcHandler.handleRpcRequest(payload);
+                            const rpcBody = payload && typeof payload === 'object' ? payload : {};
+                            const commandId = (0, demeter_mqtt_topics_1.extractRpcCommandId)(rpcBody, message.topic);
+                            if (commandId && !rpcBody.command_id) {
+                                rpcBody.command_id = commandId;
+                            }
+                            await rpcHandler.handleRpcRequest(rpcBody);
                         });
                     }
                     catch (error) {

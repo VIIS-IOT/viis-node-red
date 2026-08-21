@@ -7,10 +7,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MqttService = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 class MqttService {
-    constructor(options, mqttClient, publishTopic) {
+    constructor(options, mqttClient, publishTopic, deviceId) {
         this.mqttClient = mqttClient;
         this.publishTopic = publishTopic;
+        this.deviceId = deviceId;
         this.node = options.node;
         this.logger = new logger_1.Logger(options.node, "MQTT-SERVICE");
         this.publishTimeouts = new Map();
@@ -197,6 +199,32 @@ class MqttService {
                 // Note: We can't easily get the value here without refactoring
                 // This method is mainly for cleanup purposes
             }
+        }
+    }
+    /**
+     * Two-way RPC ACK. Publishes to `v1/device/{id}/rpc/response/{commandId}`
+     * so Demeter can close POST /rpc. Telemetry stays on publishTopic.
+     * Missing deviceId/commandId is a no-op (local wire / oneway-without-id).
+     */
+    async publishRpcResponse(commandId, result) {
+        if (!this.deviceId || !commandId) {
+            return;
+        }
+        const topic = (0, demeter_mqtt_topics_1.buildDeviceRpcResponseTopic)(this.deviceId, commandId);
+        const mqttPayload = {
+            ts: Date.now(),
+            success: result.success,
+            status: result.status || (result.success ? 'ACKED' : 'FAILED'),
+            method: result.method,
+            error: result.error,
+        };
+        try {
+            await this.mqttClient.publish(topic, JSON.stringify(mqttPayload));
+            this.logger.log(`RPC response ${mqttPayload.status} → ${topic}`);
+        }
+        catch (error) {
+            this.logger.error(`Failed to publish RPC response: ${error.message}`);
+            throw error;
         }
     }
     /**

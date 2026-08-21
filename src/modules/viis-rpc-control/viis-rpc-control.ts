@@ -19,6 +19,7 @@ import {
     resolveThingsboardMqttBroker,
     buildDeviceRpcSubscribeTopic,
     buildDeviceTelemetryTopic,
+    extractRpcCommandId,
 } from "../../core/demeter-mqtt-topics";
 import { ProtectionGateService, resolveProtectionGate } from "../viis-device-protection/services/protection-gate-service";
 import {
@@ -250,7 +251,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Initialize services
                 const modbusService = new ModbusService(serviceOptions, modbusClient, scalingUtils);
-                const mqttService = new MqttService(serviceOptions, mqttClient, publishTopic);
+                const mqttService = new MqttService(serviceOptions, mqttClient, publishTopic, deviceId);
                 const messageHandler = new MessageHandler(serviceOptions);
                 const luoiHandler = new LuoiMappingHandler(node, modbusService, validationService, mqttService);
                 const rpcHandler = new RpcHandler(
@@ -391,9 +392,12 @@ module.exports = function (RED: NodeAPI) {
                             message,
                             subscribeTopic,
                             async (payload: any) => {
-                                // Log incoming RPC request
-                                // node.warn(`[RPC] Received: ${JSON.stringify(payload)}`);
-                                await rpcHandler.handleRpcRequest(payload);
+                                const rpcBody = payload && typeof payload === 'object' ? payload : {};
+                                const commandId = extractRpcCommandId(rpcBody, message.topic);
+                                if (commandId && !rpcBody.command_id) {
+                                    rpcBody.command_id = commandId;
+                                }
+                                await rpcHandler.handleRpcRequest(rpcBody);
                             }
                         );
                     } catch (error) {

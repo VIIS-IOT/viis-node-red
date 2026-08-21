@@ -20,6 +20,10 @@ exports.buildDeviceLifecycleTopic = buildDeviceLifecycleTopic;
 exports.buildDeviceRpcSubscribeTopic = buildDeviceRpcSubscribeTopic;
 exports.buildDeviceRpcTopic = buildDeviceRpcTopic;
 exports.buildDeviceRpcResponseTopic = buildDeviceRpcResponseTopic;
+exports.isRpcCommandId = isRpcCommandId;
+exports.isHandledRpcControlMethod = isHandledRpcControlMethod;
+exports.parseDeviceRpcRequestTopic = parseDeviceRpcRequestTopic;
+exports.extractRpcCommandId = extractRpcCommandId;
 exports.buildMqttBrokerUrl = buildMqttBrokerUrl;
 exports.resolveThingsboardMqttBroker = resolveThingsboardMqttBroker;
 exports.DEFAULT_DEVICE_TOPIC_BASE = 'v1/device';
@@ -60,6 +64,50 @@ function buildDeviceRpcTopic(deviceId, commandId = '+', helper) {
 }
 function buildDeviceRpcResponseTopic(deviceId, commandId = '+', helper) {
     return joinDeviceTopic(deviceId, `rpc/response/${safeDeviceTopicSegment(commandId)}`, helper);
+}
+const RPC_COMMAND_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HANDLED_RPC_CONTROL_METHODS = new Set(['set_state', 'set_state_batch']);
+function isRpcCommandId(value) {
+    return typeof value === 'string' && RPC_COMMAND_ID_RE.test(value.trim());
+}
+/** Methods viis-rpc-control actually executes. Schedule/oneway methods stay unacked. */
+function isHandledRpcControlMethod(method) {
+    return HANDLED_RPC_CONTROL_METHODS.has(String(method || '').trim());
+}
+/**
+ * Downlink is `v1/device/{id}/rpc/{commandId}`.
+ * Uplink `.../rpc/response/{commandId}` must not parse as a request.
+ */
+function parseDeviceRpcRequestTopic(topic, helper) {
+    const baseParts = getDeviceTopicBase(helper).split('/').filter(Boolean);
+    const parts = String(topic || '').split('/').filter(Boolean);
+    if (parts.length !== baseParts.length + 3)
+        return null;
+    if (!baseParts.every((part, index) => parts[index] === part))
+        return null;
+    if (parts[baseParts.length + 1] !== 'rpc')
+        return null;
+    const commandId = decodeURIComponent(parts[baseParts.length + 2] || '');
+    if (!commandId || commandId === 'response')
+        return null;
+    return {
+        deviceId: decodeURIComponent(parts[baseParts.length] || ''),
+        commandId,
+    };
+}
+function extractRpcCommandId(payload, topic) {
+    const fromPayload = [
+        payload === null || payload === void 0 ? void 0 : payload.command_id,
+        payload === null || payload === void 0 ? void 0 : payload.commandId,
+        payload === null || payload === void 0 ? void 0 : payload.requestId,
+        payload === null || payload === void 0 ? void 0 : payload.request_id,
+    ].find((value) => isRpcCommandId(value));
+    if (fromPayload)
+        return String(fromPayload).trim();
+    const fromTopic = parseDeviceRpcRequestTopic(String(topic || ''));
+    if (fromTopic && isRpcCommandId(fromTopic.commandId))
+        return fromTopic.commandId;
+    return null;
 }
 function buildMqttBrokerUrl(host, port) {
     const resolvedHost = (host || '').trim();

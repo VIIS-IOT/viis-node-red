@@ -138,11 +138,19 @@ export interface IModbusService {
     getHoldingSetmlBomOffsetConfig(): any;
 }
 
+export interface RpcAckPayload {
+    success: boolean;
+    status: 'ACKED' | 'FAILED' | string;
+    method?: string;
+    error?: string;
+}
+
 // MQTT service interface
 export interface IMqttService {
     publishResult(key: string, value: number | boolean): void;
     publishResultImmediate(key: string, value: number | boolean): Promise<void>;
     publishConfigUpdate(key: string, value: any, note?: string): Promise<void>;
+    publishRpcResponse?(commandId: string, result: RpcAckPayload): Promise<void>;
     isConnected(): boolean;
     publishError(errorMessage: string): Promise<void>;
 }

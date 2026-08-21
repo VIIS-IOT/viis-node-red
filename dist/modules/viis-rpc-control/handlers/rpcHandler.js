@@ -10,6 +10,7 @@ const logger_1 = require("../utils/logger");
 const protection_gate_service_1 = require("../../viis-device-protection/services/protection-gate-service");
 const fertigation_start_sequence_1 = require("../../shared/fertigation-start-sequence");
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
+const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 class RpcHandler {
     static getCommandPriority(key) {
         const lower = key.toLowerCase();
@@ -75,24 +76,57 @@ class RpcHandler {
     /**
      * Internal request processor executed in serialized queue
      */
+    async publishRpcAck(rpcBody, result) {
+        if (!(0, demeter_mqtt_topics_1.isHandledRpcControlMethod)(rpcBody.method)) {
+            return;
+        }
+        const commandId = (0, demeter_mqtt_topics_1.extractRpcCommandId)(rpcBody);
+        if (!commandId || typeof this.mqttService.publishRpcResponse !== 'function') {
+            return;
+        }
+        try {
+            await this.mqttService.publishRpcResponse(commandId, {
+                success: result.success,
+                status: result.success ? 'ACKED' : 'FAILED',
+                method: String(rpcBody.method),
+                error: result.error,
+            });
+        }
+        catch (error) {
+            this.logger.warn(`RPC ACK publish failed (Modbus already finished): ${error.message}`);
+        }
+    }
+    normalizeRpcBody(rpcBody) {
+        // Mobile generic switches send method `control` with { key, value }.
+        // Demeter two-way wait still needs an ACK after the coil write.
+        if (rpcBody.method === 'control' && rpcBody.params && rpcBody.params.key != null && rpcBody.params.key !== '') {
+            const key = String(rpcBody.params.key);
+            return Object.assign(Object.assign({}, rpcBody), { method: 'set_state', params: { [key]: rpcBody.params.value } });
+        }
+        return rpcBody;
+    }
     async handleRpcRequestInternal(rpcBody, maxRetries = 3) {
         let lastError = null;
         const startTime = Date.now();
+        rpcBody = this.normalizeRpcBody(rpcBody);
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
                     this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
                     await this.handleSetStateRequest(rpcBody.params);
                     this.logger.log(`[RPC-DONE] Request completed in ${Date.now() - startTime}ms`);
+                    await this.publishRpcAck(rpcBody, { success: true });
                     return; // Success
                 }
                 else if (rpcBody.method === "set_state_batch" && rpcBody.params) {
                     this.logger.log(`Processing batch RPC request (attempt ${attempt}/${maxRetries})`);
                     await this.handleSetStateBatchRequest(rpcBody.params);
                     this.logger.log(`[RPC-DONE] Batch request completed in ${Date.now() - startTime}ms`);
+                    await this.publishRpcAck(rpcBody, { success: true });
                     return;
                 }
                 else {
+                    // Leave schedule/oneway methods for the owning node. Do not ACK.
                     this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
                     return; // No need to retry for unsupported methods
                 }
@@ -112,6 +146,7 @@ class RpcHandler {
         }
         // Handle the final error
         if (lastError) {
+            await this.publishRpcAck(rpcBody, { success: false, error: lastError.message });
             await this.handleRpcError(lastError);
         }
     }

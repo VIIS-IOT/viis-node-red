@@ -61,6 +61,55 @@ export function buildDeviceRpcResponseTopic(deviceId: string, commandId = '+', h
   return joinDeviceTopic(deviceId, `rpc/response/${safeDeviceTopicSegment(commandId)}`, helper);
 }
 
+const RPC_COMMAND_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const HANDLED_RPC_CONTROL_METHODS = new Set(['set_state', 'set_state_batch']);
+
+export function isRpcCommandId(value: unknown): value is string {
+  return typeof value === 'string' && RPC_COMMAND_ID_RE.test(value.trim());
+}
+
+/** Methods viis-rpc-control actually executes. Schedule/oneway methods stay unacked. */
+export function isHandledRpcControlMethod(method: unknown): boolean {
+  return HANDLED_RPC_CONTROL_METHODS.has(String(method || '').trim());
+}
+
+/**
+ * Downlink is `v1/device/{id}/rpc/{commandId}`.
+ * Uplink `.../rpc/response/{commandId}` must not parse as a request.
+ */
+export function parseDeviceRpcRequestTopic(
+  topic: string,
+  helper?: GlobalContextHelper,
+): { deviceId: string; commandId: string } | null {
+  const baseParts = getDeviceTopicBase(helper).split('/').filter(Boolean);
+  const parts = String(topic || '').split('/').filter(Boolean);
+  if (parts.length !== baseParts.length + 3) return null;
+  if (!baseParts.every((part, index) => parts[index] === part)) return null;
+  if (parts[baseParts.length + 1] !== 'rpc') return null;
+  const commandId = decodeURIComponent(parts[baseParts.length + 2] || '');
+  if (!commandId || commandId === 'response') return null;
+  return {
+    deviceId: decodeURIComponent(parts[baseParts.length] || ''),
+    commandId,
+  };
+}
+
+export function extractRpcCommandId(payload?: Record<string, any> | null, topic?: string): string | null {
+  const fromPayload = [
+    payload?.command_id,
+    payload?.commandId,
+    payload?.requestId,
+    payload?.request_id,
+  ].find((value) => isRpcCommandId(value));
+  if (fromPayload) return String(fromPayload).trim();
+
+  const fromTopic = parseDeviceRpcRequestTopic(String(topic || ''));
+  if (fromTopic && isRpcCommandId(fromTopic.commandId)) return fromTopic.commandId;
+  return null;
+}
+
 export function buildMqttBrokerUrl(host?: string, port?: string | number): string {
   const resolvedHost = (host || '').trim();
   if (!resolvedHost) {
