@@ -22,7 +22,7 @@ import axios, { AxiosError } from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { ProtectionGateService } from "../viis-device-protection/services/protection-gate-service";
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
-import { classifyCoils } from "./schedule-coil-classify";
+import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classify";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
 import {
@@ -1418,7 +1418,10 @@ export class ScheduleService {
             schedule?.name ?? 'unknown'
         );
         const deps = this.makeKeyWriterDeps(modbusClient);
-        const coilCommands = commands.filter(cmd => cmd.fc === 5);
+        const coilCommands = [
+            ...commands.filter(cmd => cmd.fc === 5),
+            ...(isFinishing ? impliedFinishPumpCommands(commands, this.getAllModbusCoils()) : []),
+        ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
         const holdingPhase: SchedulePhase = options?.unusedHoldingReset ? 'reset_unused_holding' : 'reset_holding';
@@ -1445,7 +1448,7 @@ export class ScheduleService {
                 const keys = await this.writeCommandGroup(otherCoils.map(cmd => ({ ...cmd, value: false })), deps, 'other_coils', 'RESET');
                 buffer.pushPhase({ phase: 'other_coils', keys });
             }
-            if (pumpCoils.length > 0 && valveCoils.length > 0) {
+            if (valveCoils.length > 0) {
                 if (this.node) this.node.warn(`[MODBUS] ⏱️ delay after PUMP stop (valves still open)...`);
                 const t0 = Date.now();
                 await this.delay(WATER_HAMMER_DELAY_MS);
