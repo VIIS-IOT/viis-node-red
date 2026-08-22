@@ -9,14 +9,8 @@ const apiService_1 = require("../services/apiService");
 const logger_1 = require("../utils/logger");
 const TabiotSchedulePlan_1 = require("../../../orm/entities/schedulePlan/TabiotSchedulePlan");
 const TabiotSchedule_1 = require("../../../orm/entities/schedule/TabiotSchedule");
-const farm_time_1 = require("../../../core/farm-time");
-function isExistingUtcSameOrAfter(existing, incoming) {
-    const existingIso = (0, farm_time_1.mysqlUtcDatetimeToIso)(existing);
-    if (!existingIso || incoming == null || incoming === '')
-        return false;
-    return new Date(existingIso).getTime() >= new Date(incoming).getTime();
-}
 const syncStateService_1 = require("../services/syncStateService");
+const schedulePullPolicy_1 = require("./schedulePullPolicy");
 /**
  * Handler for synchronizing schedules and schedule plans
  */
@@ -142,8 +136,8 @@ class ScheduleSyncHandler {
             const newPlan = new TabiotSchedulePlan_1.TabiotSchedulePlan();
             newPlan.name = serverPlan.name;
             newPlan.label = serverPlan.label;
-            newPlan.creation = new Date(serverPlan.creation);
-            newPlan.modified = new Date(serverPlan.modified);
+            newPlan.creation = (0, schedulePullPolicy_1.localInstantFromServer)(serverPlan.creation) || new Date();
+            newPlan.modified = (0, schedulePullPolicy_1.localInstantFromServer)(serverPlan.modified) || new Date();
             newPlan.schedule_count = serverPlan.schedule_count;
             newPlan.status = serverPlan.status || 'active'; // Default to 'active' if null/empty
             newPlan.is_deleted = serverPlan.is_deleted;
@@ -172,16 +166,15 @@ class ScheduleSyncHandler {
      */
     async updateSchedulePlanIfNeeded(localPlan, serverPlan) {
         try {
-            const serverModified = new Date(serverPlan.modified);
-            if (localPlan.is_from_local === 1 && isExistingUtcSameOrAfter(localPlan.modified, serverPlan.modified)) {
+            if ((0, schedulePullPolicy_1.shouldSkipIncomingUpdate)(localPlan, serverPlan.modified)) {
                 logger_1.logger.info(this.node, `Local plan ${localPlan.name} is newer or same as server, skipping update`);
                 return;
             }
             logger_1.logger.info(this.node, `Updating schedule plan: ${serverPlan.name}`);
-            // Update local plan with server data
+            const incomingModified = (0, schedulePullPolicy_1.localInstantFromServer)(serverPlan.modified);
             Object.assign(localPlan, {
                 label: serverPlan.label,
-                modified: serverModified,
+                modified: incomingModified || localPlan.modified,
                 schedule_count: serverPlan.schedule_count,
                 status: serverPlan.status || 'active', // Default to 'active' if null/empty
                 is_deleted: serverPlan.is_deleted,
@@ -280,14 +273,14 @@ class ScheduleSyncHandler {
             newSchedule.end_time = serverSchedule.end_time;
             newSchedule.start_date = serverSchedule.start_date || null;
             newSchedule.end_date = serverSchedule.end_date || null;
-            newSchedule.type = (serverSchedule.type || '');
+            newSchedule.type = '';
             newSchedule.interval = serverSchedule.interval;
             newSchedule.is_synced = 1; // Mark as synced since it came from server
             newSchedule.is_from_local = 0; // Not from local
             newSchedule.is_deleted = serverSchedule.is_deleted;
             newSchedule.schedule_plan_id = planName;
-            newSchedule.creation = new Date();
-            newSchedule.modified = new Date();
+            newSchedule.creation = (0, schedulePullPolicy_1.localInstantFromServer)(serverSchedule.creation) || new Date();
+            newSchedule.modified = (0, schedulePullPolicy_1.localInstantFromServer)(serverSchedule.modified) || new Date();
             await this.scheduleRepo.save(newSchedule);
             this.syncStats.schedulesCreated++;
             this.syncStats.totalSchedules++;
@@ -307,19 +300,16 @@ class ScheduleSyncHandler {
      */
     async updateScheduleIfNeeded(localSchedule, serverSchedule) {
         try {
-            // If local was created locally and is not deleted, only update if server version is newer
-            if (localSchedule.is_from_local === 1 && localSchedule.is_deleted === 0) {
-                if (isExistingUtcSameOrAfter(localSchedule.modified, serverSchedule.modified || new Date())) {
-                    logger_1.logger.info(this.node, `Local schedule ${localSchedule.name} is newer than server, skipping update`);
-                    this.syncStats.totalSchedules++;
-                    return;
-                }
+            if ((0, schedulePullPolicy_1.shouldSkipIncomingUpdate)(localSchedule, serverSchedule.modified)) {
+                logger_1.logger.info(this.node, `Local schedule ${localSchedule.name} is newer than server, skipping update`);
+                this.syncStats.totalSchedules++;
+                return;
             }
             logger_1.logger.info(this.node, `Updating schedule: ${serverSchedule.name}`);
-            // Update local schedule with server data
+            const incomingModified = (0, schedulePullPolicy_1.localInstantFromServer)(serverSchedule.modified);
             Object.assign(localSchedule, {
                 label: serverSchedule.label || serverSchedule.name,
-                modified: serverSchedule.modified || localSchedule.modified,
+                modified: incomingModified || localSchedule.modified,
                 status: serverSchedule.status || 'finished', // Default to 'finished' if null/empty
                 action: typeof serverSchedule.action === 'object'
                     ? JSON.stringify(serverSchedule.action)
@@ -330,7 +320,7 @@ class ScheduleSyncHandler {
                 end_time: serverSchedule.end_time,
                 start_date: serverSchedule.start_date ? new Date(serverSchedule.start_date) : null,
                 end_date: serverSchedule.end_date ? new Date(serverSchedule.end_date) : null,
-                type: (serverSchedule.type || ''), // Ensure empty string instead of null
+                type: '',
                 interval: serverSchedule.interval,
                 is_synced: 1, // Mark as synced
                 is_deleted: serverSchedule.is_deleted,
@@ -382,6 +372,10 @@ class ScheduleSyncHandler {
             logger_1.logger.info(this.node, `Found ${deletedSchedules.length} deleted schedules for plan ${planName}`);
             // Mark each missing schedule as deleted
             for (const deletedSchedule of deletedSchedules) {
+                if (!(0, schedulePullPolicy_1.shouldSoftDeleteLocalOnPull)(deletedSchedule)) {
+                    logger_1.logger.info(this.node, `Keeping unsynced local schedule ${deletedSchedule.name}`);
+                    continue;
+                }
                 logger_1.logger.info(this.node, `Marking schedule ${deletedSchedule.name} as deleted`);
                 deletedSchedule.is_deleted = 1;
                 deletedSchedule.modified = new Date();
