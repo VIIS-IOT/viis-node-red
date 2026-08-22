@@ -70,7 +70,7 @@ function toDeviceSchedule(row) {
     };
 }
 function fromDeviceSchedule(row) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const protocolId = deviceProtocolKey(row);
     const display = text(row === null || row === void 0 ? void 0 : row.id) && text(row === null || row === void 0 ? void 0 : row.name)
         ? text(row.name)
@@ -87,10 +87,10 @@ function fromDeviceSchedule(row) {
         end_date: (_f = row === null || row === void 0 ? void 0 : row.end_date) !== null && _f !== void 0 ? _f : null,
         start_time: (_g = row === null || row === void 0 ? void 0 : row.start_time) !== null && _g !== void 0 ? _g : null,
         end_time: (_h = row === null || row === void 0 ? void 0 : row.end_time) !== null && _h !== void 0 ? _h : null,
-        type: (_j = row === null || row === void 0 ? void 0 : row.type) !== null && _j !== void 0 ? _j : null,
+        type: '',
         is_deleted: toEnableInt(row === null || row === void 0 ? void 0 : row.is_deleted),
-        status: (_k = row === null || row === void 0 ? void 0 : row.status) !== null && _k !== void 0 ? _k : null,
-        schedule_plan_id: (_l = row === null || row === void 0 ? void 0 : row.schedule_plan_id) !== null && _l !== void 0 ? _l : null,
+        status: (_j = row === null || row === void 0 ? void 0 : row.status) !== null && _j !== void 0 ? _j : null,
+        schedule_plan_id: (_k = row === null || row === void 0 ? void 0 : row.schedule_plan_id) !== null && _k !== void 0 ? _k : null,
         creation: localInstant(row === null || row === void 0 ? void 0 : row.creation),
         modified: localInstant(row === null || row === void 0 ? void 0 : row.modified),
     };
