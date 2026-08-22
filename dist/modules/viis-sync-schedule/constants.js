@@ -12,7 +12,7 @@ exports.API_PATHS = {
 };
 exports.SYNC_DEFAULTS = {
     /** Default sync interval in minutes */
-    INTERVAL: 15,
+    INTERVAL: 240,
     /** Default timeout for API requests in milliseconds */
     TIMEOUT: 30000,
 };
