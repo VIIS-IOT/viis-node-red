@@ -13,6 +13,7 @@ import { plainToInstance } from 'class-transformer';
 import { TabiotScheduleDto } from '../dto/schedule.dto';
 import { validateDto } from '../utils/validation';
 import { SyncScheduleService } from '../../../services/syncSchedule/SyncScheduleService';
+import { markOutboxSynced } from './outboxAck';
 import { log } from 'console';
 import Container from 'typedi';
 import moment from 'moment-timezone';
@@ -222,10 +223,7 @@ export class ScheduleHandler {
                 logger.info(this.node, 'Schedule sync completed successfully');
                 // Assuming syncRes indicates success if no error is thrown or specific success condition
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update(
-                    { name: savedSchedule.name },
-                    { is_synced: 1 }
-                );
+                await markOutboxSynced(this.scheduleRepo, 'tabiot_schedule', savedSchedule.name);
                 // Refresh savedSchedule with updated is_synced value
                 const updatedSchedule = await this.scheduleRepo.findOneBy({ name: savedSchedule.name });
                 if (updatedSchedule) {
@@ -455,10 +453,7 @@ export class ScheduleHandler {
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updated]);
                 logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update(
-                    { name: updated.name },
-                    { is_synced: 1 }
-                );
+                await markOutboxSynced(this.scheduleRepo, 'tabiot_schedule', updated.name);
                 // Refresh updated with the latest is_synced value
                 const refreshedUpdated = await this.scheduleRepo.findOneBy({ name: updated.name });
                 if (refreshedUpdated) {
@@ -690,10 +685,7 @@ export class ScheduleHandler {
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updatedSchedule]);
                 logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update(
-                    { name: updatedSchedule.name },
-                    { is_synced: 1 }
-                );
+                await markOutboxSynced(this.scheduleRepo, 'tabiot_schedule', updatedSchedule.name);
                 this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             } catch (syncError) {
                 logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);

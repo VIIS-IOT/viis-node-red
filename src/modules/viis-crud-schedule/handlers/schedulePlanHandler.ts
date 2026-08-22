@@ -12,6 +12,7 @@ import { plainToInstance } from 'class-transformer';
 import { validateDto } from '../utils/validation';
 import { TabiotSchedulePlanDto } from '../dto/schedulePlan.dto';
 import { SyncScheduleService } from '../../../services/syncSchedule/SyncScheduleService';
+import { markOutboxSynced } from './outboxAck';
 import Container from 'typedi';
 
 export class SchedulePlanHandler {
@@ -232,10 +233,7 @@ export class SchedulePlanHandler {
             try {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([savedPlan]);
 
-                await this.planRepo.update(
-                    { name: savedPlan.name },
-                    { is_synced: 1 }
-                );
+                await markOutboxSynced(this.planRepo, 'tabiot_schedule_plan', savedPlan.name);
 
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
                 if (refreshedUpdated) {
@@ -351,10 +349,7 @@ export class SchedulePlanHandler {
             try {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updated]);
 
-                await this.planRepo.update(
-                    { name: updated.name },
-                    { is_synced: 1 }
-                );
+                await markOutboxSynced(this.planRepo, 'tabiot_schedule_plan', updated.name);
 
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
                 if (refreshedUpdated) {
@@ -442,10 +437,7 @@ export class SchedulePlanHandler {
                 logger.info(this.node, 'Schedule plan sync completed successfully');
                 
                 // If sync is successful, update is_synced to 1
-                await this.planRepo.update(
-                    { name: updatedPlan.name },
-                    { is_synced: 1 }
-                );
+                await markOutboxSynced(this.planRepo, 'tabiot_schedule_plan', updatedPlan.name);
                 this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${name}" deletion synced successfully to server`);
             } catch (syncError) {
                 logger.info(this.node, `Sync to server failed: ${(syncError as Error).message}`);

@@ -8,6 +8,7 @@ const helper_1 = require("../../../ultils/helper");
 const validation_1 = require("../utils/validation");
 const schedulePlan_dto_1 = require("../dto/schedulePlan.dto");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
+const outboxAck_1 = require("./outboxAck");
 class SchedulePlanHandler {
     constructor(dbService, node) {
         this.node = node;
@@ -190,7 +191,7 @@ class SchedulePlanHandler {
             this.node.warn(`✓ CREATE LOCAL: Schedule Plan "${dto.label}" created successfully in local database`);
             try {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([savedPlan]);
-                await this.planRepo.update({ name: savedPlan.name }, { is_synced: 1 });
+                await (0, outboxAck_1.markOutboxSynced)(this.planRepo, 'tabiot_schedule_plan', savedPlan.name);
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
                 if (refreshedUpdated) {
                     Object.assign(savedPlan, refreshedUpdated);
@@ -292,7 +293,7 @@ class SchedulePlanHandler {
             this.node.warn(`✓ UPDATE LOCAL: Schedule Plan "${dto.label}" updated successfully in local database`);
             try {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updated]);
-                await this.planRepo.update({ name: updated.name }, { is_synced: 1 });
+                await (0, outboxAck_1.markOutboxSynced)(this.planRepo, 'tabiot_schedule_plan', updated.name);
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
                 if (refreshedUpdated) {
                     Object.assign(updated, refreshedUpdated);
@@ -371,7 +372,7 @@ class SchedulePlanHandler {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updatedPlan]);
                 logger_1.logger.info(this.node, 'Schedule plan sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.planRepo.update({ name: updatedPlan.name }, { is_synced: 1 });
+                await (0, outboxAck_1.markOutboxSynced)(this.planRepo, 'tabiot_schedule_plan', updatedPlan.name);
                 this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${name}" deletion synced successfully to server`);
             }
             catch (syncError) {
