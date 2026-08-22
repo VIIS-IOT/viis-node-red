@@ -234,7 +234,7 @@ export class SchedulePlanHandler {
 
                 await this.planRepo.update(
                     { name: savedPlan.name },
-                    { is_synced: 1, modified: new Date() }
+                    { is_synced: 1 }
                 );
 
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
@@ -353,7 +353,7 @@ export class SchedulePlanHandler {
 
                 await this.planRepo.update(
                     { name: updated.name },
-                    { is_synced: 1, modified: new Date() }
+                    { is_synced: 1 }
                 );
 
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
@@ -444,7 +444,7 @@ export class SchedulePlanHandler {
                 // If sync is successful, update is_synced to 1
                 await this.planRepo.update(
                     { name: updatedPlan.name },
-                    { is_synced: 1, modified: new Date() }
+                    { is_synced: 1 }
                 );
                 this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${name}" deletion synced successfully to server`);
             } catch (syncError) {

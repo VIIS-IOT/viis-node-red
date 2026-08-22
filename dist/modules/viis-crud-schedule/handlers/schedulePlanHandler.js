@@ -190,7 +190,7 @@ class SchedulePlanHandler {
             this.node.warn(`✓ CREATE LOCAL: Schedule Plan "${dto.label}" created successfully in local database`);
             try {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([savedPlan]);
-                await this.planRepo.update({ name: savedPlan.name }, { is_synced: 1, modified: new Date() });
+                await this.planRepo.update({ name: savedPlan.name }, { is_synced: 1 });
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: savedPlan.name });
                 if (refreshedUpdated) {
                     Object.assign(savedPlan, refreshedUpdated);
@@ -292,7 +292,7 @@ class SchedulePlanHandler {
             this.node.warn(`✓ UPDATE LOCAL: Schedule Plan "${dto.label}" updated successfully in local database`);
             try {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updated]);
-                await this.planRepo.update({ name: updated.name }, { is_synced: 1, modified: new Date() });
+                await this.planRepo.update({ name: updated.name }, { is_synced: 1 });
                 const refreshedUpdated = await this.planRepo.findOneBy({ name: updated.name });
                 if (refreshedUpdated) {
                     Object.assign(updated, refreshedUpdated);
@@ -371,7 +371,7 @@ class SchedulePlanHandler {
                 const syncRes = await this.syncScheduleService.syncSchedulePlanFromLocalToServer([updatedPlan]);
                 logger_1.logger.info(this.node, 'Schedule plan sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.planRepo.update({ name: updatedPlan.name }, { is_synced: 1, modified: new Date() });
+                await this.planRepo.update({ name: updatedPlan.name }, { is_synced: 1 });
                 this.node.warn(`✓ SYNC TO SERVER: Schedule Plan "${name}" deletion synced successfully to server`);
             }
             catch (syncError) {

@@ -224,7 +224,7 @@ export class ScheduleHandler {
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: savedSchedule.name },
-                    { is_synced: 1, modified: new Date() }
+                    { is_synced: 1 }
                 );
                 // Refresh savedSchedule with updated is_synced value
                 const updatedSchedule = await this.scheduleRepo.findOneBy({ name: savedSchedule.name });
@@ -457,7 +457,7 @@ export class ScheduleHandler {
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: updated.name },
-                    { is_synced: 1, modified: new Date() }
+                    { is_synced: 1 }
                 );
                 // Refresh updated with the latest is_synced value
                 const refreshedUpdated = await this.scheduleRepo.findOneBy({ name: updated.name });
@@ -692,7 +692,7 @@ export class ScheduleHandler {
                 // If sync is successful, update is_synced to 1
                 await this.scheduleRepo.update(
                     { name: updatedSchedule.name },
-                    { is_synced: 1, modified: new Date() }
+                    { is_synced: 1 }
                 );
                 this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             } catch (syncError) {

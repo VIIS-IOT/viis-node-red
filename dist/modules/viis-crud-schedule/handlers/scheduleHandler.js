@@ -157,7 +157,7 @@ class ScheduleHandler {
                 device_id: dto.device_id,
                 start_date: dto.start_date,
                 end_date: dto.end_date,
-                type: dto.type || '',
+                type: '',
                 interval: dto.interval,
                 start_time: dto.start_time,
                 end_time: dto.end_time,
@@ -182,7 +182,7 @@ class ScheduleHandler {
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // Assuming syncRes indicates success if no error is thrown or specific success condition
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update({ name: savedSchedule.name }, { is_synced: 1, modified: new Date() });
+                await this.scheduleRepo.update({ name: savedSchedule.name }, { is_synced: 1 });
                 // Refresh savedSchedule with updated is_synced value
                 const updatedSchedule = await this.scheduleRepo.findOneBy({ name: savedSchedule.name });
                 if (updatedSchedule) {
@@ -365,7 +365,7 @@ class ScheduleHandler {
                 device_id: dto.device_id,
                 start_date: dto.start_date,
                 end_date: dto.end_date,
-                type: dto.type || '',
+                type: '',
                 interval: dto.interval,
                 start_time: dto.start_time,
                 end_time: dto.end_time,
@@ -394,7 +394,7 @@ class ScheduleHandler {
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updated]);
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update({ name: updated.name }, { is_synced: 1, modified: new Date() });
+                await this.scheduleRepo.update({ name: updated.name }, { is_synced: 1 });
                 // Refresh updated with the latest is_synced value
                 const refreshedUpdated = await this.scheduleRepo.findOneBy({ name: updated.name });
                 if (refreshedUpdated) {
@@ -608,7 +608,7 @@ class ScheduleHandler {
                 const syncRes = await this.syncScheduleService.syncScheduleFromLocalToServer([updatedSchedule]);
                 logger_1.logger.info(this.node, 'Schedule sync completed successfully');
                 // If sync is successful, update is_synced to 1
-                await this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1, modified: new Date() });
+                await this.scheduleRepo.update({ name: updatedSchedule.name }, { is_synced: 1 });
                 this.node.warn(`✓ SYNC TO SERVER: Schedule "${name}" deletion synced successfully to server`);
             }
             catch (syncError) {
