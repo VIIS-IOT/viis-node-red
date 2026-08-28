@@ -57,6 +57,10 @@ class AutomationHandler {
                 this.logger.log("Received update_intents command");
                 await this.syncIntents();
             }
+            else if (["set", "control", "set_state", "set_state_batch"].includes(String(message.method || "").toLowerCase())) {
+                // Shared rpc/+ subscription — device writes belong to viis-rpc-control.
+                return;
+            }
             else {
                 this.logger.warn(`Unknown message method: ${message.method}`);
             }

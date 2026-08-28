@@ -150,15 +150,21 @@ export class RpcHandler implements IRpcHandler {
     }
 
     private normalizeRpcBody(rpcBody: RpcMessage): RpcMessage {
-        // Mobile generic switches send method `control` with { key, value }.
-        // Demeter two-way wait still needs an ACK after the coil write.
-        if (rpcBody.method === 'control' && rpcBody.params && rpcBody.params.key != null && rpcBody.params.key !== '') {
+        // Mobile generic writes: `control` (older) or `set` (Config tab / firmware
+        // canonical). Both arrive as { key, value }. Map to set_state so Modbus
+        // write + two-way ACK share one path.
+        const method = String(rpcBody.method || '').toLowerCase();
+        const isMobileWrite = method === 'control' || method === 'set';
+        if (isMobileWrite && rpcBody.params && rpcBody.params.key != null && rpcBody.params.key !== '') {
             const key = String(rpcBody.params.key);
             return {
                 ...rpcBody,
                 method: 'set_state',
                 params: { [key]: rpcBody.params.value },
             };
+        }
+        if (isMobileWrite && rpcBody.params && typeof rpcBody.params === 'object') {
+            return { ...rpcBody, method: 'set_state' };
         }
         return rpcBody;
     }

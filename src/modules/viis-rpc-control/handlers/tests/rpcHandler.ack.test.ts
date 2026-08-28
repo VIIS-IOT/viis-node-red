@@ -126,3 +126,21 @@ test('mobile method control {key,value} is executed as set_state and ACKED', asy
     status: 'ACKED',
   }));
 });
+
+test('mobile method set {key,value} is executed as set_state and ACKED', async () => {
+  const publishRpcResponse = jest.fn().mockResolvedValue(undefined);
+  const handler = createHandler({ publishRpcResponse });
+  const write = jest.spyOn(handler as any, 'handleSetStateRequest').mockResolvedValue(undefined);
+
+  await handler.handleRpcRequest({
+    method: 'set',
+    command_id: COMMAND_ID,
+    params: { key: 'digital_out_2', value: 1 },
+  });
+
+  expect(write).toHaveBeenCalledWith({ digital_out_2: 1 });
+  expect(publishRpcResponse).toHaveBeenCalledWith(COMMAND_ID, expect.objectContaining({
+    success: true,
+    status: 'ACKED',
+  }));
+});
