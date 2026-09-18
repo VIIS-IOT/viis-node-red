@@ -1,7 +1,7 @@
 import type { ScaleConfig } from "../../viis-telemetry/viis-telemetry-utils";
 import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { mergeScaleConfigs } from "./scale-config-merger";
-import type { BoardMappings, PollingConfig, ResolvedPollerConfig } from "../types";
+import type { BoardMappings, PollingConfig, ResolvedBoardPollConfig, ResolvedPollerConfig } from "../types";
 
 interface GlobalContext {
   get(key: string): unknown;
@@ -141,26 +141,82 @@ function readScaleConfigs(
   return mergeScaleConfigs(mergedGlobalConfigs, overrides);
 }
 
+function hasMappingKey(mappings: BoardMappings, registerType: keyof BoardMappings, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(mappings[registerType], key);
+}
+
+export function partitionPollingConfig(pollingConfig: PollingConfig, mappings: BoardMappings): PollingConfig {
+  const partitioned: PollingConfig = {};
+
+  for (const [groupName, group] of Object.entries(pollingConfig ?? {})) {
+    partitioned[groupName] = {
+      interval: group.interval,
+      coils: (group.coils ?? []).filter((key) => hasMappingKey(mappings, "coils", key)),
+      input: (group.input ?? []).filter((key) => hasMappingKey(mappings, "input", key)),
+      holding: (group.holding ?? []).filter((key) => hasMappingKey(mappings, "holding", key)),
+    };
+  }
+
+  return partitioned;
+}
+
+function readConfiguredBoards(globalContext: GlobalContext): Array<{ id: string; unitId: number }> {
+  const entry = readGlobal(globalContext, ["modbusBoards", "modbus_boards"]);
+  if (entry.value === undefined) {
+    return [];
+  }
+
+  const parsed = parseConfigValue(entry.value, `global context key ${entry.key}`);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed
+    .filter((board: { id?: unknown; unitId?: unknown }) => board && typeof board.id === "string" && board.id.trim())
+    .map((board: { id: string; unitId?: unknown }) => ({
+      id: String(board.id).trim(),
+      unitId: Number(board.unitId) > 0 ? Number(board.unitId) : 1,
+    }));
+}
+
 export function resolvePollerConfig(
   nodeConfig: PollerNodeConfig,
   globalContext: GlobalContext,
 ): ResolvedPollerConfig {
-  const boardId = readBoardId(nodeConfig, globalContext);
+  const fallbackBoardId = readBoardId(nodeConfig, globalContext);
+  const configuredBoards = readConfiguredBoards(globalContext);
+  const pollingConfig = readConfigObject<PollingConfig>(
+    globalContext,
+    ["modbusPollGroups", "modbus_poll_groups", "pollingConfig"],
+    {},
+  );
+  const boardIds = configuredBoards.length > 0
+    ? configuredBoards.map((board) => board.id)
+    : [fallbackBoardId];
+
+  const boards: ResolvedBoardPollConfig[] = boardIds.map((boardId) => {
+    const mappings = readMappings(globalContext, boardId);
+    return {
+      boardId,
+      unitId: configuredBoards.find((board) => board.id === boardId)?.unitId ?? 1,
+      mappings,
+      pollingConfig: partitionPollingConfig(pollingConfig, mappings),
+    };
+  });
+
+  const primary = boards[0];
 
   return {
     deviceId: readDeviceId(globalContext),
-    boardId,
-    pollingConfig: readConfigObject<PollingConfig>(
-      globalContext,
-      ["modbusPollGroups", "modbus_poll_groups", "pollingConfig"],
-      {},
-    ),
-    mappings: readMappings(globalContext, boardId),
+    boardId: primary?.boardId ?? fallbackBoardId,
+    pollingConfig,
+    mappings: primary?.mappings ?? { coils: {}, input: {}, holding: {} },
     thresholds: readConfigObject<Record<string, number>>(
       globalContext,
       ["modbusPublishThresholds", "modbus_publish_thresholds", "modbusThresholds"],
       {},
     ),
     scaleConfigs: readScaleConfigs(nodeConfig, globalContext),
+    boards,
   };
 }

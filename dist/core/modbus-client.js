@@ -70,7 +70,13 @@ class ModbusClientCore extends events_1.EventEmitter {
      * This prevents overwhelming STM32 when multiple nodes poll simultaneously
      * Now with timeout protection to prevent queue deadlock
      */
-    async enqueueRequest(operation) {
+    applyRequestUnitId(unitId) {
+        const resolvedUnitId = unitId !== null && unitId !== void 0 ? unitId : this.config.unitId;
+        if (resolvedUnitId !== undefined && resolvedUnitId !== null) {
+            this.client.setID(resolvedUnitId);
+        }
+    }
+    async enqueueRequest(operation, unitId) {
         // Add to queue
         this.queueLength++;
         const queueTimeout = 30000; // 30 seconds max wait time in queue
@@ -88,6 +94,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     const interRequestDelay = this.config.boardType === 'ATMEGA' ? 100 : 50;
                     await new Promise(resolve => setTimeout(resolve, interRequestDelay));
                 }
+                this.applyRequestUnitId(unitId);
                 return await operation();
             }
             finally {
@@ -1000,7 +1007,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         // Continue với normal reconnect
         this.scheduleReconnect();
     }
-    async readCoils(address, length) {
+    async readCoils(address, length, unitId) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1025,9 +1032,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        });
+        }, unitId);
     }
-    async readInputRegisters(address, length) {
+    async readInputRegisters(address, length, unitId) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1050,9 +1057,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        });
+        }, unitId);
     }
-    async readHoldingRegisters(address, length) {
+    async readHoldingRegisters(address, length, unitId) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1075,10 +1082,10 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        });
+        }, unitId);
     }
     // Ghi Holding Register
-    async writeRegister(address, value) {
+    async writeRegister(address, value, unitId) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1113,9 +1120,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                     throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
                 }
             }
-        });
+        }, unitId);
     }
-    async writeCoil(address, value) {
+    async writeCoil(address, value, unitId) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1150,7 +1157,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
                 }
             }
-        });
+        }, unitId);
     }
     // Ngắt kết nối
     disconnect() {

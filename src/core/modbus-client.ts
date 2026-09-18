@@ -120,7 +120,14 @@ export class ModbusClientCore extends EventEmitter {
      * This prevents overwhelming STM32 when multiple nodes poll simultaneously
      * Now with timeout protection to prevent queue deadlock
      */
-    private async enqueueRequest<T>(operation: () => Promise<T>): Promise<T> {
+    private applyRequestUnitId(unitId?: number): void {
+        const resolvedUnitId = unitId ?? this.config.unitId;
+        if (resolvedUnitId !== undefined && resolvedUnitId !== null) {
+            this.client.setID(resolvedUnitId);
+        }
+    }
+
+    private async enqueueRequest<T>(operation: () => Promise<T>, unitId?: number): Promise<T> {
         // Add to queue
         this.queueLength++;
         const queueTimeout = 30000; // 30 seconds max wait time in queue
@@ -140,6 +147,7 @@ export class ModbusClientCore extends EventEmitter {
                     const interRequestDelay = this.config.boardType === 'ATMEGA' ? 100 : 50;
                     await new Promise(resolve => setTimeout(resolve, interRequestDelay));
                 }
+                this.applyRequestUnitId(unitId);
                 return await operation();
             } finally {
                 this.queueLength--;
@@ -1185,7 +1193,7 @@ export class ModbusClientCore extends EventEmitter {
         this.scheduleReconnect();
     }
 
-    public async readCoils(address: number, length: number): Promise<ModbusData> {
+    public async readCoils(address: number, length: number, unitId?: number): Promise<ModbusData> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1215,10 +1223,10 @@ export class ModbusClientCore extends EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        });
+        }, unitId);
     }
 
-    public async readInputRegisters(address: number, length: number): Promise<ModbusData> {
+    public async readInputRegisters(address: number, length: number, unitId?: number): Promise<ModbusData> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1245,10 +1253,10 @@ export class ModbusClientCore extends EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        });
+        }, unitId);
     }
 
-    public async readHoldingRegisters(address: number, length: number): Promise<ModbusData> {
+    public async readHoldingRegisters(address: number, length: number, unitId?: number): Promise<ModbusData> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1275,11 +1283,11 @@ export class ModbusClientCore extends EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        });
+        }, unitId);
     }
 
     // Ghi Holding Register
-    public async writeRegister(address: number, value: number): Promise<void> {
+    public async writeRegister(address: number, value: number, unitId?: number): Promise<void> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1320,10 +1328,10 @@ export class ModbusClientCore extends EventEmitter {
                 throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
             }
         }
-        });
+        }, unitId);
     }
 
-    public async writeCoil(address: number, value: boolean): Promise<void> {
+    public async writeCoil(address: number, value: boolean, unitId?: number): Promise<void> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1364,7 +1372,7 @@ export class ModbusClientCore extends EventEmitter {
                 throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
             }
         }
-        });
+        }, unitId);
     }
 
     // Ngắt kết nối

@@ -129,4 +129,85 @@ describe("validateResolvedConfig", () => {
       'scaleConfigs[1].direction must be "read" or "write"',
     ]);
   });
+
+  it("accepts a global poll key that exists on exactly one of several boards", () => {
+    const result = validateResolvedConfig({
+      deviceId: "device-1",
+      boardId: "board1",
+      pollingConfig: {
+        realtime: { interval: 2000, coils: ["power", "aux_pump"] },
+      },
+      mappings: { coils: { power: 30 }, input: {}, holding: {} },
+      thresholds: { power: 0, aux_pump: 0 },
+      scaleConfigs: [],
+      boards: [
+        {
+          boardId: "board1",
+          unitId: 3,
+          mappings: { coils: { power: 30 }, input: {}, holding: {} },
+          pollingConfig: { realtime: { interval: 2000, coils: ["power"] } },
+        },
+        {
+          boardId: "board2",
+          unitId: 1,
+          mappings: { coils: { aux_pump: 0 }, input: {}, holding: {} },
+          pollingConfig: { realtime: { interval: 2000, coils: ["aux_pump"] } },
+        },
+      ],
+    });
+
+    expect(result.errors).toEqual([]);
+  });
+
+  it("fails when a poll key is missing from every board or mapped on two boards", () => {
+    const missing = validateResolvedConfig({
+      deviceId: "device-1",
+      boardId: "board1",
+      pollingConfig: {
+        realtime: { interval: 2000, coils: ["ghost"] },
+      },
+      mappings: { coils: { power: 30 }, input: {}, holding: {} },
+      thresholds: { ghost: 0 },
+      scaleConfigs: [],
+      boards: [
+        {
+          boardId: "board1",
+          unitId: 3,
+          mappings: { coils: { power: 30 }, input: {}, holding: {} },
+          pollingConfig: { realtime: { interval: 2000, coils: [] } },
+        },
+      ],
+    });
+
+    expect(missing.errors).toContain('realtime.coils references missing key "ghost"');
+
+    const collision = validateResolvedConfig({
+      deviceId: "device-1",
+      boardId: "board1",
+      pollingConfig: {
+        realtime: { interval: 2000, coils: ["power"] },
+      },
+      mappings: { coils: { power: 30 }, input: {}, holding: {} },
+      thresholds: { power: 0 },
+      scaleConfigs: [],
+      boards: [
+        {
+          boardId: "board1",
+          unitId: 3,
+          mappings: { coils: { power: 30 }, input: {}, holding: {} },
+          pollingConfig: { realtime: { interval: 2000, coils: ["power"] } },
+        },
+        {
+          boardId: "board2",
+          unitId: 1,
+          mappings: { coils: { power: 1 }, input: {}, holding: {} },
+          pollingConfig: { realtime: { interval: 2000, coils: ["power"] } },
+        },
+      ],
+    });
+
+    expect(collision.errors).toContain(
+      'realtime.coils key "power" is mapped on multiple boards: board1, board2',
+    );
+  });
 });
