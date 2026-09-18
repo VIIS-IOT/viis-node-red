@@ -19,6 +19,13 @@ export interface BoardMappings {
   holding: Record<string, number>;
 }
 
+export interface ResolvedBoardPollConfig {
+  boardId: string;
+  unitId: number;
+  mappings: BoardMappings;
+  pollingConfig: PollingConfig;
+}
+
 export interface ResolvedPollerConfig {
   deviceId: string;
   boardId: string;
@@ -26,6 +33,7 @@ export interface ResolvedPollerConfig {
   mappings: BoardMappings;
   thresholds: Record<string, number>;
   scaleConfigs: ScaleConfig[];
+  boards?: ResolvedBoardPollConfig[];
 }
 
 export interface AddressRange {

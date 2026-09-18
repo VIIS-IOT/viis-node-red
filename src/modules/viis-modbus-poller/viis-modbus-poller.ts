@@ -8,6 +8,7 @@ import { TelemetryValue } from "./services/change-detector";
 import { PollerDiagnostics } from "./services/diagnostics";
 import { resolvePollerConfig } from "./services/config-resolver";
 import { validateResolvedConfig } from "./services/config-validator";
+import { getPollTargets, mergeBoardMappings, mergePollTickResults } from "./services/multi-board-poll";
 import { runPollTick } from "./services/poll-runner";
 import { BoardMappings, PollingConfig, ResolvedPollerConfig } from "./types";
 import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
@@ -328,38 +329,47 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
 
     let firstSuccessfulRead = true;
     let pollInProgress = 0;
-    let modbusClient: ModbusClientCore | null = null;
-    let currentTarget: SharedClientTarget | null = null;
+    const boardClients = new Map<string, { client: ModbusClientCore; target: SharedClientTarget }>();
 
-    function releaseCurrentModbusClient(): void {
-      if (!modbusClient || !currentTarget) {
+    function releaseBoardClient(boardId: string): void {
+      const entry = boardClients.get(boardId);
+      if (!entry) {
         return;
       }
 
-      if (currentTarget.mode === "board") {
-        ClientRegistry.releaseClientV2("modbus-board", node, currentTarget.boardId);
+      if (entry.target.mode === "board") {
+        ClientRegistry.releaseClientV2("modbus-board", node, entry.target.boardId);
       } else {
         ClientRegistry.releaseClientV2("modbus", node);
       }
 
-      modbusClient = null;
-      currentTarget = null;
+      boardClients.delete(boardId);
+    }
+
+    function releaseAllModbusClients(): void {
+      for (const boardId of Array.from(boardClients.keys())) {
+        releaseBoardClient(boardId);
+      }
     }
 
     async function getOrCreateSharedModbusClient(boardId: string): Promise<ModbusClientCore> {
       const nextTarget = resolveSharedClientTarget(node, node.context().global, boardId);
+      const existing = boardClients.get(boardId);
 
-      if (modbusClient && currentTarget && targetKey(currentTarget) === targetKey(nextTarget)) {
-        return modbusClient;
+      if (existing && targetKey(existing.target) === targetKey(nextTarget)) {
+        return existing.client;
       }
 
-      releaseCurrentModbusClient();
-      currentTarget = nextTarget;
-      modbusClient = nextTarget.mode === "board"
+      if (existing) {
+        releaseBoardClient(boardId);
+      }
+
+      const client = nextTarget.mode === "board"
         ? await ClientRegistry.getModbusClientV2(nextTarget.boardId, node)
         : await ClientRegistry.getModbusClientV2(nextTarget.config, node);
 
-      return modbusClient;
+      boardClients.set(boardId, { client, target: nextTarget });
+      return client;
     }
 
     function sendDiagnostics(send: (messages: any[]) => void, message: any): void {
@@ -438,28 +448,53 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
         }
 
         markDueGroups(lastPollTimes, dueGroups, startedAt);
+        const targets = getPollTargets(resolvedConfig);
         node.status({ fill: "blue", shape: "dot", text: `Polling ${dueGroups.join(", ")}` });
 
-        const client = await getOrCreateSharedModbusClient(resolvedConfig.boardId);
-        const result = await runPollTick({
-          modbusClient: client,
-          dueGroups,
-          config: resolvedConfig,
-          previousState,
-          options: {
-            maxGap: options.maxGap,
-            maxCoilsPerRead: options.maxCoilsPerRead,
-            maxRegistersPerRead: options.maxRegistersPerRead,
-            publishFullSnapshot:
-              firstSuccessfulRead && options.publishFullSnapshotOnFirstRead,
-          },
-        });
+        const activeBoardIds = new Set(targets.map((board) => board.boardId));
+        for (const boardId of Array.from(boardClients.keys())) {
+          if (!activeBoardIds.has(boardId)) {
+            releaseBoardClient(boardId);
+          }
+        }
+
+        const tickResults = [];
+        for (const board of targets) {
+          const client = await getOrCreateSharedModbusClient(board.boardId);
+          tickResults.push(await runPollTick({
+            modbusClient: client,
+            dueGroups,
+            config: {
+              ...resolvedConfig,
+              boardId: board.boardId,
+              mappings: board.mappings,
+              pollingConfig: board.pollingConfig,
+            },
+            previousState,
+            options: {
+              maxGap: options.maxGap,
+              maxCoilsPerRead: options.maxCoilsPerRead,
+              maxRegistersPerRead: options.maxRegistersPerRead,
+              publishFullSnapshot:
+                firstSuccessfulRead && options.publishFullSnapshotOnFirstRead,
+            },
+          }));
+        }
+
+        const result = mergePollTickResults(tickResults);
 
         const latestCount = Object.keys(result.latestData).length;
         if (latestCount > 0) {
           Object.assign(previousState, result.latestData);
           firstSuccessfulRead = false;
-          writeLatestGlobalState(node.context().global, resolvedConfig, result.latestData);
+          writeLatestGlobalState(
+            node.context().global,
+            {
+              ...resolvedConfig,
+              mappings: mergeBoardMappings(targets.map((board) => board.mappings)),
+            },
+            result.latestData,
+          );
         }
 
         const changedCount = Object.keys(result.changedData).length;
@@ -513,7 +548,7 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
       const closeDone = typeof removedOrDone === "function" ? removedOrDone : done;
 
       try {
-        releaseCurrentModbusClient();
+        releaseAllModbusClients();
         node.status({});
         closeDone?.();
       } catch (error) {

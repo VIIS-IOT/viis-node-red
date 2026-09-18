@@ -116,7 +116,7 @@
 </script>
 
 <script type="text/html" data-help-name="viis-modbus-poller">
-  <p>Polls configured Modbus groups through the shared VIIS Modbus client and emits telemetry deltas.</p>
+  <p>Polls configured Modbus groups through the shared VIIS Modbus client and emits telemetry deltas. When <code>device1.json</code> lists multiple boards, one node polls every board. Boards that share an RTU serial port or TCP host:port reuse one connection and switch unit id per request.</p>
 
   <h3>Inputs</h3>
   <dl class="message-properties">
@@ -132,5 +132,5 @@
   </ol>
 
   <h3>Configuration</h3>
-  <p>The node reads <code>modbusPollGroups</code>, <code>modbusMappings</code>, <code>modbusPublishThresholds</code>, and <code>vt_scaleConfigs</code> from global context.</p>
+  <p>The node reads <code>modbusBoards</code>, <code>modbusPollGroups</code>, <code>modbusMappings</code>, <code>modbusPublishThresholds</code>, and <code>vt_scaleConfigs</code> from global context. Poll groups and thresholds stay global; each key must belong to exactly one board mapping.</p>
 </script>

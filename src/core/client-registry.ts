@@ -1,9 +1,13 @@
 import { Node } from "node-red";
+import { BoardScopedModbusClient } from "./board-scoped-modbus-client";
 import { ModbusClientCore, ModbusConfig } from "./modbus-client";
+import { getModbusTransportKey } from "./modbus-transport";
 import { MqttClientCore, MqttConfig } from "./mqtt-client";
 import { MySqlClientCore } from "./mysql-client";
 import { MqttRecoveryManager } from "./mqtt-recovery-manager";
 import { executeWithCircuitBreaker } from "./offline-resilience";
+
+type BoardModbusClient = ModbusClientCore | BoardScopedModbusClient;
 
 // Multi-board configuration interface
 export interface ModbusBoardConfig extends ModbusConfig {
@@ -23,8 +27,12 @@ class ClientRegistry {
     private static modbusInstance: ModbusClientCore | null = null;
 
     // Multi-board connection pool
-    private static modbusBoardPool: Map<string, ModbusClientCore> = new Map();
+    private static modbusBoardPool: Map<string, BoardModbusClient> = new Map();
     private static modbusBoardConfigs: Map<string, ModbusBoardConfig> = new Map();
+    private static transportPool: Map<string, ModbusClientCore> = new Map();
+    private static transportRefCount: Map<string, number> = new Map();
+    private static boardTransportKey: Map<string, string> = new Map();
+    private static transportLocks: Map<string, Promise<void>> = new Map();
     private static modbusMode: 'single' | 'multi' = 'single';
     private static defaultBoardId: string | null = null;
 
@@ -94,6 +102,22 @@ class ClientRegistry {
         const next = new Promise<void>(r => { release = r; });
         const current = this.boardLocks.get(boardId) || Promise.resolve();
         this.boardLocks.set(boardId, next);
+        await current;
+        try {
+            return await fn();
+        } finally {
+            release();
+        }
+    }
+
+    private static async withTransportLock<T>(
+        transportKey: string,
+        fn: () => Promise<T>
+    ): Promise<T> {
+        let release!: () => void;
+        const next = new Promise<void>(r => { release = r; });
+        const current = this.transportLocks.get(transportKey) || Promise.resolve();
+        this.transportLocks.set(transportKey, next);
         await current;
         try {
             return await fn();
@@ -351,23 +375,20 @@ class ClientRegistry {
             throw new Error("[MODBUS-MULTI] No board ID specified and no default board configured");
         }
 
-        // Use board-specific lock to prevent race conditions
-        // This is critical for RTU connections where only one process can lock the serial port
-        await this.withBoardLock(targetBoardId, async () => {
-            // Initialize board users tracking if needed
+        const boardConfig = this.modbusBoardConfigs.get(targetBoardId);
+        if (!boardConfig) {
+            throw new Error(`[MODBUS-MULTI] Board config not found for ID: ${targetBoardId}`);
+        }
+
+        const transportKey = getModbusTransportKey(boardConfig);
+
+        await this.withTransportLock(transportKey, async () => {
             if (!this.clientUsers.modbusBoards.has(targetBoardId)) {
                 this.clientUsers.modbusBoards.set(targetBoardId, new Set());
             }
 
-            // Check if board exists in pool (inside lock to prevent race condition)
-            if (!this.modbusBoardPool.has(targetBoardId)) {
-                const boardConfig = this.modbusBoardConfigs.get(targetBoardId);
-                if (!boardConfig) {
-                    throw new Error(`[MODBUS-MULTI] Board config not found for ID: ${targetBoardId}`);
-                }
-
+            if (!this.transportPool.has(transportKey)) {
                 try {
-                    // Connection limiter — enforce max connections per host:port (ESP32 4-client limit)
                     if (boardConfig.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
                         const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
                         const currentCount = this.hostConnectionCount.get(hostKey) || 0;
@@ -379,41 +400,42 @@ class ClientRegistry {
                         }
                     }
 
-                    // Log connection type for debugging
-                    if (boardConfig.type === 'RTU') {
-                        //node.warn(`[MODBUS-MULTI] Creating RTU connection for board: ${targetBoardId} (${boardConfig.serialPort}@${boardConfig.baudRate})`);
-                    } else {
-                        //node.warn(`[MODBUS-MULTI] Creating TCP connection for board: ${targetBoardId} (${boardConfig.host}:${boardConfig.tcpPort})`);
-                    }
+                    const transport = new ModbusClientCore(boardConfig, node);
+                    this.transportPool.set(transportKey, transport);
+                    this.transportRefCount.set(transportKey, 0);
 
-                    // Create new connection for this board
-                    const client = new ModbusClientCore(boardConfig, node);
-                    this.modbusBoardPool.set(targetBoardId, client);
-
-                    // Increment host connection count for TCP
                     if (boardConfig.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
                         const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
                         this.hostConnectionCount.set(hostKey, (this.hostConnectionCount.get(hostKey) || 0) + 1);
                     }
-
-                    // Track connections
-                    if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
-                        this.activeConnections.modbusBoards.set(targetBoardId, 0);
-                    }
-                    this.activeConnections.modbusBoards.set(
-                        targetBoardId,
-                        (this.activeConnections.modbusBoards.get(targetBoardId) || 0) + 1
-                    );
-
-                    //node.warn(`[MODBUS-MULTI] Successfully created connection for board: ${targetBoardId}`);
                 } catch (error) {
                     node.error(`[MODBUS-MULTI] Failed to create connection for board ${targetBoardId}: ${(error as Error).message}`);
                     throw error;
                 }
             }
+
+            if (!this.modbusBoardPool.has(targetBoardId)) {
+                const transport = this.transportPool.get(transportKey)!;
+                this.modbusBoardPool.set(
+                    targetBoardId,
+                    new BoardScopedModbusClient(transport, boardConfig.unitId ?? 1),
+                );
+                this.boardTransportKey.set(targetBoardId, transportKey);
+                this.transportRefCount.set(
+                    transportKey,
+                    (this.transportRefCount.get(transportKey) || 0) + 1,
+                );
+
+                if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
+                    this.activeConnections.modbusBoards.set(targetBoardId, 0);
+                }
+                this.activeConnections.modbusBoards.set(
+                    targetBoardId,
+                    (this.activeConnections.modbusBoards.get(targetBoardId) || 0) + 1
+                );
+            }
         });
 
-        // Update reference counting (outside lock - these are thread-safe operations)
         if (!this.boardReferenceCount.has(targetBoardId)) {
             this.boardReferenceCount.set(targetBoardId, 0);
         }
@@ -422,14 +444,9 @@ class ClientRegistry {
             (this.boardReferenceCount.get(targetBoardId) || 0) + 1
         );
 
-        // Track node usage
         this.clientUsers.modbusBoards.get(targetBoardId)?.add(node.id);
 
-        const refCount = this.boardReferenceCount.get(targetBoardId) || 0;
-        const users = Array.from(this.clientUsers.modbusBoards.get(targetBoardId) || []);
-        //node.warn(`[MODBUS-MULTI] Node ${node.id} got board ${targetBoardId} client, ref count: ${refCount}, users: ${users.join(', ')}`);
-
-        return this.modbusBoardPool.get(targetBoardId)!;
+        return this.modbusBoardPool.get(targetBoardId)! as ModbusClientCore;
     }
 
     /**
@@ -619,25 +636,33 @@ class ClientRegistry {
                 //node.warn(`[MODBUS-MULTI] Node ${node.id} released board ${boardId} client, ref count: ${refCount - 1}`);
 
                 if (refCount - 1 <= 0) {
-                    // Disconnect and remove board connection
-                    const client = this.modbusBoardPool.get(boardId);
-                    if (client) {
-                        // Decrement host connection count for TCP boards
-                        const boardConfig = this.modbusBoardConfigs.get(boardId);
-                        if (boardConfig?.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
-                            const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
-                            const currentCount = this.hostConnectionCount.get(hostKey) || 0;
-                            if (currentCount > 0) {
-                                this.hostConnectionCount.set(hostKey, currentCount - 1);
-                            }
-                        }
+                    this.modbusBoardPool.delete(boardId);
+                    this.activeConnections.modbusBoards.delete(boardId);
+                    this.boardReferenceCount.delete(boardId);
+                    this.clientUsers.modbusBoards.delete(boardId);
 
-                        client.disconnect();
-                        this.modbusBoardPool.delete(boardId);
-                        this.activeConnections.modbusBoards.delete(boardId);
-                        this.boardReferenceCount.delete(boardId);
-                        this.clientUsers.modbusBoards.delete(boardId);
-                        //node.warn(`[MODBUS-MULTI] Board ${boardId} connection closed - no more users`);
+                    const transportKey = this.boardTransportKey.get(boardId);
+                    this.boardTransportKey.delete(boardId);
+
+                    if (transportKey) {
+                        const remaining = (this.transportRefCount.get(transportKey) || 1) - 1;
+                        this.transportRefCount.set(transportKey, remaining);
+
+                        if (remaining <= 0) {
+                            const transport = this.transportPool.get(transportKey);
+                            const boardConfig = this.modbusBoardConfigs.get(boardId);
+                            if (boardConfig?.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                                const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                                const currentCount = this.hostConnectionCount.get(hostKey) || 0;
+                                if (currentCount > 0) {
+                                    this.hostConnectionCount.set(hostKey, currentCount - 1);
+                                }
+                            }
+
+                            transport?.disconnect();
+                            this.transportPool.delete(transportKey);
+                            this.transportRefCount.delete(transportKey);
+                        }
                     }
                 }
             }
@@ -830,6 +855,28 @@ class ClientRegistry {
             users: Array.from(this.clientUsers.mysql),
             config: this.mysqlConfig
         };
+    }
+
+    static resetForTests(): void {
+        this.modbusBoardPool.clear();
+        this.modbusBoardConfigs.clear();
+        this.transportPool.forEach((transport) => transport.disconnect());
+        this.transportPool.clear();
+        this.transportRefCount.clear();
+        this.boardTransportKey.clear();
+        this.transportLocks.clear();
+        this.boardLocks.clear();
+        this.boardReferenceCount.clear();
+        this.clientUsers.modbusBoards.clear();
+        this.activeConnections.modbusBoards.clear();
+        this.hostConnectionCount.clear();
+        this.modbusMode = 'single';
+        this.defaultBoardId = null;
+        this.modbusInstance = null;
+        this.modbusConfig = null;
+        this.referenceCount.modbus = 0;
+        this.activeConnections.modbus = 0;
+        this.clientUsers.modbus.clear();
     }
 }
 

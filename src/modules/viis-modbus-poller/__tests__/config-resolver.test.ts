@@ -52,6 +52,20 @@ describe("resolvePollerConfig", () => {
       scaleConfigs: [
         { key: "current_ec", operation: "divide", factor: 100, direction: "read" },
       ],
+      boards: [
+        {
+          boardId: "board2",
+          unitId: 1,
+          mappings: {
+            coils: { pump_1: 1 },
+            input: { current_ec: 20 },
+            holding: {},
+          },
+          pollingConfig: {
+            realtime: { interval: 2000, coils: ["pump_1"], input: ["current_ec"], holding: [] },
+          },
+        },
+      ],
     });
   });
 
@@ -156,5 +170,42 @@ describe("resolvePollerConfig", () => {
     expect(() =>
       resolvePollerConfig({ scaleConfigOverrides: '{"key":"current_ec"}' }, global),
     ).toThrow("node config scaleConfigOverrides must be an array");
+  });
+
+  it("partitions global poll groups across every board in modbusBoards even when node boardId is board1", () => {
+    const global = makeGlobal({
+      modbusBoards: [
+        { id: "board1", type: "RTU", serialPort: "/dev/ttyUSB0", unitId: 3 },
+        { id: "board2", type: "RTU", serialPort: "/dev/ttyUSB0", unitId: 1 },
+      ],
+      modbusDefaultBoard: "board1",
+      modbusPollGroups: {
+        realtime: { interval: 2000, coils: ["power", "aux_pump"] },
+      },
+      modbusPublishThresholds: { power: 0, aux_pump: 0 },
+      modbusMappings: {
+        board1: { coils: { power: 30 }, inputRegisters: {}, holdingRegisters: {} },
+        board2: { coils: { aux_pump: 0 }, inputRegisters: {}, holdingRegisters: {} },
+      },
+      device_id: "device-multi",
+    });
+
+    const resolved = resolvePollerConfig({ boardId: "board1" }, global);
+
+    expect(resolved.pollingConfig.realtime.coils).toEqual(["power", "aux_pump"]);
+    expect(resolved.boards).toEqual([
+      {
+        boardId: "board1",
+        unitId: 3,
+        mappings: { coils: { power: 30 }, input: {}, holding: {} },
+        pollingConfig: { realtime: { interval: 2000, coils: ["power"], input: [], holding: [] } },
+      },
+      {
+        boardId: "board2",
+        unitId: 1,
+        mappings: { coils: { aux_pump: 0 }, input: {}, holding: {} },
+        pollingConfig: { realtime: { interval: 2000, coils: ["aux_pump"], input: [], holding: [] } },
+      },
+    ]);
   });
 });

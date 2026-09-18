@@ -11,11 +11,12 @@ function isReadableAddress(address) {
         address >= 0 &&
         !constants_1.INVALID_MODBUS_ADDRESSES.includes(address));
 }
-function addDuplicateAddressWarnings(config, warnings) {
+function addDuplicateAddressWarnings(mappings, warnings, boardId) {
     var _a, _b;
+    const prefix = boardId ? `${boardId} ` : "";
     for (const registerType of REGISTER_TYPES) {
         const keysByAddress = new Map();
-        for (const [key, address] of Object.entries((_a = config.mappings[registerType]) !== null && _a !== void 0 ? _a : {})) {
+        for (const [key, address] of Object.entries((_a = mappings[registerType]) !== null && _a !== void 0 ? _a : {})) {
             if (!isReadableAddress(address)) {
                 continue;
             }
@@ -25,20 +26,38 @@ function addDuplicateAddressWarnings(config, warnings) {
         }
         for (const [address, keys] of keysByAddress.entries()) {
             if (keys.length > 1) {
-                warnings.push(`${registerType} address ${address} is used by keys: ${keys.join(", ")}`);
+                warnings.push(`${prefix}${registerType} address ${address} is used by keys: ${keys.join(", ")}`);
             }
         }
     }
 }
-function validatePollKey(config, groupName, registerType, key, errors) {
-    var _a;
-    const mapping = (_a = config.mappings[registerType]) !== null && _a !== void 0 ? _a : {};
+function getBoardConfigs(config) {
+    if (config.boards && config.boards.length > 0) {
+        return config.boards;
+    }
+    return [
+        {
+            boardId: config.boardId,
+            unitId: 1,
+            mappings: config.mappings,
+            pollingConfig: config.pollingConfig,
+        },
+    ];
+}
+function findKeyOwners(boards, registerType, key) {
+    return boards.filter((board) => hasOwn(board.mappings[registerType], key));
+}
+function validatePollKey(config, boards, groupName, registerType, key, errors) {
+    const owners = findKeyOwners(boards, registerType, key);
     const thresholds = config.thresholds;
-    if (!hasOwn(mapping, key)) {
+    if (owners.length === 0) {
         errors.push(`${groupName}.${registerType} references missing key "${key}"`);
     }
+    else if (owners.length > 1) {
+        errors.push(`${groupName}.${registerType} key "${key}" is mapped on multiple boards: ${owners.map((board) => board.boardId).join(", ")}`);
+    }
     else {
-        const address = mapping[key];
+        const address = owners[0].mappings[registerType][key];
         if (constants_1.INVALID_MODBUS_ADDRESSES.includes(address)) {
             errors.push(`${groupName}.${registerType} key "${key}" maps to unreadable placeholder address ${address}`);
         }
@@ -53,6 +72,7 @@ function validatePollKey(config, groupName, registerType, key, errors) {
 function validatePollingConfig(config, errors) {
     var _a, _b;
     const groupEntries = Object.entries((_a = config.pollingConfig) !== null && _a !== void 0 ? _a : {});
+    const boards = getBoardConfigs(config);
     if (groupEntries.length === 0) {
         errors.push("pollingConfig must define at least one poll group");
         return;
@@ -64,7 +84,7 @@ function validatePollingConfig(config, errors) {
         for (const registerType of REGISTER_TYPES) {
             const keys = (_b = group[registerType]) !== null && _b !== void 0 ? _b : [];
             for (const key of keys) {
-                validatePollKey(config, groupName, registerType, key, errors);
+                validatePollKey(config, boards, groupName, registerType, key, errors);
             }
         }
     }
@@ -90,6 +110,14 @@ function validateResolvedConfig(config) {
     const warnings = [];
     validatePollingConfig(config, errors);
     validateScaleConfigs(config, errors);
-    addDuplicateAddressWarnings(config, warnings);
+    const boards = getBoardConfigs(config);
+    if (boards.length === 1) {
+        addDuplicateAddressWarnings(boards[0].mappings, warnings);
+    }
+    else {
+        for (const board of boards) {
+            addDuplicateAddressWarnings(board.mappings, warnings, board.boardId);
+        }
+    }
     return { errors, warnings };
 }

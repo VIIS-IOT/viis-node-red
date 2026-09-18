@@ -169,4 +169,29 @@ describe("runPollTick", () => {
         });
         expect(result.latestData).toEqual({ set_ec: 77 });
     });
+    it("reads only the keys partitioned onto the current board", async () => {
+        const readCoils = jest.fn(async (start, quantity) => ({
+            address: start,
+            data: Array.from({ length: quantity }, () => true),
+        }));
+        const result = await (0, poll_runner_1.runPollTick)({
+            modbusClient: {
+                readCoils,
+                readInputRegisters: jest.fn(),
+                readHoldingRegisters: jest.fn(),
+            },
+            dueGroups: ["realtime"],
+            config: makeConfig({
+                boardId: "board2",
+                pollingConfig: { realtime: { interval: 2000, coils: ["aux_pump"] } },
+                mappings: { coils: { aux_pump: 0 }, input: {}, holding: {} },
+                thresholds: { aux_pump: 0 },
+            }),
+            previousState: {},
+            options: defaultOptions,
+        });
+        expect(readCoils).toHaveBeenCalledTimes(1);
+        expect(readCoils).toHaveBeenCalledWith(0, 1);
+        expect(result.latestData).toEqual({ aux_pump: true });
+    });
 });
