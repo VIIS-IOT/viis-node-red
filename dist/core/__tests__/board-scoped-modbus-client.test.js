@@ -24,5 +24,21 @@ describe("BoardScopedModbusClient", () => {
         expect(transport.writeCoil).toHaveBeenCalledWith(5, true, 3);
         expect(transport.writeRegister).toHaveBeenCalledWith(6, 42, 3);
         expect(client.isConnectedCheck()).toBe(true);
+        expect(client.isConnected).toBe(true);
+    });
+    it("exposes isConnected as a live property so RPC writeToModbus does not treat a connected wrapper as disconnected", () => {
+        const transport = {
+            readCoils: jest.fn(),
+            readInputRegisters: jest.fn(),
+            readHoldingRegisters: jest.fn(),
+            writeCoil: jest.fn(),
+            writeRegister: jest.fn(),
+            isConnectedCheck: jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+            disconnect: jest.fn(),
+        };
+        const client = new board_scoped_modbus_client_1.BoardScopedModbusClient(transport, 3);
+        expect(client.isConnected).toBe(true);
+        expect(client.isConnected).toBe(false);
+        expect(transport.isConnectedCheck).toHaveBeenCalledTimes(2);
     });
 });

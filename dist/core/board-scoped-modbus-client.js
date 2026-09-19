@@ -21,6 +21,9 @@ class BoardScopedModbusClient {
     writeRegister(address, value) {
         return this.transport.writeRegister(address, value, this.unitId);
     }
+    get isConnected() {
+        return this.transport.isConnectedCheck();
+    }
     isConnectedCheck() {
         return this.transport.isConnectedCheck();
     }
