@@ -37,6 +37,10 @@ export class BoardScopedModbusClient {
     return this.transport.writeRegister(address, value, this.unitId);
   }
 
+  get isConnected(): boolean {
+    return this.transport.isConnectedCheck();
+  }
+
   isConnectedCheck(): boolean {
     return this.transport.isConnectedCheck();
   }
