@@ -59,30 +59,13 @@
     <input type="text" id="node-input-name" placeholder="Name">
   </div>
 
-  <div class="form-row">
-    <label for="node-input-boardId"><i class="fa fa-microchip"></i> Board ID</label>
-    <input type="text" id="node-input-boardId" placeholder="board1">
+  <div class="form-tips" style="margin-bottom: 12px;">
+    Boards, mappings, poll groups, thresholds, and scale come from
+    <code>device1.json</code>. One node polls every board automatically.
+    Shared RTU serial or TCP host:port reuses one connection.
   </div>
 
-  <div class="form-row">
-    <label for="node-input-maxGap"><i class="fa fa-arrows-h"></i> Max Gap</label>
-    <input type="number" id="node-input-maxGap" min="0" step="1" style="width: 120px;">
-  </div>
-
-  <div class="form-row">
-    <label for="node-input-maxCoilsPerRead"><i class="fa fa-toggle-on"></i> Max Coils</label>
-    <input type="number" id="node-input-maxCoilsPerRead" min="1" step="1" style="width: 120px;">
-  </div>
-
-  <div class="form-row">
-    <label for="node-input-maxRegistersPerRead"><i class="fa fa-list-ol"></i> Max Registers</label>
-    <input type="number" id="node-input-maxRegistersPerRead" min="1" step="1" style="width: 120px;">
-  </div>
-
-  <div class="form-row">
-    <label for="node-input-staleLockMs"><i class="fa fa-clock-o"></i> Lock Timeout</label>
-    <input type="number" id="node-input-staleLockMs" min="1000" step="100" style="width: 120px;">
-  </div>
+  <input type="hidden" id="node-input-boardId">
 
   <div class="form-row">
     <label for="node-input-publishFullSnapshotOnFirstRead"><i class="fa fa-camera"></i> First Read</label>
@@ -104,19 +87,43 @@
     <span style="margin-left: 5px;">Enable third output</span>
   </div>
 
-  <div class="form-row">
-    <label for="node-input-scaleConfigOverrides"><i class="fa fa-balance-scale"></i> Scale Overrides</label>
-    <textarea
-      id="node-input-scaleConfigOverrides"
-      rows="8"
-      style="width: 70%; font-family: monospace;"
-      placeholder='[]'
-    ></textarea>
-  </div>
+  <details style="margin: 12px 0 8px;">
+    <summary style="cursor: pointer; font-weight: 600;">Advanced read tuning</summary>
+
+    <div class="form-row" style="margin-top: 10px;">
+      <label for="node-input-maxGap"><i class="fa fa-arrows-h"></i> Max Gap</label>
+      <input type="number" id="node-input-maxGap" min="0" step="1" style="width: 120px;">
+    </div>
+
+    <div class="form-row">
+      <label for="node-input-maxCoilsPerRead"><i class="fa fa-toggle-on"></i> Max Coils</label>
+      <input type="number" id="node-input-maxCoilsPerRead" min="1" step="1" style="width: 120px;">
+    </div>
+
+    <div class="form-row">
+      <label for="node-input-maxRegistersPerRead"><i class="fa fa-list-ol"></i> Max Registers</label>
+      <input type="number" id="node-input-maxRegistersPerRead" min="1" step="1" style="width: 120px;">
+    </div>
+
+    <div class="form-row">
+      <label for="node-input-staleLockMs"><i class="fa fa-clock-o"></i> Lock Timeout</label>
+      <input type="number" id="node-input-staleLockMs" min="1000" step="100" style="width: 120px;">
+    </div>
+
+    <div class="form-row">
+      <label for="node-input-scaleConfigOverrides"><i class="fa fa-balance-scale"></i> Scale Overrides</label>
+      <textarea
+        id="node-input-scaleConfigOverrides"
+        rows="8"
+        style="width: 70%; font-family: monospace;"
+        placeholder="[]"
+      ></textarea>
+    </div>
+  </details>
 </script>
 
 <script type="text/html" data-help-name="viis-modbus-poller">
-  <p>Polls configured Modbus groups through the shared VIIS Modbus client and emits telemetry deltas. When <code>device1.json</code> lists multiple boards, one node polls every board. Boards that share an RTU serial port or TCP host:port reuse one connection and switch unit id per request.</p>
+  <p>Polls Modbus groups through the shared VIIS Modbus client and emits telemetry deltas. Do not pick a board on this node: when <code>device1.json</code> lists multiple boards, one node polls every board. Boards that share an RTU serial port or TCP host:port reuse one connection and switch unit id per request.</p>
 
   <h3>Inputs</h3>
   <dl class="message-properties">
@@ -132,5 +139,5 @@
   </ol>
 
   <h3>Configuration</h3>
-  <p>The node reads <code>modbusBoards</code>, <code>modbusPollGroups</code>, <code>modbusMappings</code>, <code>modbusPublishThresholds</code>, and <code>vt_scaleConfigs</code> from global context. Poll groups and thresholds stay global; each key must belong to exactly one board mapping.</p>
+  <p>Boards, mappings, poll groups, thresholds, and scale come from global context loaded from <code>device1.json</code> (<code>modbusBoards</code>, <code>modbusPollGroups</code>, <code>modbusMappings</code>, <code>modbusPublishThresholds</code>, <code>scaleConfigs</code>). Poll groups and thresholds stay global; each key must belong to exactly one board mapping. The editor Board ID field is unused when <code>modbusBoards</code> is present.</p>
 </script>
