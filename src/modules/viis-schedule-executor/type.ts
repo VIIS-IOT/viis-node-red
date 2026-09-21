@@ -28,6 +28,7 @@ export interface ScheduleExecutorNodeDef extends NodeDef {
     cleanupInterval: number; // Cleanup interval in minutes for stale status history
     verifyAfterWrite: boolean; // Enable/disable write verification
     skipCoilVerify: boolean; // Skip coil verification after write (default: true)
+    waterHammerDelay: number; // Seconds between valve group and pump/power group
     boardMode?: 'auto' | 'single' | 'multi';
     boardId?: string;
 }

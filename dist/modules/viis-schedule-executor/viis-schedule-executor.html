@@ -38,6 +38,13 @@
             Interval to clean stale 'running' entries from status history
         </div>
     </div>
+    <div class="form-row">
+        <label for="node-input-waterHammerDelay"><i class="fa fa-hourglass-half"></i> Valve/Power Delay (seconds)</label>
+        <input type="number" id="node-input-waterHammerDelay" placeholder="7" min="0" step="1">
+        <div style="margin-left: 105px; color: #666; font-size: 11px;">
+            Wait after opening valves before pump/power (START), and after stopping pumps before closing valves (FINISH). Default: 7. Deploy applies immediately.
+        </div>
+    </div>
 </script>
 
 <script type="text/javascript">
@@ -50,7 +57,15 @@
             debugEnable: { value: false },
             verifyAfterWrite: { value: true },
             skipCoilVerify: { value: true },
-            cleanupInterval: { value: 15, required: true }
+            cleanupInterval: { value: 15, required: true },
+            waterHammerDelay: {
+                value: 7,
+                required: true,
+                validate: function (v) {
+                    var n = Number(v);
+                    return isFinite(n) && n >= 0;
+                }
+            }
         },
         inputs: 1,
         outputs: 1,
@@ -59,8 +74,9 @@
             return this.name || "viis-schedule-executor";
         },
         oneditprepare: function () {
-            // Bạn có thể thêm code oneditprepare nếu cần thiết,
-            // ví dụ: thiết lập CodeMirror cho textarea hay xử lý các giá trị mặc định.
+            if (this.waterHammerDelay === undefined || this.waterHammerDelay === null || this.waterHammerDelay === '') {
+                $('#node-input-waterHammerDelay').val(7);
+            }
         },
         oneditsave: function () {
             // Code để xử lý trước khi lưu cấu hình nếu cần.
@@ -87,5 +103,10 @@
     </p>
     <p>
         <b>Cleanup Interval:</b> The interval (in minutes) at which the node cleans up stale 'running' entries from schedule status history. Default is 15 minutes.
+    </p>
+    <p>
+        <b>Valve/Power Delay:</b> Seconds to wait between the valve group and the pump/power group.
+        Used on START (valves first, then delay, then pumps/power) and FINISH (pumps off, then delay, then valves).
+        Default is 7 seconds. Changing the value and clicking Deploy applies it immediately.
     </p>
 </script>

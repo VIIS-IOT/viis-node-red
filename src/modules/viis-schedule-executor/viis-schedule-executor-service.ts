@@ -45,8 +45,20 @@ import {
  * Configuration parameter keys that should be excluded from command overlap checking.
  * These parameters are stored in global context and do not conflict with Modbus commands.
  */
-/** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
-const WATER_HAMMER_DELAY_MS = 7000;
+/** Default water-hammer delay between valves and pump/power (start), or power and valves (finish). */
+export const DEFAULT_WATER_HAMMER_DELAY_SEC = 7;
+export const DEFAULT_WATER_HAMMER_DELAY_MS = DEFAULT_WATER_HAMMER_DELAY_SEC * 1000;
+
+export function resolveWaterHammerDelayMs(seconds: unknown): number {
+    if (seconds === undefined || seconds === null || seconds === '') {
+        return DEFAULT_WATER_HAMMER_DELAY_MS;
+    }
+    const n = typeof seconds === 'number' ? seconds : Number(seconds);
+    if (!Number.isFinite(n) || n < 0) {
+        return DEFAULT_WATER_HAMMER_DELAY_MS;
+    }
+    return Math.round(n * 1000);
+}
 
 const CONFIG_PARAMETER_KEYS = new Set([
     'iri_time',
@@ -102,15 +114,25 @@ export class ScheduleService {
     private debugEnable: boolean; // Thêm biến debugEnable
     private verifyAfterWrite: boolean; // Enable/disable write verification
     private skipCoilVerify: boolean; // Skip coil verification after write
+    private waterHammerDelayMs: number;
     private readonly CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
     private readonly PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
     private protectionGate: ProtectionGateService | null = null;
 
-    constructor(node?: Node, verifyAfterWrite: boolean = true, debugEnable: boolean = false, skipCoilVerify: boolean = true) {
+    constructor(
+        node?: Node,
+        verifyAfterWrite: boolean = true,
+        debugEnable: boolean = false,
+        skipCoilVerify: boolean = true,
+        waterHammerDelayMs: number = DEFAULT_WATER_HAMMER_DELAY_MS,
+    ) {
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
         this.skipCoilVerify = skipCoilVerify; // Store skipCoilVerify setting
+        this.waterHammerDelayMs = Number.isFinite(waterHammerDelayMs) && waterHammerDelayMs >= 0
+            ? Math.round(waterHammerDelayMs)
+            : DEFAULT_WATER_HAMMER_DELAY_MS;
         this.globalHelper = node ? new GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -872,7 +894,7 @@ export class ScheduleService {
             if (pumpCoils.length > 0 || powerCoils.length > 0) {
                 if (this.node) this.node.warn(`[MODBUS] ⏱️ delay before PUMP/POWER...`);
                 const t0 = Date.now();
-                await this.delay(WATER_HAMMER_DELAY_MS);
+                await this.delay(this.waterHammerDelayMs);
                 buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
             }
 
@@ -1451,7 +1473,7 @@ export class ScheduleService {
             if (valveCoils.length > 0) {
                 if (this.node) this.node.warn(`[MODBUS] ⏱️ delay after PUMP stop (valves still open)...`);
                 const t0 = Date.now();
-                await this.delay(WATER_HAMMER_DELAY_MS);
+                await this.delay(this.waterHammerDelayMs);
                 buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
             }
             if (valveCoils.length > 0) {
