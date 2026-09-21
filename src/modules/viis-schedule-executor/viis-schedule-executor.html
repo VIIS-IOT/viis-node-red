@@ -60,8 +60,11 @@
             cleanupInterval: { value: 15, required: true },
             waterHammerDelay: {
                 value: 7,
-                required: true,
+                required: false,
                 validate: function (v) {
+                    if (v === undefined || v === null || String(v).trim() === '') {
+                        return true;
+                    }
                     var n = Number(v);
                     return isFinite(n) && n >= 0;
                 }
@@ -79,7 +82,12 @@
             }
         },
         oneditsave: function () {
-            // Code để xử lý trước khi lưu cấu hình nếu cần.
+            var $el = $('#node-input-waterHammerDelay');
+            var v = $el.val();
+            if (v === undefined || v === null || String(v).trim() === '') {
+                $el.val(7);
+                this.waterHammerDelay = 7;
+            }
         }
     });
 </script>

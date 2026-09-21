@@ -54,8 +54,11 @@
             mqttBroker: { value: "thingsboard", required: true },
             waterHammerDelay: {
                 value: 7,
-                required: true,
+                required: false,
                 validate: function (v) {
+                    if (v === undefined || v === null || String(v).trim() === '') {
+                        return true;
+                    }
                     var n = Number(v);
                     return isFinite(n) && n >= 0;
                 }
@@ -164,6 +167,12 @@
             $("#node-input-scaleConfigs").val(scaleConfigsEditor.getValue());
         },
         oneditsave: function () {
+            var $delay = $('#node-input-waterHammerDelay');
+            var delayVal = $delay.val();
+            if (delayVal === undefined || delayVal === null || String(delayVal).trim() === '') {
+                $delay.val(7);
+                this.waterHammerDelay = 7;
+            }
             // Compact JSON cho configKeys trước khi lưu
             var configKeysField = $("#node-input-configKeys");
             try {
