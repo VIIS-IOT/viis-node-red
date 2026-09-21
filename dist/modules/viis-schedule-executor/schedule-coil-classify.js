@@ -1,15 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isValveKey = exports.isPumpKey = exports.isChannelPowerKey = exports.isSystemPowerKey = void 0;
+exports.isValveKey = exports.isNumberedValveKey = exports.isPumpKey = exports.isChannelPowerKey = exports.isSystemPowerKey = void 0;
 exports.classifyCoils = classifyCoils;
 exports.impliedFinishPumpCommands = impliedFinishPumpCommands;
-const isSystemPowerKey = (key) => key === 'power';
+/** `power` or `…_power`, but not `power_1` / `fertigation_control_power_1`. */
+const isSystemPowerKey = (key) => /(?:^|_)power$/i.test(key);
 exports.isSystemPowerKey = isSystemPowerKey;
-const isChannelPowerKey = (key) => key.includes('power') && key !== 'power';
+const isChannelPowerKey = (key) => /power/i.test(key) && !(0, exports.isSystemPowerKey)(key);
 exports.isChannelPowerKey = isChannelPowerKey;
-const isPumpKey = (key) => key.includes('pump');
+const isPumpKey = (key) => /pump/i.test(key);
 exports.isPumpKey = isPumpKey;
-const isValveKey = (key) => key.includes('valve_');
+/** Numbered valve coil: `valve_0` or `fertigation_control_valve_0`, not `time_valve_0`. */
+const isNumberedValveKey = (key) => /(?<!time_)valve_\d+$/i.test(key);
+exports.isNumberedValveKey = isNumberedValveKey;
+const isValveKey = (key) => (0, exports.isNumberedValveKey)(key)
+    || (/valve_/i.test(key) && !/(?:^|_)time_valve_/i.test(key) && !/(?:^|_)valve_program/i.test(key));
 exports.isValveKey = isValveKey;
 function classifyCoils(commands) {
     const powerCoils = commands.filter(cmd => (0, exports.isSystemPowerKey)(cmd.key));

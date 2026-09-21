@@ -7,6 +7,7 @@ import {
     RpcMessage
 } from "./interfaces/types";
 import { RpcHandler } from "./handlers/rpcHandler";
+import { resolveWaterHammerDelayMs } from "../shared/fertigation-start-sequence";
 import { MessageHandler } from "./handlers/messageHandler";
 import { ConfigService } from "./services/configService";
 import { MqttService } from "./services/mqttService";
@@ -259,6 +260,7 @@ module.exports = function (RED: NodeAPI) {
                     mqttService,
                     luoiHandler
                 );
+                rpcHandler.setWaterHammerDelayMs(resolveWaterHammerDelayMs(config.waterHammerDelay));
 
                 // Connect to ProtectionGateService if available
                 const globalContext = node.context().global;

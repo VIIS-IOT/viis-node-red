@@ -10,6 +10,7 @@ export interface ViisRpcControlNodeDef extends NodeDef {
     mqttBroker: "thingsboard" | "local";
     configKeys: string;
     scaleConfigs: string;
+    waterHammerDelay: number; // Seconds between valve group and pump/power group
     boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
     boardId?: string; // Board ID for multi-board mode (Note: auto-detected from key mapping in most cases)
 }

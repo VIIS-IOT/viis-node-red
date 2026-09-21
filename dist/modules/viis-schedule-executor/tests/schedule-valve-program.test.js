@@ -38,6 +38,24 @@ test('board1-style map: other key at 20, no valve_program → skip', () => {
     const board1 = { set_ec: 17, TIME_DELAY: 20 };
     expect((0, schedule_valve_program_1.resolveValveProgramAddress)(board1)).toBeNull();
 });
+test('prefixed valve_program_index at 19 writes that key even when 20 is occupied', () => {
+    const map = {
+        fertigation_control_valve_program_index: 19,
+        fertigation_control_water_only_time: 20,
+    };
+    expect((0, schedule_valve_program_1.resolveValveProgramAddress)(map)).toBe(19);
+    expect((0, schedule_valve_program_1.buildValveProgramCommand)({
+        fertigation_control_valve_0: true,
+        fertigation_control_valve_1: true,
+    }, map)).toEqual({
+        key: 'fertigation_control_valve_program_index',
+        value: 3,
+        fc: 6,
+        unitid: 1,
+        address: 19,
+        quantity: 1,
+    });
+});
 test('off command is value 0 only when the gate allows', () => {
     var _a;
     expect((_a = (0, schedule_valve_program_1.buildValveProgramOffCommand)({ valve_program: 20 })) === null || _a === void 0 ? void 0 : _a.value).toBe(0);

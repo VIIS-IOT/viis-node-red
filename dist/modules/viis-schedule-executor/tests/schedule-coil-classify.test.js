@@ -21,6 +21,19 @@ test('implied finish pumps add mapped main_pump when schedule only has power', (
         { key: 'main_pump', value: false, fc: 5, unitid: 1, address: 0, quantity: 1 },
     ]);
 });
+test('prefixed fertigation keys classify like unprefixed START groups', () => {
+    const g = (0, schedule_coil_classify_1.classifyCoils)([
+        { key: 'fertigation_control_power' },
+        { key: 'fertigation_control_power_1' },
+        { key: 'fertigation_control_main_pump' },
+        { key: 'fertigation_control_valve_0' },
+        { key: 'fertigation_protect_en_alarm' },
+    ]);
+    expect(g.powerCoils.map(c => c.key)).toEqual(['fertigation_control_power']);
+    expect(g.pumpCoils.map(c => c.key)).toEqual(['fertigation_control_power_1', 'fertigation_control_main_pump']);
+    expect(g.valveCoils.map(c => c.key)).toEqual(['fertigation_control_valve_0']);
+    expect(g.otherCoils.map(c => c.key)).toEqual(['fertigation_protect_en_alarm']);
+});
 test('implied finish pumps skip keys already in the command list', () => {
     const implied = (0, schedule_coil_classify_1.impliedFinishPumpCommands)([{ key: 'main_pump', fc: 5, address: 0 }], { main_pump: 0, input_pump: 1 });
     expect(implied.map(c => c.key)).toEqual(['input_pump']);

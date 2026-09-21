@@ -1,8 +1,9 @@
 <script type="text/html" data-help-name="viis-rpc-control">
-    <p>Fertigation <code>set_state_batch</code> follows the same START order as <code>viis-schedule-executor</code>:
-    unused <code>time_valve_*</code> / <code>set_flow*</code> reset → derived <code>valve_program</code> (address-20 gate) →
-    other holdings → valve coils → other coils → 7s water-hammer → pumps + <code>power_A*</code>/<code>power_B*</code> →
-    <code>power</code> last → unmapped config (<code>iri_time</code>).</p>
+    <p>Fertigation <code>set_state_batch</code> follows the same START order as <code>viis-schedule-executor</code>
+    (also with prefixed keys like <code>fertigation_control_valve_0</code> / <code>fertigation_control_power</code>):
+    unused <code>time_valve_*</code> / <code>set_flow*</code> reset → derived <code>valve_program</code> →
+    other holdings → valve coils → other coils → water-hammer delay (node config, default 7s) →
+    pumps + channel power → system <code>power</code> last → unmapped config.</p>
     <p>Clients should keep omitting falsy coils and do not need to send <code>valve_program</code>.
     Non-fertigation batches still use generic sequential writes and client <code>modbus_delay_ms</code>.</p>
 </script>
@@ -18,6 +19,13 @@
             <option value="thingsboard">ThingsBoard</option>
             <option value="local">EMQX Local</option>
         </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-waterHammerDelay"><i class="fa fa-hourglass-half"></i> Valve/Power Delay (seconds)</label>
+        <input type="number" id="node-input-waterHammerDelay" placeholder="7" min="0" step="1">
+        <div style="margin-left: 105px; color: #666; font-size: 11px;">
+            Wait after opening valves before pump/power on fertigation set_state_batch. Default: 7. Deploy applies immediately.
+        </div>
     </div>
     <!-- <div class="form-row">
         <label for="node-input-configKeys"><i class="fa fa-cog"></i> Config Keys</label>
@@ -44,6 +52,14 @@
         defaults: {
             name: { value: "" },
             mqttBroker: { value: "thingsboard", required: true },
+            waterHammerDelay: {
+                value: 7,
+                required: true,
+                validate: function (v) {
+                    var n = Number(v);
+                    return isFinite(n) && n >= 0;
+                }
+            },
             configKeys: {
                 value: '{"max_temp": "number", "max_humid": "number"}',
                 required: true,
@@ -76,6 +92,9 @@
             return this.name || "viis-rpc-control";
         },
         oneditprepare: function () {
+            if (this.waterHammerDelay === undefined || this.waterHammerDelay === null || this.waterHammerDelay === '') {
+                $('#node-input-waterHammerDelay').val(7);
+            }
             // ---------------------------
             // Khởi tạo CodeMirror cho configKeys
             // ---------------------------

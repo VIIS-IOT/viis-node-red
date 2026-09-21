@@ -36,7 +36,9 @@ import {
 import {
     buildValveProgramCommand,
     buildValveProgramOffCommand,
+    isValveProgramHoldingKey,
     mergeHoldingMaps,
+    numberedValveIndex,
 } from "./schedule-valve-program";
 
 // require('dotenv').config();
@@ -462,7 +464,7 @@ export class ScheduleService {
 
     public mergeValveProgramOffCommand(commands: ModbusCmd[]): ModbusCmd[] {
         const off = buildValveProgramOffCommand(this.getMergedHoldingMaps());
-        if (!off || commands.some(cmd => cmd.key === 'valve_program')) {
+        if (!off || commands.some(cmd => isValveProgramHoldingKey(cmd.key))) {
             return commands;
         }
         return [off, ...commands];
@@ -676,7 +678,7 @@ export class ScheduleService {
 
             for (const key in expandedActionObj) {
                 if (expandedActionObj.hasOwnProperty(key)) {
-                    if (key === 'valve_program') {
+                    if (isValveProgramHoldingKey(key)) {
                         continue;
                     }
                     let value = expandedActionObj[key];
@@ -744,10 +746,10 @@ export class ScheduleService {
 
             const mergedHoldings = this.getMergedHoldingMaps();
             const valveProgramCmd = buildValveProgramCommand(expandedActionObj, mergedHoldings);
-            const hasNumberedValves = Array.from({ length: 16 }, (_, i) => `valve_${i}`)
-                .some(key => Object.prototype.hasOwnProperty.call(expandedActionObj, key));
+            const hasNumberedValves = Object.keys(expandedActionObj)
+                .some(key => numberedValveIndex(key) !== null);
             if (valveProgramCmd && hasNumberedValves) {
-                holdingCommands = holdingCommands.filter(cmd => cmd.key !== 'valve_program');
+                holdingCommands = holdingCommands.filter(cmd => !isValveProgramHoldingKey(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
             } else if (hasNumberedValves && !valveProgramCmd) {
                 this.node?.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
@@ -862,8 +864,8 @@ export class ScheduleService {
             this.node.warn(`[MODBUS] EXEC ${schedule?.name || '?'}: ${commands.holdingCommands.length} registers + ${commands.coilCommands.length} coils`);
         }
 
-        const valveProgramCmds = commands.holdingCommands.filter(cmd => cmd.key === 'valve_program');
-        const otherHoldingCmds = commands.holdingCommands.filter(cmd => cmd.key !== 'valve_program');
+        const valveProgramCmds = commands.holdingCommands.filter(cmd => isValveProgramHoldingKey(cmd.key));
+        const otherHoldingCmds = commands.holdingCommands.filter(cmd => !isValveProgramHoldingKey(cmd.key));
 
         if (valveProgramCmds.length > 0) {
             const keys = await this.writeCommandGroup(valveProgramCmds, deps, 'set_valve_program', 'WRITE');

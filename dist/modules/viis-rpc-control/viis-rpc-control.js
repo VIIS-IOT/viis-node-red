@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const luoi_mapping_handler_1 = require("./luoi-mapping-handler");
 const rpcHandler_1 = require("./handlers/rpcHandler");
+const fertigation_start_sequence_1 = require("../shared/fertigation-start-sequence");
 const messageHandler_1 = require("./handlers/messageHandler");
 const configService_1 = require("./services/configService");
 const mqttService_1 = require("./services/mqttService");
@@ -216,6 +217,7 @@ module.exports = function (RED) {
                 const messageHandler = new messageHandler_1.MessageHandler(serviceOptions);
                 const luoiHandler = new luoi_mapping_handler_1.LuoiMappingHandler(node, modbusService, validationService, mqttService);
                 const rpcHandler = new rpcHandler_1.RpcHandler(serviceOptions, configService, validationService, modbusService, mqttService, luoiHandler);
+                rpcHandler.setWaterHammerDelayMs((0, fertigation_start_sequence_1.resolveWaterHammerDelayMs)(config.waterHammerDelay));
                 // Connect to ProtectionGateService if available
                 const globalContext = node.context().global;
                 const protectionGate = globalContext.get('protectionGateService');

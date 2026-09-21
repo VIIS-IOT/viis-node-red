@@ -129,6 +129,11 @@ test('isFertigationBatch detects numbered valves and ignores holdings-only batch
     expect((0, fertigation_start_sequence_1.isFertigationBatch)(['power'])).toBe(true);
     expect((0, fertigation_start_sequence_1.isFertigationBatch)(['main_pump'])).toBe(true);
     expect((0, fertigation_start_sequence_1.isFertigationBatch)(['input_pump'])).toBe(true);
+    expect((0, fertigation_start_sequence_1.isFertigationBatch)(['fertigation_control_valve_0'])).toBe(true);
+    expect((0, fertigation_start_sequence_1.isFertigationBatch)(['fertigation_control_power'])).toBe(true);
+    expect((0, fertigation_start_sequence_1.isFertigationBatch)(['fertigation_control_main_pump'])).toBe(true);
+    expect((0, fertigation_start_sequence_1.isFertigationBatch)(['fertigation_control_set_ec'])).toBe(false);
+    expect((0, fertigation_start_sequence_1.isFertigationBatch)(['fertigation_control_power_1'])).toBe(false);
 });
 test('omits water-hammer delay when no pump or power write follows', () => {
     const ops = (0, fertigation_start_sequence_1.planFertigationStartWrites)({
@@ -141,4 +146,54 @@ test('omits water-hammer delay when no pump or power write follows', () => {
     });
     expect(ops.some((op) => op.kind === 'delay')).toBe(false);
     expect(writeKeys(ops)).toEqual(['valve_program', 'set_ec', 'valve_0']);
+});
+test('prefixed fertigation keys sort like schedule START and write mapped valve_program_index', () => {
+    const ops = (0, fertigation_start_sequence_1.planFertigationStartWrites)({
+        commands: [
+            { key: 'fertigation_control_power', value: true },
+            { key: 'fertigation_control_main_pump', value: true },
+            { key: 'fertigation_control_power_1', value: true },
+            { key: 'fertigation_control_valve_0', value: true },
+            { key: 'fertigation_control_valve_1', value: true },
+            { key: 'fertigation_control_set_ec', value: 1.2 },
+            { key: 'fertigation_control_time_valve_1', value: 30 },
+            { key: 'fertigation_control_valve_program_index', value: 99 },
+        ],
+        holdings: {
+            fertigation_control_time_valve_1: 4,
+            fertigation_control_time_valve_2: 5,
+            fertigation_control_set_ec: 16,
+            fertigation_control_set_flow: 999,
+            fertigation_control_set_flow_1: 9,
+            fertigation_control_valve_program_index: 19,
+            fertigation_control_water_only_time: 20,
+        },
+        coils: {
+            fertigation_control_valve_0: 39,
+            fertigation_control_valve_1: 40,
+            fertigation_control_main_pump: 31,
+            fertigation_control_power_1: 34,
+            fertigation_control_power: 30,
+        },
+    }, { waterHammerDelayMs: 20000 });
+    expect(ops).toEqual([
+        { kind: 'write', key: 'fertigation_control_time_valve_2', value: 0 },
+        { kind: 'write', key: 'fertigation_control_set_flow', value: 0 },
+        { kind: 'write', key: 'fertigation_control_set_flow_1', value: 0 },
+        { kind: 'write', key: 'fertigation_control_valve_program_index', value: 3 },
+        { kind: 'write', key: 'fertigation_control_set_ec', value: 1.2 },
+        { kind: 'write', key: 'fertigation_control_time_valve_1', value: 30 },
+        { kind: 'write', key: 'fertigation_control_valve_0', value: true },
+        { kind: 'write', key: 'fertigation_control_valve_1', value: true },
+        { kind: 'delay', ms: 20000 },
+        { kind: 'write', key: 'fertigation_control_main_pump', value: true },
+        { kind: 'write', key: 'fertigation_control_power_1', value: true },
+        { kind: 'write', key: 'fertigation_control_power', value: true },
+    ]);
+});
+test('resolveWaterHammerDelayMs treats empty as 7s', () => {
+    expect((0, fertigation_start_sequence_1.resolveWaterHammerDelayMs)(undefined)).toBe(7000);
+    expect((0, fertigation_start_sequence_1.resolveWaterHammerDelayMs)('')).toBe(7000);
+    expect((0, fertigation_start_sequence_1.resolveWaterHammerDelayMs)(7)).toBe(7000);
+    expect((0, fertigation_start_sequence_1.resolveWaterHammerDelayMs)(20)).toBe(20000);
 });
