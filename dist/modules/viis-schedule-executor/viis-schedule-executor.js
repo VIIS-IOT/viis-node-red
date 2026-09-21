@@ -97,6 +97,7 @@ module.exports = function (RED) {
         const verifyAfterWrite = config.verifyAfterWrite !== false; // Default to true if not specified
         const skipCoilVerify = config.skipCoilVerify !== false; // Default to true (skip) if not specified
         const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
+        const waterHammerDelayMs = (0, viis_schedule_executor_service_1.resolveWaterHammerDelayMs)(config.waterHammerDelay);
         // Multi-board state variables
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
@@ -108,6 +109,7 @@ module.exports = function (RED) {
             }
         };
         debugLog(`Cleanup interval set to: ${cleanupInterval} minutes`);
+        debugLog(`Water-hammer delay set to: ${waterHammerDelayMs} ms`);
         // Initialize GlobalContextHelper
         const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
         // Helper function to check and track status changes
@@ -163,7 +165,7 @@ module.exports = function (RED) {
         // Initialize ScheduleService with debugEnable setting
         let scheduleService;
         try {
-            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node, verifyAfterWrite, debugEnable, skipCoilVerify);
+            scheduleService = new viis_schedule_executor_service_1.ScheduleService(node, verifyAfterWrite, debugEnable, skipCoilVerify, waterHammerDelayMs);
             debugLog("ScheduleService initialized successfully");
         }
         catch (error) {

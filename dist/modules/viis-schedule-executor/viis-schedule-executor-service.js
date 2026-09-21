@@ -45,7 +45,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ScheduleService = void 0;
+exports.ScheduleService = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
+exports.resolveWaterHammerDelayMs = resolveWaterHammerDelayMs;
 const TabiotSchedule_1 = require("../../orm/entities/schedule/TabiotSchedule");
 const moment_1 = __importDefault(require("moment"));
 const farm_time_1 = require("../../core/farm-time");
@@ -69,8 +70,19 @@ const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
  * Configuration parameter keys that should be excluded from command overlap checking.
  * These parameters are stored in global context and do not conflict with Modbus commands.
  */
-/** Water-hammer delay between valves and pump/power (start), or power and valves (finish). */
-const WATER_HAMMER_DELAY_MS = 7000;
+/** Default water-hammer delay between valves and pump/power (start), or power and valves (finish). */
+exports.DEFAULT_WATER_HAMMER_DELAY_SEC = 7;
+exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC * 1000;
+function resolveWaterHammerDelayMs(seconds) {
+    if (seconds === undefined || seconds === null || seconds === '') {
+        return exports.DEFAULT_WATER_HAMMER_DELAY_MS;
+    }
+    const n = typeof seconds === 'number' ? seconds : Number(seconds);
+    if (!Number.isFinite(n) || n < 0) {
+        return exports.DEFAULT_WATER_HAMMER_DELAY_MS;
+    }
+    return Math.round(n * 1000);
+}
 function civilDateOnly(value) {
     if (value == null || value === '')
         return '';
@@ -138,7 +150,7 @@ const CONFIG_PARAMETER_KEYS = new Set([
     'EC_min',
 ]);
 let ScheduleService = class ScheduleService {
-    constructor(node, verifyAfterWrite = true, debugEnable = false, skipCoilVerify = true) {
+    constructor(node, verifyAfterWrite = true, debugEnable = false, skipCoilVerify = true, waterHammerDelayMs = exports.DEFAULT_WATER_HAMMER_DELAY_MS) {
         this.luoiMapping = {
             luoi_1: { thu: "luoi_1_thu", dai: "luoi_1_dai" },
             luoi_2: { thu: "luoi_2_thu", dai: "luoi_2_dai" },
@@ -151,6 +163,9 @@ let ScheduleService = class ScheduleService {
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
         this.skipCoilVerify = skipCoilVerify; // Store skipCoilVerify setting
+        this.waterHammerDelayMs = Number.isFinite(waterHammerDelayMs) && waterHammerDelayMs >= 0
+            ? Math.round(waterHammerDelayMs)
+            : exports.DEFAULT_WATER_HAMMER_DELAY_MS;
         this.globalHelper = node ? new global_context_helper_1.GlobalContextHelper(node.context()) : null;
         try {
             // Initialize SyncScheduleService with node context to get proper access token
@@ -799,7 +814,7 @@ let ScheduleService = class ScheduleService {
                 if (this.node)
                     this.node.warn(`[MODBUS] ⏱️ delay before PUMP/POWER...`);
                 const t0 = Date.now();
-                await this.delay(WATER_HAMMER_DELAY_MS);
+                await this.delay(this.waterHammerDelayMs);
                 buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
             }
             if (pumpCoils.length > 0) {
@@ -1293,7 +1308,7 @@ let ScheduleService = class ScheduleService {
                 if (this.node)
                     this.node.warn(`[MODBUS] ⏱️ delay after PUMP stop (valves still open)...`);
                 const t0 = Date.now();
-                await this.delay(WATER_HAMMER_DELAY_MS);
+                await this.delay(this.waterHammerDelayMs);
                 buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
             }
             if (valveCoils.length > 0) {
@@ -2237,5 +2252,5 @@ let ScheduleService = class ScheduleService {
 exports.ScheduleService = ScheduleService;
 exports.ScheduleService = ScheduleService = __decorate([
     (0, typedi_1.Service)(),
-    __metadata("design:paramtypes", [Object, Boolean, Boolean, Boolean])
+    __metadata("design:paramtypes", [Object, Boolean, Boolean, Boolean, Number])
 ], ScheduleService);

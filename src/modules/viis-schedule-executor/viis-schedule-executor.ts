@@ -2,7 +2,7 @@ import { NodeAPI, Node } from "node-red";
 
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore, MqttConfig } from "../../core/mqtt-client";
-import { ScheduleService } from "./viis-schedule-executor-service";
+import { resolveWaterHammerDelayMs, ScheduleService } from "./viis-schedule-executor-service";
 import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { TabiotSchedule } from "../../orm/entities/schedule/TabiotSchedule";
 import moment from "moment";
@@ -114,6 +114,7 @@ module.exports = function (RED: NodeAPI) {
         const verifyAfterWrite = config.verifyAfterWrite !== false; // Default to true if not specified
         const skipCoilVerify = config.skipCoilVerify !== false; // Default to true (skip) if not specified
         const cleanupInterval = config.cleanupInterval || 8; // Read cleanupInterval from config, default 8 minutes
+        const waterHammerDelayMs = resolveWaterHammerDelayMs(config.waterHammerDelay);
 
         // Multi-board state variables
         let currentBoardId: string | undefined = config.boardId;
@@ -128,6 +129,7 @@ module.exports = function (RED: NodeAPI) {
         };
 
         debugLog(`Cleanup interval set to: ${cleanupInterval} minutes`);
+        debugLog(`Water-hammer delay set to: ${waterHammerDelayMs} ms`);
 
         // Initialize GlobalContextHelper
         const globalHelper = new GlobalContextHelper(node.context());
@@ -198,7 +200,7 @@ module.exports = function (RED: NodeAPI) {
         // Initialize ScheduleService with debugEnable setting
         let scheduleService: ScheduleService;
         try {
-            scheduleService = new ScheduleService(node, verifyAfterWrite, debugEnable, skipCoilVerify);
+            scheduleService = new ScheduleService(node, verifyAfterWrite, debugEnable, skipCoilVerify, waterHammerDelayMs);
             debugLog("ScheduleService initialized successfully");
         } catch (error) {
             node.error(`Failed to initialize ScheduleService: ${(error as Error).message}`);
