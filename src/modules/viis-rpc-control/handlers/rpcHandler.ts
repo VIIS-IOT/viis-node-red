@@ -20,7 +20,9 @@ import {
     FertigationWriteOp,
     isFertigationBatch,
     planFertigationStartWrites,
+    WATER_HAMMER_DELAY_MS,
 } from "../../shared/fertigation-start-sequence";
+import { isNumberedValveKey } from "../../viis-schedule-executor/schedule-coil-classify";
 import { isValveOn } from "../../viis-schedule-executor/schedule-valve-program";
 import {
     extractRpcCommandId,
@@ -40,6 +42,7 @@ export class RpcHandler implements IRpcHandler {
     private requestQueue: Promise<void> = Promise.resolve();
     private queueLength: number = 0;
     private protectionGate: ProtectionGateService | null = null;
+    private waterHammerDelayMs = WATER_HAMMER_DELAY_MS;
 
     private readonly defaultBatchOptions = {
         sequential: true,
@@ -57,7 +60,7 @@ export class RpcHandler implements IRpcHandler {
 
     static getCommandPriority(key: string): number {
         const lower = key.toLowerCase();
-        if (/^valve_\d+$/i.test(key)) {
+        if (isNumberedValveKey(key)) {
             return RpcHandler.COMMAND_PRIORITY.valve;
         }
         if (lower.includes("pump")) {
@@ -98,6 +101,10 @@ export class RpcHandler implements IRpcHandler {
     private resolveGate(): ProtectionGateService | null {
         const fromGlobal = this.node?.context?.()?.global?.get?.('protectionGateService');
         return resolveProtectionGate(fromGlobal) || resolveProtectionGate(this.protectionGate);
+    }
+
+    setWaterHammerDelayMs(ms: number): void {
+        this.waterHammerDelayMs = Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : WATER_HAMMER_DELAY_MS;
     }
 
     /**
@@ -367,7 +374,7 @@ export class RpcHandler implements IRpcHandler {
             commands: commands.map((cmd) => ({ key: String(cmd?.key || ""), value: cmd?.value })),
             holdings,
             coils,
-        });
+        }, { waterHammerDelayMs: this.waterHammerDelayMs });
         const plannedKeys = new Set(
             ops
                 .filter((op): op is Extract<FertigationWriteOp, { kind: "write" }> => op.kind === "write")

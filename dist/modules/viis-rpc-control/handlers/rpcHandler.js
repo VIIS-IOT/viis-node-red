@@ -9,12 +9,13 @@ const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 const protection_gate_service_1 = require("../../viis-device-protection/services/protection-gate-service");
 const fertigation_start_sequence_1 = require("../../shared/fertigation-start-sequence");
+const schedule_coil_classify_1 = require("../../viis-schedule-executor/schedule-coil-classify");
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
 const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 class RpcHandler {
     static getCommandPriority(key) {
         const lower = key.toLowerCase();
-        if (/^valve_\d+$/i.test(key)) {
+        if ((0, schedule_coil_classify_1.isNumberedValveKey)(key)) {
             return RpcHandler.COMMAND_PRIORITY.valve;
         }
         if (lower.includes("pump")) {
@@ -31,6 +32,7 @@ class RpcHandler {
         this.requestQueue = Promise.resolve();
         this.queueLength = 0;
         this.protectionGate = null;
+        this.waterHammerDelayMs = fertigation_start_sequence_1.WATER_HAMMER_DELAY_MS;
         this.defaultBatchOptions = {
             sequential: true,
             modbus_delay_ms: 150,
@@ -57,6 +59,9 @@ class RpcHandler {
         var _a, _b, _c, _d, _e;
         const fromGlobal = (_e = (_d = (_c = (_b = (_a = this.node) === null || _a === void 0 ? void 0 : _a.context) === null || _b === void 0 ? void 0 : _b.call(_a)) === null || _c === void 0 ? void 0 : _c.global) === null || _d === void 0 ? void 0 : _d.get) === null || _e === void 0 ? void 0 : _e.call(_d, 'protectionGateService');
         return (0, protection_gate_service_1.resolveProtectionGate)(fromGlobal) || (0, protection_gate_service_1.resolveProtectionGate)(this.protectionGate);
+    }
+    setWaterHammerDelayMs(ms) {
+        this.waterHammerDelayMs = Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : fertigation_start_sequence_1.WATER_HAMMER_DELAY_MS;
     }
     /**
      * Handle incoming RPC request with retry logic
@@ -273,7 +278,7 @@ class RpcHandler {
             commands: commands.map((cmd) => ({ key: String((cmd === null || cmd === void 0 ? void 0 : cmd.key) || ""), value: cmd === null || cmd === void 0 ? void 0 : cmd.value })),
             holdings,
             coils,
-        });
+        }, { waterHammerDelayMs: this.waterHammerDelayMs });
         const plannedKeys = new Set(ops
             .filter((op) => op.kind === "write")
             .map((op) => op.key));

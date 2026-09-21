@@ -96,4 +96,60 @@ test('holdings-only batch keeps generic sequential order and does not inject val
 test('time_valve_* is not ranked as a valve coil', () => {
     expect(rpcHandler_1.RpcHandler.getCommandPriority('time_valve_0')).toBe(3);
     expect(rpcHandler_1.RpcHandler.getCommandPriority('valve_0')).toBe(0);
+    expect(rpcHandler_1.RpcHandler.getCommandPriority('fertigation_control_valve_0')).toBe(0);
+    expect(rpcHandler_1.RpcHandler.getCommandPriority('fertigation_control_time_valve_1')).toBe(3);
+});
+const PREFIXED_HOLDINGS = {
+    fertigation_control_set_ec: 16,
+    fertigation_control_set_flow: 999,
+    fertigation_control_valve_program_index: 19,
+    fertigation_control_water_only_time: 20,
+};
+const PREFIXED_COILS = {
+    fertigation_control_valve_0: 39,
+    fertigation_control_main_pump: 31,
+    fertigation_control_power_1: 34,
+    fertigation_control_power: 30,
+};
+test('prefixed fertigation batch uses mapped valve_program_index and node water-hammer delay', async () => {
+    const handler = createHandler();
+    handler.modbusService = {
+        getModbusHoldingRegisters: () => PREFIXED_HOLDINGS,
+        getModbusCoils: () => PREFIXED_COILS,
+    };
+    handler.setWaterHammerDelayMs(20000);
+    const writes = [];
+    const delays = [];
+    jest.spyOn(handler, 'handleSetStateRequest').mockImplementation(async (params) => {
+        writes.push(params);
+    });
+    handler.sleep = async (ms) => {
+        delays.push(ms);
+    };
+    await handler.handleRpcRequest({
+        method: 'set_state_batch',
+        params: {
+            commands: [
+                { key: 'fertigation_control_power', value: true },
+                { key: 'fertigation_control_main_pump', value: true },
+                { key: 'fertigation_control_power_1', value: true },
+                { key: 'fertigation_control_valve_0', value: true },
+                { key: 'fertigation_control_set_ec', value: 1.2 },
+            ],
+        },
+    });
+    expect(writes).toEqual([
+        { fertigation_control_set_flow: 0 },
+        { fertigation_control_valve_program_index: 1 },
+        { fertigation_control_set_ec: 1.2 },
+        { fertigation_control_valve_0: true },
+        { fertigation_control_main_pump: true },
+        { fertigation_control_power_1: true },
+        { fertigation_control_power: true },
+    ]);
+    expect(delays).toContain(20000);
+    expect(writes.findIndex((w) => 'fertigation_control_valve_0' in w))
+        .toBeLessThan(writes.findIndex((w) => 'fertigation_control_main_pump' in w));
+    expect(writes.findIndex((w) => 'fertigation_control_power_1' in w))
+        .toBeLessThan(writes.findIndex((w) => 'fertigation_control_power' in w));
 });

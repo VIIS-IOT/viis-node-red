@@ -1,7 +1,12 @@
-export const isSystemPowerKey = (key: string): boolean => key === 'power';
-export const isChannelPowerKey = (key: string): boolean => key.includes('power') && key !== 'power';
-export const isPumpKey = (key: string): boolean => key.includes('pump');
-export const isValveKey = (key: string): boolean => key.includes('valve_');
+/** `power` or `…_power`, but not `power_1` / `fertigation_control_power_1`. */
+export const isSystemPowerKey = (key: string): boolean => /(?:^|_)power$/i.test(key);
+export const isChannelPowerKey = (key: string): boolean => /power/i.test(key) && !isSystemPowerKey(key);
+export const isPumpKey = (key: string): boolean => /pump/i.test(key);
+/** Numbered valve coil: `valve_0` or `fertigation_control_valve_0`, not `time_valve_0`. */
+export const isNumberedValveKey = (key: string): boolean => /(?<!time_)valve_\d+$/i.test(key);
+export const isValveKey = (key: string): boolean =>
+    isNumberedValveKey(key)
+    || (/valve_/i.test(key) && !/(?:^|_)time_valve_/i.test(key) && !/(?:^|_)valve_program/i.test(key));
 
 export function classifyCoils<T extends { key: string }>(commands: T[]) {
     const powerCoils = commands.filter(cmd => isSystemPowerKey(cmd.key));

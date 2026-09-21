@@ -1,10 +1,26 @@
-import { classifyCoils } from '../viis-schedule-executor/schedule-coil-classify';
+import {
+    classifyCoils,
+    isNumberedValveKey,
+    isSystemPowerKey,
+} from '../viis-schedule-executor/schedule-coil-classify';
 import {
     buildValveProgramCommand,
     isValveOn,
+    isValveProgramHoldingKey,
 } from '../viis-schedule-executor/schedule-valve-program';
 
 export const WATER_HAMMER_DELAY_MS = 7000;
+
+export function resolveWaterHammerDelayMs(seconds: unknown): number {
+    if (seconds === undefined || seconds === null || seconds === '') {
+        return WATER_HAMMER_DELAY_MS;
+    }
+    const n = typeof seconds === 'number' ? seconds : Number(seconds);
+    if (!Number.isFinite(n) || n < 0) {
+        return WATER_HAMMER_DELAY_MS;
+    }
+    return Math.round(n * 1000);
+}
 
 export type FertigationWriteOp =
     | { kind: 'write'; key: string; value: unknown }
@@ -16,18 +32,17 @@ export interface FertigationStartInput {
     coils: Record<string, number>;
 }
 
-const VALVE_COIL_KEY = /^valve_\d+$/i;
-const FERTIGATION_TRIGGER_KEYS = new Set(['power', 'main_pump', 'input_pump']);
-const UNUSED_HOLDING_KEY = /^(time_valve_|set_flow)/i;
+const UNUSED_HOLDING_KEY = /(?:^|_)(time_valve_|set_flow)/i;
+const FERTIGATION_PUMP_KEY = /(?:^|_)(main_pump|input_pump)$/i;
 
 export function isFertigationBatch(keys: string[]): boolean {
-    return keys.some((key) => {
-        const lower = key.toLowerCase();
-        return VALVE_COIL_KEY.test(key) || FERTIGATION_TRIGGER_KEYS.has(lower);
-    });
+    return keys.some((key) => isNumberedValveKey(key) || isSystemPowerKey(key) || FERTIGATION_PUMP_KEY.test(key));
 }
 
-export function planFertigationStartWrites(input: FertigationStartInput): FertigationWriteOp[] {
+export function planFertigationStartWrites(
+    input: FertigationStartInput,
+    options: { waterHammerDelayMs?: number } = {},
+): FertigationWriteOp[] {
     const provided: Record<string, unknown> = {};
     for (const cmd of input.commands) {
         provided[cmd.key] = cmd.value;
@@ -45,11 +60,11 @@ export function planFertigationStartWrites(input: FertigationStartInput): Fertig
 
     const valveProgram = buildValveProgramCommand(provided, input.holdings);
     if (valveProgram) {
-        ops.push({ kind: 'write', key: 'valve_program', value: valveProgram.value });
+        ops.push({ kind: 'write', key: valveProgram.key, value: valveProgram.value });
     }
 
     for (const [key, value] of Object.entries(provided)) {
-        if (key === 'valve_program') continue;
+        if (isValveProgramHoldingKey(key)) continue;
         if (unusedResetKeys.has(key)) continue;
         if (!Object.prototype.hasOwnProperty.call(input.holdings, key)) continue;
         ops.push({ kind: 'write', key, value });
@@ -57,14 +72,14 @@ export function planFertigationStartWrites(input: FertigationStartInput): Fertig
 
     const coilEntries = Object.entries(provided)
         .filter(([key, value]) => Object.prototype.hasOwnProperty.call(input.coils, key) && isValveOn(value))
-        .filter(([key]) => VALVE_COIL_KEY.test(key) || !/valve_/i.test(key))
         .map(([key, value]) => ({ key, value }));
 
-    const numberedValves = coilEntries.filter((cmd) => VALVE_COIL_KEY.test(cmd.key));
-    const remainingCoils = coilEntries.filter((cmd) => !VALVE_COIL_KEY.test(cmd.key));
-    const { powerCoils, pumpCoils, otherCoils } = classifyCoils(remainingCoils);
+    const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilEntries);
+    const hammerMs = Number.isFinite(options.waterHammerDelayMs)
+        ? Number(options.waterHammerDelayMs)
+        : WATER_HAMMER_DELAY_MS;
 
-    for (const cmd of numberedValves) {
+    for (const cmd of valveCoils) {
         ops.push({ kind: 'write', key: cmd.key, value: cmd.value });
     }
     for (const cmd of otherCoils) {
@@ -72,7 +87,7 @@ export function planFertigationStartWrites(input: FertigationStartInput): Fertig
     }
 
     if (pumpCoils.length > 0 || powerCoils.length > 0) {
-        ops.push({ kind: 'delay', ms: WATER_HAMMER_DELAY_MS });
+        ops.push({ kind: 'delay', ms: hammerMs });
     }
 
     for (const cmd of pumpCoils) {

@@ -15,3 +15,16 @@ test('groups power, pump+channel, valve, other', () => {
     expect(g.valveCoils.map(c => c.key)).toEqual(['valve_0']);
     expect(g.otherCoils.map(c => c.key)).toEqual(['schedule_sync_coil']);
 });
+test('prefixed fertigation keys classify like unprefixed START groups', () => {
+    const g = (0, schedule_coil_classify_1.classifyCoils)([
+        { key: 'fertigation_control_power' },
+        { key: 'fertigation_control_power_1' },
+        { key: 'fertigation_control_main_pump' },
+        { key: 'fertigation_control_valve_0' },
+        { key: 'fertigation_protect_en_alarm' },
+    ]);
+    expect(g.powerCoils.map(c => c.key)).toEqual(['fertigation_control_power']);
+    expect(g.pumpCoils.map(c => c.key)).toEqual(['fertigation_control_power_1', 'fertigation_control_main_pump']);
+    expect(g.valveCoils.map(c => c.key)).toEqual(['fertigation_control_valve_0']);
+    expect(g.otherCoils.map(c => c.key)).toEqual(['fertigation_protect_en_alarm']);
+});

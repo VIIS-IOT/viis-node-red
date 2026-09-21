@@ -461,7 +461,7 @@ let ScheduleService = class ScheduleService {
     }
     mergeValveProgramOffCommand(commands) {
         const off = (0, schedule_valve_program_1.buildValveProgramOffCommand)(this.getMergedHoldingMaps());
-        if (!off || commands.some(cmd => cmd.key === 'valve_program')) {
+        if (!off || commands.some(cmd => (0, schedule_valve_program_1.isValveProgramHoldingKey)(cmd.key))) {
             return commands;
         }
         return [off, ...commands];
@@ -623,7 +623,7 @@ let ScheduleService = class ScheduleService {
             const modbusHolding = this.loadAllModbusHoldingRegisters();
             for (const key in expandedActionObj) {
                 if (expandedActionObj.hasOwnProperty(key)) {
-                    if (key === 'valve_program') {
+                    if ((0, schedule_valve_program_1.isValveProgramHoldingKey)(key)) {
                         continue;
                     }
                     let value = expandedActionObj[key];
@@ -691,10 +691,10 @@ let ScheduleService = class ScheduleService {
             }
             const mergedHoldings = this.getMergedHoldingMaps();
             const valveProgramCmd = (0, schedule_valve_program_1.buildValveProgramCommand)(expandedActionObj, mergedHoldings);
-            const hasNumberedValves = Array.from({ length: 16 }, (_, i) => `valve_${i}`)
-                .some(key => Object.prototype.hasOwnProperty.call(expandedActionObj, key));
+            const hasNumberedValves = Object.keys(expandedActionObj)
+                .some(key => (0, schedule_valve_program_1.numberedValveIndex)(key) !== null);
             if (valveProgramCmd && hasNumberedValves) {
-                holdingCommands = holdingCommands.filter(cmd => cmd.key !== 'valve_program');
+                holdingCommands = holdingCommands.filter(cmd => !(0, schedule_valve_program_1.isValveProgramHoldingKey)(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
             }
             else if (hasNumberedValves && !valveProgramCmd) {
@@ -786,8 +786,8 @@ let ScheduleService = class ScheduleService {
         if (this.node && (commands.holdingCommands.length > 0 || commands.coilCommands.length > 0)) {
             this.node.warn(`[MODBUS] EXEC ${(schedule === null || schedule === void 0 ? void 0 : schedule.name) || '?'}: ${commands.holdingCommands.length} registers + ${commands.coilCommands.length} coils`);
         }
-        const valveProgramCmds = commands.holdingCommands.filter(cmd => cmd.key === 'valve_program');
-        const otherHoldingCmds = commands.holdingCommands.filter(cmd => cmd.key !== 'valve_program');
+        const valveProgramCmds = commands.holdingCommands.filter(cmd => (0, schedule_valve_program_1.isValveProgramHoldingKey)(cmd.key));
+        const otherHoldingCmds = commands.holdingCommands.filter(cmd => !(0, schedule_valve_program_1.isValveProgramHoldingKey)(cmd.key));
         if (valveProgramCmds.length > 0) {
             const keys = await this.writeCommandGroup(valveProgramCmds, deps, 'set_valve_program', 'WRITE');
             buffer.pushPhase({ phase: 'set_valve_program', keys });
