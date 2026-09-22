@@ -89,10 +89,7 @@ export class RpcHandler implements IRpcHandler {
                 this.logger.warn(`[QUEUE] Coalesced duplicate ${pumpKey} ON`);
             }
         }
-        if (pumpKeys.length === 1 && droppedPumpKeys.size === 1) {
-            return;
-        }
-
+        const acquiredPumpKeys = pumpKeys.filter((pumpKey) => !droppedPumpKeys.has(pumpKey));
         const rpcBodyToRun = droppedPumpKeys.size > 0 && rpcBody.params
             ? {
                 ...rpcBody,
@@ -101,12 +98,15 @@ export class RpcHandler implements IRpcHandler {
                 ),
             }
             : rpcBody;
+        if (rpcBodyToRun.params && Object.keys(rpcBodyToRun.params).length === 0) {
+            return;
+        }
         const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBodyToRun, maxRetries));
         deviceRpcQueue = execution.catch(() => undefined);
         try {
             await execution;
         } finally {
-            for (const pumpKey of pumpKeys) {
+            for (const pumpKey of acquiredPumpKeys) {
                 const pumpNumber = this.extractPumpNumber(pumpKey);
                 if (
                     pumpNumber === null

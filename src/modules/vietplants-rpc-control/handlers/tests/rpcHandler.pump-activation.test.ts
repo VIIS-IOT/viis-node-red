@@ -261,6 +261,56 @@ test("duplicate ON is dropped during bookkeeping and accepted after it finishes"
   await new Promise((resolve) => setTimeout(resolve, 250));
 });
 
+test("a mixed pump request does not release a duplicate pump pending slot", async () => {
+  const board1Writes: string[] = [];
+  let releaseResets: () => void = () => undefined;
+  const resetGate = new Promise<void>((resolve) => { releaseResets = resolve; });
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16, COIL_BOM_2: 17 }),
+    findModbusMapping: (key: string) => ({
+      address: key === "COIL_BOM_1" ? 16 : 17,
+      fc: 5,
+      value: false,
+      boardId: "board1",
+    }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: async (key: string) => { board1Writes.push(key); },
+    readFromModbus: async () => true,
+    writeToModbusBoard: async (key: string) => {
+      if (key.startsWith("RESET")) await resetGate;
+    },
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn(),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  await handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true },
+  });
+  await handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true, COIL_BOM_2: true },
+  });
+  await handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true },
+  });
+
+  expect(board1Writes).toEqual(["COIL_BOM_1", "COIL_BOM_2"]);
+
+  releaseResets();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
 test("board1 failure releases pending so the next ON runs", async () => {
   const board1Write = jest.fn()
     .mockRejectedValueOnce(new Error("board1 write failed"))

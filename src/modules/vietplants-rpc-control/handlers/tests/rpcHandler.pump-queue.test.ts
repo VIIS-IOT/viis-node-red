@@ -60,3 +60,31 @@ test("a second ON is dropped while the first is still running", async () => {
   release();
   await first;
 });
+
+test("a duplicate pump ON still applies the other request params", async () => {
+  const handler = createHandler();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const run = jest.spyOn(handler as any, "handleSetStateRequest")
+    .mockImplementationOnce(() => gate)
+    .mockResolvedValue(undefined);
+
+  const first = handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true },
+  });
+  await Promise.resolve();
+  const second = handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true, HOLDING_X: 42, schedule_id: "schedule-1" },
+  });
+
+  release();
+  await Promise.all([first, second]);
+
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run).toHaveBeenNthCalledWith(2, {
+    HOLDING_X: 42,
+    schedule_id: "schedule-1",
+  });
+});
