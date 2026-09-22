@@ -20,12 +20,14 @@ const PUMP_ON_KEY = /^COIL_BOM_(1[0-6]|[1-9])$/;
 const pumpOnPending = new Set<string>();
 const pumpGeneration = new Map<number, number>();
 const pumpBookkeepingOwned = new Map<string, number>();
+const activatedInCurrentRequest = new Set<string>();
 let deviceRpcQueue: Promise<void> = Promise.resolve();
 
 export function resetVietplantsRpcQueueForTests(): void {
     pumpOnPending.clear();
     pumpGeneration.clear();
     pumpBookkeepingOwned.clear();
+    activatedInCurrentRequest.clear();
     deviceRpcQueue = Promise.resolve();
 }
 
@@ -114,28 +116,33 @@ export class RpcHandler implements IRpcHandler {
     }
 
     private async handleRpcRequestBody(rpcBody: RpcMessage, maxRetries: number): Promise<void> {
-        let lastError: Error | null = null;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                if (rpcBody.method === "set_state" && rpcBody.params) {
-                    this.logger.debug(`Processing RPC request (attempt ${attempt}/${maxRetries})`);
-                    await this.handleSetStateRequest(rpcBody.params);
+        activatedInCurrentRequest.clear();
+        try {
+            let lastError: Error | null = null;
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    if (rpcBody.method === "set_state" && rpcBody.params) {
+                        this.logger.debug(`Processing RPC request (attempt ${attempt}/${maxRetries})`);
+                        await this.handleSetStateRequest(rpcBody.params);
+                        return;
+                    }
+                    this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
                     return;
+                } catch (error) {
+                    lastError = error as Error;
+                    if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
+                        this.logger.debug(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying`);
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                        continue;
+                    }
+                    break;
                 }
-                this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
-                return;
-            } catch (error) {
-                lastError = error as Error;
-                if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
-                    this.logger.debug(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying`);
-                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-                    continue;
-                }
-                break;
             }
-        }
-        if (lastError) {
-            await this.handleRpcError(lastError);
+            if (lastError) {
+                await this.handleRpcError(lastError);
+            }
+        } finally {
+            activatedInCurrentRequest.clear();
         }
     }
 
@@ -654,6 +661,9 @@ export class RpcHandler implements IRpcHandler {
     }
 
     private async handlePumpActivation(key: string, value: any, mapping: any): Promise<void> {
+        if (activatedInCurrentRequest.has(key)) {
+            return;
+        }
         const pumpNumber = this.extractPumpNumber(key);
         if (pumpNumber === null) {
             throw new Error(`Invalid pump coil key: ${key}`);
@@ -668,6 +678,7 @@ export class RpcHandler implements IRpcHandler {
         await this.writeToModbusWithRetry(key, mapping, value);
         const pumpValue = await this.readFromModbusWithRetry(key, mapping);
         await this.publishResultWithRetry(key, pumpValue);
+        activatedInCurrentRequest.add(key);
         this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON` });
 
         pumpBookkeepingOwned.set(key, generation);

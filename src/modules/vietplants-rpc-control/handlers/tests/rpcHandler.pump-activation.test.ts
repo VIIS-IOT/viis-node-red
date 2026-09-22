@@ -292,10 +292,10 @@ test("board1 failure releases pending so the next ON runs", async () => {
   await new Promise((resolve) => setTimeout(resolve, 250));
 });
 
-test("retry does not repeat board1 ON while bookkeeping owns it", async () => {
+test("retry does not reactivate pump after bookkeeping finishes", async () => {
   const board1Write = jest.fn().mockResolvedValue(undefined);
-  let releaseReset: () => void = () => undefined;
-  const resetGate = new Promise<void>((resolve) => { releaseReset = resolve; });
+  const board2Write = jest.fn().mockResolvedValue(undefined);
+  let configAttempts = 0;
   const modbus = {
     getModbusHoldingRegisters: () => ({}),
     getModbusCoils: () => ({ COIL_BOM_1: 16 }),
@@ -306,9 +306,7 @@ test("retry does not repeat board1 ON while bookkeeping owns it", async () => {
     getBoard2Client: async () => ({}),
     writeToModbus: board1Write,
     readFromModbus: async () => true,
-    writeToModbusBoard: async (key: string) => {
-      if (key.startsWith("RESET")) await resetGate;
-    },
+    writeToModbusBoard: board2Write,
     readFromModbusBoard: async () => 1,
     checkConnection: async () => undefined,
   };
@@ -320,7 +318,9 @@ test("retry does not repeat board1 ON while bookkeeping owns it", async () => {
   };
   const handler = createHandler(modbus, mqtt, {
     validateAndConvertValue: (key: string, value: unknown) => {
-      if (key === "CONFIG_THAT_TIMES_OUT") throw new Error("timeout");
+      if (key === "CONFIG_THAT_TIMES_OUT" && configAttempts++ === 0) {
+        throw new Error("timeout");
+      }
       return value;
     },
   });
@@ -329,10 +329,14 @@ test("retry does not repeat board1 ON while bookkeeping owns it", async () => {
     method: "set_state",
     params: { COIL_BOM_1: true, CONFIG_THAT_TIMES_OUT: 1 },
   }, 2);
-  releaseReset();
 
   expect(board1Write).toHaveBeenCalledTimes(1);
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  expect(board1Write).toHaveBeenCalledWith(
+    "COIL_BOM_1",
+    expect.anything(),
+    true,
+  );
+  expect(board2Write.mock.calls.filter(([key]) => key === "RESET_TOTAL_VOLUME_BOM_1")).toHaveLength(1);
 });
 
 test("validation failure before bookkeeping releases pending for a later ON", async () => {
