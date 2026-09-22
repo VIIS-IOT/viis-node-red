@@ -1,5 +1,13 @@
 import type { ModbusClientCore, ModbusData } from "./modbus-client";
 
+type ModbusStatusListener = (...args: any[]) => void;
+
+type StatusEmitter = {
+  on?: (event: string, listener: ModbusStatusListener) => void;
+  removeListener?: (event: string, listener: ModbusStatusListener) => void;
+  off?: (event: string, listener: ModbusStatusListener) => void;
+};
+
 export type SharedModbusTransport = Pick<
   ModbusClientCore,
   | "readCoils"
@@ -16,6 +24,33 @@ export class BoardScopedModbusClient {
     private readonly transport: SharedModbusTransport,
     private readonly unitId: number,
   ) {}
+
+  /**
+   * Multi-board clients share one transport per socket. Forward status events
+   * so each viis-modbus-flex instance can subscribe without requiring the
+   * wrapper itself to be an EventEmitter.
+   */
+  on(event: string, listener: ModbusStatusListener): this {
+    this.statusEmitter.on?.(event, listener);
+    return this;
+  }
+
+  removeListener(event: string, listener: ModbusStatusListener): this {
+    if (typeof this.statusEmitter.removeListener === "function") {
+      this.statusEmitter.removeListener(event, listener);
+    } else {
+      this.statusEmitter.off?.(event, listener);
+    }
+    return this;
+  }
+
+  off(event: string, listener: ModbusStatusListener): this {
+    return this.removeListener(event, listener);
+  }
+
+  private get statusEmitter(): StatusEmitter {
+    return this.transport as SharedModbusTransport & StatusEmitter;
+  }
 
   readCoils(address: number, length: number): Promise<ModbusData> {
     return this.transport.readCoils(address, length, this.unitId);
