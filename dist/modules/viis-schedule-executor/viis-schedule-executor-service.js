@@ -60,6 +60,7 @@ const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-con
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
 const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
+const schedule_log_ict_time_1 = require("../../ultils/schedule-log-ict-time");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_valve_program_1 = require("./schedule-valve-program");
 // require('dotenv').config();
@@ -1085,17 +1086,11 @@ let ScheduleService = class ScheduleService {
         try {
             this.debugLog(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
             if (this.syncScheduleService) {
-                // Assuming schedule.start_time and schedule.end_time are in a time-only format like "HH:mm"
-                const now = (0, moment_1.default)(); // Current date and time
-                const todayDate = now.format('YYYY-MM-DD'); // Just the date portion
-                // Combine today's date with the schedule times and format as full datetime
-                const startTime = (0, moment_1.default)(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm')
-                    .toISOString();
-                const endTime = (0, moment_1.default)(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm')
-                    .toISOString();
+                // Naive ICT wall (YYYY-MM-DD HH:mm:ss). Same clock as utc()+7 due-check.
+                // Do not toISOString() — that tags ICT digits with Z.
                 const scheduleLogBody = {
-                    start_time: startTime,
-                    end_time: endTime,
+                    start_time: (0, schedule_log_ict_time_1.buildScheduleLogIctDateTime)(schedule.start_time),
+                    end_time: (0, schedule_log_ict_time_1.buildScheduleLogIctDateTime)(schedule.end_time),
                     schedule_id: schedule.name,
                     deleted: null
                 };

@@ -22,12 +22,17 @@ if (!backendUrl || !deviceAccessToken) {
     return null;
 }
 
-// Build schedule log payload matching V1 format
-const now = new Date();
-const todayDate = now.toISOString().split('T')[0];
-
-const startTime = `${todayDate}T${schedule.start_time || '00:00:00'}`;
-const endTime = `${todayDate}T${schedule.end_time || '23:59:59'}`;
+// Naive ICT wall (YYYY-MM-DD HH:mm:ss). Do not use toISOString() / UTC date.
+const ictMs = Date.now() + 7 * 60 * 60 * 1000;
+const todayDate = new Date(ictMs).toISOString().slice(0, 10);
+const startClock = String(schedule.start_time || '00:00:00').length === 5
+    ? `${schedule.start_time}:00`
+    : (schedule.start_time || '00:00:00');
+const endClock = String(schedule.end_time || '23:59:59').length === 5
+    ? `${schedule.end_time}:00`
+    : (schedule.end_time || '23:59:59');
+const startTime = `${todayDate} ${startClock}`;
+const endTime = `${todayDate} ${endClock}`;
 
 const logPayload = {
     start_time: startTime,

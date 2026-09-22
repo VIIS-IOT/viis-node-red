@@ -16,6 +16,7 @@ const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncSchedu
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const moment_1 = __importDefault(require("moment"));
 const axios_1 = __importDefault(require("axios"));
+const schedule_log_ict_time_1 = require("../../../ultils/schedule-log-ict-time");
 class ScheduleStatusService {
     constructor(node, debugEnable = false) {
         this.STATUS_HISTORY_KEY = "scheduleStatusHistoryV2";
@@ -118,13 +119,9 @@ class ScheduleStatusService {
                 }
                 return;
             }
-            const now = (0, moment_1.default)();
-            const todayDate = now.format('YYYY-MM-DD');
-            const startTime = (0, moment_1.default)(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm').toISOString();
-            const endTime = (0, moment_1.default)(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm').toISOString();
             const scheduleLogBody = {
-                start_time: startTime,
-                end_time: endTime,
+                start_time: (0, schedule_log_ict_time_1.buildScheduleLogIctDateTime)(schedule.start_time),
+                end_time: (0, schedule_log_ict_time_1.buildScheduleLogIctDateTime)(schedule.end_time),
                 schedule_id: schedule.name,
                 deleted: null
             };

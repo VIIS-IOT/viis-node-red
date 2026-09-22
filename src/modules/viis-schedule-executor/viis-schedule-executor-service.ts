@@ -25,6 +25,7 @@ import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants"
 import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classify";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
+import { buildScheduleLogIctDateTime } from "../../ultils/schedule-log-ict-time";
 import {
     ExecutionReport,
     ExecutionStep,
@@ -1219,19 +1220,11 @@ export class ScheduleService {
             this.debugLog(`Sync schedule log for ${schedule.name}: status ${success ? "executed" : "error"}, timestamp ${Date.now()}`);
 
             if (this.syncScheduleService) {
-                // Assuming schedule.start_time and schedule.end_time are in a time-only format like "HH:mm"
-                const now = moment(); // Current date and time
-                const todayDate = now.format('YYYY-MM-DD'); // Just the date portion
-
-                // Combine today's date with the schedule times and format as full datetime
-                const startTime = moment(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm')
-                    .toISOString();
-                const endTime = moment(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm')
-                    .toISOString();
-
+                // Naive ICT wall (YYYY-MM-DD HH:mm:ss). Same clock as utc()+7 due-check.
+                // Do not toISOString() — that tags ICT digits with Z.
                 const scheduleLogBody: TabiotScheduleLog = {
-                    start_time: startTime,
-                    end_time: endTime,
+                    start_time: buildScheduleLogIctDateTime(schedule.start_time),
+                    end_time: buildScheduleLogIctDateTime(schedule.end_time),
                     schedule_id: schedule.name,
                     deleted: null
                 };

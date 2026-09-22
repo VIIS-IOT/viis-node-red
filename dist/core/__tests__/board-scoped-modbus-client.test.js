@@ -41,4 +41,39 @@ describe("BoardScopedModbusClient", () => {
         expect(client.isConnected).toBe(false);
         expect(transport.isConnectedCheck).toHaveBeenCalledTimes(2);
     });
+    it("forwards modbus-status to every subscriber and lets one subscriber detach", () => {
+        var _a, _b;
+        const listeners = new Map();
+        const transport = {
+            readCoils: jest.fn(),
+            readInputRegisters: jest.fn(),
+            readHoldingRegisters: jest.fn(),
+            writeCoil: jest.fn(),
+            writeRegister: jest.fn(),
+            isConnectedCheck: jest.fn().mockReturnValue(true),
+            disconnect: jest.fn(),
+            on: jest.fn((event, listener) => {
+                var _a;
+                const bucket = (_a = listeners.get(event)) !== null && _a !== void 0 ? _a : new Set();
+                bucket.add(listener);
+                listeners.set(event, bucket);
+            }),
+            removeListener: jest.fn((event, listener) => {
+                var _a;
+                (_a = listeners.get(event)) === null || _a === void 0 ? void 0 : _a.delete(listener);
+            }),
+        };
+        const client = new board_scoped_modbus_client_1.BoardScopedModbusClient(transport, 1);
+        const first = jest.fn();
+        const second = jest.fn();
+        client.on("modbus-status", first);
+        client.on("modbus-status", second);
+        (_a = listeners.get("modbus-status")) === null || _a === void 0 ? void 0 : _a.forEach((listener) => listener({ status: "connected" }));
+        expect(first).toHaveBeenCalledWith({ status: "connected" });
+        expect(second).toHaveBeenCalledWith({ status: "connected" });
+        client.removeListener("modbus-status", first);
+        (_b = listeners.get("modbus-status")) === null || _b === void 0 ? void 0 : _b.forEach((listener) => listener({ status: "disconnected" }));
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(second).toHaveBeenCalledWith({ status: "disconnected" });
+    });
 });

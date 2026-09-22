@@ -12,6 +12,7 @@ import { SyncScheduleService } from "../../../services/syncSchedule/SyncSchedule
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import moment from "moment";
 import axios, { AxiosError } from "axios";
+import { buildScheduleLogIctDateTime } from "../../../ultils/schedule-log-ict-time";
 import { v4 as uuidv4 } from "uuid";
 
 export class ScheduleStatusService {
@@ -141,15 +142,9 @@ export class ScheduleStatusService {
                 return;
             }
 
-            const now = moment();
-            const todayDate = now.format('YYYY-MM-DD');
-
-            const startTime = moment(`${todayDate} ${schedule.start_time}`, 'YYYY-MM-DD HH:mm').toISOString();
-            const endTime = moment(`${todayDate} ${schedule.end_time}`, 'YYYY-MM-DD HH:mm').toISOString();
-
             const scheduleLogBody: TabiotScheduleLog = {
-                start_time: startTime,
-                end_time: endTime,
+                start_time: buildScheduleLogIctDateTime(schedule.start_time),
+                end_time: buildScheduleLogIctDateTime(schedule.end_time),
                 schedule_id: schedule.name,
                 deleted: null
             };
