@@ -1,12 +1,18 @@
 import { RpcHandler, resetVietplantsRpcQueueForTests } from "../rpcHandler";
 
-function createHandler(modbus: Record<string, unknown>, mqtt: Record<string, unknown>) {
+function createHandler(
+  modbus: Record<string, unknown>,
+  mqtt: Record<string, unknown>,
+  validation: Record<string, unknown> = {
+    validateAndConvertValue: (_key: string, value: unknown) => value,
+  },
+) {
   const node = { status: jest.fn(), warn: jest.fn(), error: jest.fn(), log: jest.fn(), debug: jest.fn(), context: () => ({}) };
   const loggerMethods = ["log", "warn", "error", "debug"];
   const handler = new RpcHandler(
     { node, flowContext: {}, globalContext: {} } as any,
     {} as any,
-    { validateAndConvertValue: (_key: string, value: unknown) => value } as any,
+    validation as any,
     modbus as any,
     mqtt as any,
     { processRpcBody: async () => false, luoiMapping: {} } as any,
@@ -68,7 +74,9 @@ test("OFF during bookkeeping skips the board2 status write", async () => {
     findModbusMapping: () => ({ address: 16, fc: 5, value: false, boardId: "board1" }),
     findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
     getBoard2Client: async () => ({}),
-    writeToModbus: async (key: string) => { writes.push(`board1:${key}`); },
+    writeToModbus: async (key: string, _mapping: unknown, value: unknown) => {
+      writes.push(`board1:${key}:${value}`);
+    },
     readFromModbus: async () => true,
     writeToModbusBoard: async (key: string) => {
       if (key.startsWith("RESET")) await resetGate;
@@ -89,8 +97,154 @@ test("OFF during bookkeeping skips the board2 status write", async () => {
   await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: false } });
   releaseReset();
   await on;
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise((resolve) => setTimeout(resolve, 250));
 
-  expect(writes).toContain("board1:COIL_BOM_1");
+  expect(writes).toContain("board1:COIL_BOM_1:true");
   expect(writes).not.toContain("board2:PUMP_STATUS_BOM_1");
+});
+
+test("duplicate ON is dropped during bookkeeping and accepted after it finishes", async () => {
+  const board1Writes: unknown[] = [];
+  let releaseReset: () => void = () => undefined;
+  const resetGate = new Promise<void>((resolve) => { releaseReset = resolve; });
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16 }),
+    findModbusMapping: () => ({ address: 16, fc: 5, value: false, boardId: "board1" }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: async (_key: string, _mapping: unknown, value: unknown) => {
+      board1Writes.push(value);
+    },
+    readFromModbus: async () => true,
+    writeToModbusBoard: async (key: string) => {
+      if (key.startsWith("RESET") && board1Writes.length === 1) await resetGate;
+    },
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn(),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  expect(board1Writes).toEqual([true]);
+
+  releaseReset();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+
+  expect(board1Writes).toEqual([true, true]);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
+test("board1 failure releases pending so the next ON runs", async () => {
+  const board1Write = jest.fn()
+    .mockRejectedValueOnce(new Error("board1 write failed"))
+    .mockResolvedValue(undefined);
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16 }),
+    findModbusMapping: () => ({ address: 16, fc: 5, value: false, boardId: "board1" }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: board1Write,
+    readFromModbus: async () => true,
+    writeToModbusBoard: async () => undefined,
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn().mockResolvedValue(undefined),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } }, 1);
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } }, 1);
+
+  expect(board1Write).toHaveBeenCalledTimes(2);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
+test("retry does not repeat board1 ON while bookkeeping owns it", async () => {
+  const board1Write = jest.fn().mockResolvedValue(undefined);
+  let releaseReset: () => void = () => undefined;
+  const resetGate = new Promise<void>((resolve) => { releaseReset = resolve; });
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16 }),
+    findModbusMapping: (key: string) => key === "COIL_BOM_1"
+      ? { address: 16, fc: 5, value: false, boardId: "board1" }
+      : null,
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: board1Write,
+    readFromModbus: async () => true,
+    writeToModbusBoard: async (key: string) => {
+      if (key.startsWith("RESET")) await resetGate;
+    },
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn().mockResolvedValue(undefined),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt, {
+    validateAndConvertValue: (key: string, value: unknown) => {
+      if (key === "CONFIG_THAT_TIMES_OUT") throw new Error("timeout");
+      return value;
+    },
+  });
+
+  await handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true, CONFIG_THAT_TIMES_OUT: 1 },
+  }, 2);
+  releaseReset();
+
+  expect(board1Write).toHaveBeenCalledTimes(1);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
+test("validation failure before bookkeeping releases pending for a later ON", async () => {
+  const board1Write = jest.fn().mockResolvedValue(undefined);
+  const validate = jest.fn()
+    .mockImplementationOnce(() => { throw new Error("invalid pump value"); })
+    .mockImplementation((_key: string, value: unknown) => value);
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16 }),
+    findModbusMapping: () => ({ address: 16, fc: 5, value: false, boardId: "board1" }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: board1Write,
+    readFromModbus: async () => true,
+    writeToModbusBoard: async () => undefined,
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn().mockResolvedValue(undefined),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt, { validateAndConvertValue: validate });
+
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } }, 1);
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } }, 1);
+
+  expect(board1Write).toHaveBeenCalledTimes(1);
+  await new Promise((resolve) => setTimeout(resolve, 250));
 });

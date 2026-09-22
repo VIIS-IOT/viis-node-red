@@ -18,10 +18,12 @@ import { Logger } from "../utils/logger";
 
 const PUMP_ON_KEY = /^COIL_BOM_(1[0-6]|[1-9])$/;
 const pumpOnPending = new Set<string>();
+const pumpBookkeepingOwned = new Set<string>();
 let deviceRpcQueue: Promise<void> = Promise.resolve();
 
 export function resetVietplantsRpcQueueForTests(): void {
     pumpOnPending.clear();
+    pumpBookkeepingOwned.clear();
     deviceRpcQueue = Promise.resolve();
 }
 
@@ -83,7 +85,13 @@ export class RpcHandler implements IRpcHandler {
 
         const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBody, maxRetries));
         deviceRpcQueue = execution.catch(() => undefined);
-        await execution;
+        try {
+            await execution;
+        } finally {
+            if (pumpKey && !pumpBookkeepingOwned.has(pumpKey)) {
+                releasePumpOnPending(pumpKey);
+            }
+        }
     }
 
     private pumpOnKey(rpcBody: RpcMessage): string | null {
@@ -638,6 +646,10 @@ export class RpcHandler implements IRpcHandler {
     }
 
     private async handlePumpActivation(key: string, value: any, mapping: any): Promise<void> {
+        if (pumpBookkeepingOwned.has(key)) {
+            return;
+        }
+
         const pumpNumber = this.extractPumpNumber(key);
         if (pumpNumber === null) {
             throw new Error(`Invalid pump coil key: ${key}`);
@@ -651,15 +663,18 @@ export class RpcHandler implements IRpcHandler {
             await this.publishResultWithRetry(key, pumpValue);
             this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON` });
         } catch (error) {
-            releasePumpOnPending(key);
             throw error;
         }
 
+        pumpBookkeepingOwned.add(key);
         void this.runBoard2PumpBookkeeping(pumpNumber, generation)
             .catch((error) => {
                 this.logger.error(`[PUMP-BOOKKEEPING] Pump ${pumpNumber}: ${(error as Error).message}`);
             })
-            .finally(() => releasePumpOnPending(key));
+            .finally(() => {
+                pumpBookkeepingOwned.delete(key);
+                releasePumpOnPending(key);
+            });
     }
 
     private async runBoard2PumpBookkeeping(pumpNumber: number, generation: number): Promise<void> {
@@ -681,6 +696,7 @@ export class RpcHandler implements IRpcHandler {
             const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
             const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, "board2");
             if (statusMapping) {
+                if (!stillCurrent()) return;
                 await this.modbusService.writeToModbusBoard(statusKey, statusMapping, 1, "board2");
             }
         } catch (error) {
