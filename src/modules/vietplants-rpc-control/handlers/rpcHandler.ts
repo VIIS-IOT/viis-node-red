@@ -18,11 +18,13 @@ import { Logger } from "../utils/logger";
 
 const PUMP_ON_KEY = /^COIL_BOM_(1[0-6]|[1-9])$/;
 const pumpOnPending = new Set<string>();
-const pumpBookkeepingOwned = new Set<string>();
+const pumpGeneration = new Map<number, number>();
+const pumpBookkeepingOwned = new Map<string, number>();
 let deviceRpcQueue: Promise<void> = Promise.resolve();
 
 export function resetVietplantsRpcQueueForTests(): void {
     pumpOnPending.clear();
+    pumpGeneration.clear();
     pumpBookkeepingOwned.clear();
     deviceRpcQueue = Promise.resolve();
 }
@@ -54,7 +56,6 @@ export class RpcHandler implements IRpcHandler {
     private luoiHandler: LuoiMappingHandler;
     private node: any;
     private logger: Logger;
-    private pumpGeneration = new Map<number, number>();
 
     constructor(
         options: ServiceOptions,
@@ -88,8 +89,15 @@ export class RpcHandler implements IRpcHandler {
         try {
             await execution;
         } finally {
-            if (pumpKey && !pumpBookkeepingOwned.has(pumpKey)) {
-                releasePumpOnPending(pumpKey);
+            if (pumpKey) {
+                const pumpNumber = this.extractPumpNumber(pumpKey);
+                if (
+                    pumpNumber === null
+                    || !pumpBookkeepingOwned.has(pumpKey)
+                    || pumpBookkeepingOwned.get(pumpKey) !== pumpGeneration.get(pumpNumber)
+                ) {
+                    releasePumpOnPending(pumpKey);
+                }
             }
         }
     }
@@ -370,7 +378,7 @@ export class RpcHandler implements IRpcHandler {
             if (PUMP_ON_KEY.test(key) && !(value === true || value === 1)) {
                 const pumpNumber = this.extractPumpNumber(key);
                 if (pumpNumber !== null) {
-                    this.pumpGeneration.set(pumpNumber, (this.pumpGeneration.get(pumpNumber) ?? 0) + 1);
+                    pumpGeneration.set(pumpNumber, (pumpGeneration.get(pumpNumber) ?? 0) + 1);
                 }
             }
 
@@ -646,39 +654,37 @@ export class RpcHandler implements IRpcHandler {
     }
 
     private async handlePumpActivation(key: string, value: any, mapping: any): Promise<void> {
-        if (pumpBookkeepingOwned.has(key)) {
-            return;
-        }
-
         const pumpNumber = this.extractPumpNumber(key);
         if (pumpNumber === null) {
             throw new Error(`Invalid pump coil key: ${key}`);
         }
-        const generation = (this.pumpGeneration.get(pumpNumber) ?? 0) + 1;
-        this.pumpGeneration.set(pumpNumber, generation);
-
-        try {
-            await this.writeToModbusWithRetry(key, mapping, value);
-            const pumpValue = await this.readFromModbusWithRetry(key, mapping);
-            await this.publishResultWithRetry(key, pumpValue);
-            this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON` });
-        } catch (error) {
-            throw error;
+        const currentGeneration = pumpGeneration.get(pumpNumber) ?? 0;
+        if (pumpBookkeepingOwned.get(key) === currentGeneration) {
+            return;
         }
+        const generation = currentGeneration + 1;
+        pumpGeneration.set(pumpNumber, generation);
 
-        pumpBookkeepingOwned.add(key);
+        await this.writeToModbusWithRetry(key, mapping, value);
+        const pumpValue = await this.readFromModbusWithRetry(key, mapping);
+        await this.publishResultWithRetry(key, pumpValue);
+        this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON` });
+
+        pumpBookkeepingOwned.set(key, generation);
         void this.runBoard2PumpBookkeeping(pumpNumber, generation)
             .catch((error) => {
                 this.logger.error(`[PUMP-BOOKKEEPING] Pump ${pumpNumber}: ${(error as Error).message}`);
             })
             .finally(() => {
-                pumpBookkeepingOwned.delete(key);
-                releasePumpOnPending(key);
+                if (pumpBookkeepingOwned.get(key) === generation) {
+                    pumpBookkeepingOwned.delete(key);
+                    releasePumpOnPending(key);
+                }
             });
     }
 
     private async runBoard2PumpBookkeeping(pumpNumber: number, generation: number): Promise<void> {
-        const stillCurrent = () => this.pumpGeneration.get(pumpNumber) === generation;
+        const stillCurrent = () => pumpGeneration.get(pumpNumber) === generation;
         try {
             if (!stillCurrent()) return;
             const board2Client = await this.modbusService.getBoard2Client();
