@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ModbusClientCore = exports.ConnectionState = void 0;
+exports.isRetryableModbusWriteError = isRetryableModbusWriteError;
 const modbus_serial_1 = __importDefault(require("modbus-serial"));
 const events_1 = require("events");
 // Connection state machine for managing connection lifecycle
@@ -16,6 +17,10 @@ var ConnectionState;
     ConnectionState["ERROR"] = "error";
     ConnectionState["CIRCUIT_BREAKER_OPEN"] = "circuit_breaker_open";
 })(ConnectionState || (exports.ConnectionState = ConnectionState = {}));
+function isRetryableModbusWriteError(message) {
+    const text = message.toLowerCase();
+    return text.includes("timeout") || text.includes("timed out");
+}
 // Core Modbus Client
 class ModbusClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -1109,7 +1114,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     const err = error;
                     retryCount++;
                     // Check if this is a timeout error and we have retries left
-                    if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                    if (isRetryableModbusWriteError(err.message) && retryCount <= maxRetries) {
                         this.node.warn(`[${boardType}-WRITE] Write register ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
                         await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
                         continue;
@@ -1146,7 +1151,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     const err = error;
                     retryCount++;
                     // Check if this is a timeout error and we have retries left
-                    if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                    if (isRetryableModbusWriteError(err.message) && retryCount <= maxRetries) {
                         this.node.warn(`[${boardType}-WRITE] Write coil ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
                         await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
                         continue;

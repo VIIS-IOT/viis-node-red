@@ -5,8 +5,42 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RpcHandler = void 0;
+exports.resetVietplantsRpcQueueForTests = resetVietplantsRpcQueueForTests;
+exports.notePumpCoilCommand = notePumpCoilCommand;
+exports.releasePumpOnPending = releasePumpOnPending;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const PUMP_ON_KEY = /^COIL_BOM_(1[0-6]|[1-9])$/;
+const BOOKKEEPING_ERROR_PUBLISH_TIMEOUT_MS = 5000;
+const pumpOnPending = new Set();
+const pumpGeneration = new Map();
+const pumpBookkeepingOwned = new Map();
+const activatedInCurrentRequest = new Set();
+let deviceRpcQueue = Promise.resolve();
+function resetVietplantsRpcQueueForTests() {
+    pumpOnPending.clear();
+    pumpGeneration.clear();
+    pumpBookkeepingOwned.clear();
+    activatedInCurrentRequest.clear();
+    deviceRpcQueue = Promise.resolve();
+}
+function notePumpCoilCommand(key, value) {
+    const turningOn = value === true || value === 1;
+    if (!PUMP_ON_KEY.test(key) || !turningOn) {
+        if (PUMP_ON_KEY.test(key)) {
+            pumpOnPending.delete(key);
+        }
+        return "run";
+    }
+    if (pumpOnPending.has(key)) {
+        return "drop";
+    }
+    pumpOnPending.add(key);
+    return "run";
+}
+function releasePumpOnPending(key) {
+    pumpOnPending.delete(key);
+}
 class RpcHandler {
     constructor(options, configService, validationService, modbusService, mqttService, luoiHandler) {
         this.configService = configService;
@@ -21,34 +55,81 @@ class RpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody, maxRetries = 3) {
-        let lastError = null;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                if (rpcBody.method === "set_state" && rpcBody.params) {
-                    this.logger.debug(`Processing RPC request (attempt ${attempt}/${maxRetries})`);
-                    await this.handleSetStateRequest(rpcBody.params);
-                    return; // Success
-                }
-                else {
-                    this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
-                    return; // No need to retry for unsupported methods
-                }
-            }
-            catch (error) {
-                lastError = error;
-                // Check if error is retryable
-                if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
-                    this.logger.debug(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying`);
-                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
-                    continue;
-                }
-                // Non-retryable error or last attempt
-                break;
+        const pumpKeys = this.pumpOnKeys(rpcBody);
+        const droppedPumpKeys = new Set();
+        for (const pumpKey of pumpKeys) {
+            if (notePumpCoilCommand(pumpKey, true) === "drop") {
+                droppedPumpKeys.add(pumpKey);
+                this.logger.warn(`[QUEUE] Coalesced duplicate ${pumpKey} ON`);
             }
         }
-        // Handle the final error
-        if (lastError) {
-            await this.handleRpcError(lastError);
+        const acquiredPumpKeys = pumpKeys.filter((pumpKey) => !droppedPumpKeys.has(pumpKey));
+        const rpcBodyToRun = droppedPumpKeys.size > 0 && rpcBody.params
+            ? Object.assign(Object.assign({}, rpcBody), { params: this.paramsWithoutCoalescedPumps(rpcBody.params, droppedPumpKeys) }) : rpcBody;
+        if (rpcBodyToRun.params && Object.keys(rpcBodyToRun.params).length === 0) {
+            return;
+        }
+        const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBodyToRun, maxRetries));
+        deviceRpcQueue = execution.catch(() => undefined);
+        try {
+            await execution;
+        }
+        finally {
+            for (const pumpKey of acquiredPumpKeys) {
+                const pumpNumber = this.extractPumpNumber(pumpKey);
+                if (pumpNumber === null
+                    || !pumpBookkeepingOwned.has(pumpKey)
+                    || pumpBookkeepingOwned.get(pumpKey) !== pumpGeneration.get(pumpNumber)) {
+                    releasePumpOnPending(pumpKey);
+                }
+            }
+        }
+    }
+    paramsWithoutCoalescedPumps(params, droppedPumpKeys) {
+        const droppedSuffixes = [...droppedPumpKeys]
+            .map((key) => this.extractPumpNumber(key))
+            .filter((pumpNumber) => pumpNumber !== null)
+            .map((pumpNumber) => `_BOM_${pumpNumber}`);
+        return Object.fromEntries(Object.entries(params).filter(([key]) => !droppedSuffixes.some((suffix) => key.endsWith(suffix))));
+    }
+    pumpOnKeys(rpcBody) {
+        const params = rpcBody === null || rpcBody === void 0 ? void 0 : rpcBody.params;
+        if (!params)
+            return [];
+        return Object.entries(params)
+            .filter(([key, value]) => PUMP_ON_KEY.test(key) && (value === true || value === 1))
+            .map(([key]) => key);
+    }
+    async handleRpcRequestBody(rpcBody, maxRetries) {
+        activatedInCurrentRequest.clear();
+        try {
+            let lastError = null;
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    if (rpcBody.method === "set_state" && rpcBody.params) {
+                        this.logger.debug(`Processing RPC request (attempt ${attempt}/${maxRetries})`);
+                        await this.handleSetStateRequest(rpcBody.params);
+                        return;
+                    }
+                    this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
+                    return;
+                }
+                catch (error) {
+                    lastError = error;
+                    if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
+                        this.logger.debug(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying`);
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                        continue;
+                    }
+                    break;
+                }
+            }
+            if (lastError) {
+                await this.handleRpcError(lastError);
+            }
+        }
+        finally {
+            activatedInCurrentRequest.clear();
         }
     }
     /**
@@ -253,9 +334,17 @@ class RpcHandler {
      * Handle parameter that has Modbus mapping
      */
     async handleModbusMappedParameter(key, rawValue, mapping) {
+        var _a;
         try {
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
+            if (PUMP_ON_KEY.test(key) && !(value === true || value === 1)) {
+                notePumpCoilCommand(key, value);
+                const pumpNumber = this.extractPumpNumber(key);
+                if (pumpNumber !== null) {
+                    pumpGeneration.set(pumpNumber, ((_a = pumpGeneration.get(pumpNumber)) !== null && _a !== void 0 ? _a : 0) + 1);
+                }
+            }
             // Check if this is a pump coil (COIL_BOM_1 to COIL_BOM_16) being turned on
             if (this.isPumpCoilBeingTurnedOn(key, value)) {
                 await this.handlePumpActivation(key, value, mapping);
@@ -498,55 +587,88 @@ class RpcHandler {
         }
         return null;
     }
-    /**
-     * Handle pump activation with reset logic
-     * 1. Reset total volume on board2
-     * 2. Confirm reset write
-     * 3. Turn on pump on board1
-     * 4. Update pump status on board2
-     */
     async handlePumpActivation(key, value, mapping) {
+        var _a;
+        if (activatedInCurrentRequest.has(key)) {
+            return;
+        }
         const pumpNumber = this.extractPumpNumber(key);
         if (pumpNumber === null) {
-            this.logger.error(`Failed to extract pump number from key: ${key}`);
             throw new Error(`Invalid pump coil key: ${key}`);
         }
-        this.logger.debug(`[PUMP-ACTIVATION] Starting activation for pump ${pumpNumber}`);
+        const currentGeneration = (_a = pumpGeneration.get(pumpNumber)) !== null && _a !== void 0 ? _a : 0;
+        if (pumpBookkeepingOwned.get(key) === currentGeneration) {
+            return;
+        }
+        const generation = currentGeneration + 1;
+        pumpGeneration.set(pumpNumber, generation);
+        await this.writeToModbusWithRetry(key, mapping, value);
+        const pumpValue = await this.readFromModbusWithRetry(key, mapping);
+        await this.publishResultWithRetry(key, pumpValue);
+        activatedInCurrentRequest.add(key);
+        this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON` });
+        pumpBookkeepingOwned.set(key, generation);
+        void this.runBoard2PumpBookkeeping(pumpNumber, generation)
+            .catch((error) => {
+            this.logger.error(`[PUMP-BOOKKEEPING] Pump ${pumpNumber}: ${error.message}`);
+        })
+            .finally(() => {
+            if (pumpBookkeepingOwned.get(key) === generation) {
+                pumpBookkeepingOwned.delete(key);
+                if (pumpGeneration.get(pumpNumber) === generation) {
+                    releasePumpOnPending(key);
+                }
+            }
+        });
+    }
+    async runBoard2PumpBookkeeping(pumpNumber, generation) {
+        const stillCurrent = () => pumpGeneration.get(pumpNumber) === generation;
         try {
-            // Step 1: Reset total volume on board2
-            const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
+            if (!stillCurrent())
+                return;
             const board2Client = await this.modbusService.getBoard2Client();
-            if (!board2Client) {
+            if (!board2Client)
                 throw new Error("Board2 Modbus client not available");
-            }
-            // Get reset coil mapping from board2
-            const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, 'board2');
-            if (!resetMapping) {
+            const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
+            const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, "board2");
+            if (!resetMapping)
                 throw new Error(`Reset coil mapping not found: ${resetKey}`);
-            }
-            // Write reset coil to 1 (true)
-            await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, 'board2');
-            // Step 2: Verify reset write
-            const resetValue = await this.modbusService.readFromModbusBoard(resetKey, resetMapping, 'board2');
-            // Small delay to ensure reset is processed
-            await new Promise(resolve => setTimeout(resolve, 200));
-            // Step 3: Turn on pump on board1
-            await this.writeToModbusWithRetry(key, mapping, value);
-            const pumpValue = await this.readFromModbusWithRetry(key, mapping);
-            // Step 4: Update pump status on board2
+            await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, "board2");
+            if (!stillCurrent())
+                return;
+            await this.modbusService.readFromModbusBoard(resetKey, resetMapping, "board2");
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            if (!stillCurrent())
+                return;
             const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
-            const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, 'board2');
+            const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, "board2");
             if (statusMapping) {
-                await this.modbusService.writeToModbusBoard(statusKey, statusMapping, 1, 'board2');
+                if (!stillCurrent())
+                    return;
+                await this.modbusService.writeToModbusBoard(statusKey, statusMapping, 1, "board2");
             }
-            // Publish the result
-            await this.publishResultWithRetry(key, pumpValue);
-            this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON (reset done)` });
-            this.logger.debug(`[PUMP-ACTIVATION] Completed for pump ${pumpNumber}`);
         }
         catch (error) {
-            this.logger.error(`[PUMP-ACTIVATION] Failed to activate pump ${pumpNumber}: ${error.message}`);
-            throw error;
+            if (!stillCurrent())
+                return;
+            const message = error.message;
+            this.logger.error(`[PUMP-BOOKKEEPING] RESET_TOTAL_VOLUME_BOM_${pumpNumber} failed: ${message}`);
+            let timeout;
+            try {
+                const publishTimedOut = await Promise.race([
+                    this.mqttService.publishConfigUpdate(`RESET_TOTAL_VOLUME_BOM_${pumpNumber}_error`, message).then(() => false),
+                    new Promise((resolve) => {
+                        timeout = setTimeout(() => resolve(true), BOOKKEEPING_ERROR_PUBLISH_TIMEOUT_MS);
+                    }),
+                ]);
+                if (publishTimedOut) {
+                    this.logger.error(`[PUMP-BOOKKEEPING] Pump ${pumpNumber}: error publish timed out after ${BOOKKEEPING_ERROR_PUBLISH_TIMEOUT_MS}ms`);
+                }
+            }
+            finally {
+                if (timeout)
+                    clearTimeout(timeout);
+            }
         }
     }
     /**
