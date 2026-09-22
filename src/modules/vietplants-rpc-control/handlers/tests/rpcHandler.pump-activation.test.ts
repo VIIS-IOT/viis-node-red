@@ -292,6 +292,53 @@ test("board1 failure releases pending so the next ON runs", async () => {
   await new Promise((resolve) => setTimeout(resolve, 250));
 });
 
+test("second pump failure in a multi-pump request releases it for a later ON", async () => {
+  const board1Write = jest.fn()
+    .mockImplementationOnce(async () => undefined)
+    .mockRejectedValueOnce(new Error("second pump board1 write failed"))
+    .mockResolvedValue(undefined);
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16, COIL_BOM_2: 17 }),
+    findModbusMapping: (key: string) => ({
+      address: key === "COIL_BOM_1" ? 16 : 17,
+      fc: 5,
+      value: false,
+      boardId: "board1",
+    }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: board1Write,
+    readFromModbus: async () => true,
+    writeToModbusBoard: async () => undefined,
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn().mockResolvedValue(undefined),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  await handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true, COIL_BOM_2: true },
+  }, 1);
+  await handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_2: true },
+  }, 1);
+
+  expect(board1Write.mock.calls.map(([key]) => key)).toEqual([
+    "COIL_BOM_1",
+    "COIL_BOM_2",
+    "COIL_BOM_2",
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
 test("retry does not reactivate pump after bookkeeping finishes", async () => {
   const board1Write = jest.fn().mockResolvedValue(undefined);
   const board2Write = jest.fn().mockResolvedValue(undefined);

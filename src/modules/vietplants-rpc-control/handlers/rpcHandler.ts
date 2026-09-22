@@ -17,6 +17,7 @@ import { ERROR_MESSAGES, STATUS_MESSAGES } from "../constants";
 import { Logger } from "../utils/logger";
 
 const PUMP_ON_KEY = /^COIL_BOM_(1[0-6]|[1-9])$/;
+const BOOKKEEPING_ERROR_PUBLISH_TIMEOUT_MS = 5000;
 const pumpOnPending = new Set<string>();
 const pumpGeneration = new Map<number, number>();
 const pumpBookkeepingOwned = new Map<string, number>();
@@ -80,18 +81,32 @@ export class RpcHandler implements IRpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody: RpcMessage, maxRetries: number = 3): Promise<void> {
-        const pumpKey = this.pumpOnKey(rpcBody);
-        if (pumpKey && notePumpCoilCommand(pumpKey, true) === "drop") {
-            this.logger.warn(`[QUEUE] Coalesced duplicate ${pumpKey} ON`);
+        const pumpKeys = this.pumpOnKeys(rpcBody);
+        const droppedPumpKeys = new Set<string>();
+        for (const pumpKey of pumpKeys) {
+            if (notePumpCoilCommand(pumpKey, true) === "drop") {
+                droppedPumpKeys.add(pumpKey);
+                this.logger.warn(`[QUEUE] Coalesced duplicate ${pumpKey} ON`);
+            }
+        }
+        if (pumpKeys.length === 1 && droppedPumpKeys.size === 1) {
             return;
         }
 
-        const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBody, maxRetries));
+        const rpcBodyToRun = droppedPumpKeys.size > 0 && rpcBody.params
+            ? {
+                ...rpcBody,
+                params: Object.fromEntries(
+                    Object.entries(rpcBody.params).filter(([key]) => !droppedPumpKeys.has(key)),
+                ),
+            }
+            : rpcBody;
+        const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBodyToRun, maxRetries));
         deviceRpcQueue = execution.catch(() => undefined);
         try {
             await execution;
         } finally {
-            if (pumpKey) {
+            for (const pumpKey of pumpKeys) {
                 const pumpNumber = this.extractPumpNumber(pumpKey);
                 if (
                     pumpNumber === null
@@ -104,15 +119,12 @@ export class RpcHandler implements IRpcHandler {
         }
     }
 
-    private pumpOnKey(rpcBody: RpcMessage): string | null {
+    private pumpOnKeys(rpcBody: RpcMessage): string[] {
         const params = rpcBody?.params;
-        if (!params) return null;
-        for (const [key, value] of Object.entries(params)) {
-            if (PUMP_ON_KEY.test(key) && (value === true || value === 1)) {
-                return key;
-            }
-        }
-        return null;
+        if (!params) return [];
+        return Object.entries(params)
+            .filter(([key, value]) => PUMP_ON_KEY.test(key) && (value === true || value === 1))
+            .map(([key]) => key);
     }
 
     private async handleRpcRequestBody(rpcBody: RpcMessage, maxRetries: number): Promise<void> {
@@ -378,11 +390,8 @@ export class RpcHandler implements IRpcHandler {
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
 
-            if (PUMP_ON_KEY.test(key)) {
-                notePumpCoilCommand(key, value);
-            }
-
             if (PUMP_ON_KEY.test(key) && !(value === true || value === 1)) {
+                notePumpCoilCommand(key, value);
                 const pumpNumber = this.extractPumpNumber(key);
                 if (pumpNumber !== null) {
                     pumpGeneration.set(pumpNumber, (pumpGeneration.get(pumpNumber) ?? 0) + 1);
@@ -722,10 +731,28 @@ export class RpcHandler implements IRpcHandler {
             if (!stillCurrent()) return;
             const message = (error as Error).message;
             this.logger.error(`[PUMP-BOOKKEEPING] RESET_TOTAL_VOLUME_BOM_${pumpNumber} failed: ${message}`);
-            await this.mqttService.publishConfigUpdate(
-                `RESET_TOTAL_VOLUME_BOM_${pumpNumber}_error`,
-                message,
-            );
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+                const publishTimedOut = await Promise.race([
+                    this.mqttService.publishConfigUpdate(
+                        `RESET_TOTAL_VOLUME_BOM_${pumpNumber}_error`,
+                        message,
+                    ).then(() => false),
+                    new Promise<boolean>((resolve) => {
+                        timeout = setTimeout(
+                            () => resolve(true),
+                            BOOKKEEPING_ERROR_PUBLISH_TIMEOUT_MS,
+                        );
+                    }),
+                ]);
+                if (publishTimedOut) {
+                    this.logger.error(
+                        `[PUMP-BOOKKEEPING] Pump ${pumpNumber}: error publish timed out after ${BOOKKEEPING_ERROR_PUBLISH_TIMEOUT_MS}ms`,
+                    );
+                }
+            } finally {
+                if (timeout) clearTimeout(timeout);
+            }
         }
     }
 
