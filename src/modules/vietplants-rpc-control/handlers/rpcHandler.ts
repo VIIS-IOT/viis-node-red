@@ -16,6 +16,34 @@ import { LuoiMappingHandler } from "../luoi-mapping-handler";
 import { ERROR_MESSAGES, STATUS_MESSAGES } from "../constants";
 import { Logger } from "../utils/logger";
 
+const PUMP_ON_KEY = /^COIL_BOM_(1[0-6]|[1-9])$/;
+const pumpOnPending = new Set<string>();
+let deviceRpcQueue: Promise<void> = Promise.resolve();
+
+export function resetVietplantsRpcQueueForTests(): void {
+    pumpOnPending.clear();
+    deviceRpcQueue = Promise.resolve();
+}
+
+export function notePumpCoilCommand(key: string, value: unknown): "run" | "drop" {
+    const turningOn = value === true || value === 1;
+    if (!PUMP_ON_KEY.test(key) || !turningOn) {
+        if (PUMP_ON_KEY.test(key)) {
+            pumpOnPending.delete(key);
+        }
+        return "run";
+    }
+    if (pumpOnPending.has(key)) {
+        return "drop";
+    }
+    pumpOnPending.add(key);
+    return "run";
+}
+
+export function releasePumpOnPending(key: string): void {
+    pumpOnPending.delete(key);
+}
+
 export class RpcHandler implements IRpcHandler {
     private configService: IConfigService;
     private validationService: IValidationService;
@@ -46,34 +74,55 @@ export class RpcHandler implements IRpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody: RpcMessage, maxRetries: number = 3): Promise<void> {
-        let lastError: Error | null = null;
+        const pumpKey = this.pumpOnKey(rpcBody);
+        if (pumpKey && notePumpCoilCommand(pumpKey, true) === "drop") {
+            this.logger.warn(`[QUEUE] Coalesced duplicate ${pumpKey} ON`);
+            return;
+        }
 
+        const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBody, maxRetries));
+        deviceRpcQueue = execution.catch(() => undefined);
+        try {
+            await execution;
+        } finally {
+            if (pumpKey) {
+                releasePumpOnPending(pumpKey);
+            }
+        }
+    }
+
+    private pumpOnKey(rpcBody: RpcMessage): string | null {
+        const params = rpcBody?.params;
+        if (!params) return null;
+        for (const [key, value] of Object.entries(params)) {
+            if (PUMP_ON_KEY.test(key) && (value === true || value === 1)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private async handleRpcRequestBody(rpcBody: RpcMessage, maxRetries: number): Promise<void> {
+        let lastError: Error | null = null;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
                     this.logger.debug(`Processing RPC request (attempt ${attempt}/${maxRetries})`);
                     await this.handleSetStateRequest(rpcBody.params);
-                    return; // Success
-                } else {
-                    this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
-                    return; // No need to retry for unsupported methods
+                    return;
                 }
+                this.logger.debug(`Unsupported RPC method: ${rpcBody.method}`);
+                return;
             } catch (error) {
                 lastError = error as Error;
-
-                // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
                     this.logger.debug(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying`);
-                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
                     continue;
                 }
-
-                // Non-retryable error or last attempt
                 break;
             }
         }
-
-        // Handle the final error
         if (lastError) {
             await this.handleRpcError(lastError);
         }
@@ -310,6 +359,10 @@ export class RpcHandler implements IRpcHandler {
         try {
             // Validate and convert value
             const value = this.validationService.validateAndConvertValue(key, rawValue);
+
+            if (PUMP_ON_KEY.test(key)) {
+                notePumpCoilCommand(key, value);
+            }
 
             // Check if this is a pump coil (COIL_BOM_1 to COIL_BOM_16) being turned on
             if (this.isPumpCoilBeingTurnedOn(key, value)) {
