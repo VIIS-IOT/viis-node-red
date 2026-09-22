@@ -159,6 +159,68 @@ test("ON after OFF writes board1 while stale bookkeeping remains in flight", asy
   await new Promise((resolve) => setTimeout(resolve, 250));
 });
 
+test("stale bookkeeping does not release a newer ON pending during its board1 write", async () => {
+  const writes: string[] = [];
+  let releaseFirstReset: () => void = () => undefined;
+  let releaseSecondOnWrite: () => void = () => undefined;
+  let markSecondOnWriteStarted: () => void = () => undefined;
+  const firstResetGate = new Promise<void>((resolve) => { releaseFirstReset = resolve; });
+  const secondOnWriteGate = new Promise<void>((resolve) => { releaseSecondOnWrite = resolve; });
+  const secondOnWriteStarted = new Promise<void>((resolve) => { markSecondOnWriteStarted = resolve; });
+  let onWriteCount = 0;
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16 }),
+    findModbusMapping: () => ({ address: 16, fc: 5, value: false, boardId: "board1" }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: async (key: string, _mapping: unknown, value: unknown) => {
+      if (value === true) {
+        onWriteCount += 1;
+        if (onWriteCount === 2) {
+          markSecondOnWriteStarted();
+          await secondOnWriteGate;
+        }
+      }
+      writes.push(`board1:${key}:${value}`);
+    },
+    readFromModbus: async () => true,
+    writeToModbusBoard: async (key: string) => {
+      if (key.startsWith("RESET") && onWriteCount === 1) await firstResetGate;
+    },
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn(),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: false } });
+  const secondOn = handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  await secondOnWriteStarted;
+
+  releaseFirstReset();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  let thirdOnSettled = false;
+  const thirdOn = handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } })
+    .then(() => { thirdOnSettled = true; });
+  await Promise.resolve();
+
+  expect(thirdOnSettled).toBe(true);
+
+  releaseSecondOnWrite();
+  await Promise.all([secondOn, thirdOn]);
+
+  expect(writes.filter((write) => write === "board1:COIL_BOM_1:true")).toHaveLength(2);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
 test("duplicate ON is dropped during bookkeeping and accepted after it finishes", async () => {
   const board1Writes: unknown[] = [];
   let releaseReset: () => void = () => undefined;

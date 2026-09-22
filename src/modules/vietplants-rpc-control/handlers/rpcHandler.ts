@@ -678,7 +678,9 @@ export class RpcHandler implements IRpcHandler {
             .finally(() => {
                 if (pumpBookkeepingOwned.get(key) === generation) {
                     pumpBookkeepingOwned.delete(key);
-                    releasePumpOnPending(key);
+                    if (pumpGeneration.get(pumpNumber) === generation) {
+                        releasePumpOnPending(key);
+                    }
                 }
             });
     }
