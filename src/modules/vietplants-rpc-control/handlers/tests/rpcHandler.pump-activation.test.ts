@@ -311,6 +311,73 @@ test("a mixed pump request does not release a duplicate pump pending slot", asyn
   await new Promise((resolve) => setTimeout(resolve, 250));
 });
 
+test("a coalesced pump ON does not release a pending slot acquired by a later request", async () => {
+  const board1Writes: string[] = [];
+  let releaseFirstWrite: () => void = () => undefined;
+  let releaseSecondWrite: () => void = () => undefined;
+  let releaseReset: () => void = () => undefined;
+  const firstWriteGate = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+  const secondWriteGate = new Promise<void>((resolve) => { releaseSecondWrite = resolve; });
+  const resetGate = new Promise<void>((resolve) => { releaseReset = resolve; });
+  let firstPumpWriteSeen = false;
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16, COIL_BOM_2: 17 }),
+    findModbusMapping: (key: string) => ({
+      address: key === "COIL_BOM_1" ? 16 : 17,
+      fc: 5,
+      value: false,
+      boardId: "board1",
+    }),
+    findModbusMappingForBoard: () => ({ address: 200, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: async (key: string) => {
+      board1Writes.push(key);
+      if (key === "COIL_BOM_1" && !firstPumpWriteSeen) {
+        firstPumpWriteSeen = true;
+        await firstWriteGate;
+        return;
+      }
+      if (key === "COIL_BOM_2") {
+        await secondWriteGate;
+      }
+    },
+    readFromModbus: async () => true,
+    writeToModbusBoard: async (key: string) => {
+      if (key.startsWith("RESET")) await resetGate;
+    },
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn(),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  const first = handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const mixed = handler.handleRpcRequest({
+    method: "set_state",
+    params: { COIL_BOM_1: true, COIL_BOM_2: true },
+  });
+  releaseFirstWrite();
+  await first;
+
+  releaseReset();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const later = handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  releaseSecondWrite();
+  await mixed;
+  const afterMixed = handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  await Promise.all([later, afterMixed]);
+
+  expect(board1Writes.filter((key) => key === "COIL_BOM_1")).toEqual(["COIL_BOM_1", "COIL_BOM_1"]);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+
 test("board1 failure releases pending so the next ON runs", async () => {
   const board1Write = jest.fn()
     .mockRejectedValueOnce(new Error("board1 write failed"))

@@ -76,7 +76,13 @@ test("a duplicate pump ON still applies the other request params", async () => {
   await Promise.resolve();
   const second = handler.handleRpcRequest({
     method: "set_state",
-    params: { COIL_BOM_1: true, HOLDING_X: 42, schedule_id: "schedule-1" },
+    params: {
+      COIL_BOM_1: true,
+      HOLDING_SETML_BOM_1: 500,
+      HOLDING_SETML_BOM_10: 80,
+      HOLDING_X: 42,
+      schedule_id: "schedule-1",
+    },
   });
 
   release();
@@ -84,6 +90,7 @@ test("a duplicate pump ON still applies the other request params", async () => {
 
   expect(run).toHaveBeenCalledTimes(2);
   expect(run).toHaveBeenNthCalledWith(2, {
+    HOLDING_SETML_BOM_10: 80,
     HOLDING_X: 42,
     schedule_id: "schedule-1",
   });

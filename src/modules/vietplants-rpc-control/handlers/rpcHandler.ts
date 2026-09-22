@@ -93,9 +93,7 @@ export class RpcHandler implements IRpcHandler {
         const rpcBodyToRun = droppedPumpKeys.size > 0 && rpcBody.params
             ? {
                 ...rpcBody,
-                params: Object.fromEntries(
-                    Object.entries(rpcBody.params).filter(([key]) => !droppedPumpKeys.has(key)),
-                ),
+                params: this.paramsWithoutCoalescedPumps(rpcBody.params, droppedPumpKeys),
             }
             : rpcBody;
         if (rpcBodyToRun.params && Object.keys(rpcBodyToRun.params).length === 0) {
@@ -117,6 +115,21 @@ export class RpcHandler implements IRpcHandler {
                 }
             }
         }
+    }
+
+    private paramsWithoutCoalescedPumps(
+        params: Record<string, any>,
+        droppedPumpKeys: Set<string>,
+    ): Record<string, any> {
+        const droppedSuffixes = [...droppedPumpKeys]
+            .map((key) => this.extractPumpNumber(key))
+            .filter((pumpNumber): pumpNumber is number => pumpNumber !== null)
+            .map((pumpNumber) => `_BOM_${pumpNumber}`);
+        return Object.fromEntries(
+            Object.entries(params).filter(([key]) =>
+                !droppedSuffixes.some((suffix) => key.endsWith(suffix)),
+            ),
+        );
     }
 
     private pumpOnKeys(rpcBody: RpcMessage): string[] {
