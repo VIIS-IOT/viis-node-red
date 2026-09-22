@@ -52,6 +52,7 @@ export class RpcHandler implements IRpcHandler {
     private luoiHandler: LuoiMappingHandler;
     private node: any;
     private logger: Logger;
+    private pumpGeneration = new Map<number, number>();
 
     constructor(
         options: ServiceOptions,
@@ -82,13 +83,7 @@ export class RpcHandler implements IRpcHandler {
 
         const execution = deviceRpcQueue.then(() => this.handleRpcRequestBody(rpcBody, maxRetries));
         deviceRpcQueue = execution.catch(() => undefined);
-        try {
-            await execution;
-        } finally {
-            if (pumpKey) {
-                releasePumpOnPending(pumpKey);
-            }
-        }
+        await execution;
     }
 
     private pumpOnKey(rpcBody: RpcMessage): string | null {
@@ -364,6 +359,13 @@ export class RpcHandler implements IRpcHandler {
                 notePumpCoilCommand(key, value);
             }
 
+            if (PUMP_ON_KEY.test(key) && !(value === true || value === 1)) {
+                const pumpNumber = this.extractPumpNumber(key);
+                if (pumpNumber !== null) {
+                    this.pumpGeneration.set(pumpNumber, (this.pumpGeneration.get(pumpNumber) ?? 0) + 1);
+                }
+            }
+
             // Check if this is a pump coil (COIL_BOM_1 to COIL_BOM_16) being turned on
             if (this.isPumpCoilBeingTurnedOn(key, value)) {
                 await this.handlePumpActivation(key, value, mapping);
@@ -635,66 +637,60 @@ export class RpcHandler implements IRpcHandler {
         return null;
     }
 
-    /**
-     * Handle pump activation with reset logic
-     * 1. Reset total volume on board2
-     * 2. Confirm reset write
-     * 3. Turn on pump on board1
-     * 4. Update pump status on board2
-     */
     private async handlePumpActivation(key: string, value: any, mapping: any): Promise<void> {
         const pumpNumber = this.extractPumpNumber(key);
         if (pumpNumber === null) {
-            this.logger.error(`Failed to extract pump number from key: ${key}`);
             throw new Error(`Invalid pump coil key: ${key}`);
         }
-
-        this.logger.debug(`[PUMP-ACTIVATION] Starting activation for pump ${pumpNumber}`);
+        const generation = (this.pumpGeneration.get(pumpNumber) ?? 0) + 1;
+        this.pumpGeneration.set(pumpNumber, generation);
 
         try {
-            // Step 1: Reset total volume on board2
-            const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
-
-            const board2Client = await this.modbusService.getBoard2Client();
-            if (!board2Client) {
-                throw new Error("Board2 Modbus client not available");
-            }
-
-            // Get reset coil mapping from board2
-            const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, 'board2');
-            if (!resetMapping) {
-                throw new Error(`Reset coil mapping not found: ${resetKey}`);
-            }
-
-            // Write reset coil to 1 (true)
-            await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, 'board2');
-
-            // Step 2: Verify reset write
-            const resetValue = await this.modbusService.readFromModbusBoard(resetKey, resetMapping, 'board2');
-
-            // Small delay to ensure reset is processed
-            await new Promise(resolve => setTimeout(resolve, 200));
-
-            // Step 3: Turn on pump on board1
             await this.writeToModbusWithRetry(key, mapping, value);
             const pumpValue = await this.readFromModbusWithRetry(key, mapping);
-
-            // Step 4: Update pump status on board2
-            const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
-
-            const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, 'board2');
-            if (statusMapping) {
-                await this.modbusService.writeToModbusBoard(statusKey, statusMapping, 1, 'board2');
-            }
-
-            // Publish the result
             await this.publishResultWithRetry(key, pumpValue);
-            this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON (reset done)` });
-
-            this.logger.debug(`[PUMP-ACTIVATION] Completed for pump ${pumpNumber}`);
+            this.node.status({ fill: "green", shape: "dot", text: `Pump ${pumpNumber} ON` });
         } catch (error) {
-            this.logger.error(`[PUMP-ACTIVATION] Failed to activate pump ${pumpNumber}: ${(error as Error).message}`);
+            releasePumpOnPending(key);
             throw error;
+        }
+
+        void this.runBoard2PumpBookkeeping(pumpNumber, generation)
+            .catch((error) => {
+                this.logger.error(`[PUMP-BOOKKEEPING] Pump ${pumpNumber}: ${(error as Error).message}`);
+            })
+            .finally(() => releasePumpOnPending(key));
+    }
+
+    private async runBoard2PumpBookkeeping(pumpNumber: number, generation: number): Promise<void> {
+        const stillCurrent = () => this.pumpGeneration.get(pumpNumber) === generation;
+        try {
+            if (!stillCurrent()) return;
+            const board2Client = await this.modbusService.getBoard2Client();
+            if (!board2Client) throw new Error("Board2 Modbus client not available");
+
+            const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
+            const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, "board2");
+            if (!resetMapping) throw new Error(`Reset coil mapping not found: ${resetKey}`);
+            await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, "board2");
+            if (!stillCurrent()) return;
+            await this.modbusService.readFromModbusBoard(resetKey, resetMapping, "board2");
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            if (!stillCurrent()) return;
+
+            const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
+            const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, "board2");
+            if (statusMapping) {
+                await this.modbusService.writeToModbusBoard(statusKey, statusMapping, 1, "board2");
+            }
+        } catch (error) {
+            if (!stillCurrent()) return;
+            const message = (error as Error).message;
+            this.logger.error(`[PUMP-BOOKKEEPING] RESET_TOTAL_VOLUME_BOM_${pumpNumber} failed: ${message}`);
+            await this.mqttService.publishConfigUpdate(
+                `RESET_TOTAL_VOLUME_BOM_${pumpNumber}_error`,
+                message,
+            );
         }
     }
 
