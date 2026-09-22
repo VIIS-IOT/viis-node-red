@@ -37,6 +37,11 @@ export interface ModbusData {
     data: number[] | boolean[];
 }
 
+export function isRetryableModbusWriteError(message: string): boolean {
+  const text = message.toLowerCase();
+  return text.includes("timeout") || text.includes("timed out");
+}
+
 // Core Modbus Client
 export class ModbusClientCore extends EventEmitter {
     private client: ModbusRTU;
@@ -1316,7 +1321,7 @@ export class ModbusClientCore extends EventEmitter {
                 retryCount++;
 
                 // Check if this is a timeout error and we have retries left
-                if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                if (isRetryableModbusWriteError(err.message) && retryCount <= maxRetries) {
                     this.node.warn(`[${boardType}-WRITE] Write register ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
                     await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
                     continue;
@@ -1360,7 +1365,7 @@ export class ModbusClientCore extends EventEmitter {
                 retryCount++;
 
                 // Check if this is a timeout error and we have retries left
-                if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                if (isRetryableModbusWriteError(err.message) && retryCount <= maxRetries) {
                     this.node.warn(`[${boardType}-WRITE] Write coil ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
                     await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
                     continue;
