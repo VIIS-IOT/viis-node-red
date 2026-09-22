@@ -22,14 +22,27 @@ const pumpOnPending = new Set<string>();
 const pumpGeneration = new Map<number, number>();
 const pumpBookkeepingOwned = new Map<string, number>();
 const activatedInCurrentRequest = new Set<string>();
+const volumeResetAt = new Map<number, number>();
 let deviceRpcQueue: Promise<void> = Promise.resolve();
+
+export const RECENT_VOLUME_RESET_MS = 180_000;
 
 export function resetVietplantsRpcQueueForTests(): void {
     pumpOnPending.clear();
     pumpGeneration.clear();
     pumpBookkeepingOwned.clear();
     activatedInCurrentRequest.clear();
+    volumeResetAt.clear();
     deviceRpcQueue = Promise.resolve();
+}
+
+export function noteVolumeReset(pumpNumber: number, at = Date.now()): void {
+    volumeResetAt.set(pumpNumber, at);
+}
+
+export function shouldSkipAutoVolumeReset(pumpNumber: number, now = Date.now()): boolean {
+    const at = volumeResetAt.get(pumpNumber);
+    return at !== undefined && now - at < RECENT_VOLUME_RESET_MS;
 }
 
 export function notePumpCoilCommand(key: string, value: unknown): "run" | "drop" {
@@ -419,6 +432,10 @@ export class RpcHandler implements IRpcHandler {
                 await this.writeToModbusWithRetry(key, mapping, value);
                 const readValue = await this.readFromModbusWithRetry(key, mapping);
                 await this.publishResultWithRetry(key, readValue);
+                const resetMatch = key.match(/^RESET_TOTAL_VOLUME_BOM_(\d+)$/);
+                if (resetMatch && (value === true || value === 1)) {
+                    noteVolumeReset(parseInt(resetMatch[1], 10));
+                }
                 this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });
             }
         } catch (error) {
@@ -725,14 +742,17 @@ export class RpcHandler implements IRpcHandler {
             const board2Client = await this.modbusService.getBoard2Client();
             if (!board2Client) throw new Error("Board2 Modbus client not available");
 
-            const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
-            const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, "board2");
-            if (!resetMapping) throw new Error(`Reset coil mapping not found: ${resetKey}`);
-            await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, "board2");
-            if (!stillCurrent()) return;
-            await this.modbusService.readFromModbusBoard(resetKey, resetMapping, "board2");
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            if (!stillCurrent()) return;
+            if (!shouldSkipAutoVolumeReset(pumpNumber)) {
+                const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
+                const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, "board2");
+                if (!resetMapping) throw new Error(`Reset coil mapping not found: ${resetKey}`);
+                await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, "board2");
+                if (!stillCurrent()) return;
+                await this.modbusService.readFromModbusBoard(resetKey, resetMapping, "board2");
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                if (!stillCurrent()) return;
+                noteVolumeReset(pumpNumber);
+            }
 
             const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
             const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, "board2");

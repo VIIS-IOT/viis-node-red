@@ -4,8 +4,10 @@
  * Handles RPC request processing and coordination between services
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RpcHandler = void 0;
+exports.RpcHandler = exports.RECENT_VOLUME_RESET_MS = void 0;
 exports.resetVietplantsRpcQueueForTests = resetVietplantsRpcQueueForTests;
+exports.noteVolumeReset = noteVolumeReset;
+exports.shouldSkipAutoVolumeReset = shouldSkipAutoVolumeReset;
 exports.notePumpCoilCommand = notePumpCoilCommand;
 exports.releasePumpOnPending = releasePumpOnPending;
 const constants_1 = require("../constants");
@@ -16,13 +18,23 @@ const pumpOnPending = new Set();
 const pumpGeneration = new Map();
 const pumpBookkeepingOwned = new Map();
 const activatedInCurrentRequest = new Set();
+const volumeResetAt = new Map();
 let deviceRpcQueue = Promise.resolve();
+exports.RECENT_VOLUME_RESET_MS = 180000;
 function resetVietplantsRpcQueueForTests() {
     pumpOnPending.clear();
     pumpGeneration.clear();
     pumpBookkeepingOwned.clear();
     activatedInCurrentRequest.clear();
+    volumeResetAt.clear();
     deviceRpcQueue = Promise.resolve();
+}
+function noteVolumeReset(pumpNumber, at = Date.now()) {
+    volumeResetAt.set(pumpNumber, at);
+}
+function shouldSkipAutoVolumeReset(pumpNumber, now = Date.now()) {
+    const at = volumeResetAt.get(pumpNumber);
+    return at !== undefined && now - at < exports.RECENT_VOLUME_RESET_MS;
 }
 function notePumpCoilCommand(key, value) {
     const turningOn = value === true || value === 1;
@@ -354,6 +366,10 @@ class RpcHandler {
                 await this.writeToModbusWithRetry(key, mapping, value);
                 const readValue = await this.readFromModbusWithRetry(key, mapping);
                 await this.publishResultWithRetry(key, readValue);
+                const resetMatch = key.match(/^RESET_TOTAL_VOLUME_BOM_(\d+)$/);
+                if (resetMatch && (value === true || value === 1)) {
+                    noteVolumeReset(parseInt(resetMatch[1], 10));
+                }
                 this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });
             }
         }
@@ -629,17 +645,20 @@ class RpcHandler {
             const board2Client = await this.modbusService.getBoard2Client();
             if (!board2Client)
                 throw new Error("Board2 Modbus client not available");
-            const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
-            const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, "board2");
-            if (!resetMapping)
-                throw new Error(`Reset coil mapping not found: ${resetKey}`);
-            await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, "board2");
-            if (!stillCurrent())
-                return;
-            await this.modbusService.readFromModbusBoard(resetKey, resetMapping, "board2");
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            if (!stillCurrent())
-                return;
+            if (!shouldSkipAutoVolumeReset(pumpNumber)) {
+                const resetKey = `RESET_TOTAL_VOLUME_BOM_${pumpNumber}`;
+                const resetMapping = this.modbusService.findModbusMappingForBoard(resetKey, "board2");
+                if (!resetMapping)
+                    throw new Error(`Reset coil mapping not found: ${resetKey}`);
+                await this.modbusService.writeToModbusBoard(resetKey, resetMapping, 1, "board2");
+                if (!stillCurrent())
+                    return;
+                await this.modbusService.readFromModbusBoard(resetKey, resetMapping, "board2");
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                if (!stillCurrent())
+                    return;
+                noteVolumeReset(pumpNumber);
+            }
             const statusKey = `PUMP_STATUS_BOM_${pumpNumber}`;
             const statusMapping = this.modbusService.findModbusMappingForBoard(statusKey, "board2");
             if (statusMapping) {

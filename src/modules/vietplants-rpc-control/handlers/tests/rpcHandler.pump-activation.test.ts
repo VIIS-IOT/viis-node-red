@@ -25,6 +25,41 @@ beforeEach(() => {
   resetVietplantsRpcQueueForTests();
 });
 
+test("pump ON skips board2 volume reset when that pump was reset recently", async () => {
+  const board2Writes: string[] = [];
+  const modbus = {
+    getModbusHoldingRegisters: () => ({}),
+    getModbusCoils: () => ({ COIL_BOM_1: 16, RESET_TOTAL_VOLUME_BOM_1: 200 }),
+    findModbusMapping: (key: string) => ({
+      address: key.startsWith("RESET") ? 200 : 16,
+      fc: 5,
+      value: false,
+      boardId: key.startsWith("RESET") ? "board2" : "board1",
+    }),
+    findModbusMappingForBoard: (key: string) => ({ address: key.startsWith("RESET") ? 200 : 160, fc: 5 }),
+    getBoard2Client: async () => ({}),
+    writeToModbus: async () => undefined,
+    readFromModbus: async () => true,
+    writeToModbusBoard: async (key: string) => { board2Writes.push(key); },
+    readFromModbusBoard: async () => 1,
+    checkConnection: async () => undefined,
+  };
+  const mqtt = {
+    publishResult: jest.fn().mockResolvedValue(undefined),
+    publishConfigUpdate: jest.fn().mockResolvedValue(undefined),
+    publishError: jest.fn(),
+    isConnected: () => true,
+  };
+  const handler = createHandler(modbus, mqtt);
+
+  await handler.handleRpcRequest({ method: "set_state", params: { RESET_TOTAL_VOLUME_BOM_1: true } });
+  await handler.handleRpcRequest({ method: "set_state", params: { COIL_BOM_1: true } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  expect(board2Writes.filter((key) => key.startsWith("RESET"))).toEqual([]);
+  expect(board2Writes).toContain("PUMP_STATUS_BOM_1");
+});
+
 test("pump ON publishes the board1 coil when board2 reset times out", async () => {
   const writes: string[] = [];
   const published: string[] = [];

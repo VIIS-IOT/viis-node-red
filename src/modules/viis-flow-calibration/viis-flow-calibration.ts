@@ -12,6 +12,8 @@ import { NodeAPI, Node, NodeContext } from "node-red";
 import ClientRegistry from "../../core/client-registry";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { CalibrationService } from "./services/calibrationService";
+import { buildCalibrationTelemetry, calibrationSkipReason } from "./calibration-telemetry";
+import { MqttConfig } from "../../core/mqtt-client";
 import {
     ViisFlowCalibrationNodeDef,
     CalibrationInput,
@@ -40,6 +42,8 @@ module.exports = function (RED: NodeAPI) {
         let calibrationService: CalibrationService | null = null;
         let modbusClientBoard1: any = null;
         let modbusClientBoard2: any = null;
+        let thingsboardMqtt: { publish: (topic: string, payload: string) => Promise<void> } | null = null;
+        let localMqtt: { publish: (topic: string, payload: string) => Promise<void> } | null = null;
         let globalHelper: GlobalContextHelper;
         let board2Coils: Record<string, number> = {};
         let board2HoldingRegisters: Record<string, number> = {}; // ADDRESSES (where to write)
@@ -70,6 +74,7 @@ module.exports = function (RED: NodeAPI) {
 
                 // Get Modbus clients for both boards
                 await initializeModbusClients();
+                await initializeMqttClients();
 
                 // Setup periodic calibration check
                 const interval = config.checkInterval || DEFAULTS.CHECK_INTERVAL;
@@ -99,6 +104,58 @@ module.exports = function (RED: NodeAPI) {
         /**
          * Initialize Modbus clients for both boards
          */
+        async function initializeMqttClients(): Promise<void> {
+            const thingsboardConfig: MqttConfig = {
+                broker: `mqtt://${globalHelper.getEnvVar("THINGSBOARD_HOST", "mqtt.viis.tech")}:${globalHelper.getEnvVar("THINGSBOARD_PORT", "1883")}`,
+                clientId: `node-red-calib-tb-${Math.random().toString(16).substring(2, 10)}`,
+                username: globalHelper.getEnvVar("DEVICE_ACCESS_TOKEN", ""),
+                password: globalHelper.getEnvVar("THINGSBOARD_PASSWORD", ""),
+                qos: 1,
+            };
+            const localConfig: MqttConfig = {
+                broker: `mqtt://${globalHelper.getEnvVar("EMQX_HOST", "emqx")}:${globalHelper.getEnvVar("EMQX_PORT", "1883")}`,
+                clientId: `node-red-calib-local-${Math.random().toString(16).substring(2, 10)}`,
+                username: globalHelper.getEnvVar("EMQX_USERNAME", ""),
+                password: globalHelper.getEnvVar("EMQX_PASSWORD", ""),
+                qos: 1,
+            };
+            try {
+                thingsboardMqtt = await ClientRegistry.getThingsboardMqttClient(thingsboardConfig, node);
+                localMqtt = await ClientRegistry.getLocalMqttClient(localConfig, node);
+            } catch (error) {
+                node.warn(`Calibration telemetry MQTT unavailable: ${(error as Error).message}`);
+            }
+        }
+
+        async function publishCalibrationTelemetry(
+            pumpIndex: number,
+            result: CalibrationResult,
+            skipReason: string,
+        ): Promise<void> {
+            const error = result.success ? skipReason : (result.error || skipReason || "calibration failed");
+            const telemetry = buildCalibrationTelemetry({
+                pumpIndex,
+                error,
+                calibUnscaled: result.board1 ? result.board1.newCalibValue / 100 : undefined,
+                kFactorUnscaled: result.board2 ? result.board2.newKFactor / 100 : undefined,
+                flowrateUnscaled: typeof result.board2?.newFlowrate === "number"
+                    ? result.board2.newFlowrate / 100
+                    : undefined,
+            });
+            const deviceId = globalHelper.getEnvVar("DEVICE_ID", "unknown");
+            const payload = JSON.stringify({ ts: Date.now(), ...telemetry });
+            try {
+                if (thingsboardMqtt) {
+                    await thingsboardMqtt.publish("v1/devices/me/telemetry", payload);
+                }
+                if (localMqtt) {
+                    await localMqtt.publish(`v1/devices/me/telemetry/${deviceId}`, payload);
+                }
+            } catch (publishError) {
+                node.warn(`Calibration telemetry publish failed: ${(publishError as Error).message}`);
+            }
+        }
+
         async function initializeModbusClients(): Promise<void> {
             try {
                 // Get board1 client (pump control)
@@ -201,9 +258,9 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     // Calculate calibration values
-                    const shouldCalibrateBoard2 = config.calibrateBoard2 !== false && input.hasBoard2Data;
+                    const shouldCalibrateBoard2 = config.calibrateBoard2 !== false;
                     if (config.calibrateBoard2 !== false && !input.hasBoard2Data) {
-                        node.warn(`Skipping Board2 calibration for pump ${i}: missing/invalid FLOWRATE sensor coefficient`);
+                        node.warn(`Skipping FLOWRATE update for pump ${i}: missing/invalid FLOWRATE sensor coefficient`);
                     }
 
                     const result = calibrationService.calculate(
@@ -224,6 +281,12 @@ module.exports = function (RED: NodeAPI) {
                         node.warn(`Calibration failed for pump ${i}: ${result.error}`);
                         stats.failedCalibrations++;
                     }
+
+                    await publishCalibrationTelemetry(i, result, calibrationSkipReason({
+                        pumpIndex: i,
+                        hasBoard2Data: input.hasBoard2Data,
+                        reportedVolume: input.reportedVolume,
+                    }));
 
                     // Mark flag for reset
                     flagUpdates[calculateKey] = false;
@@ -337,7 +400,7 @@ module.exports = function (RED: NodeAPI) {
             const flowrateValue = Number.isFinite(normalizedFlowrate) ? normalizedFlowrate : 0;
             const reportedVolumeValue = Number.isFinite(normalizedReportedVolume) && normalizedReportedVolume > 0
                 ? normalizedReportedVolume
-                : Number(setMl);
+                : null;
 
             if (!hasValidFlowrate) {
                 node.warn(`⚠️ FLOWRATE missing/invalid for pump ${pumpIndex} in holding_register_data_2. Board2 calibration will be skipped.`);
@@ -382,13 +445,15 @@ module.exports = function (RED: NodeAPI) {
                         })
                 );
 
-                log(`Writing to Board2 Flowrate: address=${result.board2.flowrateAddress}, value=${result.board2.newFlowrate}`);
-                writePromises.push(
-                    modbusClientBoard2.writeRegister(result.board2.flowrateAddress, result.board2.newFlowrate)
-                        .catch((err: Error) => {
-                            node.error(`Board2 Flowrate write error: ${err.message}`);
-                        })
-                );
+                if (typeof result.board2.newFlowrate === "number") {
+                    log(`Writing to Board2 Flowrate: address=${result.board2.flowrateAddress}, value=${result.board2.newFlowrate}`);
+                    writePromises.push(
+                        modbusClientBoard2.writeRegister(result.board2.flowrateAddress, result.board2.newFlowrate)
+                            .catch((err: Error) => {
+                                node.error(`Board2 Flowrate write error: ${err.message}`);
+                            })
+                    );
+                }
             }
 
             await Promise.all(writePromises);
@@ -597,6 +662,12 @@ module.exports = function (RED: NodeAPI) {
                     if (modbusClientBoard2) {
                         ClientRegistry.releaseClientV2("modbus-board", node, "board2");
                         log("Board2 client released");
+                    }
+                    if (thingsboardMqtt) {
+                        ClientRegistry.releaseClient("thingsboard", node);
+                    }
+                    if (localMqtt) {
+                        ClientRegistry.releaseClient("local", node);
                     }
 
                     log("Node closed and cleaned up");

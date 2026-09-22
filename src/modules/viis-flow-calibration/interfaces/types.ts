@@ -24,7 +24,7 @@ export interface CalibrationInput {
     currentCalibBoard1: number;  // Current HOLDING_CALIB_BOM_n (scaled by 100)
     currentKFactor: number;      // Current K-Factor from board2
     currentFlowrate: number;     // Current expected pump flowrate (mL/s)
-    reportedVolume: number;      // Volume reported by flow sensor (V_reported)
+    reportedVolume: number | null; // Volume reported by flow sensor, null when unread
     hasBoard2Data?: boolean;     // True when board2 data is valid for K-Factor calibration
 }
 
@@ -42,7 +42,7 @@ export interface CalibrationResult {
         newKFactor: number;        // New K-Factor
         kFactorAddress: number;
         kFactorKey: string;
-        newFlowrate: number;       // New expected pump flowrate (mL/s * 100)
+        newFlowrate?: number;      // Omitted when sensor volume or flowrate is missing
         flowrateAddress: number;
         flowrateKey: string;
     } | null;
