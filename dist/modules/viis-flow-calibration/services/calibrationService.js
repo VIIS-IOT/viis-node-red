@@ -84,22 +84,17 @@ class CalibrationService {
                 // Pump calibration coefficient (K_FACTOR_BOM):
                 // K_new = actualMl / runTime (scaled x100)
                 const newKFactor = Math.round((actualMl / runTime) * constants_1.DEFAULTS.SCALE_FACTOR);
-                // Flow sensor coefficient (FLOWRATE_BOM):
-                // FlowCoeff_new = FlowCoeff_old × (V_reported / V_entered)
-                // currentFlowrate is unscaled in global context, write as scaled x100.
-                let newFlowrate = Math.round(currentFlowrate * constants_1.DEFAULTS.SCALE_FACTOR);
-                if (reportedVolume > 0 && actualMl > 0 && currentFlowrate > 0) {
-                    newFlowrate = Math.round(currentFlowrate * (reportedVolume / actualMl) * constants_1.DEFAULTS.SCALE_FACTOR);
-                }
-                result.board2 = {
-                    newKFactor,
+                // Flow sensor coefficient only when the sensor actually reported a volume.
+                // Do not substitute the pump setpoint for a missing totalizer reading.
+                const newFlowrate = reportedVolume !== null && reportedVolume > 0 && actualMl > 0 && currentFlowrate > 0
+                    ? Math.round(currentFlowrate * (reportedVolume / actualMl) * constants_1.DEFAULTS.SCALE_FACTOR)
+                    : undefined;
+                result.board2 = Object.assign({ newKFactor,
                     kFactorAddress,
                     kFactorKey,
-                    newFlowrate,
                     flowrateAddress,
-                    flowrateKey,
-                };
-                this.log(`  Board2: newKFactor=${newKFactor}, newFlowrate=${newFlowrate / constants_1.DEFAULTS.SCALE_FACTOR} mL/s`);
+                    flowrateKey }, (newFlowrate !== undefined ? { newFlowrate } : {}));
+                this.log(`  Board2: newKFactor=${newKFactor}, newFlowrate=${newFlowrate === undefined ? "skipped" : newFlowrate / constants_1.DEFAULTS.SCALE_FACTOR} mL/s`);
             }
             else {
                 this.warn(`  Board2: Registers not found - kFactor=${kFactorKey}, flowrate=${flowrateKey}`);

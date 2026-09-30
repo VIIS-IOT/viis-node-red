@@ -107,25 +107,21 @@ export class CalibrationService {
                 // K_new = actualMl / runTime (scaled x100)
                 const newKFactor = Math.round((actualMl / runTime) * DEFAULTS.SCALE_FACTOR);
 
-                // Flow sensor coefficient (FLOWRATE_BOM):
-                // FlowCoeff_new = FlowCoeff_old × (V_reported / V_entered)
-                // currentFlowrate is unscaled in global context, write as scaled x100.
-                let newFlowrate = Math.round(currentFlowrate * DEFAULTS.SCALE_FACTOR);
-                if (reportedVolume > 0 && actualMl > 0 && currentFlowrate > 0) {
-                    newFlowrate = Math.round(
-                        currentFlowrate * (reportedVolume / actualMl) * DEFAULTS.SCALE_FACTOR
-                    );
-                }
+                // Flow sensor coefficient only when the sensor actually reported a volume.
+                // Do not substitute the pump setpoint for a missing totalizer reading.
+                const newFlowrate = reportedVolume !== null && reportedVolume > 0 && actualMl > 0 && currentFlowrate > 0
+                    ? Math.round(currentFlowrate * (reportedVolume / actualMl) * DEFAULTS.SCALE_FACTOR)
+                    : undefined;
 
                 result.board2 = {
                     newKFactor,
                     kFactorAddress,
                     kFactorKey,
-                    newFlowrate,
                     flowrateAddress,
                     flowrateKey,
+                    ...(newFlowrate !== undefined ? { newFlowrate } : {}),
                 };
-                this.log(`  Board2: newKFactor=${newKFactor}, newFlowrate=${newFlowrate / DEFAULTS.SCALE_FACTOR} mL/s`);
+                this.log(`  Board2: newKFactor=${newKFactor}, newFlowrate=${newFlowrate === undefined ? "skipped" : newFlowrate / DEFAULTS.SCALE_FACTOR} mL/s`);
             } else {
                 this.warn(`  Board2: Registers not found - kFactor=${kFactorKey}, flowrate=${flowrateKey}`);
             }

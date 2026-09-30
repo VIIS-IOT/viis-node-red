@@ -54,6 +54,26 @@ describe("CalibrationService", () => {
             expect(result.board2!.newFlowrate).toBe(1053);
         });
 
+        it("does not scale flowrate from setMl when reported volume is missing", () => {
+            const input: CalibrationInput = {
+                pumpIndex: 1,
+                actualMl: 80,
+                setMl: 100,
+                currentCalibBoard1: 10,
+                currentKFactor: 10,
+                currentFlowrate: 10,
+                reportedVolume: null,
+                hasBoard2Data: true,
+            };
+
+            const result = service.calculate(input, board1Registers, board2Registers, true, true);
+
+            expect(result.success).toBe(true);
+            expect(result.board1?.newCalibValue).toBe(800);
+            expect(result.board2?.newKFactor).toBe(800);
+            expect(result.board2?.newFlowrate).toBeUndefined();
+        });
+
         it("should handle division by zero when actualMl is 0", () => {
             const input: CalibrationInput = {
                 pumpIndex: 1,

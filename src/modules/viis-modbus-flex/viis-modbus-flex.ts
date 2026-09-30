@@ -92,6 +92,7 @@ module.exports = function (RED: NodeAPI) {
         let currentModbusConfig: any = null;
         let currentBoardId: string | undefined = config.boardId;
         let isMultiBoardMode: boolean = false;
+        let detachModbusStatus: () => void = () => undefined;
 
         try {
             // Initialize logger with enableLogging flag from config
@@ -103,6 +104,77 @@ module.exports = function (RED: NodeAPI) {
 
             // Initialize GlobalContextHelper for environment variables
             const globalHelper = new GlobalContextHelper(node.context());
+
+            const attachModbusStatus = (client: any) => {
+                detachModbusStatus();
+                detachModbusStatus = () => undefined;
+
+                if (!client || typeof client.on !== "function") {
+                    logger.warn("[MODBUS-GETTER] Client has no modbus-status events; polling continues");
+                    return;
+                }
+
+                const handler = async (event: any) => {
+                    logger.log(`[EVENT] Board ${config.boardId}: ${event.status} - ${event.error || ''}`);
+
+                    if (event.status === 'circuit-breaker-open' ||
+                        event.status === 'prolonged-disconnect') {
+                        await sendNotification(
+                            node,
+                            logger,
+                            globalHelper,
+                            config.boardId,
+                            {
+                                status: event.status,
+                                error: event.error,
+                                recoveryAt: event.recoveryAt,
+                                failedCount: event.failedCount,
+                                disconnectStartTime: event.disconnectStartTime
+                            }
+                        );
+                    }
+
+                    switch (event.status) {
+                        case 'connected':
+                            node.status({ fill: "green", shape: "dot", text: "Connected" });
+                            break;
+                        case 'disconnected':
+                            node.status({ fill: "red", shape: "ring", text: `Disconnected: ${event.error}` });
+                            break;
+                        case 'circuit-breaker-open':
+                            const recoveryMin = event.recoveryAt ?
+                                Math.round((event.recoveryAt - Date.now()) / 60000) : 5;
+                            node.status({
+                                fill: "yellow",
+                                shape: "ring",
+                                text: `Circuit Breaker (retry in ${recoveryMin}m)`
+                            });
+                            break;
+                        case 'error':
+                            node.status({ fill: "yellow", shape: "ring", text: `Error: ${event.error}` });
+                            break;
+                    }
+                };
+
+                try {
+                    client.on("modbus-status", handler);
+                } catch (error) {
+                    logger.warn(`[MODBUS-GETTER] Status subscription skipped: ${(error as Error).message}`);
+                    return;
+                }
+
+                detachModbusStatus = () => {
+                    try {
+                        if (typeof client.removeListener === "function") {
+                            client.removeListener("modbus-status", handler);
+                        } else if (typeof client.off === "function") {
+                            client.off("modbus-status", handler);
+                        }
+                    } catch (error) {
+                        logger.warn(`[MODBUS-GETTER] Status unsubscribe skipped: ${(error as Error).message}`);
+                    }
+                };
+            };
 
             // Helper function to read fresh Modbus config from global context
             const readModbusConfig = () => {
@@ -220,52 +292,8 @@ module.exports = function (RED: NodeAPI) {
                     // Set ready status
                     node.status({ fill: "green", shape: "dot", text: STATUS_MESSAGES.READY });
 
-                    // 🆕 MỚI: Lắng nghe events từ modbus client và gửi notification
-                    (modbusClient as any).on("modbus-status", async (event: any) => {
-                        logger.log(`[EVENT] Board ${config.boardId}: ${event.status} - ${event.error || ''}`);
-                        
-                        // Handle alert events
-                        if (event.status === 'circuit-breaker-open' || 
-                            event.status === 'prolonged-disconnect') {
-                            
-                            await sendNotification(
-                                node,
-                                logger,
-                                globalHelper,
-                                config.boardId,
-                                {
-                                    status: event.status,
-                                    error: event.error,
-                                    recoveryAt: event.recoveryAt,
-                                    failedCount: event.failedCount,
-                                    disconnectStartTime: event.disconnectStartTime
-                                }
-                            );
-                        }
-                        
-                        // Update node status
-                        switch (event.status) {
-                            case 'connected':
-                                node.status({ fill: "green", shape: "dot", text: "Connected" });
-                                break;
-                            case 'disconnected':
-                                node.status({ fill: "red", shape: "ring", text: `Disconnected: ${event.error}` });
-                                break;
-                            case 'circuit-breaker-open':
-                                const recoveryMin = event.recoveryAt ? 
-                                    Math.round((event.recoveryAt - Date.now()) / 60000) : 5;
-                                node.status({ 
-                                    fill: "yellow", 
-                                    shape: "ring", 
-                                    text: `Circuit Breaker (retry in ${recoveryMin}m)` 
-                                });
-                                break;
-                            case 'error':
-                                node.status({ fill: "yellow", shape: "ring", text: `Error: ${event.error}` });
-                                break;
-                        }
-                    });
-
+                    // Status events are optional. A missing .on() must not abort polling.
+                    attachModbusStatus(modbusClient);
                     logger.log("Modbus status event listener registered");
 
             // Auto-detect config changes every 30 seconds
@@ -325,9 +353,11 @@ module.exports = function (RED: NodeAPI) {
                             }
                         }
 
-                        // Update service with new client
+                        // Update service with new client and move the status listener
+                        // onto that client. Each flex instance keeps its own listener.
                         if (modbusGetterService && modbusClient) {
                             (modbusGetterService as any).modbusClient = modbusClient;
+                            attachModbusStatus(modbusClient);
                         }
 
                         currentModbusConfig = { ...newConfig };
@@ -361,6 +391,8 @@ module.exports = function (RED: NodeAPI) {
                     if (isMultiBoardMode && targetBoardId && targetBoardId !== currentBoardId) {
                         const requestedBoardId = targetBoardId;
                         logger.log(`Switching to board: ${requestedBoardId}`);
+                        detachModbusStatus();
+                        detachModbusStatus = () => undefined;
 
                         // Release current board connection
                         if (currentBoardId) {
@@ -375,6 +407,7 @@ module.exports = function (RED: NodeAPI) {
                             // Update service with new client
                             if (modbusGetterService) {
                                 (modbusGetterService as any).modbusClient = modbusClient;
+                                attachModbusStatus(modbusClient);
                             }
 
                             logger.log(`Switched to board: ${requestedBoardId}`);
@@ -462,6 +495,8 @@ module.exports = function (RED: NodeAPI) {
         node.on("close", (done: any) => {
             try {
                 logger.log("Closing VIIS Modbus Flex Node...");
+                detachModbusStatus();
+                detachModbusStatus = () => undefined;
 
                 // Stop config check interval
                 if (configCheckInterval) {

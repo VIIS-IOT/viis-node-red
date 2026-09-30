@@ -46,4 +46,42 @@ describe("BoardScopedModbusClient", () => {
     expect(client.isConnected).toBe(false);
     expect(transport.isConnectedCheck).toHaveBeenCalledTimes(2);
   });
+
+  it("forwards modbus-status to every subscriber and lets one subscriber detach", () => {
+    const listeners = new Map<string, Set<(event: unknown) => void>>();
+    const transport = {
+      readCoils: jest.fn(),
+      readInputRegisters: jest.fn(),
+      readHoldingRegisters: jest.fn(),
+      writeCoil: jest.fn(),
+      writeRegister: jest.fn(),
+      isConnectedCheck: jest.fn().mockReturnValue(true),
+      disconnect: jest.fn(),
+      on: jest.fn((event: string, listener: (event: unknown) => void) => {
+        const bucket = listeners.get(event) ?? new Set<(event: unknown) => void>();
+        bucket.add(listener);
+        listeners.set(event, bucket);
+      }),
+      removeListener: jest.fn((event: string, listener: (event: unknown) => void) => {
+        listeners.get(event)?.delete(listener);
+      }),
+    };
+
+    const client = new BoardScopedModbusClient(transport, 1);
+    const first = jest.fn();
+    const second = jest.fn();
+
+    client.on("modbus-status", first);
+    client.on("modbus-status", second);
+    listeners.get("modbus-status")?.forEach((listener) => listener({ status: "connected" }));
+
+    expect(first).toHaveBeenCalledWith({ status: "connected" });
+    expect(second).toHaveBeenCalledWith({ status: "connected" });
+
+    client.removeListener("modbus-status", first);
+    listeners.get("modbus-status")?.forEach((listener) => listener({ status: "disconnected" }));
+
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledWith({ status: "disconnected" });
+  });
 });
