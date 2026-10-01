@@ -64,8 +64,9 @@ class MqttClientCore extends events_1.EventEmitter {
             clean: true,
         };
         if (this.config.deviceId) {
+            // Broker publishes this only when the session dies without DISCONNECT.
             options.will = {
-                topic: (0, demeter_mqtt_topics_1.buildDeviceAttributesTopic)(this.config.deviceId),
+                topic: (0, demeter_mqtt_topics_1.buildDeviceLifecycleTopic)(this.config.deviceId),
                 payload: JSON.stringify({ status: "offline" }),
                 qos: 1,
                 retain: false,
@@ -249,7 +250,8 @@ class MqttClientCore extends events_1.EventEmitter {
             return;
         this.healthCheckTimer = setInterval(() => {
             if (this.connectionState.isConnected && this.client) {
-                // Send a lightweight telemetry message as health check for ThingsBoard
+                // Refresh lastConnectTime before the 10-minute trusted window expires.
+                this.publishDeviceStatus("online");
                 this.publishHealthCheck();
             }
         }, this.config.healthCheckInterval);
@@ -294,7 +296,7 @@ class MqttClientCore extends events_1.EventEmitter {
         if (!this.config.deviceId)
             return;
         try {
-            await this.publishMessage((0, demeter_mqtt_topics_1.buildDeviceAttributesTopic)(this.config.deviceId), JSON.stringify(statusMessage), { qos: 1, retain: false });
+            await this.publishMessage((0, demeter_mqtt_topics_1.buildDeviceLifecycleTopic)(this.config.deviceId), JSON.stringify(statusMessage), { qos: 1, retain: false });
         }
         catch (error) {
             this.node.warn(`Failed to publish device status: ${error.message}`);

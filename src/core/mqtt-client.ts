@@ -3,7 +3,7 @@ import mqtt, { MqttClient, IClientOptions, IClientPublishOptions } from "mqtt";
 import { EventEmitter } from "events";
 import { ConnectionMonitor } from "./connection-monitor";
 import {
-    buildDeviceAttributesTopic,
+    buildDeviceLifecycleTopic,
     buildDeviceTelemetryTopic,
 } from "./demeter-mqtt-topics";
 
@@ -133,8 +133,9 @@ export class MqttClientCore extends EventEmitter {
             clean: true,
         };
         if (this.config.deviceId) {
+            // Broker publishes this only when the session dies without DISCONNECT.
             options.will = {
-                topic: buildDeviceAttributesTopic(this.config.deviceId),
+                topic: buildDeviceLifecycleTopic(this.config.deviceId),
                 payload: JSON.stringify({ status: "offline" }),
                 qos: 1,
                 retain: false,
@@ -357,7 +358,8 @@ export class MqttClientCore extends EventEmitter {
 
         this.healthCheckTimer = setInterval(() => {
             if (this.connectionState.isConnected && this.client) {
-                // Send a lightweight telemetry message as health check for ThingsBoard
+                // Refresh lastConnectTime before the 10-minute trusted window expires.
+                this.publishDeviceStatus("online");
                 this.publishHealthCheck();
             }
         }, this.config.healthCheckInterval);
@@ -411,7 +413,7 @@ export class MqttClientCore extends EventEmitter {
         if (!this.config.deviceId) return;
         try {
             await this.publishMessage(
-                buildDeviceAttributesTopic(this.config.deviceId),
+                buildDeviceLifecycleTopic(this.config.deviceId),
                 JSON.stringify(statusMessage),
                 { qos: 1, retain: false }
             );
