@@ -3,6 +3,7 @@
  */
 
 import { NodeDef } from "node-red";
+import { OperationContext, TraceContext } from "../../../core/observability/types";
 
 // Node configuration interface
 export interface ViisRpcControlNodeDef extends NodeDef {
@@ -127,9 +128,9 @@ export interface IValidationService {
 // Modbus service interface
 export interface IModbusService {
     findModbusMapping(key: string): ModbusMappingResult | null;
-    writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void>;
-    readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean>;
-    checkConnection(boardId?: string): Promise<void>;
+    writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean, context?: OperationContext): Promise<void>;
+    readFromModbus(key: string, mapping: ModbusMappingResult, context?: OperationContext): Promise<number | boolean>;
+    checkConnection(boardId?: string, context?: OperationContext): Promise<void>;
     getModbusHoldingRegisters(): Record<string, number>;
     getModbusCoils(): Record<string, number>;
     updateGlobalContextCacheAfterVerification(key: string, value: number | boolean, fc: number): void;
@@ -146,6 +147,18 @@ export interface IMqttService {
     publishConfigUpdate(key: string, value: any, note?: string): Promise<void>;
     isConnected(): boolean;
     publishError(errorMessage: string): Promise<void>;
+    scheduleResultTracked(key: string, value: number | boolean, context: OperationContext): { operationId: string; completion: Promise<PublishOutcome> };
+    publishResultImmediateTracked(key: string, value: number | boolean, context: OperationContext): Promise<PublishOutcome>;
+    publishConfigUpdateTracked(key: string, value: any, note: string | undefined, context: OperationContext): Promise<PublishOutcome>;
+    publishErrorTracked(errorMessage: string, context: OperationContext): Promise<PublishOutcome>;
+    getDiagnosticStatus?(): { pendingPublishCount: number; oldestPendingPublishAgeMs?: number; lastPublishAcknowledgedAt?: string };
+}
+
+export interface PublishOutcome {
+    operationId: string;
+    status: "acknowledged" | "failed" | "unknown" | "superseded" | "cancelled";
+    acknowledgement: "mqtt_puback" | "mqtt_pubcomp" | "client_callback" | "none";
+    errorCode?: string;
 }
 
 // Message handler interface
@@ -158,7 +171,7 @@ export interface IMessageHandler {
 
 // RPC handler interface
 export interface IRpcHandler {
-    handleRpcRequest(rpcBody: RpcMessage): Promise<void>;
+    handleRpcRequest(rpcBody: RpcMessage, maxRetries?: number, context?: TraceContext): Promise<void>;
 }
 
 // Scaling utility interface

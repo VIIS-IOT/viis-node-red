@@ -7,6 +7,7 @@ exports.MqttClientCore = void 0;
 const mqtt_1 = __importDefault(require("mqtt"));
 const events_1 = require("events");
 const connection_monitor_1 = require("./connection-monitor");
+const diagnostic_logger_1 = require("./observability/diagnostic-logger");
 // Enhanced MQTT Client with Google IoT standards compliance
 class MqttClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -30,6 +31,7 @@ class MqttClientCore extends events_1.EventEmitter {
         this.eventListeners = new Map();
         this.config = Object.assign({ reconnectPeriod: 0, connectTimeout: 10000, keepalive: 30, maxReconnectAttempts: this.CIRCUIT_BREAKER_MAX_ATTEMPTS, reconnectBackoffMultiplier: this.RECONNECT_INTERVAL_MULTIPLIER, maxReconnectDelay: this.RECONNECT_INTERVAL_MAX, healthCheckInterval: this.HEALTH_CHECK_INTERVAL, messageQueueSize: 100, enableCircuitBreaker: true }, config);
         this.node = node;
+        this.diagnostic = new diagnostic_logger_1.DiagnosticLogger(node, "mqtt-client");
         // Initialize connection state
         this.connectionState = {
             isConnected: false,
@@ -144,6 +146,11 @@ class MqttClientCore extends events_1.EventEmitter {
         this.connectionState.lastConnectedAt = Date.now();
         this.connectionState.reconnectAttempts = 0;
         this.connectionState.totalReconnects++;
+        this.diagnostic.emit("info", "mqtt.connected", {
+            clientId: this.config.clientId,
+            totalReconnects: this.connectionState.totalReconnects,
+            connectedAt: new Date(this.connectionState.lastConnectedAt).toISOString(),
+        });
         this.node.status({ fill: "green", shape: "dot", text: "Connected" });
         this.emit("mqtt-status", { status: "connected", state: this.connectionState });
         // Resubscribe to topics
@@ -157,6 +164,11 @@ class MqttClientCore extends events_1.EventEmitter {
         this.connectionState.isConnected = false;
         this.connectionState.isConnecting = false;
         this.connectionState.lastDisconnectedAt = Date.now();
+        this.diagnostic.emit("warn", "mqtt.disconnected", {
+            clientId: this.config.clientId,
+            reconnectAttempts: this.connectionState.reconnectAttempts,
+            disconnectedAt: new Date(this.connectionState.lastDisconnectedAt).toISOString(),
+        });
         this.node.status({ fill: "red", shape: "ring", text: "Disconnected" });
         this.emit("mqtt-status", { status: "disconnected", state: this.connectionState });
         // Schedule reconnection if not manually disconnected
@@ -168,7 +180,11 @@ class MqttClientCore extends events_1.EventEmitter {
         this.connectionState.reconnectAttempts++;
         // Reset stale connection promise to prevent hanging waitForConnection calls
         this.connectionPromise = null;
-        this.node.error(`MQTT Connection Error: ${error.message}`);
+        this.diagnostic.emit("error", "mqtt.connection_error", {
+            clientId: this.config.clientId,
+            reconnectAttempts: this.connectionState.reconnectAttempts,
+            error: { code: error === null || error === void 0 ? void 0 : error.code, message: error.message },
+        });
         this.node.status({
             fill: "yellow",
             shape: "ring",
@@ -187,6 +203,11 @@ class MqttClientCore extends events_1.EventEmitter {
     // Circuit breaker implementation with progressive recovery
     openCircuitBreaker() {
         this.connectionState.circuitBreakerOpen = true;
+        this.diagnostic.emit("error", "mqtt.circuit_breaker_changed", {
+            clientId: this.config.clientId,
+            open: true,
+            reconnectAttempts: this.connectionState.reconnectAttempts,
+        });
         this.node.warn("Circuit breaker opened - stopping reconnection attempts");
         this.node.status({ fill: "red", shape: "ring", text: "Circuit breaker open - will retry in 30s" });
         // Shorter initial timeout with progressive backoff
@@ -194,6 +215,11 @@ class MqttClientCore extends events_1.EventEmitter {
         this.circuitBreakerTimer = setTimeout(() => {
             this.connectionState.circuitBreakerOpen = false;
             this.connectionState.reconnectAttempts = 0;
+            this.diagnostic.emit("info", "mqtt.circuit_breaker_changed", {
+                clientId: this.config.clientId,
+                open: false,
+                reconnectAttempts: 0,
+            });
             this.node.log("Circuit breaker closed - reconnection attempts resumed");
             this.node.status({ fill: "yellow", shape: "ring", text: "Retrying connection..." });
             // Immediately attempt reconnection
@@ -206,6 +232,11 @@ class MqttClientCore extends events_1.EventEmitter {
             this.node.warn("Manually resetting circuit breaker");
             this.connectionState.circuitBreakerOpen = false;
             this.connectionState.reconnectAttempts = 0;
+            this.diagnostic.emit("warn", "mqtt.circuit_breaker_changed", {
+                clientId: this.config.clientId,
+                open: false,
+                manualReset: true,
+            });
             if (this.circuitBreakerTimer) {
                 clearTimeout(this.circuitBreakerTimer);
                 this.circuitBreakerTimer = null;
@@ -223,6 +254,11 @@ class MqttClientCore extends events_1.EventEmitter {
         const multiplier = this.config.reconnectBackoffMultiplier || 1.5;
         const maxDelay = this.config.maxReconnectDelay || 60000;
         const delay = Math.min(baseDelay * Math.pow(multiplier, this.connectionState.reconnectAttempts), maxDelay);
+        this.diagnostic.emit("warn", "mqtt.reconnect_scheduled", {
+            clientId: this.config.clientId,
+            reconnectAttempts: this.connectionState.reconnectAttempts,
+            delayMs: delay,
+        });
         this.node.log(`Scheduling reconnection in ${delay}ms (attempt ${this.connectionState.reconnectAttempts + 1})`);
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
@@ -331,6 +367,9 @@ class MqttClientCore extends events_1.EventEmitter {
     getConnectionState() {
         return Object.assign({}, this.connectionState);
     }
+    getDiagnosticStatus() {
+        return Object.assign(Object.assign({ clientId: this.config.clientId }, this.connectionState), { queue: this.getQueueStatus(), subscribedTopicCount: this.subscribedTopics.size });
+    }
     // Get queue status for monitoring
     getQueueStatus() {
         return {
@@ -378,6 +417,7 @@ class MqttClientCore extends events_1.EventEmitter {
     async subscribe(topic, qos = this.config.qos) {
         if (!this.client)
             throw new Error("MQTT client not initialized");
+        this.diagnostic.emit("info", "mqtt.subscribe_started", { clientId: this.config.clientId, topic, qos });
         if (!this.client.connected) {
             await this.waitForConnection();
         }
@@ -385,11 +425,18 @@ class MqttClientCore extends events_1.EventEmitter {
             this.client.subscribe(topic, { qos }, (err) => {
                 if (err) {
                     this.node.error(`Failed to subscribe to ${topic}: ${err.message}`);
+                    this.diagnostic.emit("error", "mqtt.subscribe_failed", {
+                        clientId: this.config.clientId,
+                        topic,
+                        qos,
+                        error: { code: err.code, message: err.message },
+                    });
                     reject(err);
                 }
                 else {
                     this.subscribedTopics.add(topic);
                     this.node.log(`Subscribed to topic: ${topic}`);
+                    this.diagnostic.emit("info", "mqtt.subscribe_succeeded", { clientId: this.config.clientId, topic, qos });
                     resolve();
                 }
             });
@@ -417,39 +464,35 @@ class MqttClientCore extends events_1.EventEmitter {
         });
     }
     // Publish message only when connected
-    async publish(topic, message, options) {
+    async publish(topic, message, options, context) {
         if (!this.client)
             throw new Error("MQTT client not initialized");
         if (!this.client.connected) {
-            this.node.warn(`MQTT client not connected to ${this.config.broker}, waiting for connection...`);
+            this.diagnostic.emit("warn", "mqtt.publish_waiting_for_connection", Object.assign(Object.assign({}, context), { clientId: this.config.clientId, connected: false }));
             await this.waitForConnection();
         }
         return new Promise((resolve, reject) => {
             this.client.publish(topic, message, Object.assign({ qos: this.config.qos }, options), (err) => {
+                var _a, _b;
                 if (err) {
                     this.node.error(`Failed to publish to ${topic}: ${err.message}`);
+                    this.diagnostic.emit("error", context ? "mqtt.publish_failed" : "mqtt.client_publish_failed", Object.assign(Object.assign({}, context), { clientId: this.config.clientId, topic, qos: (_a = options === null || options === void 0 ? void 0 : options.qos) !== null && _a !== void 0 ? _a : this.config.qos, error: { code: err.code, message: err.message } }));
                     reject(err);
                 }
                 else {
-                    // Format message for logging
                     const messageStr = Buffer.isBuffer(message) ? message.toString('utf8') : message;
-                    const truncatedMsg = messageStr.length > 200 ? messageStr.substring(0, 200) + '...' : messageStr;
-                    // Try to parse as JSON for better readability
-                    let displayMsg = truncatedMsg;
-                    try {
-                        const parsed = JSON.parse(messageStr);
-                        displayMsg = JSON.stringify(parsed);
-                        if (displayMsg.length > 200) {
-                            displayMsg = displayMsg.substring(0, 200) + '...';
-                        }
-                    }
-                    catch (_a) {
-                        // Not JSON, use as is
-                    }
+                    this.diagnostic.emit("debug", "mqtt.client_publish_callback", Object.assign(Object.assign({}, context), { clientId: this.config.clientId, topic, qos: (_b = options === null || options === void 0 ? void 0 : options.qos) !== null && _b !== void 0 ? _b : this.config.qos, payloadBytes: Buffer.byteLength(messageStr, "utf8") }));
                     resolve();
                 }
             });
         });
+    }
+    getPublishAcknowledgement() {
+        if (this.config.qos === 1)
+            return "mqtt_puback";
+        if (this.config.qos === 2)
+            return "mqtt_pubcomp";
+        return "client_callback";
     }
     // Resubscribe all topics on reconnect
     resubscribeTopics() {

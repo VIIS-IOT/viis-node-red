@@ -32,20 +32,37 @@ class BoardScopedModbusClient {
     get statusEmitter() {
         return this.transport;
     }
-    readCoils(address, length) {
-        return this.transport.readCoils(address, length, this.unitId);
+    readCoils(address, length, _unitId, context) {
+        return context
+            ? this.transport.readCoils(address, length, this.unitId, context)
+            : this.transport.readCoils(address, length, this.unitId);
     }
-    readInputRegisters(address, length) {
-        return this.transport.readInputRegisters(address, length, this.unitId);
+    readInputRegisters(address, length, _unitId, context) {
+        return context
+            ? this.transport.readInputRegisters(address, length, this.unitId, context)
+            : this.transport.readInputRegisters(address, length, this.unitId);
     }
-    readHoldingRegisters(address, length) {
-        return this.transport.readHoldingRegisters(address, length, this.unitId);
+    readHoldingRegisters(address, length, _unitId, context) {
+        return context
+            ? this.transport.readHoldingRegisters(address, length, this.unitId, context)
+            : this.transport.readHoldingRegisters(address, length, this.unitId);
     }
-    writeCoil(address, value) {
-        return this.transport.writeCoil(address, value, this.unitId);
+    writeCoil(address, value, _unitId, context) {
+        return context
+            ? this.transport.writeCoil(address, value, this.unitId, context)
+            : this.transport.writeCoil(address, value, this.unitId);
     }
-    writeRegister(address, value) {
-        return this.transport.writeRegister(address, value, this.unitId);
+    writeRegister(address, value, _unitId, context) {
+        return context
+            ? this.transport.writeRegister(address, value, this.unitId, context)
+            : this.transport.writeRegister(address, value, this.unitId);
+    }
+    getDiagnosticStatus() {
+        var _a, _b;
+        return ((_b = (_a = this.transport).getDiagnosticStatus) === null || _b === void 0 ? void 0 : _b.call(_a, this.unitId)) || {
+            unitId: this.unitId,
+            connected: this.transport.isConnectedCheck(),
+        };
     }
     get isConnected() {
         return this.transport.isConnectedCheck();

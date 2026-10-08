@@ -6,6 +6,10 @@ import {
     ModbusMappingResult
 } from "./interfaces/types";
 import { Logger } from "./utils/logger";
+import { DiagnosticLogger } from "../../core/observability/diagnostic-logger";
+import { createOperationContext } from "../../core/observability/trace-context";
+import { OperationContext, TraceContext } from "../../core/observability/types";
+import { PublishOutcome } from "./interfaces/types";
 
 
 
@@ -17,6 +21,8 @@ export class LuoiMappingHandler {
     private validationService: IValidationService;
     private mqttService: IMqttService;
     private logger: Logger;
+    private diagnostic: DiagnosticLogger;
+    private publishTracker?: (context: TraceContext, completion: Promise<PublishOutcome>) => void;
 
     // Mapping constants
     private readonly luoiMapping = {
@@ -47,13 +53,18 @@ export class LuoiMappingHandler {
         this.validationService = validationService;
         this.mqttService = mqttService;
         this.logger = new Logger(node, "LUOI-HANDLER");
+        this.diagnostic = new DiagnosticLogger(node, "luoi-mapping");
+    }
+
+    setPublishTracker(tracker: (context: TraceContext, completion: Promise<PublishOutcome>) => void): void {
+        this.publishTracker = tracker;
     }
 
     /**
      * Process RPC body and handle ONLY luoi mapping logic with actual Modbus write operations
      * Returns true if any luoi parameters were processed
      */
-    public async processRpcBody(rpcBody: Record<string, any>): Promise<boolean> {
+    public async processRpcBody(rpcBody: Record<string, any>, context?: TraceContext): Promise<boolean> {
         this.logger.debug("Processing RPC body for luoi mapping only");
         this.flowContext.set("rpcBody", rpcBody);
         let hasLuoiMapping = false;
@@ -65,7 +76,8 @@ export class LuoiMappingHandler {
             // Only handle luoi mapping - let standard processing handle everything else
             if (this.luoiMapping[key as keyof typeof this.luoiMapping]) {
                 let rawValue = rpcBody[key];
-                await this.handleLuoiMappingWithModbusWrite(key, rawValue);
+                const mappingContext = context ? createOperationContext(context, { parentOperationId: context.traceId }) : undefined;
+                await this.handleLuoiMappingWithModbusWrite(key, rawValue, mappingContext);
                 hasLuoiMapping = true;
             }
         }
@@ -78,7 +90,7 @@ export class LuoiMappingHandler {
     /**
      * Handle luoi mapping with actual Modbus write operations
      */
-    private async handleLuoiMappingWithModbusWrite(key: string, rawValue: any): Promise<void> {
+    private async handleLuoiMappingWithModbusWrite(key: string, rawValue: any, context?: OperationContext): Promise<void> {
         const mapping = this.luoiMapping[key as keyof typeof this.luoiMapping];
         const thuKey = mapping.thu;
         const daiKey = mapping.dai;
@@ -95,6 +107,7 @@ export class LuoiMappingHandler {
                 break;
             case 2:
                 // N/A — không tác động coil
+                this.diagnostic.emit("info", "rpc.luoi_no_op", { ...context, key, reason: "not_applicable" });
                 return;
             default:
                 this.logger.warn(`Giá trị không hợp lệ cho ${key}: ${rawValue}`);
@@ -104,6 +117,7 @@ export class LuoiMappingHandler {
         try {
             const thuMapping = this.modbusService.findModbusMapping(thuKey);
             const daiMapping = this.modbusService.findModbusMapping(daiKey);
+            this.diagnostic.emit("info", "rpc.luoi_pair_started", { ...context, key, thuKey, daiKey });
 
             if (!thuMapping || thuMapping.address === undefined) {
                 throw new Error(`Missing Modbus mapping for ${thuKey}`);
@@ -113,14 +127,18 @@ export class LuoiMappingHandler {
             }
 
             // Write thu coil
-            await this.writeToModbusAndPublish(thuKey, thuMapping, thuValue);
+            const thuContext = context ? createOperationContext(context, { parentOperationId: context.operationId, executionIndex: 0 }) : undefined;
+            await this.writeToModbusAndPublish(thuKey, thuMapping, thuValue, thuContext);
 
             // Write dai coil
-            await this.writeToModbusAndPublish(daiKey, daiMapping, daiValue);
+            const daiContext = context ? createOperationContext(context, { parentOperationId: context.operationId, executionIndex: 1 }) : undefined;
+            await this.writeToModbusAndPublish(daiKey, daiMapping, daiValue, daiContext);
 
             this.logger.log(`Successfully processed luoi mapping: ${key}=${rawValue} -> ${thuKey}=${thuValue}, ${daiKey}=${daiValue}`);
+            this.diagnostic.emit("info", "rpc.luoi_pair_finished", { ...context, key, outcome: "success" });
         } catch (error) {
             this.logger.error(`Failed to process luoi mapping ${key}: ${(error as Error).message}`);
+            this.diagnostic.emit("error", "rpc.luoi_pair_finished", { ...context, key, outcome: "failed", error: { message: (error as Error).message } });
             throw error;
         }
     }
@@ -128,8 +146,14 @@ export class LuoiMappingHandler {
     /**
      * Write to Modbus and publish result
      */
-    private async writeToModbusAndPublish(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
+    private async writeToModbusAndPublish(key: string, mapping: ModbusMappingResult, value: number | boolean, parentContext?: OperationContext): Promise<void> {
         try {
+            const writeContext = parentContext ? createOperationContext(parentContext, {
+                parentOperationId: parentContext.operationId,
+                boardId: mapping.boardId,
+                functionCode: 5,
+                address: mapping.address,
+            }) : undefined;
             const writeMapping: ModbusMappingResult = {
                 ...mapping,
                 fc: 5,
@@ -141,17 +165,26 @@ export class LuoiMappingHandler {
 
             // Write to Modbus
             this.logger.debug(`Writing to Modbus: key=${key}, address=${writeMapping.address}, value=${validatedValue}, fc=${writeMapping.fc}`);
-            await this.modbusService.writeToModbus(key, writeMapping, validatedValue);
+            await this.modbusService.writeToModbus(key, writeMapping, validatedValue, writeContext);
 
             // Read back the value to confirm
-            const readValue = await this.modbusService.readFromModbus(key, writeMapping);
+            const readContext = writeContext ? createOperationContext(writeContext, { parentOperationId: writeContext.operationId }) : undefined;
+            const readValue = await this.modbusService.readFromModbus(key, writeMapping, readContext);
 
             // Publish the result
-            this.mqttService.publishResult(key, readValue);
+            if (readContext) {
+                const publishContext = createOperationContext(readContext, { parentOperationId: readContext.operationId });
+                const ticket = this.mqttService.scheduleResultTracked(key, readValue, publishContext);
+                this.publishTracker?.(parentContext, ticket.completion);
+                this.diagnostic.emit("info", "mqtt.publish_scheduled", { ...publishContext, key, publishOperationId: ticket.operationId });
+            } else {
+                this.mqttService.publishResult(key, readValue);
+            }
 
             this.logger.debug(`Successfully processed parameter: ${key}=${readValue}`);
         } catch (error) {
             this.logger.error(`Failed to write and publish ${key}: ${(error as Error).message}`);
+            this.diagnostic.emit("error", "modbus.luoi_operation_failed", { ...parentContext, key, error: { message: (error as Error).message } });
             throw error;
         }
     }

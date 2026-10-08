@@ -10,6 +10,9 @@ const logger_1 = require("../utils/logger");
 const fertigation_start_sequence_1 = require("../../shared/fertigation-start-sequence");
 const schedule_coil_classify_1 = require("../../viis-schedule-executor/schedule-coil-classify");
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
+const diagnostic_logger_1 = require("../../../core/observability/diagnostic-logger");
+const trace_context_1 = require("../../../core/observability/trace-context");
+const runtime_1 = require("../../../core/observability/runtime");
 class RpcHandler {
     static getCommandPriority(key) {
         const lower = key.toLowerCase();
@@ -29,6 +32,10 @@ class RpcHandler {
         this.RPC_REQUEST_TIMEOUT = 30000; // 30s overall timeout per RPC request
         this.requestQueue = Promise.resolve();
         this.queueLength = 0;
+        this.activeCount = 0;
+        this.underlyingPendingCount = 0;
+        this.pendingLateOperationCount = 0;
+        this.traceStates = new Map();
         this.protectionGate = null;
         this.waterHammerDelayMs = fertigation_start_sequence_1.WATER_HAMMER_DELAY_MS;
         this.defaultBatchOptions = {
@@ -39,6 +46,7 @@ class RpcHandler {
             continue_on_error: false,
         };
         this.sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        this.pendingTraceContexts = new Map();
         this.configService = configService;
         this.validationService = validationService;
         this.modbusService = modbusService;
@@ -46,6 +54,23 @@ class RpcHandler {
         this.luoiHandler = luoiHandler;
         this.node = options.node;
         this.logger = new logger_1.Logger(options.node, "RPC-HANDLER");
+        this.diagnostic = new diagnostic_logger_1.DiagnosticLogger(options.node, "rpc-handler");
+        this.nodeInstanceId = (0, trace_context_1.createId)();
+        if (typeof this.luoiHandler.setPublishTracker === "function") {
+            this.luoiHandler.setPublishTracker((context, completion) => this.trackPublish(context, completion));
+        }
+    }
+    getDiagnosticStatus() {
+        return {
+            queuedCount: this.queueLength,
+            activeCount: this.activeCount,
+            pendingUnderlyingOperations: this.underlyingPendingCount,
+            pendingLateOperations: this.pendingLateOperationCount,
+            pendingTraceCount: this.traceStates.size,
+            activePhase: this.activePhase,
+            lastRpcStartedAt: this.lastRpcStartedAt,
+            lastExecutionFinishedAt: this.lastExecutionFinishedAt,
+        };
     }
     /**
      * Set protection gate service for coil write protection
@@ -59,41 +84,226 @@ class RpcHandler {
     /**
      * Handle incoming RPC request with retry logic
      */
-    async handleRpcRequest(rpcBody, maxRetries = 3) {
+    async handleRpcRequest(rpcBody, maxRetries = 3, suppliedContext) {
+        var _a;
+        const context = suppliedContext || (0, trace_context_1.createTraceContext)({
+            runtimeBootId: runtime_1.runtimeBootId,
+            nodeId: ((_a = this.node) === null || _a === void 0 ? void 0 : _a.id) || "unknown",
+            nodeInstanceId: this.nodeInstanceId,
+            ingress: "node_input",
+            brokerRole: "none",
+            payload: rpcBody,
+        });
+        const queuedAt = Date.now();
         this.queueLength++;
         this.logger.log(`[QUEUE] RPC request queued (queue: ${this.queueLength})`);
+        this.diagnostic.emit("info", "rpc.queued", Object.assign(Object.assign({}, context), { method: rpcBody === null || rpcBody === void 0 ? void 0 : rpcBody.method, queuePosition: this.queueLength }));
+        this.pendingTraceContexts.set(context.traceId, context);
+        this.registerTrace(context.traceId);
         const execution = this.requestQueue.then(async () => {
             this.logger.log(`[QUEUE] RPC request dequeued, starting execution (remaining: ${this.queueLength - 1})`);
-            return this.withTimeout(this.handleRpcRequestInternal(rpcBody, maxRetries), this.RPC_REQUEST_TIMEOUT, `RPC request timeout after ${this.RPC_REQUEST_TIMEOUT}ms`);
+            const queueWaitMs = Date.now() - queuedAt;
+            const startedAt = Date.now();
+            this.lastRpcStartedAt = new Date(startedAt).toISOString();
+            this.activeCount++;
+            this.activePhase = "rpc_dispatch";
+            this.diagnostic.emit("info", "rpc.started", Object.assign(Object.assign({}, context), { method: rpcBody === null || rpcBody === void 0 ? void 0 : rpcBody.method, queueWaitMs }));
+            const underlying = this.handleRpcRequestInternal(rpcBody, maxRetries, context);
+            this.underlyingPendingCount++;
+            let timedOut = false;
+            void underlying.then(outcome => {
+                if (timedOut)
+                    this.diagnostic.emit("warn", "rpc.late_settlement", Object.assign(Object.assign({}, context), { controlOutcome: outcome, elapsedMs: Date.now() - startedAt }));
+            }, error => {
+                if (timedOut)
+                    this.diagnostic.emit("error", "rpc.late_settlement", Object.assign(Object.assign({}, context), { controlOutcome: "failed", error: { message: error.message }, elapsedMs: Date.now() - startedAt }));
+            }).then(() => {
+                this.underlyingPendingCount = Math.max(0, this.underlyingPendingCount - 1);
+                this.markUnderlyingSettled(context.traceId);
+            });
+            try {
+                const controlOutcome = await this.withTimeout(underlying, this.RPC_REQUEST_TIMEOUT, `RPC request timeout after ${this.RPC_REQUEST_TIMEOUT}ms`);
+                return { controlOutcome, queueWaitMs, executionMs: Date.now() - startedAt };
+            }
+            catch (error) {
+                timedOut = error.message.toLowerCase().includes("timeout");
+                if (timedOut) {
+                    this.activePhase = "rpc_timeout";
+                    this.diagnostic.emit("error", "rpc.timeout", Object.assign(Object.assign({}, context), { queueWaitMs, executionMs: Date.now() - startedAt, underlyingOperationMayContinue: true }));
+                }
+                throw error;
+            }
+            finally {
+                this.activeCount = Math.max(0, this.activeCount - 1);
+                this.activePhase = undefined;
+            }
         });
         this.requestQueue = execution.catch(() => { }).finally(() => {
             this.queueLength--;
         });
-        return execution;
+        let controlOutcome;
+        try {
+            const result = await execution;
+            controlOutcome = result.controlOutcome;
+            this.finishTrace(context, controlOutcome, result.queueWaitMs, result.executionMs);
+        }
+        catch (error) {
+            controlOutcome = error.message.toLowerCase().includes("timeout") ? "timed_out" : "failed";
+            this.finishTrace(context, controlOutcome, Date.now() - queuedAt, 0, { message: error.message });
+            throw error;
+        }
+    }
+    registerTrace(traceId) {
+        this.traceStates.set(traceId, {
+            tickets: [],
+            knownOutcomes: [],
+            pendingTicketCount: 0,
+            underlyingSettled: false,
+            executionFinished: false,
+            deliveryFinalizing: false,
+            deliveryFinished: false,
+            lateAfterTimeout: false,
+            outstandingLateOperations: 0,
+        });
+        while (this.traceStates.size > 1024) {
+            const oldestTraceId = this.traceStates.keys().next().value;
+            if (!oldestTraceId)
+                break;
+            this.traceStates.delete(oldestTraceId);
+            this.pendingTraceContexts.delete(oldestTraceId);
+            this.diagnostic.emit("warn", "rpc.trace_state_evicted", { traceId: oldestTraceId, reason: "capacity", maxTracked: 1024 });
+        }
+    }
+    summarizeOutcomes(outcomes, pending = false) {
+        if (pending)
+            return "pending";
+        if (outcomes.length === 0)
+            return "not_applicable";
+        if (outcomes.every(item => item.status === "acknowledged"))
+            return "acknowledged";
+        if (outcomes.some(item => item.status === "acknowledged"))
+            return "partial";
+        if (outcomes.some(item => item.status === "unknown"))
+            return "unknown";
+        if (outcomes.every(item => item.status === "superseded" || item.status === "cancelled"))
+            return "superseded";
+        return "failed";
+    }
+    finishTrace(context, controlOutcome, queueWaitMs, executionMs, error) {
+        let state = this.traceStates.get(context.traceId);
+        if (!state) {
+            this.registerTrace(context.traceId);
+            state = this.traceStates.get(context.traceId);
+        }
+        if (state.executionFinished)
+            return;
+        state.executionFinished = true;
+        state.controlOutcome = controlOutcome;
+        state.queueWaitMs = queueWaitMs;
+        state.executionMs = executionMs;
+        state.error = error;
+        state.lateAfterTimeout = controlOutcome === "timed_out";
+        this.lastExecutionFinishedAt = new Date().toISOString();
+        this.diagnostic.emit(controlOutcome === "failed" || controlOutcome === "timed_out" ? "error" : "info", "rpc.execution_finished", Object.assign(Object.assign(Object.assign(Object.assign({}, context), { controlOutcome, deliveryOutcome: this.summarizeOutcomes(state.knownOutcomes, state.pendingTicketCount > 0 || state.lateAfterTimeout), publishCount: state.tickets.length, pendingPublishCount: state.pendingTicketCount, acknowledgedCount: state.knownOutcomes.filter(item => item.status === "acknowledged").length, failedCount: state.knownOutcomes.filter(item => item.status === "failed").length, unknownCount: state.knownOutcomes.filter(item => item.status === "unknown").length, queueWaitMs,
+            executionMs }), (state.lateAfterTimeout ? { underlyingOperationMayContinue: true } : {})), (error ? { error } : {})));
+        if (state.underlyingSettled)
+            void this.finalizeDelivery(context, state);
+    }
+    markUnderlyingSettled(traceId) {
+        const state = this.traceStates.get(traceId);
+        if (!state)
+            return;
+        state.underlyingSettled = true;
+        if (state.executionFinished && state.outstandingLateOperations === 0) {
+            const context = this.pendingTraceContexts.get(traceId);
+            if (context)
+                void this.finalizeDelivery(context, state);
+        }
+    }
+    async finalizeDelivery(context, state) {
+        if (state.deliveryFinalizing || state.deliveryFinished || !state.underlyingSettled || state.outstandingLateOperations > 0)
+            return;
+        state.deliveryFinalizing = true;
+        try {
+            const outcomes = await Promise.all(state.tickets.map(ticket => ticket));
+            state.deliveryFinished = true;
+            this.diagnostic.emit("info", "rpc.delivery_finished", Object.assign(Object.assign(Object.assign({}, context), { controlOutcome: state.controlOutcome, deliveryOutcome: this.summarizeOutcomes(outcomes), publishCount: outcomes.length, acknowledgedCount: outcomes.filter(item => item.status === "acknowledged").length, failedCount: outcomes.filter(item => item.status === "failed").length, unknownCount: outcomes.filter(item => item.status === "unknown").length, lateAfterTimeout: state.lateAfterTimeout, queueWaitMs: state.queueWaitMs, executionMs: state.executionMs }), (state.error ? { error: state.error } : {})));
+        }
+        finally {
+            this.traceStates.delete(context.traceId);
+            this.pendingTraceContexts.delete(context.traceId);
+        }
+    }
+    trackPublish(context, completion) {
+        if (!context)
+            return;
+        const state = this.traceStates.get(context.traceId);
+        if (!state)
+            return;
+        this.pendingTraceContexts.set(context.traceId, context);
+        const safeCompletion = completion.then(outcome => outcome, () => ({ operationId: (0, trace_context_1.createId)(), status: "failed", acknowledgement: "none" }));
+        const ticketIndex = state.tickets.length;
+        state.pendingTicketCount++;
+        state.tickets.push(safeCompletion);
+        void safeCompletion.then(outcome => {
+            state.knownOutcomes[ticketIndex] = outcome;
+            state.pendingTicketCount = Math.max(0, state.pendingTicketCount - 1);
+        });
+    }
+    trackLateOperation(context, operation, label) {
+        if (!context)
+            return;
+        const state = this.traceStates.get(context.traceId);
+        if (!state)
+            return;
+        state.outstandingLateOperations++;
+        this.pendingLateOperationCount++;
+        const traceContext = this.pendingTraceContexts.get(context.traceId) || context;
+        let completed = false;
+        const complete = () => {
+            if (completed)
+                return;
+            completed = true;
+            state.outstandingLateOperations = Math.max(0, state.outstandingLateOperations - 1);
+            this.pendingLateOperationCount = Math.max(0, this.pendingLateOperationCount - 1);
+            if (state.executionFinished && state.underlyingSettled && state.outstandingLateOperations === 0) {
+                void this.finalizeDelivery(traceContext, state);
+            }
+        };
+        void operation.then(outcome => {
+            this.diagnostic.emit("warn", "rpc.late_settlement", Object.assign(Object.assign({}, context), { operationScope: label, lateOutcome: "resolved", controlOutcome: outcome, lateAfterTimeout: true }));
+        }, error => {
+            this.diagnostic.emit("error", "rpc.late_settlement", Object.assign(Object.assign({}, context), { operationScope: label, lateOutcome: "failed", error: { message: error.message }, lateAfterTimeout: true }));
+        }).then(complete, complete);
+    }
+    operationContext(context, values = {}) {
+        return (0, trace_context_1.createOperationContext)(context, values);
     }
     /**
      * Internal request processor executed in serialized queue
      */
-    async handleRpcRequestInternal(rpcBody, maxRetries = 3) {
+    async handleRpcRequestInternal(rpcBody, maxRetries = 3, context) {
         let lastError = null;
         const startTime = Date.now();
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
-                    this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
-                    await this.handleSetStateRequest(rpcBody.params);
+                    this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}, keys=${Object.keys(rpcBody.params).length})`);
+                    this.diagnostic.emit("debug", "rpc.attempt_started", Object.assign(Object.assign({}, context), { attempt, maxAttempts: maxRetries, method: rpcBody.method }));
+                    const result = await this.handleSetStateRequest(rpcBody.params, context);
                     this.logger.log(`[RPC-DONE] Request completed in ${Date.now() - startTime}ms`);
-                    return; // Success
+                    this.diagnostic.emit("debug", "rpc.attempt_finished", Object.assign(Object.assign({}, context), { attempt, outcome: result }));
+                    return result;
                 }
                 else if (rpcBody.method === "set_state_batch" && rpcBody.params) {
                     this.logger.log(`Processing batch RPC request (attempt ${attempt}/${maxRetries})`);
-                    await this.handleSetStateBatchRequest(rpcBody.params);
+                    const result = await this.handleSetStateBatchRequest(rpcBody.params, context);
                     this.logger.log(`[RPC-DONE] Batch request completed in ${Date.now() - startTime}ms`);
-                    return;
+                    return result;
                 }
                 else {
                     this.logger.warn(`Unsupported RPC method: ${rpcBody.method}`);
-                    return; // No need to retry for unsupported methods
+                    return "unsupported"; // No need to retry for unsupported methods
                 }
             }
             catch (error) {
@@ -102,6 +312,7 @@ class RpcHandler {
                 // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
                     this.logger.warn(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
+                    this.diagnostic.emit("warn", "rpc.retry", Object.assign(Object.assign({}, context), { attempt, nextAttempt: attempt + 1, maxAttempts: maxRetries, error: { message: lastError.message } }));
                     await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
                     continue;
                 }
@@ -111,13 +322,14 @@ class RpcHandler {
         }
         // Handle the final error
         if (lastError) {
-            await this.handleRpcError(lastError);
+            await this.handleRpcError(lastError, context);
         }
+        return lastError ? "failed" : "no_op";
     }
     /**
      * Handle set_state_batch RPC request
      */
-    async handleSetStateBatchRequest(params) {
+    async handleSetStateBatchRequest(params, context) {
         const commands = Array.isArray(params.commands) ? params.commands : [];
         const options = Object.assign(Object.assign({}, this.defaultBatchOptions), (params.options || {}));
         if (commands.length === 0) {
@@ -131,6 +343,7 @@ class RpcHandler {
             options.sequential = true;
         }
         const batchId = params.batch_id || params.batchId || `batch_${Date.now()}`;
+        this.diagnostic.emit("info", "rpc.batch_planned", Object.assign(Object.assign({}, context), { batchId: String(batchId), plannedCount: commands.length, executableCount: commands.filter((cmd) => (cmd === null || cmd === void 0 ? void 0 : cmd.kind) !== "delay").length, sequential: true }));
         const holdings = this.modbusService.getModbusHoldingRegisters() || {};
         const coils = this.modbusService.getModbusCoils() || {};
         const commandKeys = commands.map((cmd) => String((cmd === null || cmd === void 0 ? void 0 : cmd.key) || ""));
@@ -149,7 +362,9 @@ class RpcHandler {
         for (let i = 0; i < sortedCommands.length; i++) {
             const cmd = sortedCommands[i] || {};
             if (cmd.kind === "delay") {
+                this.diagnostic.emit("info", "rpc.delay_started", Object.assign(Object.assign({}, context), { batchId, executionIndex: i, delayMs: Number(cmd.ms) || 0 }));
                 await this.sleep(Number(cmd.ms) || 0);
+                this.diagnostic.emit("info", "rpc.delay_finished", Object.assign(Object.assign({}, context), { batchId, executionIndex: i }));
                 continue;
             }
             const key = String(cmd.key || "");
@@ -167,8 +382,19 @@ class RpcHandler {
                 }
                 continue;
             }
+            const commandContext = context ? (0, trace_context_1.createOperationContext)(context, {
+                commandIndex: order,
+                executionIndex: i,
+                batchId: String(batchId),
+            }) : undefined;
+            const commandTimeoutMs = Number(options.timeout_per_cmd) || this.defaultBatchOptions.timeout_per_cmd;
+            let commandOperation;
+            let commandSettled = false;
             try {
-                await this.withTimeout(this.handleSetStateRequest({ [key]: cmd.value }), Number(options.timeout_per_cmd) || this.defaultBatchOptions.timeout_per_cmd, `Command timeout for ${key}`);
+                this.diagnostic.emit("info", "rpc.batch_command_started", Object.assign(Object.assign({}, commandContext), { key, executionIndex: i, plannedCount: sortedCommands.length }));
+                commandOperation = this.handleSetStateRequest({ [key]: cmd.value }, commandContext);
+                void commandOperation.then(() => { commandSettled = true; }, () => { commandSettled = true; });
+                await this.withTimeout(commandOperation, commandTimeoutMs, `Command timeout for ${key}`);
                 successfulCommands.push({ key, value: cmd.value, order });
                 results.push({
                     order,
@@ -176,9 +402,15 @@ class RpcHandler {
                     status: "success",
                     timestamp: new Date().toISOString(),
                 });
+                this.diagnostic.emit("info", "rpc.batch_command_finished", Object.assign(Object.assign({}, commandContext), { key, outcome: "success" }));
             }
             catch (error) {
                 const errorMessage = error.message;
+                const timedOut = errorMessage.toLowerCase().includes("timeout") && !commandSettled;
+                if (timedOut && commandOperation) {
+                    this.trackLateOperation(commandContext, commandOperation, "batch_command");
+                    this.diagnostic.emit("error", "rpc.batch_command_timeout", Object.assign(Object.assign({}, commandContext), { key, timeoutMs: commandTimeoutMs, underlyingOperationMayContinue: true }));
+                }
                 results.push({
                     order,
                     key,
@@ -187,8 +419,9 @@ class RpcHandler {
                     timestamp: new Date().toISOString(),
                 });
                 this.logger.error(`Batch command failed [${batchId}] ${key}: ${errorMessage}`);
+                this.diagnostic.emit("error", "rpc.batch_command_finished", Object.assign(Object.assign({}, commandContext), { batchId: String(batchId), commandIndex: order, executionIndex: i, key, outcome: "failed", underlyingOperationMayContinue: timedOut, error: { message: errorMessage } }));
                 if (options.rollback_on_fail && successfulCommands.length > 0) {
-                    await this.rollbackBatch(successfulCommands, batchId);
+                    await this.rollbackBatch(successfulCommands, batchId, context);
                 }
                 if (options.sequential && !options.continue_on_error) {
                     break;
@@ -214,7 +447,9 @@ class RpcHandler {
                 ? "partial"
                 : "failed";
         const writeCount = sortedCommands.filter((cmd) => (cmd === null || cmd === void 0 ? void 0 : cmd.kind) !== "delay").length;
-        await this.mqttService.publishConfigUpdate("rpc_batch_result", {
+        const unexecutedCount = Math.max(0, writeCount - results.length);
+        const batchResultContext = context ? (0, trace_context_1.createOperationContext)(context, { batchId: String(batchId) }) : undefined;
+        const batchResultOutcome = batchResultContext ? await this.mqttService.publishConfigUpdateTracked("rpc_batch_result", {
             batch_id: batchId,
             status: overallStatus,
             total: writeCount,
@@ -222,9 +457,13 @@ class RpcHandler {
             failed_count: results.length - successCount,
             results,
             completed_at: new Date().toISOString(),
-        }, "set_state_batch completed");
+        }, "set_state_batch completed", batchResultContext) : undefined;
+        if (batchResultContext && batchResultOutcome)
+            this.trackPublish(context, Promise.resolve(batchResultOutcome));
         this.node.status({ fill: overallStatus === "success" ? "green" : "yellow", shape: "dot", text: `batch ${overallStatus}` });
         this.logger.log(`Batch ${batchId} completed: ${overallStatus} (${successCount}/${writeCount})`);
+        this.diagnostic.emit(overallStatus === "success" ? "info" : "warn", "rpc.batch_finished", Object.assign(Object.assign({}, context), { batchId: String(batchId), status: overallStatus, total: writeCount, executedCount: results.length, successCount, failedCount: results.length - successCount, unexecutedCount, resultPublishStatus: batchResultOutcome === null || batchResultOutcome === void 0 ? void 0 : batchResultOutcome.status }));
+        return overallStatus;
     }
     buildFertigationBatchCommands(commands, holdings, coils) {
         const ops = (0, fertigation_start_sequence_1.planFertigationStartWrites)({
@@ -257,7 +496,7 @@ class RpcHandler {
      * Best-effort rollback for commands that were already applied.
      * Supports boolean and binary numeric commands only.
      */
-    async rollbackBatch(successfulCommands, batchId) {
+    async rollbackBatch(successfulCommands, batchId, context) {
         this.logger.warn(`Starting rollback for batch ${batchId} (${successfulCommands.length} commands)`);
         for (const cmd of [...successfulCommands].reverse()) {
             const rollbackValue = this.getRollbackValue(cmd.value);
@@ -266,10 +505,18 @@ class RpcHandler {
                 continue;
             }
             try {
-                await this.handleSetStateRequest({ [cmd.key]: rollbackValue });
+                const rollbackContext = context ? (0, trace_context_1.createOperationContext)(context, {
+                    parentOperationId: context.traceId,
+                    batchId,
+                    commandIndex: cmd.order,
+                }) : undefined;
+                this.diagnostic.emit("warn", "rpc.rollback_started", Object.assign(Object.assign({}, rollbackContext), { key: cmd.key }));
+                await this.handleSetStateRequest({ [cmd.key]: rollbackValue }, rollbackContext);
+                this.diagnostic.emit("info", "rpc.rollback_finished", Object.assign(Object.assign({}, rollbackContext), { key: cmd.key, outcome: "success" }));
             }
             catch (error) {
                 this.logger.error(`Rollback failed for ${cmd.key}: ${error.message}`);
+                this.diagnostic.emit("error", "rpc.rollback_finished", Object.assign(Object.assign({}, context), { batchId, commandIndex: cmd.order, key: cmd.key, outcome: "failed", error: { message: error.message } }));
             }
         }
     }
@@ -327,7 +574,7 @@ class RpcHandler {
     /**
      * Handle RPC error with proper logging and status updates
      */
-    async handleRpcError(error) {
+    async handleRpcError(error, context) {
         try {
             const err = error;
             let errorMessage = constants_1.ERROR_MESSAGES.RPC_HANDLING_ERROR + `: ${err.message}`;
@@ -348,7 +595,7 @@ class RpcHandler {
                 this.logger.error(`Modbus connection lost: ${err.message}`);
                 // Attempt to trigger reconnection by notifying the service
                 try {
-                    await this.modbusService.checkConnection();
+                    await this.modbusService.checkConnection(undefined, context ? this.operationContext(context) : undefined);
                 }
                 catch (reconnectError) {
                     this.logger.error(`Reconnection attempt failed: ${reconnectError.message}`);
@@ -365,7 +612,14 @@ class RpcHandler {
             }
             this.logger.error(errorMessage);
             // Publish error status via MQTT with retry
-            await this.publishErrorWithRetry(errorMessage);
+            if (context) {
+                const publishContext = (0, trace_context_1.createOperationContext)(context, { parentOperationId: context.traceId });
+                const outcome = await this.mqttService.publishErrorTracked(errorMessage, publishContext);
+                this.trackPublish(context, Promise.resolve(outcome));
+            }
+            else {
+                await this.mqttService.publishError(errorMessage);
+            }
         }
         catch (publishError) {
             this.logger.error(`Failed to handle RPC error: ${publishError.message}`);
@@ -374,43 +628,31 @@ class RpcHandler {
     /**
      * Publish error with retry logic
      */
-    async publishErrorWithRetry(errorMessage, maxRetries = 3) {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                await this.mqttService.publishError(errorMessage);
-                return; // Success
-            }
-            catch (error) {
-                this.logger.error(`Failed to publish error (attempt ${attempt}/${maxRetries}): ${error.message}`);
-                if (attempt < maxRetries) {
-                    // Check if MQTT is connected
-                    if (!this.mqttService.isConnected()) {
-                        this.logger.warn("MQTT disconnected, waiting for reconnection...");
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
-                    else {
-                        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
-                    }
-                }
-            }
+    async publishErrorWithRetry(errorMessage, context) {
+        if (!context) {
+            await this.mqttService.publishError(errorMessage);
+            return;
         }
-        this.logger.error("Failed to publish error after all retries");
+        const publishContext = (0, trace_context_1.createOperationContext)(context, { parentOperationId: context.traceId });
+        const outcome = await this.mqttService.publishErrorTracked(errorMessage, publishContext);
+        this.trackPublish(context, Promise.resolve(outcome));
     }
     /**
      * Handle set_state RPC request
      */
-    async handleSetStateRequest(params) {
+    async handleSetStateRequest(params, context) {
         try {
             // Filter out parameters with "undefined" values
             const filteredParams = this.filterUndefinedParams(params);
             if (Object.keys(filteredParams).length === 0) {
                 this.logger.warn("All parameters were filtered out due to undefined values");
                 this.node.status({ fill: "yellow", shape: "ring", text: "No valid parameters" });
-                return;
+                this.diagnostic.emit("warn", "rpc.no_valid_parameters", Object.assign(Object.assign({}, context), { suppliedCount: Object.keys(params || {}).length }));
+                return "no_op";
             }
             this.logger.log(`[SET-STATE] Processing ${Object.keys(filteredParams).length} parameters`);
             // Try luoi mapping handler first - it now handles actual Modbus writes
-            const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams);
+            const hasLuoiMapping = await this.luoiHandler.processRpcBody(filteredParams, context);
             // Create a copy of filteredParams without luoi parameters for standard processing
             const standardParams = Object.assign({}, filteredParams);
             const luoiMappingKeys = Object.keys(this.luoiHandler['luoiMapping'] || {});
@@ -420,9 +662,10 @@ class RpcHandler {
             // Process remaining non-luoi parameters with standard handler
             // Only process if there are remaining parameters after removing luoi keys
             if (Object.keys(standardParams).length > 0) {
-                await this.handleStandardParams(standardParams);
+                await this.handleStandardParams(standardParams, context);
             }
             this.logger.log(`[SET-STATE] Completed successfully`);
+            return Object.keys(standardParams).length === 0 && !hasLuoiMapping ? "no_op" : "success";
         }
         catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${error.message}`);
@@ -452,7 +695,7 @@ class RpcHandler {
      * Handle standard parameter processing
      * Sort to process holding registers first, then coils
      */
-    async handleStandardParams(params) {
+    async handleStandardParams(params, context) {
         // Get modbus mappings from global variables
         const modbusHoldingRegisters = this.modbusService.getModbusHoldingRegisters() || {};
         const modbusCoils = this.modbusService.getModbusCoils() || {};
@@ -473,8 +716,9 @@ class RpcHandler {
         }
         this.logger.log(`Processing parameters - Holding: ${holdingParams.length}, Coils: ${coilParams.length}, Config: ${configParams.length}`);
         // Process in order: holding registers first, then coils, then config-only
+        let executionIndex = 0;
         for (const [key, rawValue] of holdingParams) {
-            await this.processParameter(key, rawValue);
+            await this.processParameter(key, rawValue, context ? (0, trace_context_1.createOperationContext)(context, { executionIndex: executionIndex++ }) : undefined);
             // Small delay between each holding register write
             if (holdingParams.length > 1) {
                 await new Promise(resolve => setTimeout(resolve, 100));
@@ -486,46 +730,57 @@ class RpcHandler {
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
         for (const [key, rawValue] of coilParams) {
-            await this.processParameter(key, rawValue);
+            await this.processParameter(key, rawValue, context ? (0, trace_context_1.createOperationContext)(context, { executionIndex: executionIndex++ }) : undefined);
             // Small delay between each coil write to ensure proper sequencing
             if (coilParams.length > 1) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
         for (const [key, rawValue] of configParams) {
-            await this.processParameter(key, rawValue);
+            await this.processParameter(key, rawValue, context ? (0, trace_context_1.createOperationContext)(context, { executionIndex: executionIndex++ }) : undefined);
         }
     }
     /**
      * Process a single parameter
      */
-    async processParameter(key, rawValue) {
+    async processParameter(key, rawValue, context) {
         const mapping = this.modbusService.findModbusMapping(key);
+        this.diagnostic.emit("info", "rpc.key_classified", Object.assign(Object.assign(Object.assign(Object.assign({}, context), { key, classification: mapping ? "modbus_mapped" : "config_only" }), (mapping ? { boardId: mapping.boardId, functionCode: mapping.fc, address: mapping.address } : {})), { valueType: typeof rawValue }));
         if (mapping) {
-            await this.handleModbusMappedParameter(key, rawValue, mapping);
+            await this.handleModbusMappedParameter(key, rawValue, mapping, context);
         }
         else {
-            await this.handleConfigOnlyParameter(key, rawValue);
+            await this.handleConfigOnlyParameter(key, rawValue, context);
         }
     }
     /**
      * Handle parameter that has Modbus mapping
      */
-    async handleModbusMappedParameter(key, rawValue, mapping) {
+    async handleModbusMappedParameter(key, rawValue, mapping, parentContext) {
         // Validate and convert value
         const value = this.validationService.validateAndConvertValue(key, rawValue);
+        const writeContext = parentContext ? (0, trace_context_1.createOperationContext)(parentContext, {
+            parentOperationId: parentContext.operationId,
+            boardId: mapping.boardId,
+            functionCode: mapping.fc,
+            address: mapping.address,
+        }) : undefined;
         // Protection gate check for coils (fc=5)
         if (mapping.fc === 5 && this.protectionGate) {
             const gate = this.protectionGate.checkGate(key, Boolean(value), 'rpc');
             if (!gate.allowed) {
                 this.logger.warn(`[PROTECTION] Blocked ${key}=${value}: ${gate.reason}`);
+                this.diagnostic.emit("warn", "rpc.protection_blocked", Object.assign(Object.assign({}, writeContext), { key, requestedValue: typeof value === "number" || typeof value === "boolean" ? value : undefined, reason: gate.reason, action: gate.action }));
                 try {
-                    await this.mqttService.publishConfigUpdate(`_blocked_${key}`, {
+                    const publishContext = writeContext ? (0, trace_context_1.createOperationContext)(writeContext, { parentOperationId: writeContext.operationId }) : undefined;
+                    const outcome = publishContext ? await this.mqttService.publishConfigUpdateTracked(`_blocked_${key}`, {
                         requested: value,
                         reason: gate.reason,
                         source: 'rpc',
                         action: gate.action,
-                    });
+                    }, undefined, publishContext) : undefined;
+                    if (publishContext && outcome)
+                        this.trackPublish(parentContext, Promise.resolve(outcome));
                 }
                 catch (pubErr) {
                     this.logger.warn(`Failed to publish blocked telemetry: ${pubErr.message}`);
@@ -538,7 +793,7 @@ class RpcHandler {
         // If this throws, the outer handleRpcRequest retry loop may re-attempt — which is safe
         // because the write did not actually succeed yet.
         try {
-            await this.writeToModbusWithRetry(key, mapping, value);
+            await this.writeToModbusWithRetry(key, mapping, value, 2, writeContext);
             this.logger.log(`[MODBUS-WRITE] Write ${key} completed successfully`);
         }
         catch (error) {
@@ -549,34 +804,56 @@ class RpcHandler {
         // CRITICAL: handled in its own try-catch so that a read failure after a SUCCESSFUL write
         // does NOT propagate a retryable error back to handleRpcRequest. If it did, the outer
         // retry loop would execute the write AGAIN — causing double-writes on relays/coils.
+        let readValue;
+        let readbackSucceeded = false;
+        let readContext;
         try {
-            const readValue = await this.readFromModbusWithRetry(key, mapping);
-            // Update global context cache only after successful read-back verification
-            this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
-            // Update protection gate state after successful coil write
-            if (mapping.fc === 5 && this.protectionGate) {
-                this.protectionGate.updateState(key, Boolean(readValue));
-            }
-            // Publish the confirmed read-back value
-            await this.publishResultWithRetry(key, readValue);
-            this.node.status({ fill: "green", shape: "dot", text: `${key}=${readValue}` });
+            readContext = writeContext ? (0, trace_context_1.createOperationContext)(writeContext, { parentOperationId: writeContext.operationId }) : undefined;
+            readValue = await this.readFromModbusWithRetry(key, mapping, 2, readContext);
+            readbackSucceeded = true;
         }
         catch (readError) {
             // Write succeeded but read-back failed. Publish the written value as fallback and
             // return without throwing — the outer retry must NOT re-write.
             this.logger.warn(`[RPC-HANDLER] Write succeeded but read-back failed for ${key}: ${readError.message}. Publishing written value as fallback.`);
-            await this.publishResultWithRetry(key, value);
-            this.node.status({ fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
-            // Update gate state even on read-back failure (write succeeded)
-            if (mapping.fc === 5 && this.protectionGate) {
-                this.protectionGate.updateState(key, Boolean(value));
+            this.diagnostic.emit("warn", "modbus.readback_unavailable", Object.assign(Object.assign({}, readContext), { key, boardId: mapping.boardId, functionCode: mapping.fc, address: mapping.address, error: { message: readError.message }, writeSucceeded: true }));
+            readValue = value;
+        }
+        // These are post-write bookkeeping operations. Their failure must not escape to the
+        // outer RPC retry loop, which would repeat a write that already succeeded.
+        try {
+            if (readbackSucceeded)
+                this.modbusService.updateGlobalContextCacheAfterVerification(key, readValue, mapping.fc);
+            if (mapping.fc === 5 && this.protectionGate)
+                this.protectionGate.updateState(key, Boolean(readValue));
+            this.node.status(readbackSucceeded
+                ? { fill: "green", shape: "dot", text: `${key}=${readValue}` }
+                : { fill: "yellow", shape: "ring", text: `${key} written (no readback)` });
+        }
+        catch (postWriteError) {
+            this.diagnostic.emit("error", "rpc.post_write_processing_failed", Object.assign(Object.assign({}, writeContext), { key, writeSucceeded: true, readbackSucceeded, error: { message: postWriteError.message } }));
+        }
+        const publishContext = parentContext ? (0, trace_context_1.createOperationContext)(parentContext, {
+            parentOperationId: (readbackSucceeded ? readContext === null || readContext === void 0 ? void 0 : readContext.operationId : writeContext === null || writeContext === void 0 ? void 0 : writeContext.operationId),
+            boardId: mapping.boardId,
+            functionCode: mapping.fc,
+            address: mapping.address,
+        }) : undefined;
+        if (publishContext) {
+            try {
+                const ticket = this.mqttService.scheduleResultTracked(key, readValue, publishContext);
+                this.trackPublish(parentContext, ticket.completion);
+                this.diagnostic.emit("info", "modbus.readback_observed", Object.assign(Object.assign({}, publishContext), { key, readbackOutcome: readbackSucceeded ? "succeeded" : "unavailable_written_value_fallback", publishOperationId: ticket.operationId }));
+            }
+            catch (publishError) {
+                this.diagnostic.emit("error", "rpc.telemetry_schedule_failed", Object.assign(Object.assign({}, publishContext), { key, writeSucceeded: true, readbackSucceeded, error: { message: publishError.message } }));
             }
         }
     }
     /**
      * Handle parameter that only updates configuration (no Modbus mapping)
      */
-    async handleConfigOnlyParameter(key, rawValue) {
+    async handleConfigOnlyParameter(key, rawValue, context) {
         try {
             // Skip if value is falsy (empty string, null, undefined, 0, false)
             // Note: 0 and false are valid values, so only skip empty strings and null/undefined
@@ -592,7 +869,17 @@ class RpcHandler {
             currentConfig[key] = value;
             this.configService.setConfigKeyValues(currentConfig);
             // Publish the validated value directly (not from config) to ensure correct type
-            await this.mqttService.publishConfigUpdate(key, value);
+            if (context) {
+                const publishContext = (0, trace_context_1.createOperationContext)(context, { parentOperationId: context.operationId });
+                const outcome = await this.mqttService.publishConfigUpdateTracked(key, value, undefined, publishContext);
+                this.trackPublish(context, Promise.resolve(outcome));
+                if (outcome.status !== "acknowledged") {
+                    this.diagnostic.emit(outcome.status === "failed" ? "error" : "warn", "rpc.config_delivery_outcome", Object.assign(Object.assign({}, publishContext), { key, status: outcome.status }));
+                }
+            }
+            else {
+                await this.mqttService.publishConfigUpdate(key, value);
+            }
             this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.CONFIG_UPDATED(key) });
         }
         catch (error) {
@@ -688,11 +975,13 @@ class RpcHandler {
     /**
      * Write to Modbus with connection error handling and retry logic
      */
-    async writeToModbusWithRetry(key, mapping, value, maxRetries = 2) {
+    async writeToModbusWithRetry(key, mapping, value, maxRetries = 2, context) {
         let lastError = null;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                await this.modbusService.writeToModbus(key, mapping, value);
+                if (context)
+                    this.diagnostic.emit("info", "modbus.service_attempt", Object.assign(Object.assign({}, context), { operation: "write", attempt, maxAttempts: maxRetries }));
+                await this.modbusService.writeToModbus(key, mapping, value, context);
                 return; // Success, exit retry loop
             }
             catch (error) {
@@ -701,11 +990,12 @@ class RpcHandler {
                 // Check if this is a connection-related error
                 if (this.isConnectionError(errorMessage)) {
                     this.logger.error(`[RPC-HANDLER] Modbus connection lost: ${errorMessage}`);
+                    this.diagnostic.emit("warn", "modbus.retry", Object.assign(Object.assign({}, context), { operation: "write", attempt, maxAttempts: maxRetries, error: { message: errorMessage } }));
                     if (attempt < maxRetries) {
                         this.logger.warn(`[RPC-HANDLER] Attempting reconnection (${attempt}/${maxRetries})...`);
                         try {
                             // Pass boardId so the correct board client is reconnected in multi-board mode
-                            await this.modbusService.checkConnection(mapping.boardId);
+                            await this.modbusService.checkConnection(mapping.boardId, context);
                             this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying operation...`);
                             // Continue to next iteration to retry the operation
                         }
@@ -731,11 +1021,13 @@ class RpcHandler {
     /**
      * Read from Modbus with connection error handling and retry logic
      */
-    async readFromModbusWithRetry(key, mapping, maxRetries = 2) {
+    async readFromModbusWithRetry(key, mapping, maxRetries = 2, context) {
         let lastError = null;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                return await this.modbusService.readFromModbus(key, mapping);
+                if (context)
+                    this.diagnostic.emit("info", "modbus.service_attempt", Object.assign(Object.assign({}, context), { operation: "read", attempt, maxAttempts: maxRetries }));
+                return await this.modbusService.readFromModbus(key, mapping, context);
             }
             catch (error) {
                 lastError = error;
@@ -743,11 +1035,12 @@ class RpcHandler {
                 // Check if this is a connection-related error
                 if (this.isConnectionError(errorMessage)) {
                     this.logger.error(`[RPC-HANDLER] Modbus connection lost during read: ${errorMessage}`);
+                    this.diagnostic.emit("warn", "modbus.retry", Object.assign(Object.assign({}, context), { operation: "read", attempt, maxAttempts: maxRetries, error: { message: errorMessage } }));
                     if (attempt < maxRetries) {
                         this.logger.warn(`[RPC-HANDLER] Attempting reconnection for read (${attempt}/${maxRetries})...`);
                         try {
                             // Pass boardId so the correct board client is reconnected in multi-board mode
-                            await this.modbusService.checkConnection(mapping.boardId);
+                            await this.modbusService.checkConnection(mapping.boardId, context);
                             this.logger.warn(`[RPC-HANDLER] Reconnection successful, retrying read operation...`);
                         }
                         catch (reconnectError) {

@@ -10,16 +10,30 @@ import {
 } from "../interfaces/types";
 import { DEBOUNCE_CONFIG } from "../constants";
 import { Logger } from "../utils/logger";
+import { DiagnosticLogger } from "../../../core/observability/diagnostic-logger";
+import { attachBusinessRequestId, createTraceContext } from "../../../core/observability/trace-context";
+import { runtimeBootId } from "../../../core/observability/runtime";
+import { BrokerRole, TraceContext } from "../../../core/observability/types";
 
 export class MessageHandler implements IMessageHandler {
     private processedMessages: Set<string>;
     private logger: Logger;
     private nodeId: string;
+    private diagnostic: DiagnosticLogger;
+    private nodeInstanceId: string;
+    private brokerRole: BrokerRole;
+    private deviceId?: string;
+    private duplicateTraceIds = new Map<string, string>();
+    private cleanupTimers = new Set<NodeJS.Timeout>();
 
-    constructor(options: ServiceOptions) {
+    constructor(options: ServiceOptions, identity: { nodeInstanceId?: string; brokerRole?: BrokerRole; deviceId?: string } = {}) {
         this.processedMessages = new Set();
         this.logger = new Logger(options.node, "MESSAGE-HANDLER");
         this.nodeId = options.node.id;
+        this.diagnostic = new DiagnosticLogger(options.node, "rpc-ingress");
+        this.nodeInstanceId = identity.nodeInstanceId || crypto.randomUUID();
+        this.brokerRole = identity.brokerRole || "none";
+        this.deviceId = identity.deviceId;
     }
 
     /**
@@ -71,13 +85,21 @@ export class MessageHandler implements IMessageHandler {
      * Mark a message as processed and schedule cleanup
      */
     markMessageProcessed(messageId: string): void {
+        this.markMessageProcessedWithTrace(messageId);
+    }
+
+    private markMessageProcessedWithTrace(messageId: string, traceId?: string): void {
         this.processedMessages.add(messageId);
+        if (traceId) this.duplicateTraceIds.set(messageId, traceId);
 
         // Schedule cleanup after TTL
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             this.processedMessages.delete(messageId);
+            this.duplicateTraceIds.delete(messageId);
+            this.cleanupTimers.delete(timer);
             // this.logger.warn(`Cleaned up processed message: ${messageId}`);
         }, DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
+        this.cleanupTimers.add(timer);
 
         // this.logger.warn(`Marked message as processed: ${messageId}`);
     }
@@ -88,6 +110,9 @@ export class MessageHandler implements IMessageHandler {
     clearProcessedMessages(): void {
         const count = this.processedMessages.size;
         this.processedMessages.clear();
+        this.duplicateTraceIds.clear();
+        this.cleanupTimers.forEach(timer => clearTimeout(timer));
+        this.cleanupTimers.clear();
         this.logger.warn(`Cleared ${count} processed messages`);
     }
 
@@ -118,12 +143,17 @@ export class MessageHandler implements IMessageHandler {
     /**
      * Process a message with deduplication
      */
-    processMessage<T>(payload: any, processor: (payload: any) => Promise<T> | T): Promise<T> | T | null {
+    processMessage<T>(payload: any, processor: (payload: any, context?: TraceContext) => Promise<T> | T, context?: TraceContext): Promise<T> | T | null {
         const messageId = this.generateMessageId(payload);
 
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
-            // this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
+            this.diagnostic.emit("warn", "rpc.duplicate", {
+                ...context,
+                dedupId: messageId,
+                duplicateOfTraceId: this.duplicateTraceIds.get(messageId),
+                dedupTtlMs: DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL,
+            });
             return null;
         }
         else {
@@ -131,14 +161,15 @@ export class MessageHandler implements IMessageHandler {
         }
 
         // Mark as processed
-        this.markMessageProcessed(messageId);
+        this.markMessageProcessedWithTrace(messageId, context?.traceId);
+        this.diagnostic.emit("info", "rpc.accepted", { ...context, dedupId: messageId });
 
         // Log processing
         // this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
 
         // Process the message
         try {
-            return processor(payload);
+            return processor(payload, context);
         } catch (error) {
             this.logger.error(`Message processing failed for ${messageId}: ${(error as Error).message}`);
             throw error;
@@ -189,9 +220,7 @@ export class MessageHandler implements IMessageHandler {
                 // this.logger.warn(`[EXTRACT] Successfully parsed message: ${JSON.stringify(parsed)}`);
                 return parsed;
             } catch (error) {
-                // this.logger.warn(`[EXTRACT] Failed to parse message content: ${(error as Error).message}`);
-                // this.logger.warn(`[EXTRACT] Returning raw message string: ${message.message.toString()}`);
-                return message.message.toString();
+                throw new Error(`Invalid MQTT JSON payload: ${(error as Error).message}`);
             }
         }
 
@@ -203,7 +232,23 @@ export class MessageHandler implements IMessageHandler {
     /**
      * Process MQTT message with topic validation
      */
-    processMqttMessage(message: any, expectedTopicPrefix: string, processor: (payload: any) => Promise<void> | void): Promise<void> | void | null {
+    processMqttMessage(message: any, expectedTopicPrefix: string, processor: (payload: any, context?: TraceContext) => Promise<void> | void, identity: { nodeInstanceId?: string; brokerRole?: BrokerRole; deviceId?: string } = {}): Promise<void> | void | null {
+        let context = createTraceContext({
+            runtimeBootId,
+            nodeId: this.nodeId,
+            nodeInstanceId: identity.nodeInstanceId || this.nodeInstanceId,
+            ingress: "mqtt",
+            brokerRole: identity.brokerRole || this.brokerRole,
+            deviceId: identity.deviceId || this.deviceId,
+            topic: message?.topic,
+        });
+        this.diagnostic.emit("info", "rpc.received", {
+            ...context,
+            topic: typeof message?.topic === "string" ? message.topic.slice(0, 256) : undefined,
+            payloadBytes: Buffer.byteLength(String(message?.message ?? ""), "utf8"),
+            qos: message?.qos,
+            retain: Boolean(message?.retain),
+        });
         try {
             // this.logger.warn(`[MSG-HANDLER] Processing MQTT message`);
             // this.logger.warn(`[MSG-HANDLER] Message topic: ${message.topic}`);
@@ -215,12 +260,12 @@ export class MessageHandler implements IMessageHandler {
             // this.logger.warn(`[MSG-HANDLER] Clean expected prefix: ${cleanExpectedPrefix}`);
 
             if (!message.topic) {
-                // this.logger.warn(`[MSG-HANDLER] Message has no topic - rejecting`);
+                this.diagnostic.emit("warn", "rpc.rejected", { ...context, reason: "missing_topic" });
                 return null;
             }
 
             if (!message.topic.startsWith(cleanExpectedPrefix)) {
-                // this.logger.warn(`[MSG-HANDLER] Topic mismatch - rejecting. Topic: ${message.topic}, Expected prefix: ${cleanExpectedPrefix}`);
+                this.diagnostic.emit("warn", "rpc.rejected", { ...context, reason: "topic_mismatch" });
                 return null;
             }
 
@@ -228,15 +273,24 @@ export class MessageHandler implements IMessageHandler {
 
             // Extract and validate payload
             const payload = this.extractPayload(message);
+            const attached = attachBusinessRequestId(context, payload);
+            context = attached.context;
+            if (attached.invalidSource) {
+                this.diagnostic.emit("warn", "rpc.request_id_invalid", { ...context, source: attached.invalidSource });
+            }
             // this.logger.warn(`[MSG-HANDLER] Extracted payload: ${JSON.stringify(payload)}`);
 
             // Process with deduplication
-            const result = this.processMessage(payload, processor);
+            const result = this.processMessage(payload, processor, context);
             // this.logger.warn(`[MSG-HANDLER] Process message result: ${result}`);
             return result;
         } catch (error) {
+            this.diagnostic.emit("error", "rpc.parse_failed", {
+                ...context,
+                disposition: "rejected",
+                error: { message: (error as Error).message },
+            });
             this.logger.error(`[MSG-HANDLER] MQTT message processing error: ${(error as Error).message}`);
-            this.logger.error(`[MSG-HANDLER] Error stack: ${(error as Error).stack}`);
             throw error;
         }
     }

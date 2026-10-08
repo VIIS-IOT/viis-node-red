@@ -1,236 +1,260 @@
 "use strict";
-/**
- * MQTT Service for VIIS RPC Control Node
- * Handles MQTT publishing with debouncing and immediate publishing
- */
+/** MQTT result delivery for VIIS RPC control. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MqttService = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const diagnostic_logger_1 = require("../../../core/observability/diagnostic-logger");
+const trace_context_1 = require("../../../core/observability/trace-context");
+const runtime_1 = require("../../../core/observability/runtime");
 class MqttService {
     constructor(options, mqttClient, publishTopic) {
+        this.pendingResults = new Map();
+        this.activePublishes = new Map();
+        this.publishDeadlineMs = 10000;
         this.mqttClient = mqttClient;
         this.publishTopic = publishTopic;
         this.node = options.node;
         this.logger = new logger_1.Logger(options.node, "MQTT-SERVICE");
-        this.publishTimeouts = new Map();
+        this.diagnostic = new diagnostic_logger_1.DiagnosticLogger(options.node, "mqtt-publish");
+        this.nodeInstanceId = (0, trace_context_1.createId)();
     }
-    /**
-     * Publish result with debouncing to prevent rapid successive publishes
-     */
+    orphanContext() {
+        var _a;
+        const trace = (0, trace_context_1.createTraceContext)({
+            runtimeBootId: runtime_1.runtimeBootId,
+            nodeId: ((_a = this.node) === null || _a === void 0 ? void 0 : _a.id) || "unknown",
+            nodeInstanceId: this.nodeInstanceId,
+            ingress: "node_input",
+            brokerRole: "none",
+        });
+        return (0, trace_context_1.createOperationContext)(trace);
+    }
+    childContext(context) {
+        return (0, trace_context_1.createOperationContext)(context, { parentOperationId: context.operationId });
+    }
+    /** Preserve the legacy void API while exposing a trackable debounced ticket to RPC. */
     publishResult(key, value) {
-        // Clear existing timeout for this key
-        const existingTimeout = this.publishTimeouts.get(key);
-        if (existingTimeout) {
-            clearTimeout(existingTimeout);
-            this.logger.debug(`Cleared existing timeout for ${key}`);
+        this.scheduleResultTracked(key, value, this.orphanContext());
+    }
+    scheduleResultTracked(key, value, context) {
+        const previous = this.pendingResults.get(key);
+        if (previous) {
+            clearTimeout(previous.timer);
+            this.settlePending(previous, { operationId: previous.operationId, status: "superseded", acknowledgement: "none" });
+            this.diagnostic.emit("info", "mqtt.publish_superseded", Object.assign(Object.assign({}, previous.context), { supersededByOperationId: context.operationId, key }));
         }
-        // Set new debounced timeout
-        const timeout = setTimeout(async () => {
+        const operationId = (0, trace_context_1.createId)();
+        const publishContext = (0, trace_context_1.createOperationContext)(context, { operationId, parentOperationId: context.operationId });
+        let resolve;
+        const completion = new Promise(done => { resolve = done; });
+        const entry = {
+            key,
+            value,
+            operationId,
+            context: publishContext,
+            scheduledAt: Date.now(),
+            timer: setTimeout(() => {
+                var _a;
+                if (((_a = this.pendingResults.get(key)) === null || _a === void 0 ? void 0 : _a.operationId) !== operationId)
+                    return;
+                this.pendingResults.delete(key);
+                this.diagnostic.emit("info", "mqtt.publish_scheduled", Object.assign(Object.assign({}, publishContext), { key, debounceMs: constants_1.DEBOUNCE_CONFIG.TIME_MS }));
+                void this.publishResultPayload(key, value, publishContext).then(outcome => this.settlePending(entry, outcome));
+            }, constants_1.DEBOUNCE_CONFIG.TIME_MS),
+            resolve,
+            settled: false,
+        };
+        this.pendingResults.set(key, entry);
+        return { operationId, completion };
+    }
+    async publishResultImmediate(key, value) {
+        await this.publishResultImmediateTracked(key, value, this.orphanContext());
+    }
+    publishResultImmediateTracked(key, value, context) {
+        return this.publishResultPayload(key, value, this.childContext(context));
+    }
+    async publishConfigUpdate(key, value, note) {
+        await this.publishConfigUpdateTracked(key, value, note, this.orphanContext());
+    }
+    publishConfigUpdateTracked(key, value, note, context) {
+        const payload = { ts: Date.now(), [key]: value };
+        if (note)
+            payload.note = note;
+        return this.publishPayload(payload, payload, this.childContext(context), constants_1.STATUS_MESSAGES.CONFIG_UPDATED(key));
+    }
+    async publishMultipleValues(values, note) {
+        const payload = Object.assign({ ts: Date.now() }, values);
+        if (note)
+            payload.note = note;
+        await this.publishPayload(payload, payload, this.childContext(this.orphanContext()), `Published: ${Object.keys(values).join(", ")}`);
+    }
+    async publishCustomPayload(payload) {
+        const wirePayload = typeof payload === "string" ? payload : JSON.stringify(payload);
+        await this.publishPayload(wirePayload, payload, this.childContext(this.orphanContext()), "Custom payload published");
+    }
+    async publishError(errorMessage) {
+        await this.publishErrorTracked(errorMessage, this.orphanContext());
+    }
+    publishErrorTracked(errorMessage, context) {
+        const payload = { ts: Date.now(), error: errorMessage, status: "error" };
+        return this.publishPayload(payload, payload, this.childContext(context));
+    }
+    publishResultPayload(key, value, context) {
+        const payload = { ts: Date.now(), [key]: value };
+        return this.publishPayload(payload, payload, context, constants_1.STATUS_MESSAGES.PUBLISHED(key));
+    }
+    async publishPayload(wirePayload, outputPayload, context, successStatus) {
+        const payloadString = typeof wirePayload === "string" ? wirePayload : JSON.stringify(wirePayload);
+        const startedAt = Date.now();
+        this.activePublishes.set(context.operationId, startedAt);
+        if (this.activePublishes.size > 1024) {
+            const oldestId = this.activePublishes.keys().next().value;
+            if (oldestId)
+                this.activePublishes.delete(oldestId);
+        }
+        this.latestStatusOperationId = context.operationId;
+        this.diagnostic.emit("info", "mqtt.publish_started", Object.assign(Object.assign({}, context), { topic: this.publishTopic, payloadBytes: Buffer.byteLength(payloadString, "utf8"), deadlineMs: this.publishDeadlineMs }));
+        let timedOut = false;
+        let settled = false;
+        const operation = Promise.resolve()
+            .then(() => this.mqttClient.publish(this.publishTopic, payloadString, undefined, context))
+            .then(() => {
+            const acknowledgement = this.getAcknowledgementType();
+            const outcome = { operationId: context.operationId, status: "acknowledged", acknowledgement };
+            this.activePublishes.delete(context.operationId);
+            this.lastPublishAcknowledgedAt = new Date().toISOString();
             try {
-                await this.publishResultImmediate(key, value);
-                this.publishTimeouts.delete(key);
+                this.node.send({ payload: outputPayload });
+                this.diagnostic.emit("info", "node.output_sent", Object.assign(Object.assign({}, context), { publishOperationId: context.operationId }));
             }
             catch (error) {
-                this.logger.error(`Debounced publish failed for ${key}: ${error.message}`);
-                this.publishTimeouts.delete(key);
+                this.diagnostic.emit("error", "node.output_failed", Object.assign(Object.assign({}, context), { error: this.safeError(error) }));
             }
-        }, constants_1.DEBOUNCE_CONFIG.TIME_MS);
-        this.publishTimeouts.set(key, timeout);
-        this.logger.debug(`Scheduled debounced publish for ${key}=${value} in ${constants_1.DEBOUNCE_CONFIG.TIME_MS}ms`);
-    }
-    /**
-     * Publish result immediately without debouncing
-     */
-    async publishResultImmediate(key, value) {
-        //this.logger.warn(`[MQTT-RESULT] Publishing result: ${key}=${value} (type: ${typeof value})`);
-        const mqttPayload = {
-            ts: Date.now(),
-            [key]: value,
-        };
-        //this.logger.warn(`[MQTT-RESULT] Payload before JSON.stringify: ${JSON.stringify(mqttPayload)}`);
-        try {
-            const payloadString = JSON.stringify(mqttPayload);
-            //this.logger.warn(`[MQTT-RESULT] Payload string: ${payloadString}`);
-            await this.mqttClient.publish(this.publishTopic, payloadString);
-            this.node.send({ payload: mqttPayload });
-            this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.PUBLISHED(key) });
-            //this.logger.warn(`Published immediately: ${key}=${value} (type: ${typeof value})`);
-        }
-        catch (error) {
-            const errorMessage = `Failed to publish ${key}: ${error.message}`;
-            this.logger.error(errorMessage);
-            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            //this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
-            // Don't throw - let local services continue even if MQTT fails
-        }
-    }
-    /**
-     * Publish configuration update result
-     */
-    async publishConfigUpdate(key, value, note) {
-        //this.logger.warn(`[MQTT-CONFIG] Publishing config update: ${key}=${value} (type: ${typeof value})`);
-        const mqttPayload = {
-            ts: Date.now(),
-            [key]: value,
-        };
-        if (note) {
-            mqttPayload.note = note;
-        }
-        //this.logger.warn(`[MQTT-CONFIG] Payload before JSON.stringify: ${JSON.stringify(mqttPayload)}`);
-        try {
-            const payloadString = JSON.stringify(mqttPayload);
-            //this.logger.warn(`[MQTT-CONFIG] Payload string: ${payloadString}`);
-            await this.mqttClient.publish(this.publishTopic, payloadString);
-            this.node.send({ payload: mqttPayload });
-            this.node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.CONFIG_UPDATED(key) });
-            //this.logger.warn(`Published config update: ${key}=${value} (type: ${typeof value})${note ? ` (${note})` : ''}`);
-        }
-        catch (error) {
-            const errorMessage = `Failed to publish config update for ${key}: ${error.message}`;
-            this.logger.error(errorMessage);
-            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            //this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
-            // Don't throw - let local services continue even if MQTT fails
-        }
-    }
-    /**
-     * Publish multiple values at once
-     */
-    async publishMultipleValues(values, note) {
-        const mqttPayload = Object.assign({ ts: Date.now() }, values);
-        if (note) {
-            mqttPayload.note = note;
-        }
-        try {
-            await this.mqttClient.publish(this.publishTopic, JSON.stringify(mqttPayload));
-            this.node.send({ payload: mqttPayload });
-            const keys = Object.keys(values).join(', ');
-            this.node.status({ fill: "green", shape: "dot", text: `Published: ${keys}` });
-            //this.logger.warn(`Published multiple values: ${JSON.stringify(values)}${note ? ` (${note})` : ''}`);
-        }
-        catch (error) {
-            const errorMessage = `Failed to publish multiple values: ${error.message}`;
-            this.logger.error(errorMessage);
-            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            //this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
-            // Don't throw - let local services continue even if MQTT fails
-        }
-    }
-    /**
-     * Publish custom payload
-     */
-    async publishCustomPayload(payload) {
-        try {
-            const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
-            await this.mqttClient.publish(this.publishTopic, payloadString);
-            this.node.send({ payload });
-            this.node.status({ fill: "green", shape: "dot", text: "Custom payload published" });
-            //this.logger.warn(`Published custom payload: ${payloadString}`);
-        }
-        catch (error) {
-            const errorMessage = `Failed to publish custom payload: ${error.message}`;
-            this.logger.error(errorMessage);
-            this.node.status({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
-            //this.logger.warn(`⚠️  Continuing local operations despite MQTT publish failure`);
-            // Don't throw - let local services continue even if MQTT fails
-        }
-    }
-    /**
-     * Clear all pending publish timeouts
-     */
-    clearAllTimeouts() {
-        this.publishTimeouts.forEach((timeout, key) => {
-            clearTimeout(timeout);
-            this.logger.debug(`Cleared pending timeout for ${key}`);
+            if (timedOut) {
+                this.diagnostic.emit("info", "mqtt.publish_late_settlement", Object.assign(Object.assign({}, context), { outcome: "acknowledged", elapsedMs: Date.now() - startedAt }));
+            }
+            else {
+                this.diagnostic.emit("info", "mqtt.publish_acknowledged", Object.assign(Object.assign({}, context), { acknowledgement, elapsedMs: Date.now() - startedAt }));
+            }
+            if (!timedOut && this.latestStatusOperationId === context.operationId && successStatus) {
+                this.safeNodeStatus({ fill: "green", shape: "dot", text: successStatus });
+            }
+            settled = true;
+            return outcome;
+        }, (error) => {
+            const outcome = {
+                operationId: context.operationId,
+                status: timedOut ? "unknown" : "failed",
+                acknowledgement: "none",
+                errorCode: this.errorCode(error),
+            };
+            this.activePublishes.delete(context.operationId);
+            if (timedOut) {
+                this.diagnostic.emit("warn", "mqtt.publish_late_settlement", Object.assign(Object.assign({}, context), { outcome: "failed_after_unknown", error: this.safeError(error), elapsedMs: Date.now() - startedAt }));
+            }
+            else {
+                this.diagnostic.emit("error", "mqtt.publish_failed", Object.assign(Object.assign({}, context), { error: this.safeError(error), elapsedMs: Date.now() - startedAt }));
+                if (this.latestStatusOperationId === context.operationId) {
+                    this.safeNodeStatus({ fill: "yellow", shape: "ring", text: "MQTT failed - continuing locally" });
+                }
+            }
+            settled = true;
+            return outcome;
         });
-        this.publishTimeouts.clear();
-        //this.logger.warn("Cleared all pending publish timeouts");
-    }
-    /**
-     * Get the number of pending publishes
-     */
-    getPendingPublishCount() {
-        return this.publishTimeouts.size;
-    }
-    /**
-     * Get list of keys with pending publishes
-     */
-    getPendingPublishKeys() {
-        return Array.from(this.publishTimeouts.keys());
-    }
-    /**
-     * Check if a key has a pending publish
-     */
-    hasPendingPublish(key) {
-        return this.publishTimeouts.has(key);
-    }
-    /**
-     * Cancel pending publish for a specific key
-     */
-    cancelPendingPublish(key) {
-        const timeout = this.publishTimeouts.get(key);
-        if (timeout) {
+        let timeout;
+        const deadline = new Promise(resolve => {
+            timeout = setTimeout(() => {
+                if (settled)
+                    return;
+                timedOut = true;
+                const outcome = { operationId: context.operationId, status: "unknown", acknowledgement: "none" };
+                this.diagnostic.emit("warn", "mqtt.publish_wait_timed_out", Object.assign(Object.assign({}, context), { deadlineMs: this.publishDeadlineMs, underlyingOperationMayContinue: true }));
+                if (this.latestStatusOperationId === context.operationId) {
+                    this.safeNodeStatus({ fill: "yellow", shape: "ring", text: "MQTT acknowledgement pending" });
+                }
+                resolve(outcome);
+            }, this.publishDeadlineMs);
+        });
+        const outcome = await Promise.race([operation, deadline]);
+        if (timeout)
             clearTimeout(timeout);
-            this.publishTimeouts.delete(key);
-            this.logger.debug(`Cancelled pending publish for ${key}`);
-            return true;
-        }
-        return false;
+        return outcome;
     }
-    /**
-     * Force publish all pending values immediately
-     */
-    async flushPendingPublishes() {
-        const pendingKeys = Array.from(this.publishTimeouts.keys());
-        if (pendingKeys.length === 0) {
-            this.logger.debug("No pending publishes to flush");
-            return;
-        }
-        //this.logger.warn(`Flushing ${pendingKeys.length} pending publishes`);
-        // Clear all timeouts and trigger immediate publishes
-        for (const key of pendingKeys) {
-            const timeout = this.publishTimeouts.get(key);
-            if (timeout) {
-                clearTimeout(timeout);
-                this.publishTimeouts.delete(key);
-                // Note: We can't easily get the value here without refactoring
-                // This method is mainly for cleanup purposes
-            }
-        }
-    }
-    /**
-     * Get MQTT client connection status
-     */
-    isConnected() {
-        return this.mqttClient && this.mqttClient.isConnected();
-    }
-    /**
-     * Get publish topic
-     */
-    getPublishTopic() {
-        return this.publishTopic;
-    }
-    /**
-     * Publish error status
-     */
-    async publishError(errorMessage) {
-        //this.logger.warn(`[MQTT-ERROR] Publishing error status: ${errorMessage}`);
-        const mqttPayload = {
-            ts: Date.now(),
-            error: errorMessage,
-            status: "error"
-        };
+    getAcknowledgementType() {
+        var _a, _b;
         try {
-            const payloadString = JSON.stringify(mqttPayload);
-            await this.mqttClient.publish(this.publishTopic, payloadString);
-            this.node.send({ payload: mqttPayload });
-            //this.logger.warn(`Published error status: ${errorMessage}`);
+            return ((_b = (_a = this.mqttClient).getPublishAcknowledgement) === null || _b === void 0 ? void 0 : _b.call(_a)) || "client_callback";
         }
-        catch (error) {
-            // Don't throw error here to prevent cascading failures
-            this.logger.error(`Failed to publish error status: ${error.message}`);
+        catch (_c) {
+            return "client_callback";
         }
     }
+    safeError(error) {
+        const value = error;
+        return Object.assign(Object.assign({}, (typeof (value === null || value === void 0 ? void 0 : value.code) === "string" ? { code: value.code.slice(0, 64) } : {})), { message: String((value === null || value === void 0 ? void 0 : value.message) || error || "unknown error").slice(0, 256) });
+    }
+    errorCode(error) {
+        const code = error === null || error === void 0 ? void 0 : error.code;
+        return typeof code === "string" ? code.slice(0, 64) : undefined;
+    }
+    safeNodeStatus(status) {
+        try {
+            this.node.status(status);
+        }
+        catch ( /* node status must not affect control */_a) { /* node status must not affect control */ }
+    }
+    settlePending(entry, outcome) {
+        var _a;
+        if (entry.settled)
+            return;
+        entry.settled = true;
+        if (((_a = this.pendingResults.get(entry.key)) === null || _a === void 0 ? void 0 : _a.operationId) === entry.operationId)
+            this.pendingResults.delete(entry.key);
+        entry.resolve(outcome);
+    }
+    clearAllTimeouts() {
+        for (const entry of this.pendingResults.values()) {
+            clearTimeout(entry.timer);
+            this.settlePending(entry, { operationId: entry.operationId, status: "cancelled", acknowledgement: "none" });
+            this.diagnostic.emit("info", "mqtt.publish_cancelled", Object.assign(Object.assign({}, entry.context), { reason: "node_closed" }));
+        }
+        this.pendingResults.clear();
+    }
+    getPendingPublishCount() {
+        return this.pendingResults.size + this.activePublishes.size;
+    }
+    getPendingPublishKeys() { return Array.from(this.pendingResults.keys()); }
+    hasPendingPublish(key) { return this.pendingResults.has(key); }
+    cancelPendingPublish(key) {
+        const entry = this.pendingResults.get(key);
+        if (!entry)
+            return false;
+        clearTimeout(entry.timer);
+        this.settlePending(entry, { operationId: entry.operationId, status: "cancelled", acknowledgement: "none" });
+        this.diagnostic.emit("info", "mqtt.publish_cancelled", Object.assign(Object.assign({}, entry.context), { reason: "caller_cancelled" }));
+        return true;
+    }
+    async flushPendingPublishes() {
+        var _a;
+        const entries = Array.from(this.pendingResults.values());
+        for (const entry of entries) {
+            clearTimeout(entry.timer);
+            if (((_a = this.pendingResults.get(entry.key)) === null || _a === void 0 ? void 0 : _a.operationId) !== entry.operationId)
+                continue;
+            this.pendingResults.delete(entry.key);
+            const outcome = await this.publishResultPayload(entry.key, entry.value, entry.context);
+            this.settlePending(entry, outcome);
+        }
+    }
+    getDiagnosticStatus() {
+        const timestamps = [
+            ...Array.from(this.pendingResults.values(), entry => entry.scheduledAt),
+            ...Array.from(this.activePublishes.values()),
+        ];
+        return Object.assign(Object.assign({ pendingPublishCount: timestamps.length }, (timestamps.length ? { oldestPendingPublishAgeMs: Date.now() - Math.min(...timestamps) } : {})), (this.lastPublishAcknowledgedAt ? { lastPublishAcknowledgedAt: this.lastPublishAcknowledgedAt } : {}));
+    }
+    isConnected() { return Boolean(this.mqttClient && this.mqttClient.isConnected()); }
+    getPublishTopic() { return this.publishTopic; }
 }
 exports.MqttService = MqttService;

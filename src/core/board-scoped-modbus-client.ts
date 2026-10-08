@@ -1,4 +1,5 @@
 import type { ModbusClientCore, ModbusData } from "./modbus-client";
+import type { OperationContext } from "./observability/types";
 
 type ModbusStatusListener = (...args: any[]) => void;
 
@@ -17,7 +18,7 @@ export type SharedModbusTransport = Pick<
   | "writeRegister"
   | "isConnectedCheck"
   | "disconnect"
->;
+> & { getDiagnosticStatus?: (unitId?: number) => Record<string, unknown> };
 
 export class BoardScopedModbusClient {
   constructor(
@@ -52,24 +53,41 @@ export class BoardScopedModbusClient {
     return this.transport as SharedModbusTransport & StatusEmitter;
   }
 
-  readCoils(address: number, length: number): Promise<ModbusData> {
-    return this.transport.readCoils(address, length, this.unitId);
+  readCoils(address: number, length: number, _unitId?: number, context?: OperationContext): Promise<ModbusData> {
+    return context
+      ? this.transport.readCoils(address, length, this.unitId, context)
+      : this.transport.readCoils(address, length, this.unitId);
   }
 
-  readInputRegisters(address: number, length: number): Promise<ModbusData> {
-    return this.transport.readInputRegisters(address, length, this.unitId);
+  readInputRegisters(address: number, length: number, _unitId?: number, context?: OperationContext): Promise<ModbusData> {
+    return context
+      ? this.transport.readInputRegisters(address, length, this.unitId, context)
+      : this.transport.readInputRegisters(address, length, this.unitId);
   }
 
-  readHoldingRegisters(address: number, length: number): Promise<ModbusData> {
-    return this.transport.readHoldingRegisters(address, length, this.unitId);
+  readHoldingRegisters(address: number, length: number, _unitId?: number, context?: OperationContext): Promise<ModbusData> {
+    return context
+      ? this.transport.readHoldingRegisters(address, length, this.unitId, context)
+      : this.transport.readHoldingRegisters(address, length, this.unitId);
   }
 
-  writeCoil(address: number, value: boolean): Promise<void> {
-    return this.transport.writeCoil(address, value, this.unitId);
+  writeCoil(address: number, value: boolean, _unitId?: number, context?: OperationContext): Promise<void> {
+    return context
+      ? this.transport.writeCoil(address, value, this.unitId, context)
+      : this.transport.writeCoil(address, value, this.unitId);
   }
 
-  writeRegister(address: number, value: number): Promise<void> {
-    return this.transport.writeRegister(address, value, this.unitId);
+  writeRegister(address: number, value: number, _unitId?: number, context?: OperationContext): Promise<void> {
+    return context
+      ? this.transport.writeRegister(address, value, this.unitId, context)
+      : this.transport.writeRegister(address, value, this.unitId);
+  }
+
+  getDiagnosticStatus(): Record<string, unknown> {
+    return this.transport.getDiagnosticStatus?.(this.unitId) || {
+      unitId: this.unitId,
+      connected: this.transport.isConnectedCheck(),
+    };
   }
 
   get isConnected(): boolean {

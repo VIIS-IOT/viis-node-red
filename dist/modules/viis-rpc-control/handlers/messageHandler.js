@@ -41,11 +41,20 @@ exports.MessageHandler = void 0;
 const crypto = __importStar(require("crypto"));
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const diagnostic_logger_1 = require("../../../core/observability/diagnostic-logger");
+const trace_context_1 = require("../../../core/observability/trace-context");
+const runtime_1 = require("../../../core/observability/runtime");
 class MessageHandler {
-    constructor(options) {
+    constructor(options, identity = {}) {
+        this.duplicateTraceIds = new Map();
+        this.cleanupTimers = new Set();
         this.processedMessages = new Set();
         this.logger = new logger_1.Logger(options.node, "MESSAGE-HANDLER");
         this.nodeId = options.node.id;
+        this.diagnostic = new diagnostic_logger_1.DiagnosticLogger(options.node, "rpc-ingress");
+        this.nodeInstanceId = identity.nodeInstanceId || crypto.randomUUID();
+        this.brokerRole = identity.brokerRole || "none";
+        this.deviceId = identity.deviceId;
     }
     /**
      * Generate a unique message ID based on payload content and node ID
@@ -95,12 +104,20 @@ class MessageHandler {
      * Mark a message as processed and schedule cleanup
      */
     markMessageProcessed(messageId) {
+        this.markMessageProcessedWithTrace(messageId);
+    }
+    markMessageProcessedWithTrace(messageId, traceId) {
         this.processedMessages.add(messageId);
+        if (traceId)
+            this.duplicateTraceIds.set(messageId, traceId);
         // Schedule cleanup after TTL
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             this.processedMessages.delete(messageId);
+            this.duplicateTraceIds.delete(messageId);
+            this.cleanupTimers.delete(timer);
             // this.logger.warn(`Cleaned up processed message: ${messageId}`);
         }, constants_1.DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
+        this.cleanupTimers.add(timer);
         // this.logger.warn(`Marked message as processed: ${messageId}`);
     }
     /**
@@ -109,6 +126,9 @@ class MessageHandler {
     clearProcessedMessages() {
         const count = this.processedMessages.size;
         this.processedMessages.clear();
+        this.duplicateTraceIds.clear();
+        this.cleanupTimers.forEach(timer => clearTimeout(timer));
+        this.cleanupTimers.clear();
         this.logger.warn(`Cleared ${count} processed messages`);
     }
     /**
@@ -135,23 +155,24 @@ class MessageHandler {
     /**
      * Process a message with deduplication
      */
-    processMessage(payload, processor) {
+    processMessage(payload, processor, context) {
         const messageId = this.generateMessageId(payload);
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
-            // this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
+            this.diagnostic.emit("warn", "rpc.duplicate", Object.assign(Object.assign({}, context), { dedupId: messageId, duplicateOfTraceId: this.duplicateTraceIds.get(messageId), dedupTtlMs: constants_1.DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL }));
             return null;
         }
         else {
             // this.logger.warn(`New message detected: ${messageId}`);
         }
         // Mark as processed
-        this.markMessageProcessed(messageId);
+        this.markMessageProcessedWithTrace(messageId, context === null || context === void 0 ? void 0 : context.traceId);
+        this.diagnostic.emit("info", "rpc.accepted", Object.assign(Object.assign({}, context), { dedupId: messageId }));
         // Log processing
         // this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
         // Process the message
         try {
-            return processor(payload);
+            return processor(payload, context);
         }
         catch (error) {
             this.logger.error(`Message processing failed for ${messageId}: ${error.message}`);
@@ -197,9 +218,7 @@ class MessageHandler {
                 return parsed;
             }
             catch (error) {
-                // this.logger.warn(`[EXTRACT] Failed to parse message content: ${(error as Error).message}`);
-                // this.logger.warn(`[EXTRACT] Returning raw message string: ${message.message.toString()}`);
-                return message.message.toString();
+                throw new Error(`Invalid MQTT JSON payload: ${error.message}`);
             }
         }
         // Return the message itself if no specific payload field
@@ -209,7 +228,18 @@ class MessageHandler {
     /**
      * Process MQTT message with topic validation
      */
-    processMqttMessage(message, expectedTopicPrefix, processor) {
+    processMqttMessage(message, expectedTopicPrefix, processor, identity = {}) {
+        var _a;
+        let context = (0, trace_context_1.createTraceContext)({
+            runtimeBootId: runtime_1.runtimeBootId,
+            nodeId: this.nodeId,
+            nodeInstanceId: identity.nodeInstanceId || this.nodeInstanceId,
+            ingress: "mqtt",
+            brokerRole: identity.brokerRole || this.brokerRole,
+            deviceId: identity.deviceId || this.deviceId,
+            topic: message === null || message === void 0 ? void 0 : message.topic,
+        });
+        this.diagnostic.emit("info", "rpc.received", Object.assign(Object.assign({}, context), { topic: typeof (message === null || message === void 0 ? void 0 : message.topic) === "string" ? message.topic.slice(0, 256) : undefined, payloadBytes: Buffer.byteLength(String((_a = message === null || message === void 0 ? void 0 : message.message) !== null && _a !== void 0 ? _a : ""), "utf8"), qos: message === null || message === void 0 ? void 0 : message.qos, retain: Boolean(message === null || message === void 0 ? void 0 : message.retain) }));
         try {
             // this.logger.warn(`[MSG-HANDLER] Processing MQTT message`);
             // this.logger.warn(`[MSG-HANDLER] Message topic: ${message.topic}`);
@@ -219,25 +249,30 @@ class MessageHandler {
             const cleanExpectedPrefix = expectedTopicPrefix.replace("+", "");
             // this.logger.warn(`[MSG-HANDLER] Clean expected prefix: ${cleanExpectedPrefix}`);
             if (!message.topic) {
-                // this.logger.warn(`[MSG-HANDLER] Message has no topic - rejecting`);
+                this.diagnostic.emit("warn", "rpc.rejected", Object.assign(Object.assign({}, context), { reason: "missing_topic" }));
                 return null;
             }
             if (!message.topic.startsWith(cleanExpectedPrefix)) {
-                // this.logger.warn(`[MSG-HANDLER] Topic mismatch - rejecting. Topic: ${message.topic}, Expected prefix: ${cleanExpectedPrefix}`);
+                this.diagnostic.emit("warn", "rpc.rejected", Object.assign(Object.assign({}, context), { reason: "topic_mismatch" }));
                 return null;
             }
             // this.logger.warn(`[MSG-HANDLER] Topic validation passed`);
             // Extract and validate payload
             const payload = this.extractPayload(message);
+            const attached = (0, trace_context_1.attachBusinessRequestId)(context, payload);
+            context = attached.context;
+            if (attached.invalidSource) {
+                this.diagnostic.emit("warn", "rpc.request_id_invalid", Object.assign(Object.assign({}, context), { source: attached.invalidSource }));
+            }
             // this.logger.warn(`[MSG-HANDLER] Extracted payload: ${JSON.stringify(payload)}`);
             // Process with deduplication
-            const result = this.processMessage(payload, processor);
+            const result = this.processMessage(payload, processor, context);
             // this.logger.warn(`[MSG-HANDLER] Process message result: ${result}`);
             return result;
         }
         catch (error) {
+            this.diagnostic.emit("error", "rpc.parse_failed", Object.assign(Object.assign({}, context), { disposition: "rejected", error: { message: error.message } }));
             this.logger.error(`[MSG-HANDLER] MQTT message processing error: ${error.message}`);
-            this.logger.error(`[MSG-HANDLER] Error stack: ${error.stack}`);
             throw error;
         }
     }

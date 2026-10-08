@@ -7,6 +7,8 @@ exports.ModbusClientCore = exports.ConnectionState = void 0;
 exports.isRetryableModbusWriteError = isRetryableModbusWriteError;
 const modbus_serial_1 = __importDefault(require("modbus-serial"));
 const events_1 = require("events");
+const crypto_1 = require("crypto");
+const diagnostic_logger_1 = require("./observability/diagnostic-logger");
 // Connection state machine for managing connection lifecycle
 var ConnectionState;
 (function (ConnectionState) {
@@ -30,6 +32,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         // Request queue for serializing Modbus operations
         this.requestQueue = Promise.resolve();
         this.queueLength = 0;
+        this.lastSuccessfulIoByUnit = new Map();
         this.isShuttingDown = false; // Flag to prevent new operations during shutdown
         // Circuit breaker pattern for recovery management
         this.failedConnectionCount = 0;
@@ -61,6 +64,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             "ENODEV" // USB device disconnected
         ];
         this.node = node; // Set node first before calling other methods
+        this.diagnostic = new diagnostic_logger_1.DiagnosticLogger(node, "modbus-client");
         this.config = Object.assign({ tcpPort: 502, baudRate: 9600, parity: "none", unitId: 1, timeout: 8000, reconnectInterval: 30000, 
             // Board-specific defaults
             boardType: "STM32", writeTimeout: 8000, readTimeout: 8000, connectionTimeout: 8000, maxRetries: 3 }, config);
@@ -81,16 +85,21 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.client.setID(resolvedUnitId);
         }
     }
-    async enqueueRequest(operation, unitId) {
+    async enqueueRequest(operation, unitId, context, details = { kind: "read", functionCode: 0, address: 0 }) {
         // Add to queue
         this.queueLength++;
+        const queuedCount = this.queueLength;
         const queueTimeout = 30000; // 30 seconds max wait time in queue
         const queueStartTime = Date.now();
+        const actualUnitId = unitId !== null && unitId !== void 0 ? unitId : this.config.unitId;
+        this.diagnostic.emit(context ? "info" : "debug", "modbus.queued", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, queueCount: queuedCount, operation: details.kind, functionCode: details.functionCode, address: details.address }));
         // Chain the operation to the queue with timeout protection
         const result = this.requestQueue.then(async () => {
+            var _a;
             try {
                 // Check if request has been waiting too long
                 const waitTime = Date.now() - queueStartTime;
+                this.diagnostic.emit(context ? "info" : "debug", "modbus.started", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, queueWaitMs: waitTime, operation: details.kind, functionCode: details.functionCode, address: details.address }));
                 if (waitTime > queueTimeout) {
                     throw new Error(`[QUEUE-TIMEOUT] Request timed out after waiting ${waitTime}ms in queue`);
                 }
@@ -100,7 +109,22 @@ class ModbusClientCore extends events_1.EventEmitter {
                     await new Promise(resolve => setTimeout(resolve, interRequestDelay));
                 }
                 this.applyRequestUnitId(unitId);
-                return await operation();
+                try {
+                    const result = await operation();
+                    this.lastSuccessfulIoByUnit.set(actualUnitId, Date.now());
+                    this.diagnostic.emit(context ? "info" : "debug", details.kind === "write" ? "modbus.write_acknowledged" : "modbus.read_succeeded", Object.assign(Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, operation: details.kind, functionCode: details.functionCode, address: details.address, durationMs: Date.now() - queueStartTime - waitTime }), (details.kind === "write" ? { valueType: typeof details.value } : {})));
+                    return result;
+                }
+                catch (error) {
+                    this.diagnostic.emit("error", details.kind === "write" ? "modbus.write_failed" : "modbus.read_failed", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, operation: details.kind, functionCode: details.functionCode, address: details.address, queueWaitMs: waitTime, error: { code: error === null || error === void 0 ? void 0 : error.code, message: error.message } }));
+                    throw error;
+                }
+            }
+            catch (error) {
+                if ((_a = error.message) === null || _a === void 0 ? void 0 : _a.includes("[QUEUE-TIMEOUT]")) {
+                    this.diagnostic.emit("error", "modbus.queue_timeout", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, queueWaitMs: Date.now() - queueStartTime, operation: details.kind, functionCode: details.functionCode, address: details.address, error: { message: error.message } }));
+                }
+                throw error;
             }
             finally {
                 this.queueLength--;
@@ -162,6 +186,13 @@ class ModbusClientCore extends events_1.EventEmitter {
         }
         if (oldState !== newState) {
             this.node.log(`[FSM] ${oldState} → ${newState}`);
+            this.diagnostic.emit(newState === ConnectionState.CONNECTED ? "info" : "warn", "modbus.connection_state_changed", {
+                transportId: this.getTransportId(),
+                from: oldState,
+                to: newState,
+                connected: newState === ConnectionState.CONNECTED,
+                timestamp: new Date(this.lastStateChangeAt).toISOString(),
+            });
             this.emit('state-change', { from: oldState, to: newState, timestamp: this.lastStateChangeAt });
         }
     }
@@ -1012,7 +1043,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         // Continue với normal reconnect
         this.scheduleReconnect();
     }
-    async readCoils(address, length, unitId) {
+    async readCoils(address, length, unitId, context) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1037,9 +1068,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        }, unitId);
+        }, unitId, context, { kind: "read", functionCode: 1, address, quantity: length });
     }
-    async readInputRegisters(address, length, unitId) {
+    async readInputRegisters(address, length, unitId, context) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1062,9 +1093,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        }, unitId);
+        }, unitId, context, { kind: "read", functionCode: 4, address, quantity: length });
     }
-    async readHoldingRegisters(address, length, unitId) {
+    async readHoldingRegisters(address, length, unitId, context) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1087,10 +1118,10 @@ class ModbusClientCore extends events_1.EventEmitter {
                 this.handleError(err);
                 throw error;
             }
-        }, unitId);
+        }, unitId, context, { kind: "read", functionCode: 3, address, quantity: length });
     }
     // Ghi Holding Register
-    async writeRegister(address, value, unitId) {
+    async writeRegister(address, value, unitId, context) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1100,6 +1131,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             const maxRetries = this.config.maxRetries || 3;
             while (retryCount <= maxRetries) {
                 try {
+                    this.diagnostic.emit(context ? "info" : "debug", "modbus.write_attempt", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: unitId !== null && unitId !== void 0 ? unitId : this.config.unitId, functionCode: 6, address, attempt: retryCount + 1, maxAttempts: maxRetries + 1 }));
                     //this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
                     // Add timeout wrapper for write operations with configurable timeout
                     const writePromise = this.client.writeRegister(address, value);
@@ -1125,9 +1157,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                     throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
                 }
             }
-        }, unitId);
+        }, unitId, context, { kind: "write", functionCode: 6, address, value });
     }
-    async writeCoil(address, value, unitId) {
+    async writeCoil(address, value, unitId, context) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1137,6 +1169,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             const maxRetries = this.config.maxRetries || 3;
             while (retryCount <= maxRetries) {
                 try {
+                    this.diagnostic.emit(context ? "info" : "debug", "modbus.write_attempt", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: unitId !== null && unitId !== void 0 ? unitId : this.config.unitId, functionCode: 5, address, attempt: retryCount + 1, maxAttempts: maxRetries + 1 }));
                     //this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
                     // Add timeout wrapper for write operations with configurable timeout
                     const writePromise = this.client.writeCoil(address, value);
@@ -1162,7 +1195,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
                 }
             }
-        }, unitId);
+        }, unitId, context, { kind: "write", functionCode: 5, address, value });
     }
     // Ngắt kết nối
     disconnect() {
@@ -1227,6 +1260,14 @@ class ModbusClientCore extends events_1.EventEmitter {
     // Kiểm tra trạng thái kết nối
     isConnectedCheck() {
         return this.isConnected;
+    }
+    getDiagnosticStatus(unitId = this.config.unitId) {
+        const lastIo = this.lastSuccessfulIoByUnit.get(unitId);
+        return Object.assign({ transportId: this.getTransportId(), unitId, connected: this.isConnected, connectionState: this.connectionState, queueCount: this.queueLength }, (lastIo ? { lastSuccessfulIoAt: new Date(lastIo).toISOString() } : {}));
+    }
+    getTransportId() {
+        const endpoint = [this.config.type, this.config.host, this.config.tcpPort, this.config.serialPort, this.config.baudRate].join("|");
+        return `modbus-${(0, crypto_1.createHash)("sha256").update(endpoint).digest("hex").slice(0, 12)}`;
     }
     // Public method to manually trigger reconnection
     async reconnect() {

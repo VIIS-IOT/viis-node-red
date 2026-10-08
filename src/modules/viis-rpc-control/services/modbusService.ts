@@ -18,6 +18,8 @@ import { ScalingUtils } from "../utils/scaling";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
 import ClientRegistry from "../../../core/client-registry";
 import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
+import { DiagnosticLogger } from "../../../core/observability/diagnostic-logger";
+import { OperationContext } from "../../../core/observability/types";
 
 export class ModbusService implements IModbusService {
     private defaultModbusClient: any; // Default client for single-board or fallback
@@ -28,6 +30,7 @@ export class ModbusService implements IModbusService {
     private flowContext: any;
     private nodeId: string;
     private globalHelper: GlobalContextHelper;
+    private diagnostic: DiagnosticLogger;
 
     constructor(options: ServiceOptions, modbusClient: any, scalingUtils: ScalingUtils) {
         this.defaultModbusClient = modbusClient;
@@ -36,6 +39,7 @@ export class ModbusService implements IModbusService {
         this.flowContext = options.flowContext;
         this.nodeId = options.node.id;
         this.logger = new Logger(options.node, "MODBUS-SERVICE");
+        this.diagnostic = new DiagnosticLogger(options.node, "modbus-service");
         this.globalHelper = new GlobalContextHelper(options.node.context());
         this.environmentConfig = this.loadEnvironmentConfig();
 
@@ -48,7 +52,7 @@ export class ModbusService implements IModbusService {
      * In multi-board mode, gets client from ClientRegistry
      * In single-board mode, returns default client
      */
-    private async getModbusClient(boardId?: string): Promise<any> {
+    private async getModbusClient(boardId?: string, context?: OperationContext): Promise<any> {
         if (boardId) {
             // Multi-board mode: Get client for specific board
             try {
@@ -56,6 +60,20 @@ export class ModbusService implements IModbusService {
                 return client;
             } catch (error) {
                 this.logger.error(`Failed to get client for board ${boardId}: ${error}`);
+                this.diagnostic.emit("error", "modbus.board_acquire_failed", {
+                    ...context,
+                    requestedBoardId: boardId,
+                    effectiveBoardId: "default-client",
+                    fallback: true,
+                    ...this.getClientDiagnostics(this.defaultModbusClient),
+                    error: { message: (error as Error).message },
+                });
+                this.diagnostic.emit("warn", "modbus.board_fallback", {
+                    ...context,
+                    requestedBoardId: boardId,
+                    effectiveBoardId: "default-client",
+                    ...this.getClientDiagnostics(this.defaultModbusClient),
+                });
                 return this.defaultModbusClient;
             }
         }
@@ -262,8 +280,9 @@ export class ModbusService implements IModbusService {
      * Write value to Modbus device
      * Automatically uses correct board client in multi-board mode
      */
-    async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
+    async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean, context?: OperationContext): Promise<void> {
         try {
+            const operationStartedAt = Date.now();
             const originalValue = value;
             let writeValue = value;
 
@@ -286,7 +305,16 @@ export class ModbusService implements IModbusService {
             // this.node.warn(`[RPC] WRITE ${key}: original=${originalValue} → scaled=${writeValue} | addr=${mapping.address} fc=${fcName}${mapping.boardId ? ` board=${mapping.boardId}` : ''}`);
 
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
-            const modbusClient = await this.getModbusClient(mapping.boardId);
+            const modbusClient = await this.getModbusClient(mapping.boardId, context);
+            this.diagnostic.emit("info", "modbus.write_started", {
+                ...context,
+                key,
+                boardId: mapping.boardId,
+                ...this.getClientDiagnostics(modbusClient, mapping.boardId),
+                functionCode: mapping.fc,
+                address: mapping.address,
+                valueType: typeof writeValue,
+            });
 
             // Check if Modbus client is connected
             if (!modbusClient) {
@@ -299,10 +327,10 @@ export class ModbusService implements IModbusService {
 
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
-                await modbusClient.writeRegister(mapping.address, writeValue as number);
+                await modbusClient.writeRegister(mapping.address, writeValue as number, undefined, context);
                 // Note: Cache update removed from here - will be updated after read-back verification
             } else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
-                await modbusClient.writeCoil(mapping.address, writeValue as boolean);
+                await modbusClient.writeCoil(mapping.address, writeValue as boolean, undefined, context);
                 // Note: Cache update removed from here - will be updated after read-back verification
             } else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);
@@ -310,9 +338,26 @@ export class ModbusService implements IModbusService {
 
             // Store manual override information
             this.storeManualOverride(mapping.address, mapping.fc, writeValue);
+            this.diagnostic.emit("info", "modbus.write_completed", {
+                ...context,
+                key,
+                boardId: mapping.boardId,
+                ...this.getClientDiagnostics(modbusClient, mapping.boardId),
+                functionCode: mapping.fc,
+                address: mapping.address,
+                durationMs: Date.now() - operationStartedAt,
+            });
 
         } catch (error) {
             const errorMsg = (error as Error).message;
+            this.diagnostic.emit("error", "modbus.write_service_failed", {
+                ...context,
+                key,
+                boardId: mapping.boardId,
+                functionCode: mapping.fc,
+                address: mapping.address,
+                error: { code: (error as any)?.code, message: errorMsg },
+            });
 
             // Check if this is a connection error and provide more context
             if (this.isConnectionError(errorMsg)) {
@@ -327,10 +372,18 @@ export class ModbusService implements IModbusService {
      * Read value from Modbus device
      * Automatically uses correct board client in multi-board mode
      */
-    async readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean> {
+    async readFromModbus(key: string, mapping: ModbusMappingResult, context?: OperationContext): Promise<number | boolean> {
         try {
             // Get appropriate Modbus client (auto-selects board in multi-board mode)
-            const modbusClient = await this.getModbusClient(mapping.boardId);
+            const modbusClient = await this.getModbusClient(mapping.boardId, context);
+            this.diagnostic.emit("info", "modbus.read_started", {
+                ...context,
+                key,
+                boardId: mapping.boardId,
+                ...this.getClientDiagnostics(modbusClient, mapping.boardId),
+                functionCode: mapping.fc,
+                address: mapping.address,
+            });
 
             const readFc = this.getReadFunctionCode(mapping.fc);
             let result: ModbusData;
@@ -338,13 +391,13 @@ export class ModbusService implements IModbusService {
             // Perform the read operation based on function code
             switch (readFc) {
                 case MODBUS_FUNCTION_CODES.READ_COILS:
-                    result = await modbusClient.readCoils(mapping.address, 1);
+                    result = await modbusClient.readCoils(mapping.address, 1, undefined, context);
                     break;
                 case MODBUS_FUNCTION_CODES.READ_HOLDING_REGISTERS:
-                    result = await modbusClient.readHoldingRegisters(mapping.address, 1);
+                    result = await modbusClient.readHoldingRegisters(mapping.address, 1, undefined, context);
                     break;
                 case MODBUS_FUNCTION_CODES.READ_INPUT_REGISTERS:
-                    result = await modbusClient.readInputRegisters(mapping.address, 1);
+                    result = await modbusClient.readInputRegisters(mapping.address, 1, undefined, context);
                     break;
                 default:
                     throw new Error(`Unsupported read function code: ${readFc}`);
@@ -357,6 +410,16 @@ export class ModbusService implements IModbusService {
             if (typeof readValue === "number") {
                 readValue = this.scalingUtils.scaleValue(key, readValue, "read");
             }
+            this.diagnostic.emit("info", "modbus.read_service_succeeded", {
+                ...context,
+                key,
+                boardId: mapping.boardId,
+                ...this.getClientDiagnostics(modbusClient, mapping.boardId),
+                functionCode: readFc,
+                address: mapping.address,
+                rawValueType: typeof rawValue,
+            });
+            if (context) this.diagnostic.emit("debug", "modbus.readback_observed", { ...context, key, observedValue: readValue });
 
             // Log: Response from Modbus
             const fcName = readFc === 1 ? 'READ_COILS' : readFc === 3 ? 'READ_HOLDING' : readFc === 4 ? 'READ_INPUT' : `FC${readFc}`;
@@ -367,7 +430,30 @@ export class ModbusService implements IModbusService {
         } catch (error) {
             const errorMessage = ERROR_MESSAGES.MODBUS_READ_FAILED(key) + `: ${(error as Error).message}`;
             this.logger.error(errorMessage);
+            this.diagnostic.emit("error", "modbus.read_service_failed", {
+                ...context,
+                key,
+                boardId: mapping.boardId,
+                functionCode: mapping.fc,
+                address: mapping.address,
+                error: { code: (error as any)?.code, message: errorMessage },
+            });
             throw new Error(errorMessage);
+        }
+    }
+
+    private getClientDiagnostics(client: any, requestedBoardId?: string): Record<string, unknown> {
+        try {
+            const status = client?.getDiagnosticStatus?.();
+            return {
+                ...(typeof status?.transportId === "string" ? { transportId: status.transportId } : {}),
+                ...(typeof status?.unitId === "number" ? { unitId: status.unitId } : {}),
+                ...(typeof status?.queueCount === "number" ? { transportQueueCount: status.queueCount } : {}),
+                ...(typeof status?.connected === "boolean" ? { connected: status.connected } : {}),
+                ...(requestedBoardId ? { requestedBoardId } : {}),
+            };
+        } catch {
+            return requestedBoardId ? { requestedBoardId } : {};
         }
     }
 
@@ -573,12 +659,19 @@ export class ModbusService implements IModbusService {
      * In multi-board mode, pass boardId to reconnect the correct board's client.
      * Falls back to defaultModbusClient when boardId is not provided.
      */
-    async checkConnection(boardId?: string): Promise<void> {
+    async checkConnection(boardId?: string, context?: OperationContext): Promise<void> {
+        const startedAt = Date.now();
         try {
             // Use board-specific client in multi-board mode, otherwise fall back to default
             const modbusClient = boardId
-                ? await this.getModbusClient(boardId)
+                ? await this.getModbusClient(boardId, context)
                 : this.defaultModbusClient;
+
+            this.diagnostic.emit("info", "modbus.connection_check_started", {
+                ...context,
+                boardId,
+                ...this.getClientDiagnostics(modbusClient, boardId),
+            });
 
             if (!modbusClient) {
                 throw new Error("Modbus client is not initialized");
@@ -594,6 +687,13 @@ export class ModbusService implements IModbusService {
 
                     // Wait a moment for connection to stabilize
                     await new Promise(resolve => setTimeout(resolve, 1000));
+                    this.diagnostic.emit("info", "modbus.connection_check_finished", {
+                        ...context,
+                        boardId,
+                        ...this.getClientDiagnostics(modbusClient, boardId),
+                        outcome: "reconnected",
+                        durationMs: Date.now() - startedAt,
+                    });
                     return;
                 } catch (reconnectError) {
                     throw new Error(`Reconnection failed: ${(reconnectError as Error).message}`);
@@ -603,10 +703,24 @@ export class ModbusService implements IModbusService {
             // Try a simple read operation to verify connection (skip for now to avoid additional errors)
             // The connection check via isConnectedCheck() should be sufficient
             this.logger.debug("[MODBUS-SERVICE] Modbus connection verified successfully");
+            this.diagnostic.emit("info", "modbus.connection_check_finished", {
+                ...context,
+                boardId,
+                ...this.getClientDiagnostics(modbusClient, boardId),
+                outcome: "connected",
+                durationMs: Date.now() - startedAt,
+            });
 
         } catch (error) {
             const errorMsg = `Modbus connection check failed: ${(error as Error).message}`;
             this.logger.error(errorMsg);
+            this.diagnostic.emit("error", "modbus.connection_check_finished", {
+                ...context,
+                boardId,
+                outcome: "failed",
+                durationMs: Date.now() - startedAt,
+                error: { message: errorMsg },
+            });
             throw new Error(errorMsg);
         }
     }
