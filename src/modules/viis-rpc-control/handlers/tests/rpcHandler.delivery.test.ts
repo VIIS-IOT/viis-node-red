@@ -79,15 +79,16 @@ describe("RpcHandler control and delivery outcomes", () => {
         expect(events).toContain("modbus.readback_unavailable");
     });
 
-    test("overall timeout emits one execution terminal and records late settlement and delivery", async () => {
+    test("overall deadline emits one execution terminal and records late settlement and delivery", async () => {
         let resolveWrite!: () => void;
         const writeGate = new Promise<void>(resolve => { resolveWrite = resolve; });
         const read = jest.fn().mockResolvedValue(true);
         const { handler, writes } = createHandler(read);
         writes.mockImplementation(() => writeGate);
-        (handler as any).RPC_REQUEST_TIMEOUT = 10;
 
-        await expect(handler.handleRpcRequest({ method: "set_state", params: { valve: true } })).rejects.toThrow("timeout");
+        // timeout 3000ms - 2000ms margin = 1000ms TTL (minimum); expiry resolves, it does not reject
+        await expect(handler.handleRpcRequest({ method: "set_state", params: { valve: true }, timeout: 3000 })).resolves.toBeUndefined();
+        expect(events).toContain("rpc.expired");
         expect(events.filter(event => event === "rpc.execution_finished")).toHaveLength(1);
         expect(events).not.toContain("rpc.delivery_finished");
 

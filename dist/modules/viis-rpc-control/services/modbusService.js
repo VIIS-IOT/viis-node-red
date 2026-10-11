@@ -9,6 +9,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ModbusService = void 0;
 const constants_1 = require("../constants");
+const rpc_deadline_1 = require("../utils/rpc-deadline");
 const logger_1 = require("../utils/logger");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
@@ -226,8 +227,20 @@ class ModbusService {
      * Write value to Modbus device
      * Automatically uses correct board client in multi-board mode
      */
-    async writeToModbus(key, mapping, value, context) {
+    async writeToModbus(key, mapping, value, operationContext) {
+        var _a, _b;
+        // Deadline of the RPC this write belongs to (explicit on the context, or from the
+        // request's async context). Carried on the OperationContext down to
+        // ModbusClientCore, which drops the write if it is still queued/retrying past it.
+        const deadline = (_a = operationContext === null || operationContext === void 0 ? void 0 : operationContext.deadline) !== null && _a !== void 0 ? _a : (_b = (0, rpc_deadline_1.currentRpcDeadline)()) === null || _b === void 0 ? void 0 : _b.deadline;
+        const context = deadline !== undefined && (operationContext === null || operationContext === void 0 ? void 0 : operationContext.deadline) === undefined
+            ? Object.assign(Object.assign({}, (operationContext || {})), { deadline })
+            : operationContext;
         try {
+            (0, rpc_deadline_1.assertRpcNotExpired)(`Modbus write ${key}`);
+            if (deadline !== undefined && Date.now() >= deadline) {
+                throw new Error(`[RPC-EXPIRED] Modbus write ${key} skipped: deadline passed`);
+            }
             const operationStartedAt = Date.now();
             const originalValue = value;
             let writeValue = value;

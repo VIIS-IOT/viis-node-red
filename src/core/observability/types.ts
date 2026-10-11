@@ -28,6 +28,12 @@ export interface OperationContext extends TraceContext {
     unitId?: number;
     functionCode?: number;
     address?: number;
+    /**
+     * Epoch ms after which a Modbus write made for this operation must not be sent
+     * anymore (still queued or between retries). Set from the RPC deadline so an
+     * expired RPC never writes to the device late.
+     */
+    deadline?: number;
 }
 
 export interface DiagnosticEvent {

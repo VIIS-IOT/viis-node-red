@@ -13,7 +13,16 @@ import {
     IMqttService
 } from "../interfaces/types";
 import { LuoiMappingHandler } from "../luoi-mapping-handler";
-import { ERROR_MESSAGES, STATUS_MESSAGES, FERTIGATION_KEY_DELAY_MS } from "../constants";
+import { ERROR_MESSAGES, STATUS_MESSAGES, FERTIGATION_KEY_DELAY_MS, RPC_DEADLINE_CONFIG } from "../constants";
+import {
+    RpcDeadlineContext,
+    RpcExpiredError,
+    assertRpcNotExpired,
+    createRpcDeadline,
+    currentRpcDeadline,
+    isRpcExpired,
+    runWithRpcDeadline,
+} from "../utils/rpc-deadline";
 import { Logger } from "../utils/logger";
 import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
 import {
@@ -29,6 +38,8 @@ import { createId, createOperationContext, createTraceContext } from "../../../c
 import { runtimeBootId } from "../../../core/observability/runtime";
 import { OperationContext, TraceContext } from "../../../core/observability/types";
 import { PublishOutcome } from "../interfaces/types";
+
+const RPC_EXPIRED = Symbol("rpc-expired");
 
 interface TraceExecutionState {
     tickets: Promise<PublishOutcome>[];
@@ -48,7 +59,6 @@ interface TraceExecutionState {
 
 export class RpcHandler implements IRpcHandler {
     private readonly maxBatchSize = 100;
-    private readonly RPC_REQUEST_TIMEOUT = 30000; // 30s overall timeout per RPC request
     private configService: IConfigService;
     private validationService: IValidationService;
     private modbusService: IModbusService;
@@ -159,25 +169,51 @@ export class RpcHandler implements IRpcHandler {
             payload: rpcBody,
         });
         const queuedAt = Date.now();
+        // The deadline starts when the command is received, not when it is dequeued:
+        // time spent waiting behind other requests counts against it.
+        const deadline = createRpcDeadline(
+            context.businessRequestId || context.mqttRequestId || null,
+            this.resolveRequestTtl(rpcBody),
+            queuedAt,
+        );
         this.queueLength++;
-        this.logger.log(`[QUEUE] RPC request queued (queue: ${this.queueLength})`);
+        this.logger.log(`[QUEUE] RPC request queued (queue: ${this.queueLength}, ttl: ${deadline.ttlMs}ms)`);
         this.diagnostic.emit("info", "rpc.queued", {
             ...context,
             method: rpcBody?.method,
             queuePosition: this.queueLength,
+            ttlMs: deadline.ttlMs,
+            deadline: deadline.deadline,
         });
         this.pendingTraceContexts.set(context.traceId, context);
         this.registerTrace(context.traceId);
 
+        let underlyingDone: Promise<unknown> = Promise.resolve();
         const execution = this.requestQueue.then(async () => {
-            this.logger.log(`[QUEUE] RPC request dequeued, starting execution (remaining: ${this.queueLength - 1})`);
             const queueWaitMs = Date.now() - queuedAt;
+            if (isRpcExpired(deadline)) {
+                // Waited past its deadline behind other requests: never execute it late.
+                this.logger.warn(`[RPC-EXPIRED] Dropped before execution: waited ${queueWaitMs}ms in RPC queue (ttl ${deadline.ttlMs}ms)`);
+                this.diagnostic.emit("warn", "rpc.expired", {
+                    ...context,
+                    method: rpcBody?.method,
+                    phase: "queued",
+                    ttlMs: deadline.ttlMs,
+                    queueWaitMs,
+                    executed: false,
+                });
+                this.markUnderlyingSettled(context.traceId);
+                await this.reportRpcExpired(deadline, context);
+                return { controlOutcome: "expired", queueWaitMs, executionMs: 0 };
+            }
+            this.logger.log(`[QUEUE] RPC request dequeued, starting execution (remaining: ${this.queueLength - 1})`);
             const startedAt = Date.now();
             this.lastRpcStartedAt = new Date(startedAt).toISOString();
             this.activeCount++;
             this.activePhase = "rpc_dispatch";
             this.diagnostic.emit("info", "rpc.started", { ...context, method: rpcBody?.method, queueWaitMs });
-            const underlying = this.handleRpcRequestInternal(rpcBody, maxRetries, context);
+            const underlying = runWithRpcDeadline(deadline, () => this.handleRpcRequestInternal(rpcBody, maxRetries, context));
+            underlyingDone = underlying.catch(() => undefined);
             this.underlyingPendingCount++;
             let timedOut = false;
             void underlying.then(
@@ -192,12 +228,36 @@ export class RpcHandler implements IRpcHandler {
                 this.markUnderlyingSettled(context.traceId);
             });
             try {
-                const controlOutcome = await this.withTimeout(
-                    underlying,
-                    this.RPC_REQUEST_TIMEOUT,
-                    `RPC request timeout after ${this.RPC_REQUEST_TIMEOUT}ms`
-                );
-                return { controlOutcome, queueWaitMs, executionMs: Date.now() - startedAt };
+                // Answer by the deadline even if the device never responds.
+                let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+                const deadlineReached = new Promise<typeof RPC_EXPIRED>(resolve => {
+                    deadlineTimer = setTimeout(() => resolve(RPC_EXPIRED), Math.max(0, deadline.deadline - Date.now()));
+                });
+                let raced: string | typeof RPC_EXPIRED;
+                try {
+                    raced = await Promise.race([underlying, deadlineReached]);
+                } finally {
+                    if (deadlineTimer) clearTimeout(deadlineTimer);
+                }
+                if (raced === RPC_EXPIRED || (deadline.expired && raced === "expired")) {
+                    deadline.expired = true;
+                    timedOut = raced === RPC_EXPIRED;
+                    this.activePhase = "rpc_expired";
+                    this.diagnostic.emit("error", "rpc.expired", {
+                        ...context,
+                        method: rpcBody?.method,
+                        phase: "executing",
+                        ttlMs: deadline.ttlMs,
+                        queueWaitMs,
+                        executionMs: Date.now() - startedAt,
+                        executed: true,
+                        pendingWritesCancelled: true,
+                        underlyingOperationMayContinue: timedOut,
+                    });
+                    await this.reportRpcExpired(deadline, context);
+                    return { controlOutcome: "expired", queueWaitMs, executionMs: Date.now() - startedAt };
+                }
+                return { controlOutcome: raced, queueWaitMs, executionMs: Date.now() - startedAt };
             } catch (error) {
                 timedOut = (error as Error).message.toLowerCase().includes("timeout");
                 if (timedOut) {
@@ -216,9 +276,14 @@ export class RpcHandler implements IRpcHandler {
             }
         });
 
-        this.requestQueue = execution.catch(() => { /* keep queue alive */ }).finally(() => {
-            this.queueLength--;
-        });
+        // Keep requests serialized until the underlying work has wound down (its writes are
+        // cancelled at the deadline), but never let one stuck request block the queue forever.
+        this.requestQueue = execution
+            .catch(() => { /* keep queue alive */ })
+            .then(() => this.waitForUnderlyingOrRelease(underlyingDone, deadline, context))
+            .finally(() => {
+                this.queueLength--;
+            });
 
         let controlOutcome: string;
         try {
@@ -230,6 +295,47 @@ export class RpcHandler implements IRpcHandler {
             this.finishTrace(context, controlOutcome, Date.now() - queuedAt, 0, { message: (error as Error).message });
             throw error;
         }
+    }
+
+    /**
+     * TTL for one RPC request: rpcBody.timeout (ms, minus a margin so the answer
+     * reaches the client before it gives up) or the per-method default.
+     */
+    private resolveRequestTtl(rpcBody: RpcMessage): number {
+        const cfg = RPC_DEADLINE_CONFIG;
+        const clientTimeout = Number(rpcBody?.timeout);
+        const ttl = Number.isFinite(clientTimeout) && clientTimeout > 0
+            ? clientTimeout - cfg.CLIENT_TIMEOUT_MARGIN_MS
+            : String(rpcBody?.method || "") === "set_state_batch"
+                ? cfg.BATCH_TTL_MS
+                : cfg.SET_STATE_TTL_MS;
+        return Math.min(cfg.MAX_TTL_MS, Math.max(cfg.MIN_TTL_MS, ttl));
+    }
+
+    private async waitForUnderlyingOrRelease(underlyingDone: Promise<unknown>, deadline: RpcDeadlineContext, context: TraceContext): Promise<void> {
+        let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+        const graceMs = RPC_DEADLINE_CONFIG.QUEUE_RELEASE_GRACE_MS;
+        const forcedRelease = new Promise<"released">(resolve => {
+            releaseTimer = setTimeout(() => resolve("released"), Math.max(0, deadline.deadline - Date.now()) + graceMs);
+        });
+        try {
+            const result = await Promise.race([underlyingDone.then(() => "settled" as const), forcedRelease]);
+            if (result === "released") {
+                this.logger.warn(`[QUEUE] Request still running ${graceMs}ms after its deadline; releasing RPC queue (its writes stay cancelled)`);
+                this.diagnostic.emit("warn", "rpc.queue_released", { ...context, graceMs, ttlMs: deadline.ttlMs });
+            }
+        } finally {
+            if (releaseTimer) clearTimeout(releaseTimer);
+        }
+    }
+
+    /** Publish the expiry error exactly once per request (the request itself may also fail late). */
+    private async reportRpcExpired(deadline: RpcDeadlineContext, context?: TraceContext): Promise<void> {
+        if (deadline.responded) return;
+        deadline.responded = true;
+        const message = `[RPC-EXPIRED] RPC not completed within ${deadline.ttlMs}ms (device not responding); remaining Modbus writes cancelled`;
+        this.logger.warn(`${message}${deadline.commandId ? ` (request ${deadline.commandId})` : ""}`);
+        await this.handleRpcError(new RpcExpiredError(message), context);
     }
 
     private registerTrace(traceId: string): void {
@@ -275,9 +381,9 @@ export class RpcHandler implements IRpcHandler {
         state.queueWaitMs = queueWaitMs;
         state.executionMs = executionMs;
         state.error = error;
-        state.lateAfterTimeout = controlOutcome === "timed_out";
+        state.lateAfterTimeout = controlOutcome === "timed_out" || (controlOutcome === "expired" && !state.underlyingSettled);
         this.lastExecutionFinishedAt = new Date().toISOString();
-        this.diagnostic.emit(controlOutcome === "failed" || controlOutcome === "timed_out" ? "error" : "info", "rpc.execution_finished", {
+        this.diagnostic.emit(controlOutcome === "failed" || controlOutcome === "timed_out" || controlOutcome === "expired" ? "error" : "info", "rpc.execution_finished", {
             ...context,
             controlOutcome,
             deliveryOutcome: this.summarizeOutcomes(state.knownOutcomes, state.pendingTicketCount > 0 || state.lateAfterTimeout),
@@ -398,8 +504,13 @@ export class RpcHandler implements IRpcHandler {
     private async handleRpcRequestInternal(rpcBody: RpcMessage, maxRetries: number = 3, context?: TraceContext): Promise<string> {
         let lastError: Error | null = null;
         const startTime = Date.now();
+        const deadline = currentRpcDeadline();
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            if (attempt > 1 && isRpcExpired(deadline)) {
+                this.logger.warn(`[RPC-EXPIRED] Not retrying (attempt ${attempt}/${maxRetries}): request deadline passed`);
+                break;
+            }
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
                     this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}, keys=${Object.keys(rpcBody.params).length})`);
@@ -421,6 +532,11 @@ export class RpcHandler implements IRpcHandler {
                 lastError = error as Error;
                 this.logger.error(`[RPC-ERROR] Attempt ${attempt}/${maxRetries} failed after ${Date.now() - startTime}ms: ${lastError.message}`);
 
+                if (lastError instanceof RpcExpiredError || isRpcExpired(deadline)) {
+                    // The deadline watchdog in handleRpcRequest reports the expiry.
+                    break;
+                }
+
                 // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
                     this.logger.warn(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
@@ -434,8 +550,13 @@ export class RpcHandler implements IRpcHandler {
             }
         }
 
-        // Handle the final error
+        // Handle the final error (an expired request is reported once by the deadline watchdog)
+        if (lastError && isRpcExpired(deadline)) {
+            if (deadline) await this.reportRpcExpired(deadline, context);
+            return "expired";
+        }
         if (lastError) {
+            if (deadline) deadline.responded = true;
             await this.handleRpcError(lastError, context);
         }
         return lastError ? "failed" : "no_op";
@@ -761,8 +882,12 @@ export class RpcHandler implements IRpcHandler {
             const err = error as Error;
             let errorMessage = ERROR_MESSAGES.RPC_HANDLING_ERROR + `: ${err.message}`;
 
+            if (err instanceof RpcExpiredError || err.message.includes("[RPC-EXPIRED]")) {
+                errorMessage = err.message;
+                this.node.status({ fill: "yellow", shape: "ring", text: "RPC expired" });
+            }
             // Handle specific timeout errors
-            if (err.message.includes("timeout") || err.message.includes("TIMEOUT")) {
+            else if (err.message.includes("timeout") || err.message.includes("TIMEOUT")) {
                 const boardType = err.message.includes("STM32") ? "STM32" :
                     err.message.includes("ATMEGA") ? "ATMEGA" : "UNKNOWN";
                 errorMessage = `${boardType} board timeout error: ${err.message}. Consider increasing timeout values or checking board responsiveness.`;
@@ -1005,6 +1130,7 @@ export class RpcHandler implements IRpcHandler {
             }
         }
 
+        assertRpcNotExpired(`Modbus write ${key}`);
         this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
 
         // Write to Modbus with connection error handling.
@@ -1240,6 +1366,7 @@ export class RpcHandler implements IRpcHandler {
         let lastError: Error | null = null;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            assertRpcNotExpired(`Modbus write ${key} (attempt ${attempt}/${maxRetries})`);
             try {
                 if (context) this.diagnostic.emit("info", "modbus.service_attempt", { ...context, operation: "write", attempt, maxAttempts: maxRetries });
                 await this.modbusService.writeToModbus(key, mapping, value, context);

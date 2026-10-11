@@ -13,6 +13,7 @@ import {
 } from "../interfaces/types";
 import { ModbusData } from "../../../core/modbus-client";
 import { MODBUS_FUNCTION_CODES, ERROR_MESSAGES, ENV_KEYS, DEFAULTS, HOLDING_SETML_BOM_OFFSETS } from "../constants";
+import { assertRpcNotExpired, currentRpcDeadline } from "../utils/rpc-deadline";
 import { Logger } from "../utils/logger";
 import { ScalingUtils } from "../utils/scaling";
 import { GlobalContextHelper } from "../../../ultils/global-context-helper";
@@ -280,8 +281,19 @@ export class ModbusService implements IModbusService {
      * Write value to Modbus device
      * Automatically uses correct board client in multi-board mode
      */
-    async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean, context?: OperationContext): Promise<void> {
+    async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean, operationContext?: OperationContext): Promise<void> {
+        // Deadline of the RPC this write belongs to (explicit on the context, or from the
+        // request's async context). Carried on the OperationContext down to
+        // ModbusClientCore, which drops the write if it is still queued/retrying past it.
+        const deadline = operationContext?.deadline ?? currentRpcDeadline()?.deadline;
+        const context: OperationContext | undefined = deadline !== undefined && operationContext?.deadline === undefined
+            ? ({ ...(operationContext || {}), deadline } as OperationContext)
+            : operationContext;
         try {
+            assertRpcNotExpired(`Modbus write ${key}`);
+            if (deadline !== undefined && Date.now() >= deadline) {
+                throw new Error(`[RPC-EXPIRED] Modbus write ${key} skipped: deadline passed`);
+            }
             const operationStartedAt = Date.now();
             const originalValue = value;
             let writeValue = value;

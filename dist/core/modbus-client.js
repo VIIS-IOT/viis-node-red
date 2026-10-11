@@ -100,13 +100,17 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.diagnostic.emit(context ? "info" : "debug", "modbus.queued", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, queueCount: queuedCount, operation: details.kind, functionCode: details.functionCode, address: details.address }));
         // Chain the operation to the queue with timeout protection
         const result = this.requestQueue.then(async () => {
-            var _a;
+            var _a, _b;
             try {
                 // Check if request has been waiting too long
                 const waitTime = Date.now() - queueStartTime;
                 this.diagnostic.emit(context ? "info" : "debug", "modbus.started", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, queueWaitMs: waitTime, operation: details.kind, functionCode: details.functionCode, address: details.address }));
                 if (waitTime > queueTimeout) {
                     throw new Error(`[QUEUE-TIMEOUT] Request timed out after waiting ${waitTime}ms in queue`);
+                }
+                if ((context === null || context === void 0 ? void 0 : context.deadline) !== undefined && Date.now() >= context.deadline) {
+                    this.node.warn(`[QUEUE-EXPIRED] ${details.kind} fc${details.functionCode}@${details.address} dropped after waiting ${waitTime}ms in queue: caller deadline passed`);
+                    throw new Error(`[QUEUE-EXPIRED] Request skipped: caller deadline passed after ${waitTime}ms in queue`);
                 }
                 // Add inter-request delay to prevent overwhelming device
                 if (this.queueLength > 1) {
@@ -126,7 +130,10 @@ class ModbusClientCore extends events_1.EventEmitter {
                 }
             }
             catch (error) {
-                if ((_a = error.message) === null || _a === void 0 ? void 0 : _a.includes("[QUEUE-TIMEOUT]")) {
+                if ((_a = error.message) === null || _a === void 0 ? void 0 : _a.includes("[QUEUE-EXPIRED]")) {
+                    this.diagnostic.emit("warn", "modbus.write_expired", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, phase: "queued", queueWaitMs: Date.now() - queueStartTime, operation: details.kind, functionCode: details.functionCode, address: details.address, sent: false }));
+                }
+                if ((_b = error.message) === null || _b === void 0 ? void 0 : _b.includes("[QUEUE-TIMEOUT]")) {
                     this.diagnostic.emit("error", "modbus.queue_timeout", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: actualUnitId, queueWaitMs: Date.now() - queueStartTime, operation: details.kind, functionCode: details.functionCode, address: details.address, error: { message: error.message } }));
                 }
                 throw error;
@@ -1153,6 +1160,20 @@ class ModbusClientCore extends events_1.EventEmitter {
             }
         }, unitId, context, { kind: "read", functionCode: 3, address, quantity: length });
     }
+    /**
+     * Throws (without touching connection state) when the caller's deadline has
+     * passed, so an expired RPC write is neither sent nor retried.
+     */
+    assertWriteDeadline(context, functionCode, address, attempt, unitId) {
+        if ((context === null || context === void 0 ? void 0 : context.deadline) === undefined || Date.now() < context.deadline)
+            return;
+        const what = functionCode === 5 ? `Write coil ${address}` : `Write register ${address}`;
+        this.node.warn(`[WRITE-EXPIRED] ${what} not sent (attempt ${attempt}): caller deadline passed`);
+        this.diagnostic.emit("warn", "modbus.write_expired", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: unitId !== null && unitId !== void 0 ? unitId : this.config.unitId, phase: attempt > 1 ? "retry" : "before_send", functionCode,
+            address,
+            attempt, sent: false }));
+        throw new Error(`[WRITE-EXPIRED] ${what} skipped: caller deadline passed`);
+    }
     // Ghi Holding Register
     async writeRegister(address, value, unitId, context) {
         // Use request queue to serialize operations
@@ -1163,6 +1184,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             let retryCount = 0;
             const maxRetries = this.config.maxRetries || 3;
             while (retryCount <= maxRetries) {
+                this.assertWriteDeadline(context, 6, address, retryCount + 1, unitId);
                 try {
                     this.diagnostic.emit(context ? "info" : "debug", "modbus.write_attempt", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: unitId !== null && unitId !== void 0 ? unitId : this.config.unitId, functionCode: 6, address, attempt: retryCount + 1, maxAttempts: maxRetries + 1 }));
                     //this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
@@ -1201,6 +1223,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             let retryCount = 0;
             const maxRetries = this.config.maxRetries || 3;
             while (retryCount <= maxRetries) {
+                this.assertWriteDeadline(context, 5, address, retryCount + 1, unitId);
                 try {
                     this.diagnostic.emit(context ? "info" : "debug", "modbus.write_attempt", Object.assign(Object.assign({}, context), { transportId: this.getTransportId(), unitId: unitId !== null && unitId !== void 0 ? unitId : this.config.unitId, functionCode: 5, address, attempt: retryCount + 1, maxAttempts: maxRetries + 1 }));
                     //this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
