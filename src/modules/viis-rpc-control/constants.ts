@@ -20,6 +20,10 @@ export const CONTEXT_KEYS = {
 export const DEBOUNCE_CONFIG = {
     TIME_MS: 200, // 200ms debounce
     MESSAGE_CACHE_TTL: 10000, // 10 seconds - for reliable message deduplication
+    // Dedupe window for commands that carry an id (command_id, requestId or the
+    // MQTT request id in the topic). The id is part of the dedupe key, so a longer
+    // window only catches exact redeliveries and cannot swallow a new command.
+    COMMAND_ID_CACHE_TTL: 60000,
 } as const;
 
 // MQTT configuration defaults

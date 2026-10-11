@@ -84,11 +84,50 @@ export class MessageHandler implements IMessageHandler {
     /**
      * Mark a message as processed and schedule cleanup
      */
-    markMessageProcessed(messageId: string): void {
-        this.markMessageProcessedWithTrace(messageId);
+    markMessageProcessed(messageId: string, ttlMs: number = DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL): void {
+        this.markMessageProcessedWithTrace(messageId, undefined, ttlMs);
     }
 
-    private markMessageProcessedWithTrace(messageId: string, traceId?: string): void {
+    /**
+     * Identity of a command, used for dedupe: explicit command_id in the payload,
+     * then the business request id (params.requestId, ...), then the MQTT request
+     * id from the topic (v1/devices/me/rpc/request/{id}).
+     */
+    extractCommandId(payload: any, context?: TraceContext): string | null {
+        const explicit = payload?.command_id ?? payload?.commandId;
+        if (typeof explicit === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(explicit)) {
+            return explicit;
+        }
+        if (typeof explicit === 'number' && Number.isFinite(explicit)) {
+            return String(explicit);
+        }
+        if (context?.businessRequestId) {
+            return context.businessRequestId;
+        }
+        if (context?.mqttRequestId) {
+            return `mqtt:${context.mqttRequestId}`;
+        }
+        return null;
+    }
+
+    /**
+     * Dedupe key and window for a payload. With a command id the key is id + params
+     * hash: an exact redelivery of the same command is dropped (60s), while a new
+     * command with the same params (new id) runs. The params hash stays in the key so
+     * that a recycled numeric MQTT request id (ThingsBoard resets it per session)
+     * carrying different params is never mistaken for a duplicate.
+     * Without any id, fall back to the params hash (legacy 10s window).
+     */
+    resolveDedupe(payload: any, context?: TraceContext): { messageId: string; commandId: string | null; ttlMs: number } {
+        const commandId = this.extractCommandId(payload, context);
+        if (!commandId) {
+            return { messageId: this.generateMessageId(payload), commandId: null, ttlMs: DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL };
+        }
+        const paramsKey = payload?.params ? this.generateMessageId(payload) : this.nodeId;
+        return { messageId: `cmd_${commandId}_${paramsKey}`, commandId, ttlMs: DEBOUNCE_CONFIG.COMMAND_ID_CACHE_TTL };
+    }
+
+    private markMessageProcessedWithTrace(messageId: string, traceId?: string, ttlMs: number = DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL): void {
         this.processedMessages.add(messageId);
         if (traceId) this.duplicateTraceIds.set(messageId, traceId);
 
@@ -98,7 +137,8 @@ export class MessageHandler implements IMessageHandler {
             this.duplicateTraceIds.delete(messageId);
             this.cleanupTimers.delete(timer);
             // this.logger.warn(`Cleaned up processed message: ${messageId}`);
-        }, DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
+        }, ttlMs);
+        (timer as any).unref?.();
         this.cleanupTimers.add(timer);
 
         // this.logger.warn(`Marked message as processed: ${messageId}`);
@@ -144,25 +184,25 @@ export class MessageHandler implements IMessageHandler {
      * Process a message with deduplication
      */
     processMessage<T>(payload: any, processor: (payload: any, context?: TraceContext) => Promise<T> | T, context?: TraceContext): Promise<T> | T | null {
-        const messageId = this.generateMessageId(payload);
+        const { messageId, commandId, ttlMs } = this.resolveDedupe(payload, context);
+        const dedupBy = commandId ? "command_id" : "params";
 
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
+            this.logger.warn(`Duplicate RPC ignored: ${commandId ? `command_id=${commandId}` : messageId}`);
             this.diagnostic.emit("warn", "rpc.duplicate", {
                 ...context,
                 dedupId: messageId,
+                dedupBy,
                 duplicateOfTraceId: this.duplicateTraceIds.get(messageId),
-                dedupTtlMs: DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL,
+                dedupTtlMs: ttlMs,
             });
             return null;
         }
-        else {
-            // this.logger.warn(`New message detected: ${messageId}`);
-        }
 
         // Mark as processed
-        this.markMessageProcessedWithTrace(messageId, context?.traceId);
-        this.diagnostic.emit("info", "rpc.accepted", { ...context, dedupId: messageId });
+        this.markMessageProcessedWithTrace(messageId, context?.traceId, ttlMs);
+        this.diagnostic.emit("info", "rpc.accepted", { ...context, dedupId: messageId, dedupBy });
 
         // Log processing
         // this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
