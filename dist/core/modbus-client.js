@@ -759,6 +759,21 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.client = new modbus_serial_1.default();
         this.isConnected = false;
     }
+    /**
+     * Reconnect timers can fire after the connection was already restored elsewhere
+     * (e.g. ensureConnected on an incoming RPC). Tearing that connection down would
+     * waste one of the ESP32's 4 TCP client slots, so skip the attempt instead.
+     */
+    skipReconnectIfConnected() {
+        if (this.isShuttingDown || (this.isConnected && this.client.isOpen)) {
+            this.reconnectTimer = undefined;
+            if (!this.isShuttingDown && this.connectionState !== ConnectionState.CONNECTED) {
+                this.transitionTo(ConnectionState.CONNECTED);
+            }
+            return true;
+        }
+        return false;
+    }
     scheduleReconnect() {
         // Don't schedule reconnect if shutting down
         if (this.isShuttingDown) {
@@ -769,6 +784,10 @@ class ModbusClientCore extends events_1.EventEmitter {
             //this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
             return;
         }
+        // Connection may already have been restored elsewhere (e.g. ensureConnected on an RPC)
+        if (this.isConnected && this.client.isOpen) {
+            return;
+        }
         // FSM: Check minimum interval since last state change
         const timeSinceLastChange = Date.now() - this.lastStateChangeAt;
         if (timeSinceLastChange < this.MIN_RECONNECT_INTERVAL) {
@@ -777,7 +796,10 @@ class ModbusClientCore extends events_1.EventEmitter {
             // Schedule after the minimum interval
             this.reconnectTimer = setTimeout(() => {
                 this.reconnectTimer = undefined;
-                this.transitionTo(ConnectionState.RECONNECTING);
+                // Do NOT call transitionTo() here: it resets lastStateChangeAt, so the
+                // re-entry below would always land in this wait branch again and the
+                // real reconnect would never run (endless 15s wait loop while the state
+                // stays RECONNECTING, which also suppresses startConnectionCheck).
                 this.scheduleReconnect();
             }, waitTime);
             return;
@@ -790,6 +812,8 @@ class ModbusClientCore extends events_1.EventEmitter {
         //this.node.log(`[STM32-RECONNECT] Scheduling quick reconnect in ${quickReconnectTime}ms`);
         // Thử kết nối lại nhanh
         this.reconnectTimer = setTimeout(async () => {
+            if (this.skipReconnectIfConnected())
+                return;
             try {
                 // Ensure old connection is fully cleaned up before creating new one
                 await this.ensureCleanConnection();
@@ -811,6 +835,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                 // Lên lịch thử lại với thời gian dài hơn cho STM32
                 //this.node.log(`[STM32-RECONNECT] Scheduling standard reconnect in ${standardReconnectTime}ms`);
                 this.reconnectTimer = setTimeout(async () => {
+                    if (this.skipReconnectIfConnected())
+                        return;
                     try {
                         // Ensure clean connection before retry
                         await this.ensureCleanConnection();
@@ -869,6 +895,8 @@ class ModbusClientCore extends events_1.EventEmitter {
         const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
         //this.node.log(`[STM32-RECONNECT] Scheduling backoff reconnect attempt ${attempt}/${maxAttempts} in ${delay}ms`);
         this.reconnectTimer = setTimeout(async () => {
+            if (this.skipReconnectIfConnected())
+                return;
             try {
                 await this.ensureCleanConnection();
                 await this.initializeClient();
