@@ -11,7 +11,8 @@ import {
     ManualOverrides,
     ManualOverride
 } from "../interfaces/types";
-import { ModbusData } from "../../../core/modbus-client";
+import { ModbusData, ModbusWriteOptions } from "../../../core/modbus-client";
+import { assertRpcNotExpired, currentRpcDeadline } from "../utils/rpc-deadline";
 import { MODBUS_FUNCTION_CODES, ERROR_MESSAGES, ENV_KEYS, DEFAULTS, HOLDING_SETML_BOM_OFFSETS } from "../constants";
 import { Logger } from "../utils/logger";
 import { ScalingUtils } from "../utils/scaling";
@@ -262,8 +263,16 @@ export class ModbusService implements IModbusService {
      * Write value to Modbus device
      * Automatically uses correct board client in multi-board mode
      */
-    async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void> {
+    async writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean, options?: ModbusWriteOptions): Promise<void> {
+        // Deadline of the RPC this write belongs to (explicit, or from the request context)
+        const deadline = options?.deadline ?? currentRpcDeadline()?.deadline;
+        const writeOptions: ModbusWriteOptions | undefined = deadline !== undefined ? { deadline } : undefined;
         try {
+            assertRpcNotExpired(`Modbus write ${key}`);
+            if (deadline !== undefined && Date.now() >= deadline) {
+                throw new Error(`[RPC-EXPIRED] Modbus write ${key} skipped: deadline passed`);
+            }
+
             const originalValue = value;
             let writeValue = value;
 
@@ -299,10 +308,18 @@ export class ModbusService implements IModbusService {
 
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
-                await modbusClient.writeRegister(mapping.address, writeValue as number);
+                if (writeOptions) {
+                    await modbusClient.writeRegister(mapping.address, writeValue as number, undefined, writeOptions);
+                } else {
+                    await modbusClient.writeRegister(mapping.address, writeValue as number);
+                }
                 // Note: Cache update removed from here - will be updated after read-back verification
             } else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
-                await modbusClient.writeCoil(mapping.address, writeValue as boolean);
+                if (writeOptions) {
+                    await modbusClient.writeCoil(mapping.address, writeValue as boolean, undefined, writeOptions);
+                } else {
+                    await modbusClient.writeCoil(mapping.address, writeValue as boolean);
+                }
                 // Note: Cache update removed from here - will be updated after read-back verification
             } else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);

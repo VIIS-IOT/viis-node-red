@@ -86,7 +86,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.client.setID(resolvedUnitId);
         }
     }
-    async enqueueRequest(operation, unitId) {
+    async enqueueRequest(operation, unitId, deadline) {
         // Add to queue
         this.queueLength++;
         const queueTimeout = 30000; // 30 seconds max wait time in queue
@@ -98,6 +98,10 @@ class ModbusClientCore extends events_1.EventEmitter {
                 const waitTime = Date.now() - queueStartTime;
                 if (waitTime > queueTimeout) {
                     throw new Error(`[QUEUE-TIMEOUT] Request timed out after waiting ${waitTime}ms in queue`);
+                }
+                if (deadline !== undefined && Date.now() >= deadline) {
+                    this.node.warn(`[QUEUE-EXPIRED] Write dropped after waiting ${waitTime}ms in queue: caller deadline passed`);
+                    throw new Error(`[QUEUE-EXPIRED] Write skipped: caller deadline passed after ${waitTime}ms in queue`);
                 }
                 // Add inter-request delay to prevent overwhelming device
                 if (this.queueLength > 1) {
@@ -1122,8 +1126,15 @@ class ModbusClientCore extends events_1.EventEmitter {
             }
         }, unitId);
     }
+    /** Throws (without touching connection state) when a write's deadline has passed. */
+    assertWriteDeadline(options, what) {
+        if ((options === null || options === void 0 ? void 0 : options.deadline) !== undefined && Date.now() >= options.deadline) {
+            this.node.warn(`[WRITE-EXPIRED] ${what} not sent: caller deadline passed`);
+            throw new Error(`[WRITE-EXPIRED] ${what} skipped: caller deadline passed`);
+        }
+    }
     // Ghi Holding Register
-    async writeRegister(address, value, unitId) {
+    async writeRegister(address, value, unitId, options) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1132,6 +1143,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             let retryCount = 0;
             const maxRetries = this.config.maxRetries || 3;
             while (retryCount <= maxRetries) {
+                this.assertWriteDeadline(options, `Write register ${address}`);
                 try {
                     //this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
                     // Add timeout wrapper for write operations with configurable timeout
@@ -1158,9 +1170,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                     throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
                 }
             }
-        }, unitId);
+        }, unitId, options === null || options === void 0 ? void 0 : options.deadline);
     }
-    async writeCoil(address, value, unitId) {
+    async writeCoil(address, value, unitId, options) {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1169,6 +1181,7 @@ class ModbusClientCore extends events_1.EventEmitter {
             let retryCount = 0;
             const maxRetries = this.config.maxRetries || 3;
             while (retryCount <= maxRetries) {
+                this.assertWriteDeadline(options, `Write coil ${address}`);
                 try {
                     //this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
                     // Add timeout wrapper for write operations with configurable timeout
@@ -1195,7 +1208,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
                 }
             }
-        }, unitId);
+        }, unitId, options === null || options === void 0 ? void 0 : options.deadline);
     }
     // Ngắt kết nối
     disconnect() {

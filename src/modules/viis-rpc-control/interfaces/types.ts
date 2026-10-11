@@ -127,7 +127,7 @@ export interface IValidationService {
 // Modbus service interface
 export interface IModbusService {
     findModbusMapping(key: string): ModbusMappingResult | null;
-    writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean): Promise<void>;
+    writeToModbus(key: string, mapping: ModbusMappingResult, value: number | boolean, options?: { deadline?: number }): Promise<void>;
     readFromModbus(key: string, mapping: ModbusMappingResult): Promise<number | boolean>;
     checkConnection(boardId?: string): Promise<void>;
     getModbusHoldingRegisters(): Record<string, number>;

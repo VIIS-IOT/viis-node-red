@@ -390,7 +390,7 @@ module.exports = function (RED: NodeAPI) {
                 // Set up MQTT message handler
                 mqttClient.on("mqtt-message", ({ message }: { message: MqttMessage }) => {
                     try {
-                        messageHandler.processMqttMessage(
+                        const processing = messageHandler.processMqttMessage(
                             message,
                             subscribeTopic,
                             async (payload: any) => {
@@ -406,6 +406,11 @@ module.exports = function (RED: NodeAPI) {
                                 void rpcHandler.resendRpcAck(duplicateCommandId).catch(() => undefined);
                             }
                         );
+                        if (processing && typeof (processing as Promise<void>).catch === "function") {
+                            (processing as Promise<void>).catch((error) => {
+                                logger.error(`Error processing MQTT message: ${(error as Error).message}`);
+                            });
+                        }
                     } catch (error) {
                         logger.error(`Error processing MQTT message: ${(error as Error).message}`);
                     }

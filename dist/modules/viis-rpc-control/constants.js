@@ -4,7 +4,7 @@
  * Centralized configuration and magic numbers
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.FERTIGATION_KEY_DELAY_MS = exports.WATER_HAMMER_DELAY_MS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
+exports.HOLDING_SETML_BOM_OFFSETS = exports.DEFAULTS = exports.FERTIGATION_KEY_DELAY_MS = exports.WATER_HAMMER_DELAY_MS = exports.STATUS_MESSAGES = exports.ERROR_MESSAGES = exports.VALIDATION = exports.ENV_KEYS = exports.MODBUS_FUNCTION_CODES = exports.BOARD_CONFIGS = exports.MODBUS_CONFIG = exports.MQTT_CONFIG = exports.RPC_DEADLINE_CONFIG = exports.DEBOUNCE_CONFIG = exports.CONTEXT_KEYS = void 0;
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 // Context keys for storing data
 exports.CONTEXT_KEYS = {
@@ -22,6 +22,20 @@ exports.DEBOUNCE_CONFIG = {
     // Dedupe window for commands that carry a command_id (exact MQTT redelivery).
     // Ids are unique per command, so a longer window cannot swallow a new command.
     COMMAND_ID_CACHE_TTL: 60000,
+};
+// RPC request deadline. A command that is not finished within its TTL is answered
+// FAILED and its remaining Modbus writes are cancelled (never applied late).
+exports.RPC_DEADLINE_CONFIG = {
+    // set_state: answer before the client gives up (~25s in the mobile/e2e client)
+    SET_STATE_TTL_MS: 20000,
+    // set_state_batch: keeps the previous overall budget (sequences include a 7s water-hammer delay)
+    BATCH_TTL_MS: 30000,
+    // rpcBody.timeout (ms) overrides the TTL, minus this margin so our answer arrives first
+    CLIENT_TIMEOUT_MARGIN_MS: 2000,
+    MIN_TTL_MS: 1000,
+    MAX_TTL_MS: 120000,
+    // If a request is still running this long after its deadline, let the next one start
+    QUEUE_RELEASE_GRACE_MS: 10000,
 };
 // MQTT configuration defaults
 exports.MQTT_CONFIG = {

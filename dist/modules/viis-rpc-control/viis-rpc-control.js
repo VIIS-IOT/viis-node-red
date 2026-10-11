@@ -340,7 +340,7 @@ module.exports = function (RED) {
                 // Set up MQTT message handler
                 mqttClient.on("mqtt-message", ({ message }) => {
                     try {
-                        messageHandler.processMqttMessage(message, subscribeTopic, async (payload) => {
+                        const processing = messageHandler.processMqttMessage(message, subscribeTopic, async (payload) => {
                             const rpcBody = payload && typeof payload === 'object' ? payload : {};
                             const commandId = (0, demeter_mqtt_topics_1.extractRpcCommandId)(rpcBody, message.topic);
                             if (commandId && !rpcBody.command_id) {
@@ -351,6 +351,11 @@ module.exports = function (RED) {
                             // Same command_id delivered again: answer with the cached result
                             void rpcHandler.resendRpcAck(duplicateCommandId).catch(() => undefined);
                         });
+                        if (processing && typeof processing.catch === "function") {
+                            processing.catch((error) => {
+                                logger.error(`Error processing MQTT message: ${error.message}`);
+                            });
+                        }
                     }
                     catch (error) {
                         logger.error(`Error processing MQTT message: ${error.message}`);

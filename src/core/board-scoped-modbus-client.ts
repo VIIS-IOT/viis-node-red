@@ -1,4 +1,4 @@
-import type { ModbusClientCore, ModbusData } from "./modbus-client";
+import type { ModbusClientCore, ModbusData, ModbusWriteOptions } from "./modbus-client";
 
 type ModbusStatusListener = (...args: any[]) => void;
 
@@ -65,12 +65,17 @@ export class BoardScopedModbusClient {
     return this.transport.readHoldingRegisters(address, length, this.unitId);
   }
 
-  writeCoil(address: number, value: boolean): Promise<void> {
-    return this.transport.writeCoil(address, value, this.unitId);
+  /** The board's own unitId is always used; the third argument only mirrors ModbusClientCore. */
+  writeCoil(address: number, value: boolean, _unitId?: number, options?: ModbusWriteOptions): Promise<void> {
+    return options
+      ? this.transport.writeCoil(address, value, this.unitId, options)
+      : this.transport.writeCoil(address, value, this.unitId);
   }
 
-  writeRegister(address: number, value: number): Promise<void> {
-    return this.transport.writeRegister(address, value, this.unitId);
+  writeRegister(address: number, value: number, _unitId?: number, options?: ModbusWriteOptions): Promise<void> {
+    return options
+      ? this.transport.writeRegister(address, value, this.unitId, options)
+      : this.transport.writeRegister(address, value, this.unitId);
   }
 
   get isConnected(): boolean {

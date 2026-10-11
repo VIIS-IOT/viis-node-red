@@ -8,6 +8,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ModbusService = void 0;
+const rpc_deadline_1 = require("../utils/rpc-deadline");
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 const global_context_helper_1 = require("../../../ultils/global-context-helper");
@@ -222,8 +223,16 @@ class ModbusService {
      * Write value to Modbus device
      * Automatically uses correct board client in multi-board mode
      */
-    async writeToModbus(key, mapping, value) {
+    async writeToModbus(key, mapping, value, options) {
+        var _a, _b;
+        // Deadline of the RPC this write belongs to (explicit, or from the request context)
+        const deadline = (_a = options === null || options === void 0 ? void 0 : options.deadline) !== null && _a !== void 0 ? _a : (_b = (0, rpc_deadline_1.currentRpcDeadline)()) === null || _b === void 0 ? void 0 : _b.deadline;
+        const writeOptions = deadline !== undefined ? { deadline } : undefined;
         try {
+            (0, rpc_deadline_1.assertRpcNotExpired)(`Modbus write ${key}`);
+            if (deadline !== undefined && Date.now() >= deadline) {
+                throw new Error(`[RPC-EXPIRED] Modbus write ${key} skipped: deadline passed`);
+            }
             const originalValue = value;
             let writeValue = value;
             // Apply special offset for HOLDING_SETML_BOM keys (decoupled feature)
@@ -251,11 +260,21 @@ class ModbusService {
             }
             // Perform the write operation based on function code
             if (mapping.fc === 6) { // WRITE_SINGLE_REGISTER
-                await modbusClient.writeRegister(mapping.address, writeValue);
+                if (writeOptions) {
+                    await modbusClient.writeRegister(mapping.address, writeValue, undefined, writeOptions);
+                }
+                else {
+                    await modbusClient.writeRegister(mapping.address, writeValue);
+                }
                 // Note: Cache update removed from here - will be updated after read-back verification
             }
             else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
-                await modbusClient.writeCoil(mapping.address, writeValue);
+                if (writeOptions) {
+                    await modbusClient.writeCoil(mapping.address, writeValue, undefined, writeOptions);
+                }
+                else {
+                    await modbusClient.writeCoil(mapping.address, writeValue);
+                }
                 // Note: Cache update removed from here - will be updated after read-back verification
             }
             else {

@@ -41,11 +41,16 @@ class BoardScopedModbusClient {
     readHoldingRegisters(address, length) {
         return this.transport.readHoldingRegisters(address, length, this.unitId);
     }
-    writeCoil(address, value) {
-        return this.transport.writeCoil(address, value, this.unitId);
+    /** The board's own unitId is always used; the third argument only mirrors ModbusClientCore. */
+    writeCoil(address, value, _unitId, options) {
+        return options
+            ? this.transport.writeCoil(address, value, this.unitId, options)
+            : this.transport.writeCoil(address, value, this.unitId);
     }
-    writeRegister(address, value) {
-        return this.transport.writeRegister(address, value, this.unitId);
+    writeRegister(address, value, _unitId, options) {
+        return options
+            ? this.transport.writeRegister(address, value, this.unitId, options)
+            : this.transport.writeRegister(address, value, this.unitId);
     }
     get isConnected() {
         return this.transport.isConnectedCheck();

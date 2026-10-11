@@ -6,6 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RpcHandler = void 0;
 const constants_1 = require("../constants");
+const rpc_deadline_1 = require("../utils/rpc-deadline");
 const logger_1 = require("../utils/logger");
 const protection_gate_service_1 = require("../../viis-device-protection/services/protection-gate-service");
 const fertigation_start_sequence_1 = require("../../shared/fertigation-start-sequence");
@@ -28,7 +29,6 @@ class RpcHandler {
     }
     constructor(options, configService, validationService, modbusService, mqttService, luoiHandler) {
         this.maxBatchSize = 100;
-        this.RPC_REQUEST_TIMEOUT = 30000; // 30s overall timeout per RPC request
         this.requestQueue = Promise.resolve();
         this.queueLength = 0;
         this.protectionGate = null;
@@ -69,23 +69,82 @@ class RpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody, maxRetries = 3) {
+        // The deadline starts when the command is received, not when it is dequeued:
+        // time spent waiting behind other requests counts against it.
+        const ctx = (0, rpc_deadline_1.createRpcDeadline)((0, demeter_mqtt_topics_1.extractRpcCommandId)(rpcBody), this.resolveRequestTtl(rpcBody));
         this.queueLength++;
-        this.logger.log(`[QUEUE] RPC request queued (queue: ${this.queueLength})`);
+        this.logger.log(`[QUEUE] RPC request queued (queue: ${this.queueLength}, ttl: ${ctx.ttlMs}ms)`);
         const execution = this.requestQueue.then(async () => {
+            if ((0, rpc_deadline_1.isRpcExpired)(ctx)) {
+                this.logger.warn(`[RPC-EXPIRED] Dropped before execution: waited ${Date.now() - ctx.receivedAt}ms in RPC queue (ttl ${ctx.ttlMs}ms)`);
+                return;
+            }
             this.logger.log(`[QUEUE] RPC request dequeued, starting execution (remaining: ${this.queueLength - 1})`);
-            return this.withTimeout(this.handleRpcRequestInternal(rpcBody, maxRetries), this.RPC_REQUEST_TIMEOUT, `RPC request timeout after ${this.RPC_REQUEST_TIMEOUT}ms`);
+            await (0, rpc_deadline_1.runWithRpcDeadline)(ctx, () => this.handleRpcRequestInternal(rpcBody, maxRetries));
         });
-        this.requestQueue = execution.catch(() => { }).finally(() => {
+        // Never rejects: errors are reported via ACK/status, so no unhandled rejection.
+        const settled = execution.catch((error) => {
+            this.logger.error(`[RPC-ERROR] Unexpected failure: ${error.message}`);
+        });
+        // Keep requests serialized, but do not let one stuck request block the queue forever.
+        let releaseTimer;
+        const forcedRelease = new Promise((resolve) => {
+            releaseTimer = setTimeout(() => {
+                this.logger.warn(`[QUEUE] Request still running ${constants_1.RPC_DEADLINE_CONFIG.QUEUE_RELEASE_GRACE_MS}ms after its deadline; releasing RPC queue (its writes stay cancelled)`);
+                resolve();
+            }, Math.max(0, ctx.deadline - Date.now()) + constants_1.RPC_DEADLINE_CONFIG.QUEUE_RELEASE_GRACE_MS);
+        });
+        this.requestQueue = Promise.race([settled, forcedRelease]).then(() => {
+            if (releaseTimer)
+                clearTimeout(releaseTimer);
             this.queueLength--;
         });
-        return execution;
+        // Answer by the deadline even if the device never responds.
+        let deadlineTimer;
+        const deadlineReached = new Promise((resolve) => {
+            deadlineTimer = setTimeout(() => resolve("expired"), Math.max(0, ctx.deadline - Date.now()));
+        });
+        const outcome = await Promise.race([settled.then(() => "done"), deadlineReached]);
+        if (deadlineTimer)
+            clearTimeout(deadlineTimer);
+        if (outcome === "expired" || ctx.expired) {
+            ctx.expired = true;
+            if (!ctx.responded) {
+                const message = `RPC expired: not completed within ${ctx.ttlMs}ms (device not responding); remaining Modbus writes cancelled`;
+                this.logger.warn(`[RPC-EXPIRED] ${ctx.commandId ? `command ${ctx.commandId}: ` : ""}${message}`);
+                this.node.status({ fill: "yellow", shape: "ring", text: "RPC expired" });
+                await this.publishRpcAck(rpcBody, { success: false, error: message }, ctx);
+            }
+        }
+    }
+    /**
+     * TTL for one RPC request: rpcBody.timeout (ms, minus a margin so the answer
+     * reaches the client before it gives up) or the per-method default.
+     */
+    resolveRequestTtl(rpcBody) {
+        const cfg = constants_1.RPC_DEADLINE_CONFIG;
+        const clientTimeout = Number(rpcBody === null || rpcBody === void 0 ? void 0 : rpcBody.timeout);
+        const ttl = Number.isFinite(clientTimeout) && clientTimeout > 0
+            ? clientTimeout - cfg.CLIENT_TIMEOUT_MARGIN_MS
+            : String((rpcBody === null || rpcBody === void 0 ? void 0 : rpcBody.method) || "") === "set_state_batch"
+                ? cfg.BATCH_TTL_MS
+                : cfg.SET_STATE_TTL_MS;
+        return Math.min(cfg.MAX_TTL_MS, Math.max(cfg.MIN_TTL_MS, ttl));
     }
     /**
      * Internal request processor executed in serialized queue
      */
-    async publishRpcAck(rpcBody, result) {
+    async publishRpcAck(rpcBody, result, ctx = (0, rpc_deadline_1.currentRpcDeadline)()) {
         if (!(0, demeter_mqtt_topics_1.isHandledRpcControlMethod)(rpcBody.method)) {
             return;
+        }
+        if (ctx) {
+            // Exactly one terminal response per request (the deadline watchdog may have answered)
+            if (ctx.responded) {
+                this.logger.warn(`[RPC-LATE] Request finished after its deadline (success=${result.success}); FAILED was already reported`);
+                return;
+            }
+            ctx.responded = true;
         }
         const commandId = (0, demeter_mqtt_topics_1.extractRpcCommandId)(rpcBody);
         if (!commandId || typeof this.mqttService.publishRpcResponse !== 'function') {
@@ -153,7 +212,12 @@ class RpcHandler {
         let lastError = null;
         const startTime = Date.now();
         rpcBody = this.normalizeRpcBody(rpcBody);
+        const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            if (attempt > 1 && (0, rpc_deadline_1.isRpcExpired)(ctx)) {
+                this.logger.warn(`[RPC-EXPIRED] Not retrying (attempt ${attempt}/${maxRetries}): request deadline passed`);
+                break;
+            }
             try {
                 if (rpcBody.method === "set_state" && rpcBody.params) {
                     this.logger.log(`Processing RPC request (attempt ${attempt}/${maxRetries}): ${JSON.stringify(rpcBody)}`);
@@ -178,6 +242,10 @@ class RpcHandler {
             catch (error) {
                 lastError = error;
                 this.logger.error(`[RPC-ERROR] Attempt ${attempt}/${maxRetries} failed after ${Date.now() - startTime}ms: ${lastError.message}`);
+                if (lastError instanceof rpc_deadline_1.RpcExpiredError || (0, rpc_deadline_1.isRpcExpired)(ctx)) {
+                    // The deadline watchdog in handleRpcRequest reports FAILED.
+                    break;
+                }
                 // Check if error is retryable
                 if (this.isRetryableError(lastError.message) && attempt < maxRetries) {
                     this.logger.warn(`RPC request failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
@@ -188,8 +256,8 @@ class RpcHandler {
                 break;
             }
         }
-        // Handle the final error
-        if (lastError) {
+        // Handle the final error (an expired request is answered by the deadline watchdog)
+        if (lastError && !(0, rpc_deadline_1.isRpcExpired)(ctx)) {
             await this.publishRpcAck(rpcBody, { success: false, error: lastError.message });
             await this.handleRpcError(lastError);
         }
@@ -614,6 +682,7 @@ class RpcHandler {
                 throw new Error(`Protection blocked: ${gate.reason}`);
             }
         }
+        (0, rpc_deadline_1.assertRpcNotExpired)(`Modbus write ${key}=${value}`);
         this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
         // Write to Modbus with connection error handling.
         // If this throws, the outer handleRpcRequest retry loop may re-attempt — which is safe
@@ -772,6 +841,7 @@ class RpcHandler {
     async writeToModbusWithRetry(key, mapping, value, maxRetries = 2) {
         let lastError = null;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            (0, rpc_deadline_1.assertRpcNotExpired)(`Modbus write ${key} (attempt ${attempt}/${maxRetries})`);
             try {
                 await this.modbusService.writeToModbus(key, mapping, value);
                 return; // Success, exit retry loop

@@ -43,6 +43,15 @@ export interface ModbusData {
  */
 export const CIRCUIT_BREAKER_RECOVERY_MS = 60000;
 
+/** Optional per-write constraints from the caller (e.g. an RPC deadline). */
+export interface ModbusWriteOptions {
+    /**
+     * Epoch ms after which this write must not be sent anymore (still queued or
+     * between retries). Used so an expired RPC never writes to the device late.
+     */
+    deadline?: number;
+}
+
 export function isRetryableModbusWriteError(message: string): boolean {
     const text = message.toLowerCase();
     return text.includes("timeout") || text.includes("timed out");
@@ -138,7 +147,7 @@ export class ModbusClientCore extends EventEmitter {
         }
     }
 
-    private async enqueueRequest<T>(operation: () => Promise<T>, unitId?: number): Promise<T> {
+    private async enqueueRequest<T>(operation: () => Promise<T>, unitId?: number, deadline?: number): Promise<T> {
         // Add to queue
         this.queueLength++;
         const queueTimeout = 30000; // 30 seconds max wait time in queue
@@ -151,6 +160,10 @@ export class ModbusClientCore extends EventEmitter {
                 const waitTime = Date.now() - queueStartTime;
                 if (waitTime > queueTimeout) {
                     throw new Error(`[QUEUE-TIMEOUT] Request timed out after waiting ${waitTime}ms in queue`);
+                }
+                if (deadline !== undefined && Date.now() >= deadline) {
+                    this.node.warn(`[QUEUE-EXPIRED] Write dropped after waiting ${waitTime}ms in queue: caller deadline passed`);
+                    throw new Error(`[QUEUE-EXPIRED] Write skipped: caller deadline passed after ${waitTime}ms in queue`);
                 }
 
                 // Add inter-request delay to prevent overwhelming device
@@ -1324,8 +1337,16 @@ export class ModbusClientCore extends EventEmitter {
         }, unitId);
     }
 
+    /** Throws (without touching connection state) when a write's deadline has passed. */
+    private assertWriteDeadline(options: ModbusWriteOptions | undefined, what: string): void {
+        if (options?.deadline !== undefined && Date.now() >= options.deadline) {
+            this.node.warn(`[WRITE-EXPIRED] ${what} not sent: caller deadline passed`);
+            throw new Error(`[WRITE-EXPIRED] ${what} skipped: caller deadline passed`);
+        }
+    }
+
     // Ghi Holding Register
-    public async writeRegister(address: number, value: number, unitId?: number): Promise<void> {
+    public async writeRegister(address: number, value: number, unitId?: number, options?: ModbusWriteOptions): Promise<void> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1336,6 +1357,7 @@ export class ModbusClientCore extends EventEmitter {
         const maxRetries = this.config.maxRetries || 3;
 
         while (retryCount <= maxRetries) {
+            this.assertWriteDeadline(options, `Write register ${address}`);
             try {
                 //this.node.log(`[${boardType}-WRITE] Attempting to write register ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
 
@@ -1366,10 +1388,10 @@ export class ModbusClientCore extends EventEmitter {
                 throw new Error(`[${boardType}-WRITE-FAILED] Write register ${address} failed after ${retryCount} attempts: ${err.message}`);
             }
         }
-        }, unitId);
+        }, unitId, options?.deadline);
     }
 
-    public async writeCoil(address: number, value: boolean, unitId?: number): Promise<void> {
+    public async writeCoil(address: number, value: boolean, unitId?: number, options?: ModbusWriteOptions): Promise<void> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {
             await this.ensureConnected();
@@ -1380,6 +1402,7 @@ export class ModbusClientCore extends EventEmitter {
         const maxRetries = this.config.maxRetries || 3;
 
         while (retryCount <= maxRetries) {
+            this.assertWriteDeadline(options, `Write coil ${address}`);
             try {
                 //this.node.log(`[${boardType}-WRITE] Attempting to write coil ${address} = ${value} (attempt ${retryCount + 1}/${maxRetries + 1}, timeout: ${writeTimeout}ms)`);
 
@@ -1410,7 +1433,7 @@ export class ModbusClientCore extends EventEmitter {
                 throw new Error(`[${boardType}-WRITE-FAILED] Write coil ${address} failed after ${retryCount} attempts: ${err.message}`);
             }
         }
-        }, unitId);
+        }, unitId, options?.deadline);
     }
 
     // Ngắt kết nối

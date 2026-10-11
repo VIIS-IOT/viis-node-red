@@ -25,6 +25,21 @@ export const DEBOUNCE_CONFIG = {
     COMMAND_ID_CACHE_TTL: 60000,
 } as const;
 
+// RPC request deadline. A command that is not finished within its TTL is answered
+// FAILED and its remaining Modbus writes are cancelled (never applied late).
+export const RPC_DEADLINE_CONFIG = {
+    // set_state: answer before the client gives up (~25s in the mobile/e2e client)
+    SET_STATE_TTL_MS: 20000,
+    // set_state_batch: keeps the previous overall budget (sequences include a 7s water-hammer delay)
+    BATCH_TTL_MS: 30000,
+    // rpcBody.timeout (ms) overrides the TTL, minus this margin so our answer arrives first
+    CLIENT_TIMEOUT_MARGIN_MS: 2000,
+    MIN_TTL_MS: 1000,
+    MAX_TTL_MS: 120000,
+    // If a request is still running this long after its deadline, let the next one start
+    QUEUE_RELEASE_GRACE_MS: 10000,
+} as const;
+
 // MQTT configuration defaults
 export const MQTT_CONFIG = {
     THINGSBOARD: {
