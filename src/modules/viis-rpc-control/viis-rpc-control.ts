@@ -400,6 +400,10 @@ module.exports = function (RED: NodeAPI) {
                                     rpcBody.command_id = commandId;
                                 }
                                 await rpcHandler.handleRpcRequest(rpcBody);
+                            },
+                            (duplicateCommandId) => {
+                                // Same command_id delivered again: answer with the cached result
+                                void rpcHandler.resendRpcAck(duplicateCommandId).catch(() => undefined);
                             }
                         );
                     } catch (error) {

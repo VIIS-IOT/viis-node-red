@@ -41,6 +41,7 @@ exports.MessageHandler = void 0;
 const crypto = __importStar(require("crypto"));
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 class MessageHandler {
     constructor(options) {
         this.processedMessages = new Set();
@@ -94,13 +95,13 @@ class MessageHandler {
     /**
      * Mark a message as processed and schedule cleanup
      */
-    markMessageProcessed(messageId) {
+    markMessageProcessed(messageId, ttlMs = constants_1.DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL) {
         this.processedMessages.add(messageId);
         // Schedule cleanup after TTL
         setTimeout(() => {
             this.processedMessages.delete(messageId);
             // this.logger.warn(`Cleaned up processed message: ${messageId}`);
-        }, constants_1.DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
+        }, ttlMs);
         // this.logger.warn(`Marked message as processed: ${messageId}`);
     }
     /**
@@ -135,18 +136,31 @@ class MessageHandler {
     /**
      * Process a message with deduplication
      */
-    processMessage(payload, processor) {
-        const messageId = this.generateMessageId(payload);
+    processMessage(payload, processor, topic, onDuplicate) {
+        // Dedupe by command_id when the command carries one: an exact redelivery of the
+        // same command is dropped, but a new command with the same params (new id) runs.
+        // Without an id, fall back to the params hash (legacy short window).
+        const commandId = payload && typeof payload === 'object'
+            ? (0, demeter_mqtt_topics_1.extractRpcCommandId)(payload, topic)
+            : null;
+        const messageId = commandId
+            ? `cmd_${commandId}_${this.nodeId}`
+            : this.generateMessageId(payload);
         // Check for duplicate
         if (this.isMessageProcessed(messageId)) {
-            // this.logger.warn(`Duplicate message detected and ignored: ${messageId}`);
+            this.logger.warn(`Duplicate message ignored: ${commandId ? `command_id=${commandId}` : messageId}`);
+            if (onDuplicate) {
+                try {
+                    onDuplicate(commandId, payload);
+                }
+                catch (error) {
+                    this.logger.warn(`Duplicate handler failed: ${error.message}`);
+                }
+            }
             return null;
         }
-        else {
-            // this.logger.warn(`New message detected: ${messageId}`);
-        }
         // Mark as processed
-        this.markMessageProcessed(messageId);
+        this.markMessageProcessed(messageId, commandId ? constants_1.DEBOUNCE_CONFIG.COMMAND_ID_CACHE_TTL : constants_1.DEBOUNCE_CONFIG.MESSAGE_CACHE_TTL);
         // Log processing
         // this.logger.warn(`Processing message: ${JSON.stringify(payload)} [ID: ${messageId}]`);
         // Process the message
@@ -209,7 +223,7 @@ class MessageHandler {
     /**
      * Process MQTT message with topic validation
      */
-    processMqttMessage(message, expectedTopicPrefix, processor) {
+    processMqttMessage(message, expectedTopicPrefix, processor, onDuplicate) {
         try {
             // this.logger.warn(`[MSG-HANDLER] Processing MQTT message`);
             // this.logger.warn(`[MSG-HANDLER] Message topic: ${message.topic}`);
@@ -231,7 +245,7 @@ class MessageHandler {
             const payload = this.extractPayload(message);
             // this.logger.warn(`[MSG-HANDLER] Extracted payload: ${JSON.stringify(payload)}`);
             // Process with deduplication
-            const result = this.processMessage(payload, processor);
+            const result = this.processMessage(payload, processor, message.topic, onDuplicate);
             // this.logger.warn(`[MSG-HANDLER] Process message result: ${result}`);
             return result;
         }

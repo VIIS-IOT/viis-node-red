@@ -33,6 +33,8 @@ class RpcHandler {
         this.queueLength = 0;
         this.protectionGate = null;
         this.waterHammerDelayMs = fertigation_start_sequence_1.WATER_HAMMER_DELAY_MS;
+        /** Last terminal response per command_id, re-sent when the same command is redelivered. */
+        this.ackCache = new Map();
         this.defaultBatchOptions = {
             sequential: true,
             modbus_delay_ms: 150,
@@ -89,16 +91,47 @@ class RpcHandler {
         if (!commandId || typeof this.mqttService.publishRpcResponse !== 'function') {
             return;
         }
+        const response = {
+            success: result.success,
+            status: result.success ? 'ACKED' : 'FAILED',
+            method: String(rpcBody.method),
+            error: result.error,
+        };
+        this.cacheAck(commandId, response);
         try {
-            await this.mqttService.publishRpcResponse(commandId, {
-                success: result.success,
-                status: result.success ? 'ACKED' : 'FAILED',
-                method: String(rpcBody.method),
-                error: result.error,
-            });
+            await this.mqttService.publishRpcResponse(commandId, response);
         }
         catch (error) {
             this.logger.warn(`RPC ACK publish failed (Modbus already finished): ${error.message}`);
+        }
+    }
+    cacheAck(commandId, response) {
+        var _a, _b;
+        this.ackCache.set(commandId, response);
+        const timer = setTimeout(() => this.ackCache.delete(commandId), constants_1.DEBOUNCE_CONFIG.COMMAND_ID_CACHE_TTL);
+        (_b = (_a = timer).unref) === null || _b === void 0 ? void 0 : _b.call(_a);
+    }
+    /**
+     * Re-publish the terminal response of an already handled command_id (duplicate
+     * delivery), so the client is not left without a response. Returns false when
+     * the command is still running; its final response will follow on the same topic.
+     */
+    async resendRpcAck(commandId) {
+        if (!commandId || typeof this.mqttService.publishRpcResponse !== 'function') {
+            return false;
+        }
+        const cached = this.ackCache.get(commandId);
+        if (!cached) {
+            return false;
+        }
+        try {
+            await this.mqttService.publishRpcResponse(commandId, cached);
+            this.logger.log(`[RPC-DEDUPE] Re-sent ${cached.status} for duplicate command ${commandId}`);
+            return true;
+        }
+        catch (error) {
+            this.logger.warn(`[RPC-DEDUPE] Re-send failed for ${commandId}: ${error.message}`);
+            return false;
         }
     }
     normalizeRpcBody(rpcBody) {

@@ -13,7 +13,7 @@ import {
     IMqttService
 } from "../interfaces/types";
 import { LuoiMappingHandler } from "../luoi-mapping-handler";
-import { ERROR_MESSAGES, STATUS_MESSAGES, FERTIGATION_KEY_DELAY_MS } from "../constants";
+import { ERROR_MESSAGES, STATUS_MESSAGES, FERTIGATION_KEY_DELAY_MS, DEBOUNCE_CONFIG } from "../constants";
 import { Logger } from "../utils/logger";
 import { ProtectionGateService, resolveProtectionGate } from "../../viis-device-protection/services/protection-gate-service";
 import {
@@ -43,6 +43,8 @@ export class RpcHandler implements IRpcHandler {
     private queueLength: number = 0;
     private protectionGate: ProtectionGateService | null = null;
     private waterHammerDelayMs = WATER_HAMMER_DELAY_MS;
+    /** Last terminal response per command_id, re-sent when the same command is redelivered. */
+    private ackCache = new Map<string, { success: boolean; status: string; method: string; error?: string }>();
 
     private readonly defaultBatchOptions = {
         sequential: true,
@@ -144,15 +146,46 @@ export class RpcHandler implements IRpcHandler {
         if (!commandId || typeof this.mqttService.publishRpcResponse !== 'function') {
             return;
         }
+        const response = {
+            success: result.success,
+            status: result.success ? 'ACKED' : 'FAILED',
+            method: String(rpcBody.method),
+            error: result.error,
+        };
+        this.cacheAck(commandId, response);
         try {
-            await this.mqttService.publishRpcResponse(commandId, {
-                success: result.success,
-                status: result.success ? 'ACKED' : 'FAILED',
-                method: String(rpcBody.method),
-                error: result.error,
-            });
+            await this.mqttService.publishRpcResponse(commandId, response);
         } catch (error) {
             this.logger.warn(`RPC ACK publish failed (Modbus already finished): ${(error as Error).message}`);
+        }
+    }
+
+    private cacheAck(commandId: string, response: { success: boolean; status: string; method: string; error?: string }): void {
+        this.ackCache.set(commandId, response);
+        const timer = setTimeout(() => this.ackCache.delete(commandId), DEBOUNCE_CONFIG.COMMAND_ID_CACHE_TTL);
+        (timer as any).unref?.();
+    }
+
+    /**
+     * Re-publish the terminal response of an already handled command_id (duplicate
+     * delivery), so the client is not left without a response. Returns false when
+     * the command is still running; its final response will follow on the same topic.
+     */
+    async resendRpcAck(commandId: string | null): Promise<boolean> {
+        if (!commandId || typeof this.mqttService.publishRpcResponse !== 'function') {
+            return false;
+        }
+        const cached = this.ackCache.get(commandId);
+        if (!cached) {
+            return false;
+        }
+        try {
+            await this.mqttService.publishRpcResponse(commandId, cached);
+            this.logger.log(`[RPC-DEDUPE] Re-sent ${cached.status} for duplicate command ${commandId}`);
+            return true;
+        } catch (error) {
+            this.logger.warn(`[RPC-DEDUPE] Re-send failed for ${commandId}: ${(error as Error).message}`);
+            return false;
         }
     }
 

@@ -19,6 +19,9 @@ exports.CONTEXT_KEYS = {
 exports.DEBOUNCE_CONFIG = {
     TIME_MS: 200, // 200ms debounce
     MESSAGE_CACHE_TTL: 10000, // 10 seconds - for reliable message deduplication
+    // Dedupe window for commands that carry a command_id (exact MQTT redelivery).
+    // Ids are unique per command, so a longer window cannot swallow a new command.
+    COMMAND_ID_CACHE_TTL: 60000,
 };
 // MQTT configuration defaults
 exports.MQTT_CONFIG = {
