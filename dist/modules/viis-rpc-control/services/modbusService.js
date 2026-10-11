@@ -504,6 +504,11 @@ class ModbusService {
             // Check if client reports as connected
             if (!modbusClient.isConnectedCheck()) {
                 this.logger.log("Modbus client disconnected, attempting to reconnect...");
+                if (typeof modbusClient.reconnect !== "function") {
+                    // The client reconnects on its own (FSM + ensureConnected per request).
+                    this.logger.warn("Modbus client has no manual reconnect; relying on automatic reconnect");
+                    return;
+                }
                 try {
                     await modbusClient.reconnect();
                     this.logger.log("Modbus reconnection successful");

@@ -56,5 +56,16 @@ class BoardScopedModbusClient {
     disconnect() {
         this.transport.disconnect();
     }
+    /**
+     * Manual reconnect of the shared transport (used by viis-rpc-control's
+     * checkConnection). Without this, callers got "reconnect is not a function"
+     * in multi-board mode.
+     */
+    async reconnect() {
+        if (typeof this.transport.reconnect !== "function") {
+            throw new Error("Shared Modbus transport does not support manual reconnect");
+        }
+        await this.transport.reconnect();
+    }
 }
 exports.BoardScopedModbusClient = BoardScopedModbusClient;
