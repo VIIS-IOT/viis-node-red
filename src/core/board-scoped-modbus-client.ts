@@ -18,7 +18,10 @@ export type SharedModbusTransport = Pick<
   | "writeRegister"
   | "isConnectedCheck"
   | "disconnect"
-> & { getDiagnosticStatus?: (unitId?: number) => Record<string, unknown> };
+> &
+  Partial<Pick<ModbusClientCore, "reconnect">> & {
+    getDiagnosticStatus?: (unitId?: number) => Record<string, unknown>;
+  };
 
 export class BoardScopedModbusClient {
   constructor(
@@ -100,5 +103,17 @@ export class BoardScopedModbusClient {
 
   disconnect(): void {
     this.transport.disconnect();
+  }
+
+  /**
+   * Manual reconnect of the shared transport (used by viis-rpc-control's
+   * checkConnection). Without this, callers got "reconnect is not a function"
+   * in multi-board mode.
+   */
+  async reconnect(): Promise<void> {
+    if (typeof this.transport.reconnect !== "function") {
+      throw new Error("Shared Modbus transport does not support manual reconnect");
+    }
+    await this.transport.reconnect();
   }
 }

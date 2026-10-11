@@ -76,4 +76,19 @@ describe("BoardScopedModbusClient", () => {
         expect(first).toHaveBeenCalledTimes(1);
         expect(second).toHaveBeenCalledWith({ status: "disconnected" });
     });
+    it("forwards reconnect to the shared transport", async () => {
+        const transport = {
+            readCoils: jest.fn(),
+            readInputRegisters: jest.fn(),
+            readHoldingRegisters: jest.fn(),
+            writeCoil: jest.fn(),
+            writeRegister: jest.fn(),
+            isConnectedCheck: jest.fn().mockReturnValue(false),
+            disconnect: jest.fn(),
+            reconnect: jest.fn().mockResolvedValue(undefined),
+        };
+        const client = new board_scoped_modbus_client_1.BoardScopedModbusClient(transport, 2);
+        await client.reconnect();
+        expect(transport.reconnect).toHaveBeenCalledTimes(1);
+    });
 });

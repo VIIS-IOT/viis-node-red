@@ -681,6 +681,19 @@ export class ModbusService implements IModbusService {
             if (!modbusClient.isConnectedCheck()) {
                 this.logger.log("Modbus client disconnected, attempting to reconnect...");
 
+                if (typeof modbusClient.reconnect !== "function") {
+                    // The client reconnects on its own (FSM + ensureConnected per request).
+                    this.logger.warn("Modbus client has no manual reconnect; relying on automatic reconnect");
+                    this.diagnostic.emit("warn", "modbus.connection_check_finished", {
+                        ...context,
+                        boardId,
+                        ...this.getClientDiagnostics(modbusClient, boardId),
+                        outcome: "auto_reconnect",
+                        durationMs: Date.now() - startedAt,
+                    });
+                    return;
+                }
+
                 try {
                     await modbusClient.reconnect();
                     this.logger.log("Modbus reconnection successful");
