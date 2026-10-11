@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ModbusClientCore = exports.ConnectionState = void 0;
+exports.ModbusClientCore = exports.CIRCUIT_BREAKER_RECOVERY_MS = exports.ConnectionState = void 0;
 exports.isRetryableModbusWriteError = isRetryableModbusWriteError;
 const modbus_serial_1 = __importDefault(require("modbus-serial"));
 const events_1 = require("events");
@@ -17,6 +17,11 @@ var ConnectionState;
     ConnectionState["ERROR"] = "error";
     ConnectionState["CIRCUIT_BREAKER_OPEN"] = "circuit_breaker_open";
 })(ConnectionState || (exports.ConnectionState = ConnectionState = {}));
+/**
+ * How long the circuit breaker stays open before a reconnect is retried.
+ * Single source for the timer, the log line and the `recoveryAt` event field.
+ */
+exports.CIRCUIT_BREAKER_RECOVERY_MS = 60000;
 function isRetryableModbusWriteError(message) {
     const text = message.toLowerCase();
     return text.includes("timeout") || text.includes("timed out");
@@ -839,12 +844,12 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.disconnectStartTime = Date.now();
             // FSM: Transition to CIRCUIT_BREAKER_OPEN
             this.transitionTo(ConnectionState.CIRCUIT_BREAKER_OPEN);
-            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${maxAttempts} failed attempts, waiting 5 minutes`);
+            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${maxAttempts} failed attempts, waiting ${exports.CIRCUIT_BREAKER_RECOVERY_MS / 1000}s`);
             // Emit event cho alert handling
             this.emit("modbus-status", {
                 status: "circuit-breaker-open",
                 error: `${maxAttempts} failed connection attempts`,
-                recoveryAt: Date.now() + 300000,
+                recoveryAt: Date.now() + exports.CIRCUIT_BREAKER_RECOVERY_MS,
                 failedCount: maxAttempts
             });
             this.circuitBreakerTimer = setTimeout(() => {
@@ -857,7 +862,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 setTimeout(() => {
                     this.scheduleReconnect();
                 }, jitter);
-            }, 60000); // 1 minute (reduced from 5 minutes)
+            }, exports.CIRCUIT_BREAKER_RECOVERY_MS);
             return;
         }
         // Exponential backoff: 10s, 20s, 40s, 60s, 60s...
@@ -1016,12 +1021,12 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.disconnectStartTime = Date.now();
             // FSM: Transition to CIRCUIT_BREAKER_OPEN
             this.transitionTo(ConnectionState.CIRCUIT_BREAKER_OPEN);
-            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${this.failedConnectionCount} failed attempts, waiting 5 minutes`);
+            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${this.failedConnectionCount} failed attempts, waiting ${exports.CIRCUIT_BREAKER_RECOVERY_MS / 1000}s`);
             // Emit event cho alert handling
             this.emit("modbus-status", {
                 status: "circuit-breaker-open",
                 error: `${this.failedConnectionCount} failed connection attempts`,
-                recoveryAt: Date.now() + 300000,
+                recoveryAt: Date.now() + exports.CIRCUIT_BREAKER_RECOVERY_MS,
                 failedCount: this.failedConnectionCount
             });
             this.circuitBreakerTimer = setTimeout(() => {
@@ -1034,7 +1039,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                 setTimeout(() => {
                     this.scheduleReconnect();
                 }, jitter);
-            }, 60000); // 1 minute (reduced from 5 minutes)
+            }, exports.CIRCUIT_BREAKER_RECOVERY_MS);
             return;
         }
         // Continue với normal reconnect
