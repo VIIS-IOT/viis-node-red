@@ -135,10 +135,15 @@ function markDueGroups(lastPollTimes, dueGroups, now) {
     }
 }
 function splitLatestDataByRegister(latestData, mappings) {
-    const result = { coils: {}, input: {}, holding: {} };
+    var _a;
+    const result = { coils: {}, discreteInputs: {}, input: {}, holding: {} };
     for (const [key, value] of Object.entries(latestData)) {
         if (Object.prototype.hasOwnProperty.call(mappings.coils, key)) {
             result.coils[key] = value;
+            continue;
+        }
+        if (Object.prototype.hasOwnProperty.call((_a = mappings.discreteInputs) !== null && _a !== void 0 ? _a : {}, key)) {
+            result.discreteInputs[key] = value;
             continue;
         }
         if (Object.prototype.hasOwnProperty.call(mappings.input, key)) {
@@ -162,6 +167,7 @@ function writeLatestGlobalState(globalContext, config, latestData) {
     const timestamp = Date.now();
     const split = splitLatestDataByRegister(latestData, config.mappings);
     mergeGlobalTelemetry(globalContext, viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, split.coils, timestamp);
+    mergeGlobalTelemetry(globalContext, viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.DISCRETE_INPUT_DATA, split.discreteInputs, timestamp);
     mergeGlobalTelemetry(globalContext, viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA, split.input, timestamp);
     mergeGlobalTelemetry(globalContext, viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, split.holding, timestamp);
 }

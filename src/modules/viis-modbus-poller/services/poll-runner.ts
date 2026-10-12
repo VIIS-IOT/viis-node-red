@@ -15,7 +15,8 @@ import {
 import { planAddressRanges } from "./range-planner";
 
 export interface RunPollTickInput {
-  modbusClient: Pick<ModbusClientCore, "readCoils" | "readInputRegisters" | "readHoldingRegisters">;
+  modbusClient: Pick<ModbusClientCore, "readCoils" | "readInputRegisters" | "readHoldingRegisters">
+    & Partial<Pick<ModbusClientCore, "readDiscreteInputs">>;
   dueGroups: string[];
   config: ResolvedPollerConfig;
   previousState: Record<string, TelemetryValue>;
@@ -38,10 +39,11 @@ type ModbusReadResult = {
   data: Array<number | boolean>;
 };
 
-const READ_ORDER: RegisterType[] = ["coils", "input", "holding"];
+const READ_ORDER: RegisterType[] = ["coils", "discreteInputs", "input", "holding"];
 
 const FUNCTION_CODES = {
   coils: 1,
+  discreteInputs: 2,
   input: 4,
   holding: 3,
 } as const;
@@ -60,7 +62,10 @@ function collectRequestedKeys(input: RunPollTickInput, registerType: RegisterTyp
 }
 
 function getMaxQuantity(input: RunPollTickInput, registerType: RegisterType): number {
-  return registerType === "coils" ? input.options.maxCoilsPerRead : input.options.maxRegistersPerRead;
+  // Discrete inputs are bits like coils, so they share the bit read limit.
+  return registerType === "coils" || registerType === "discreteInputs"
+    ? input.options.maxCoilsPerRead
+    : input.options.maxRegistersPerRead;
 }
 
 function createRanges(input: RunPollTickInput, registerType: RegisterType): AddressRange[] {
@@ -68,7 +73,7 @@ function createRanges(input: RunPollTickInput, registerType: RegisterType): Addr
     registerType,
     functionCode: FUNCTION_CODES[registerType],
     requestedKeys: collectRequestedKeys(input, registerType),
-    mapping: input.config.mappings[registerType],
+    mapping: input.config.mappings[registerType] ?? {},
     maxGap: input.options.maxGap,
     maxQuantity: getMaxQuantity(input, registerType),
   });
@@ -77,6 +82,14 @@ function createRanges(input: RunPollTickInput, registerType: RegisterType): Addr
 function readRange(input: RunPollTickInput, range: AddressRange): Promise<ModbusReadResult> {
   if (range.registerType === "coils") {
     return input.modbusClient.readCoils(range.start, range.quantity);
+  }
+
+  if (range.registerType === "discreteInputs") {
+    // Never fall back to readCoils: FC01 addresses a different table and would return wrong bits.
+    if (!input.modbusClient.readDiscreteInputs) {
+      return Promise.reject(new Error("Modbus client does not support FC02 (read discrete inputs)"));
+    }
+    return input.modbusClient.readDiscreteInputs(range.start, range.quantity);
   }
 
   if (range.registerType === "input") {

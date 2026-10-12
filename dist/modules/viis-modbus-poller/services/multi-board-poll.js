@@ -18,11 +18,17 @@ function getPollTargets(config) {
     ];
 }
 function mergeBoardMappings(mappingsList) {
-    return mappingsList.reduce((merged, mappings) => ({
-        coils: Object.assign(Object.assign({}, merged.coils), mappings.coils),
-        input: Object.assign(Object.assign({}, merged.input), mappings.input),
-        holding: Object.assign(Object.assign({}, merged.holding), mappings.holding),
-    }), { coils: {}, input: {}, holding: {} });
+    var _a;
+    const merged = mappingsList.reduce((acc, mappings) => ({
+        coils: Object.assign(Object.assign({}, acc.coils), mappings.coils),
+        discreteInputs: Object.assign(Object.assign({}, acc.discreteInputs), mappings.discreteInputs),
+        input: Object.assign(Object.assign({}, acc.input), mappings.input),
+        holding: Object.assign(Object.assign({}, acc.holding), mappings.holding),
+    }), { coils: {}, discreteInputs: {}, input: {}, holding: {} });
+    if (Object.keys((_a = merged.discreteInputs) !== null && _a !== void 0 ? _a : {}).length === 0) {
+        delete merged.discreteInputs;
+    }
+    return merged;
 }
 function mergePollTickResults(results) {
     const latestData = {};

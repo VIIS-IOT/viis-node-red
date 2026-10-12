@@ -37,6 +37,15 @@ class BoardScopedModbusClient {
             ? this.transport.readCoils(address, length, this.unitId, context)
             : this.transport.readCoils(address, length, this.unitId);
     }
+    readDiscreteInputs(address, length, _unitId, context) {
+        // Never fall back to readCoils: FC01 addresses a different table.
+        if (!this.transport.readDiscreteInputs) {
+            return Promise.reject(new Error("Modbus transport does not support FC02 (read discrete inputs)"));
+        }
+        return context
+            ? this.transport.readDiscreteInputs(address, length, this.unitId, context)
+            : this.transport.readDiscreteInputs(address, length, this.unitId);
+    }
     readInputRegisters(address, length, _unitId, context) {
         return context
             ? this.transport.readInputRegisters(address, length, this.unitId, context)

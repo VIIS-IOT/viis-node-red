@@ -106,8 +106,17 @@ function readMappings(globalContext: GlobalContext, boardId: string): BoardMappi
   );
   const boardMapping = allMappings?.[boardId];
 
+  const discreteInputs = readMappingRecord(
+    globalContext,
+    boardMapping,
+    "discreteInputs",
+    `modbus_${boardId}_discrete_inputs`,
+  );
+
   return {
     coils: readMappingRecord(globalContext, boardMapping, "coils", `modbus_${boardId}_coils`),
+    // Optional: only present when the board maps FC02 status bits.
+    ...(Object.keys(discreteInputs).length > 0 ? { discreteInputs } : {}),
     input: readMappingRecord(
       globalContext,
       boardMapping,
@@ -142,7 +151,7 @@ function readScaleConfigs(
 }
 
 function hasMappingKey(mappings: BoardMappings, registerType: keyof BoardMappings, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(mappings[registerType], key);
+  return Object.prototype.hasOwnProperty.call(mappings[registerType] ?? {}, key);
 }
 
 export function partitionPollingConfig(pollingConfig: PollingConfig, mappings: BoardMappings): PollingConfig {
@@ -152,6 +161,9 @@ export function partitionPollingConfig(pollingConfig: PollingConfig, mappings: B
     partitioned[groupName] = {
       interval: group.interval,
       coils: (group.coils ?? []).filter((key) => hasMappingKey(mappings, "coils", key)),
+      ...(group.discreteInputs
+        ? { discreteInputs: group.discreteInputs.filter((key) => hasMappingKey(mappings, "discreteInputs", key)) }
+        : {}),
       input: (group.input ?? []).filter((key) => hasMappingKey(mappings, "input", key)),
       holding: (group.holding ?? []).filter((key) => hasMappingKey(mappings, "holding", key)),
     };

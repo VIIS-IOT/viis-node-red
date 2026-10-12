@@ -5,9 +5,10 @@ const viis_telemetry_utils_1 = require("../../viis-telemetry/viis-telemetry-util
 const change_detector_1 = require("./change-detector");
 const diagnostics_1 = require("./diagnostics");
 const range_planner_1 = require("./range-planner");
-const READ_ORDER = ["coils", "input", "holding"];
+const READ_ORDER = ["coils", "discreteInputs", "input", "holding"];
 const FUNCTION_CODES = {
     coils: 1,
+    discreteInputs: 2,
     input: 4,
     holding: 3,
 };
@@ -23,14 +24,18 @@ function collectRequestedKeys(input, registerType) {
     return Array.from(requestedKeys);
 }
 function getMaxQuantity(input, registerType) {
-    return registerType === "coils" ? input.options.maxCoilsPerRead : input.options.maxRegistersPerRead;
+    // Discrete inputs are bits like coils, so they share the bit read limit.
+    return registerType === "coils" || registerType === "discreteInputs"
+        ? input.options.maxCoilsPerRead
+        : input.options.maxRegistersPerRead;
 }
 function createRanges(input, registerType) {
+    var _a;
     return (0, range_planner_1.planAddressRanges)({
         registerType,
         functionCode: FUNCTION_CODES[registerType],
         requestedKeys: collectRequestedKeys(input, registerType),
-        mapping: input.config.mappings[registerType],
+        mapping: (_a = input.config.mappings[registerType]) !== null && _a !== void 0 ? _a : {},
         maxGap: input.options.maxGap,
         maxQuantity: getMaxQuantity(input, registerType),
     });
@@ -38,6 +43,13 @@ function createRanges(input, registerType) {
 function readRange(input, range) {
     if (range.registerType === "coils") {
         return input.modbusClient.readCoils(range.start, range.quantity);
+    }
+    if (range.registerType === "discreteInputs") {
+        // Never fall back to readCoils: FC01 addresses a different table and would return wrong bits.
+        if (!input.modbusClient.readDiscreteInputs) {
+            return Promise.reject(new Error("Modbus client does not support FC02 (read discrete inputs)"));
+        }
+        return input.modbusClient.readDiscreteInputs(range.start, range.quantity);
     }
     if (range.registerType === "input") {
         return input.modbusClient.readInputRegisters(range.start, range.quantity);

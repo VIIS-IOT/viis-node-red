@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validateResolvedConfig = validateResolvedConfig;
 const constants_1 = require("../constants");
-const REGISTER_TYPES = ["coils", "input", "holding"];
+const REGISTER_TYPES = ["coils", "discreteInputs", "input", "holding"];
 function hasOwn(record, key) {
     return Object.prototype.hasOwnProperty.call(record, key);
 }
@@ -45,9 +45,10 @@ function getBoardConfigs(config) {
     ];
 }
 function findKeyOwners(boards, registerType, key) {
-    return boards.filter((board) => hasOwn(board.mappings[registerType], key));
+    return boards.filter((board) => { var _a; return hasOwn(((_a = board.mappings[registerType]) !== null && _a !== void 0 ? _a : {}), key); });
 }
 function validatePollKey(config, boards, groupName, registerType, key, errors) {
+    var _a;
     const owners = findKeyOwners(boards, registerType, key);
     const thresholds = config.thresholds;
     if (owners.length === 0) {
@@ -57,7 +58,7 @@ function validatePollKey(config, boards, groupName, registerType, key, errors) {
         errors.push(`${groupName}.${registerType} key "${key}" is mapped on multiple boards: ${owners.map((board) => board.boardId).join(", ")}`);
     }
     else {
-        const address = owners[0].mappings[registerType][key];
+        const address = ((_a = owners[0].mappings[registerType]) !== null && _a !== void 0 ? _a : {})[key];
         if (constants_1.INVALID_MODBUS_ADDRESSES.includes(address)) {
             errors.push(`${groupName}.${registerType} key "${key}" maps to unreadable placeholder address ${address}`);
         }

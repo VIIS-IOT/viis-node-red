@@ -6,7 +6,7 @@ export interface ConfigValidationResult {
   warnings: string[];
 }
 
-const REGISTER_TYPES: RegisterType[] = ["coils", "input", "holding"];
+const REGISTER_TYPES: RegisterType[] = ["coils", "discreteInputs", "input", "holding"];
 
 function hasOwn(record: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
@@ -68,7 +68,7 @@ function findKeyOwners(
   registerType: RegisterType,
   key: string,
 ): ResolvedBoardPollConfig[] {
-  return boards.filter((board) => hasOwn(board.mappings[registerType] as Record<string, unknown>, key));
+  return boards.filter((board) => hasOwn((board.mappings[registerType] ?? {}) as Record<string, unknown>, key));
 }
 
 function validatePollKey(
@@ -89,7 +89,7 @@ function validatePollKey(
       `${groupName}.${registerType} key "${key}" is mapped on multiple boards: ${owners.map((board) => board.boardId).join(", ")}`,
     );
   } else {
-    const address = owners[0].mappings[registerType][key];
+    const address = (owners[0].mappings[registerType] ?? {})[key];
     if (INVALID_MODBUS_ADDRESSES.includes(address as (typeof INVALID_MODBUS_ADDRESSES)[number])) {
       errors.push(`${groupName}.${registerType} key "${key}" maps to unreadable placeholder address ${address}`);
     } else if (!isReadableAddress(address)) {

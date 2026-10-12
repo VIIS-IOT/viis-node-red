@@ -1,10 +1,12 @@
 import type { ScaleConfig } from "../viis-telemetry/viis-telemetry-utils";
 
-export type RegisterType = "coils" | "input" | "holding";
+/** Poll/mapping areas. `discreteInputs` = FC02 read-only bits; optional so older configs keep their shape. */
+export type RegisterType = "coils" | "discreteInputs" | "input" | "holding";
 
 export interface PollGroupConfig {
   interval: number;
   coils?: string[];
+  discreteInputs?: string[];
   input?: string[];
   holding?: string[];
 }
@@ -15,6 +17,7 @@ export interface PollingConfig {
 
 export interface BoardMappings {
   coils: Record<string, number>;
+  discreteInputs?: Record<string, number>;
   input: Record<string, number>;
   holding: Record<string, number>;
 }
@@ -38,7 +41,7 @@ export interface ResolvedPollerConfig {
 
 export interface AddressRange {
   registerType: RegisterType;
-  functionCode: 1 | 3 | 4;
+  functionCode: 1 | 2 | 3 | 4;
   start: number;
   quantity: number;
   addresses: number[];
@@ -47,7 +50,7 @@ export interface AddressRange {
 
 export interface RangePlanInput {
   registerType: RegisterType;
-  functionCode: 1 | 3 | 4;
+  functionCode: 1 | 2 | 3 | 4;
   requestedKeys: string[];
   mapping: Record<string, number>;
   maxGap: number;
