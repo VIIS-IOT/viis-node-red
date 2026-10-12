@@ -13,6 +13,7 @@ exports.createGlobalContextHelper = createGlobalContextHelper;
 exports.getEnvVar = getEnvVar;
 exports.getJsonEnvVar = getJsonEnvVar;
 const viis_telemetry_constants_1 = require("../modules/viis-telemetry/viis-telemetry-constants");
+const device_config_file_1 = require("./device-config-file");
 /**
  * Environment variable mapping from process.env names to global context names
  */
@@ -126,7 +127,13 @@ class GlobalContextHelper {
      * @returns Variable value or default
      */
     getEnvVar(envVarName, defaultValue) {
-        // First try to get from global context using mapping
+        // Identity and broker keys come from device1.json/common.json first: global context may
+        // still hold a previous device's values persisted to disk before env-loader reloads them.
+        const fileValue = (0, device_config_file_1.getDeviceConfigFileValue)(envVarName);
+        if (fileValue !== undefined) {
+            return fileValue;
+        }
+        // Then try global context using mapping
         const globalVarName = ENV_TO_GLOBAL_MAPPING[envVarName];
         if (globalVarName) {
             const prefixedName = this.getPrefixedName(globalVarName);

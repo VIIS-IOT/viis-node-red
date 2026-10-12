@@ -10,9 +10,11 @@ exports.getEnvVarInt = getEnvVarInt;
 exports.loadDeviceCredentials = loadDeviceCredentials;
 exports.loadMqttServerConfig = loadMqttServerConfig;
 exports.loadHttpServerConfig = loadHttpServerConfig;
+const device_config_file_1 = require("./device-config-file");
 /**
  * Get environment variable with fallback priority
- * Priority: 1. Global context (from env-loader) → 2. process.env → 3. defaultValue
+ * Priority: 1. device1.json/common.json for identity and broker keys (see device-config-file)
+ *           → 2. Global context (from env-loader) → 3. process.env → 4. defaultValue
  *
  * @param context - Node-RED context object (node.context())
  * @param envVarName - Environment variable name to lookup
@@ -21,6 +23,12 @@ exports.loadHttpServerConfig = loadHttpServerConfig;
  */
 function getEnvVar(context, envVarName, defaultValue = "") {
     try {
+        // The config file wins over global context, which may still hold a previous device's
+        // values persisted to disk before env-loader has reloaded them.
+        const fileValue = (0, device_config_file_1.getDeviceConfigFileValue)(envVarName);
+        if (fileValue !== undefined) {
+            return fileValue;
+        }
         // Map environment variable names to global context names
         const envToGlobalMap = {
             'DEVICE_ID': ['device_id'],

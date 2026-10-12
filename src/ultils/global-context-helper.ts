@@ -9,6 +9,7 @@
 
 import { NodeContext } from "node-red";
 import { GLOBAL_CONTEXT_KEYS } from "../modules/viis-telemetry/viis-telemetry-constants";
+import { getDeviceConfigFileValue } from "./device-config-file";
 
 /**
  * Environment variable mapping from process.env names to global context names
@@ -129,7 +130,14 @@ export class GlobalContextHelper {
    * @returns Variable value or default
    */
   getEnvVar(envVarName: string, defaultValue?: any): any {
-    // First try to get from global context using mapping
+    // Identity and broker keys come from device1.json/common.json first: global context may
+    // still hold a previous device's values persisted to disk before env-loader reloads them.
+    const fileValue = getDeviceConfigFileValue(envVarName);
+    if (fileValue !== undefined) {
+      return fileValue;
+    }
+
+    // Then try global context using mapping
     const globalVarName = ENV_TO_GLOBAL_MAPPING[envVarName];
     if (globalVarName) {
       const prefixedName = this.getPrefixedName(globalVarName);
