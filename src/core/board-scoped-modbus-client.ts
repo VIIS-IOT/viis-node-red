@@ -18,7 +18,7 @@ export type SharedModbusTransport = Pick<
   | "isConnectedCheck"
   | "disconnect"
 > &
-  Partial<Pick<ModbusClientCore, "reconnect">>;
+  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs">>;
 
 export class BoardScopedModbusClient {
   constructor(
@@ -55,6 +55,14 @@ export class BoardScopedModbusClient {
 
   readCoils(address: number, length: number): Promise<ModbusData> {
     return this.transport.readCoils(address, length, this.unitId);
+  }
+
+  readDiscreteInputs(address: number, length: number): Promise<ModbusData> {
+    // Never fall back to readCoils: FC01 addresses a different table.
+    if (!this.transport.readDiscreteInputs) {
+      return Promise.reject(new Error("Modbus transport does not support FC02 (read discrete inputs)"));
+    }
+    return this.transport.readDiscreteInputs(address, length, this.unitId);
   }
 
   readInputRegisters(address: number, length: number): Promise<ModbusData> {

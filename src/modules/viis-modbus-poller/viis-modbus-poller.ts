@@ -235,11 +235,13 @@ function splitLatestDataByRegister(
   mappings: BoardMappings,
 ): {
   coils: Record<string, TelemetryValue>;
+  discreteInputs: Record<string, TelemetryValue>;
   input: Record<string, TelemetryValue>;
   holding: Record<string, TelemetryValue>;
 } {
-  const result = { coils: {}, input: {}, holding: {} } as {
+  const result = { coils: {}, discreteInputs: {}, input: {}, holding: {} } as {
     coils: Record<string, TelemetryValue>;
+    discreteInputs: Record<string, TelemetryValue>;
     input: Record<string, TelemetryValue>;
     holding: Record<string, TelemetryValue>;
   };
@@ -247,6 +249,11 @@ function splitLatestDataByRegister(
   for (const [key, value] of Object.entries(latestData)) {
     if (Object.prototype.hasOwnProperty.call(mappings.coils, key)) {
       result.coils[key] = value;
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(mappings.discreteInputs ?? {}, key)) {
+      result.discreteInputs[key] = value;
       continue;
     }
 
@@ -286,6 +293,7 @@ function writeLatestGlobalState(
   const split = splitLatestDataByRegister(latestData, config.mappings);
 
   mergeGlobalTelemetry(globalContext, GLOBAL_CONTEXT_KEYS.COIL_REGISTER_DATA, split.coils, timestamp);
+  mergeGlobalTelemetry(globalContext, GLOBAL_CONTEXT_KEYS.DISCRETE_INPUT_DATA, split.discreteInputs, timestamp);
   mergeGlobalTelemetry(globalContext, GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA, split.input, timestamp);
   mergeGlobalTelemetry(globalContext, GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, split.holding, timestamp);
 }

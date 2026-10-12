@@ -337,11 +337,8 @@ class ModbusGetterService {
                     result = await this.modbusClient.readCoils(address, quantity);
                     break;
                 case constants_1.MODBUS_FUNCTION_CODES.READ_DISCRETE_INPUTS:
-                    // Note: ModbusClientCore doesn't have readDiscreteInputs method
-                    // Using readCoils as fallback for discrete inputs
-                    this.logger.warn("READ_DISCRETE_INPUTS not implemented, using readCoils as fallback");
-                    this.logger.debug("Reading discrete inputs (fallback to coils)...");
-                    result = await this.modbusClient.readCoils(address, quantity);
+                    this.logger.debug("Reading discrete inputs...");
+                    result = await this.modbusClient.readDiscreteInputs(address, quantity);
                     break;
                 case constants_1.MODBUS_FUNCTION_CODES.READ_HOLDING_REGISTERS:
                     this.logger.debug("Reading holding registers...");

@@ -70,11 +70,8 @@ function readMappingRecord(globalContext, boardMapping, preferredKey, fallbackKe
 function readMappings(globalContext, boardId) {
     const allMappings = readConfigObject(globalContext, ["modbusMappings"], undefined);
     const boardMapping = allMappings === null || allMappings === void 0 ? void 0 : allMappings[boardId];
-    return {
-        coils: readMappingRecord(globalContext, boardMapping, "coils", `modbus_${boardId}_coils`),
-        input: readMappingRecord(globalContext, boardMapping, "inputRegisters", `modbus_${boardId}_input_registers`),
-        holding: readMappingRecord(globalContext, boardMapping, "holdingRegisters", `modbus_${boardId}_holding_registers`),
-    };
+    const discreteInputs = readMappingRecord(globalContext, boardMapping, "discreteInputs", `modbus_${boardId}_discrete_inputs`);
+    return Object.assign(Object.assign({ coils: readMappingRecord(globalContext, boardMapping, "coils", `modbus_${boardId}_coils`) }, (Object.keys(discreteInputs).length > 0 ? { discreteInputs } : {})), { input: readMappingRecord(globalContext, boardMapping, "inputRegisters", `modbus_${boardId}_input_registers`), holding: readMappingRecord(globalContext, boardMapping, "holdingRegisters", `modbus_${boardId}_holding_registers`) });
 }
 function readScaleConfigs(nodeConfig, globalContext) {
     const globalScaleConfigs = parseOptionalArray(globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS), `global context key ${viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS}`);
@@ -84,18 +81,16 @@ function readScaleConfigs(nodeConfig, globalContext) {
     return (0, scale_config_merger_1.mergeScaleConfigs)(mergedGlobalConfigs, overrides);
 }
 function hasMappingKey(mappings, registerType, key) {
-    return Object.prototype.hasOwnProperty.call(mappings[registerType], key);
+    var _a;
+    return Object.prototype.hasOwnProperty.call((_a = mappings[registerType]) !== null && _a !== void 0 ? _a : {}, key);
 }
 function partitionPollingConfig(pollingConfig, mappings) {
     var _a, _b, _c;
     const partitioned = {};
     for (const [groupName, group] of Object.entries(pollingConfig !== null && pollingConfig !== void 0 ? pollingConfig : {})) {
-        partitioned[groupName] = {
-            interval: group.interval,
-            coils: ((_a = group.coils) !== null && _a !== void 0 ? _a : []).filter((key) => hasMappingKey(mappings, "coils", key)),
-            input: ((_b = group.input) !== null && _b !== void 0 ? _b : []).filter((key) => hasMappingKey(mappings, "input", key)),
-            holding: ((_c = group.holding) !== null && _c !== void 0 ? _c : []).filter((key) => hasMappingKey(mappings, "holding", key)),
-        };
+        partitioned[groupName] = Object.assign(Object.assign({ interval: group.interval, coils: ((_a = group.coils) !== null && _a !== void 0 ? _a : []).filter((key) => hasMappingKey(mappings, "coils", key)) }, (group.discreteInputs
+            ? { discreteInputs: group.discreteInputs.filter((key) => hasMappingKey(mappings, "discreteInputs", key)) }
+            : {})), { input: ((_b = group.input) !== null && _b !== void 0 ? _b : []).filter((key) => hasMappingKey(mappings, "input", key)), holding: ((_c = group.holding) !== null && _c !== void 0 ? _c : []).filter((key) => hasMappingKey(mappings, "holding", key)) });
     }
     return partitioned;
 }

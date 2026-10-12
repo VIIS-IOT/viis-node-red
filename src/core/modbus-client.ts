@@ -1277,6 +1277,36 @@ export class ModbusClientCore extends EventEmitter {
         }, unitId);
     }
 
+    /** FC02: read-only status bits (level sensors, faults). A separate table from coils (FC01). */
+    public async readDiscreteInputs(address: number, length: number, unitId?: number): Promise<ModbusData> {
+        // Use request queue to serialize operations
+        return this.enqueueRequest(async () => {
+            await this.ensureConnected();
+
+            const boardType = this.config.boardType || "STM32";
+            const readTimeout = this.config.readTimeout || 5000;
+
+            try {
+                const readPromise = this.client.readDiscreteInputs(address, length);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error(`[${boardType}-TIMEOUT] Read discrete inputs timeout after ${readTimeout}ms`)), readTimeout);
+                });
+
+                const { data } = await Promise.race([readPromise, timeoutPromise]);
+
+                // Reset consecutive error counter on successful read
+                this.consecutiveErrors = 0;
+
+                return { address, data };
+            } catch (error) {
+                const err = error as Error;
+                this.node.warn(`[${boardType}-READ] Error reading discrete inputs at ${address}: ${err.message}`);
+                this.handleError(err);
+                throw error;
+            }
+        }, unitId);
+    }
+
     public async readInputRegisters(address: number, length: number, unitId?: number): Promise<ModbusData> {
         // Use request queue to serialize operations
         return this.enqueueRequest(async () => {

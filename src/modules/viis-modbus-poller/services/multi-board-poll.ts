@@ -25,14 +25,19 @@ export function getPollTargets(config: ResolvedPollerConfig): ResolvedBoardPollC
 }
 
 export function mergeBoardMappings(mappingsList: BoardMappings[]): BoardMappings {
-  return mappingsList.reduce<BoardMappings>(
-    (merged, mappings) => ({
-      coils: { ...merged.coils, ...mappings.coils },
-      input: { ...merged.input, ...mappings.input },
-      holding: { ...merged.holding, ...mappings.holding },
+  const merged = mappingsList.reduce<BoardMappings>(
+    (acc, mappings) => ({
+      coils: { ...acc.coils, ...mappings.coils },
+      discreteInputs: { ...acc.discreteInputs, ...mappings.discreteInputs },
+      input: { ...acc.input, ...mappings.input },
+      holding: { ...acc.holding, ...mappings.holding },
     }),
-    { coils: {}, input: {}, holding: {} },
+    { coils: {}, discreteInputs: {}, input: {}, holding: {} },
   );
+  if (Object.keys(merged.discreteInputs ?? {}).length === 0) {
+    delete merged.discreteInputs;
+  }
+  return merged;
 }
 
 export function mergePollTickResults(results: PollTickResult[]): PollTickResult {

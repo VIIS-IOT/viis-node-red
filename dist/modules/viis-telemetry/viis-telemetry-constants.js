@@ -59,6 +59,7 @@ exports.CONTEXT_KEYS = {
 exports.GLOBAL_CONTEXT_KEYS = {
     SCALE_CONFIGS: 'scaleConfigs',
     COIL_REGISTER_DATA: 'coilRegisterData',
+    DISCRETE_INPUT_DATA: 'discreteInputData',
     INPUT_REGISTER_DATA: 'inputRegisterData',
     HOLDING_REGISTER_DATA: 'holdingRegisterData',
 };
