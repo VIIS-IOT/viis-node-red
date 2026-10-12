@@ -32,7 +32,8 @@ export class TabiotProductionFunction extends CustomBaseEntity {
     })
     data_type?: 'Bool' | 'Value' | 'Enum' | 'Raw' | 'String' | 'Group Break' | 'Tab Break' | 'IP' | 'Checkbox-bit' | 'User data type';
 
-    @Column({ type: 'varchar', length: 255, nullable: true })
+    // Platform icons are SVG data URIs, longer than 255 chars.
+    @Column({ type: 'text', nullable: true })
     icon_url?: string;
 
     @Column({ type: 'varchar', length: 255, nullable: true })

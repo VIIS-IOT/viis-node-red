@@ -45,7 +45,7 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotProductionFunction.prototype, "data_type", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 255, nullable: true }),
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
     __metadata("design:type", String)
 ], TabiotProductionFunction.prototype, "icon_url", void 0);
 __decorate([
