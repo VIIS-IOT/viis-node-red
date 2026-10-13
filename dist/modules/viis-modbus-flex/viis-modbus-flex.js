@@ -9,6 +9,14 @@ const modbusGetterService_1 = require("./services/modbusGetterService");
 const logger_1 = require("./utils/logger");
 const constants_1 = require("./constants");
 /**
+ * The device access token is the device's MQTT credential: the notification request needs it in the
+ * query string, but it must never reach a log line. Masks the value of every `device_access_token=`
+ * query parameter in `text` (a URL, or an error message that quotes one).
+ */
+function redactDeviceToken(text) {
+    return String(text).replace(/(device_access_token=)[^&\s]*/g, '$1***');
+}
+/**
  * 🆕 MỚI: Helper function để gọi notification API
  */
 async function sendNotification(node, logger, globalHelper, boardId, alertData) {
@@ -47,7 +55,7 @@ async function sendNotification(node, logger, globalHelper, boardId, alertData) 
         };
         // Append device_access_token to URL
         const urlWithToken = `${backendUrl}/api/v2/notification-by-token?device_access_token=${encodeURIComponent(deviceAccessToken)}`;
-        logger.log(`[NOTIFICATION] Sending alert to: ${urlWithToken}`);
+        logger.log(`[NOTIFICATION] Sending alert to: ${redactDeviceToken(urlWithToken)}`);
         const response = await fetch(urlWithToken, {
             method: 'POST',
             headers: {
@@ -66,7 +74,8 @@ async function sendNotification(node, logger, globalHelper, boardId, alertData) 
         }
     }
     catch (error) {
-        logger.error(`[NOTIFICATION] Error sending alert: ${error.message}`);
+        // fetch quotes the whole request URL in some failures (e.g. "Failed to parse URL from <url>").
+        logger.error(`[NOTIFICATION] Error sending alert: ${redactDeviceToken(error.message)}`);
     }
 }
 /**

@@ -23,7 +23,9 @@ async function sendTelemetryByHttp(token, telemetryData, context) {
             console.error("Error sending telemetry:", error.response.data);
         }
         else {
-            console.error("Error sending telemetry:", error);
+            // With no response, the error object carries the request URL (config.url, request.path, input),
+            // and that URL contains the device token. Log the message only.
+            console.error("Error sending telemetry:", error instanceof Error ? error.message : String(error));
         }
         return false;
     }
