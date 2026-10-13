@@ -3,6 +3,11 @@ import { GlobalContextHelper } from "../ultils/global-context-helper";
 import { DEFAULT_HTTP_SERVER_URL } from "../const";
 import { DeviceIntent } from "./type";
 
+/** Masks the device token in an error message that may quote the request URL. */
+function maskToken(text: string, token: string): string {
+  return token ? text.split(token).join("***") : text;
+}
+
 export async function sendTelemetryByHttp(
   token: string,
   telemetryData: any,
@@ -57,9 +62,11 @@ export async function getDeviceIntentsByToken(
   } catch (error) {
     // Log error but return empty array instead of throwing to prevent crash
     if (axios.isAxiosError(error)) {
-      console.error(`Failed to fetch device intents: ${error.message} (network may be down)`);
+      console.error(`Failed to fetch device intents: ${maskToken(error.message, token)} (network may be down)`);
     } else {
-      console.error("Failed to fetch device intents:", error);
+      // Not an AxiosError (e.g. Node's "Invalid URL" TypeError for a malformed VIIS_BACKEND): the error
+      // object carries the request URL in `input`, and that URL contains the device token. Message only.
+      console.error("Failed to fetch device intents:", maskToken(error instanceof Error ? error.message : String(error), token));
     }
     return []; // Return empty array to allow node to continue
   }
