@@ -78,6 +78,26 @@ describe("getDeviceIntentsByToken logging", () => {
         expect(intents).toEqual([]);
         expect(loggedText()).not.toContain(TOKEN);
     });
+    it.each([
+        [
+            "a URL parse error that keeps the request URL in `input`",
+            () => Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL", input: `not-a-url/api/v2/device-intent/by-device-token/${TOKEN}` }),
+            "Invalid URL",
+        ],
+        [
+            "an error whose message quotes the request URL",
+            () => new TypeError(`Failed to parse URL from not-a-url/api/v2/device-intent/by-device-token/${TOKEN}`),
+            "Failed to parse URL from",
+        ],
+    ])("does not log the token for a non-Axios error: %s", async (_case, makeError, expectedFragment) => {
+        // A malformed VIIS_BACKEND is rejected by the URL parser before axios builds an AxiosError.
+        getSpy.mockRejectedValue(makeError());
+        const intents = await (0, device_1.getDeviceIntentsByToken)(TOKEN);
+        expect(intents).toEqual([]);
+        expect(loggedText()).toContain("Failed to fetch device intents");
+        expect(loggedText()).toContain(expectedFragment);
+        expect(loggedText()).not.toContain(TOKEN);
+    });
 });
 describe("sendTelemetryByHttp logging", () => {
     let postSpy;
