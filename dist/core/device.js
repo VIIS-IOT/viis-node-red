@@ -35,8 +35,10 @@ async function getDeviceIntentsByToken(token, context) {
         const serverUrl = globalHelper
             ? globalHelper.getEnvVar('VIIS_BACKEND', const_1.DEFAULT_HTTP_SERVER_URL)
             : const_1.DEFAULT_HTTP_SERVER_URL;
-        console.log(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`);
-        const response = await axios_1.default.get(`${serverUrl}/api/v2/device-intent/by-device-token/${token}`, {
+        const intentsPath = `${serverUrl}/api/v2/device-intent/by-device-token`;
+        // The token is the device's credential: request with it, log without it.
+        console.log(`${intentsPath}/***`);
+        const response = await axios_1.default.get(`${intentsPath}/${token}`, {
             headers: { "Content-Type": "application/json" },
             timeout: 10000 // 10 second timeout
         });
