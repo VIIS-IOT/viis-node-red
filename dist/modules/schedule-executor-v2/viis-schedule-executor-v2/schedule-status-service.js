@@ -142,15 +142,12 @@ class ScheduleStatusService {
     // ==================== HTTP NOTIFICATION ====================
     /**
      * Send notification to backend via HTTP API
+     * Note: Failure notifications (success=false, severity 'error') are always sent;
+     * debugEnable only controls logging.
      */
     async sendNotificationToBackend(schedule, action, success = true, options) {
         var _a;
         const { maxRetries = 3, baseDelay = 1000, timeout = 10000 } = options || {};
-        // Skip error notifications when debug is disabled
-        if (!success && !this.debugEnable) {
-            this.debugLog(`Error notification skipped (debug disabled): ${schedule.name}`);
-            return true;
-        }
         const backendUrl = this.globalHelper ? this.globalHelper.getEnvVar('VIIS_BACKEND', '') : '';
         const deviceAccessToken = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '') : '';
         const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
