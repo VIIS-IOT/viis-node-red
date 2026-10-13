@@ -179,6 +179,55 @@ describe('HTTP Notification to Backend', () => {
             );
         });
 
+        test('failure notification is sent without debug', async () => {
+            // Schedule failures are always notified; debugEnable only controls logging.
+            const quietService = new ScheduleService(mockNode, true, false);
+            mockedAxios.post.mockResolvedValue({ status: 200, data: { status: 'success' } });
+
+            const result = await (quietService as any).sendNotificationToBackend(
+                createTestSchedule(),
+                'start',
+                false  // failure
+            );
+
+            expect(result).toBe(true);
+            expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+            expect(mockedAxios.post).toHaveBeenCalledWith(
+                'https://iot.viis.tech/api/v2/alarm/notification-by-token',
+                expect.objectContaining({
+                    severity: 'error',
+                    message_key: 'iot.notification.schedule.failed',
+                    alarm_status: 'Pending'
+                }),
+                expect.objectContaining({
+                    params: { device_access_token: 'test-token-123' }
+                })
+            );
+        });
+
+        test('end failure notification is sent without debug', async () => {
+            const quietService = new ScheduleService(mockNode, true, false);
+            mockedAxios.post.mockResolvedValue({ status: 200, data: { status: 'success' } });
+
+            const result = await (quietService as any).sendNotificationToBackend(
+                createTestSchedule(),
+                'end',
+                false  // failure
+            );
+
+            expect(result).toBe(true);
+            expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+            expect(mockedAxios.post).toHaveBeenCalledWith(
+                'https://iot.viis.tech/api/v2/alarm/notification-by-token',
+                expect.objectContaining({
+                    severity: 'error',
+                    message_key: 'iot.notification.schedule.failed',
+                    alarm_status: 'Clear'
+                }),
+                expect.any(Object)
+            );
+        });
+
         test('should retry on network failure', async () => {
             let attemptCount = 0;
             mockedAxios.post.mockImplementation(async () => {

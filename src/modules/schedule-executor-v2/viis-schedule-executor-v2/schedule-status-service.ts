@@ -170,6 +170,8 @@ export class ScheduleStatusService {
 
     /**
      * Send notification to backend via HTTP API
+     * Note: Failure notifications (success=false, severity 'error') are always sent;
+     * debugEnable only controls logging.
      */
     async sendNotificationToBackend(
         schedule: TabiotSchedule,
@@ -186,12 +188,6 @@ export class ScheduleStatusService {
             baseDelay = 1000,
             timeout = 10000
         } = options || {};
-
-        // Skip error notifications when debug is disabled
-        if (!success && !this.debugEnable) {
-            this.debugLog(`Error notification skipped (debug disabled): ${schedule.name}`);
-            return true;
-        }
 
         const backendUrl = this.globalHelper ? this.globalHelper.getEnvVar('VIIS_BACKEND', '') : '';
         const deviceAccessToken = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '') : '';
