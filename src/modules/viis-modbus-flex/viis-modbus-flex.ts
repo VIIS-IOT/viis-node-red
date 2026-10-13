@@ -7,6 +7,15 @@ import { Logger } from "./utils/logger";
 import { DEFAULT_CONFIG, ENV_KEYS, STATUS_MESSAGES } from "./constants";
 
 /**
+ * The device access token is the device's MQTT credential: the notification request needs it in the
+ * query string, but it must never reach a log line. Masks the value of every `device_access_token=`
+ * query parameter in `text` (a URL, or an error message that quotes one).
+ */
+function redactDeviceToken(text: unknown): string {
+    return String(text).replace(/(device_access_token=)[^&\s]*/g, '$1***');
+}
+
+/**
  * 🆕 MỚI: Helper function để gọi notification API
  */
 async function sendNotification(
@@ -55,7 +64,7 @@ async function sendNotification(
         // Append device_access_token to URL
         const urlWithToken = `${backendUrl}/api/v2/notification-by-token?device_access_token=${encodeURIComponent(deviceAccessToken)}`;
         
-        logger.log(`[NOTIFICATION] Sending alert to: ${urlWithToken}`);
+        logger.log(`[NOTIFICATION] Sending alert to: ${redactDeviceToken(urlWithToken)}`);
         
         const response = await fetch(urlWithToken, {
             method: 'POST',
@@ -74,7 +83,8 @@ async function sendNotification(
             logger.error(`[NOTIFICATION] Failed to send alert: ${response.status} - ${errorText}`);
         }
     } catch (error) {
-        logger.error(`[NOTIFICATION] Error sending alert: ${(error as Error).message}`);
+        // fetch quotes the whole request URL in some failures (e.g. "Failed to parse URL from <url>").
+        logger.error(`[NOTIFICATION] Error sending alert: ${redactDeviceToken((error as Error).message)}`);
     }
 }
 
