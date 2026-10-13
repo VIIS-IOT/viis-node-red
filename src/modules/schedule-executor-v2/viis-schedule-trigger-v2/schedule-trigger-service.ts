@@ -57,7 +57,8 @@ export class ScheduleTriggerService {
             const schedules: any[] = await repository
                 .createQueryBuilder("schedule")
                 .leftJoin("tabiot_device", "device", "schedule.device_id = device.name")
-                .leftJoin("schedule.schedulePlan", "schedulePlan")
+                // Plan dates are part of the run rule (evaluateScheduleRun), so load the plan.
+                .leftJoinAndSelect("schedule.schedulePlan", "schedulePlan")
                 .addSelect("device.label", "device_label")
                 .where("schedule.enable = :enable", { enable: 1 })
                 .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })

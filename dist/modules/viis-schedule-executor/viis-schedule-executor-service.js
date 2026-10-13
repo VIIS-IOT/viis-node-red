@@ -50,6 +50,7 @@ exports.resolveWaterHammerDelayMs = resolveWaterHammerDelayMs;
 const TabiotSchedule_1 = require("../../orm/entities/schedule/TabiotSchedule");
 const moment_1 = __importDefault(require("moment"));
 const farm_time_1 = require("../../core/farm-time");
+const schedule_run_window_1 = require("../../core/schedule-run-window");
 const dataSource_1 = require("../../orm/dataSource");
 const SyncScheduleService_1 = require("../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importStar(require("typedi"));
@@ -82,33 +83,6 @@ function resolveWaterHammerDelayMs(seconds) {
         return exports.DEFAULT_WATER_HAMMER_DELAY_MS;
     }
     return Math.round(n * 1000);
-}
-function civilDateOnly(value) {
-    if (value == null || value === '')
-        return '';
-    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return value.toISOString().slice(0, 10);
-    }
-    const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/);
-    return match ? match[1] : '';
-}
-function civilTimeOnly(value) {
-    if (value == null || value === '')
-        return '';
-    const match = String(value).match(/(\d{2}:\d{2}:\d{2})/);
-    return match ? match[1] : String(value);
-}
-function isNowInCivilWindow(nowMs, farmDate, startTime, endTime) {
-    const today = (0, farm_time_1.plannedWindowUnixMs)(farmDate, startTime, endTime);
-    if (nowMs >= today.startMs && nowMs < today.endMs)
-        return true;
-    if (endTime.slice(0, 8) <= startTime.slice(0, 8)) {
-        const prevDate = (0, farm_time_1.unixMsToCivil)((0, farm_time_1.civilToUnixMs)(farmDate, '12:00:00') - 24 * 60 * 60 * 1000).date;
-        const prev = (0, farm_time_1.plannedWindowUnixMs)(prevDate, startTime, endTime);
-        if (nowMs >= prev.startMs && nowMs < prev.endMs)
-            return true;
-    }
-    return false;
 }
 const CONFIG_PARAMETER_KEYS = new Set([
     'iri_time',
@@ -486,7 +460,8 @@ let ScheduleService = class ScheduleService {
             const schedules = await repository
                 .createQueryBuilder("schedule")
                 .leftJoin("tabiot_device", "device", "schedule.device_id = device.name")
-                .leftJoin("schedule.schedulePlan", "schedulePlan")
+                // Plan dates are part of the run rule (evaluateScheduleRun), so load the plan.
+                .leftJoinAndSelect("schedule.schedulePlan", "schedulePlan")
                 .addSelect("device.label", "device_label")
                 .where("schedule.enable = :enable", { enable: 1 })
                 .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
@@ -504,65 +479,22 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
-     * Kiểm tra xem schedule có đang trong khung thời gian thực thi hay không
+     * Kiểm tra xem schedule có đang trong khung thời gian thực thi hay không.
+     * Rule (shared with executor v2 and the mobile app): see core/schedule-run-window.ts.
      */
     isScheduleDue(schedule) {
+        var _a;
         try {
-            if (!schedule.start_time || !schedule.end_time) {
-                console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
-                return false;
-            }
             if (schedule.enable !== 1) {
                 this.debugLog(`Schedule ${schedule.name} is not enabled`);
                 return false;
             }
-            const farm = (0, farm_time_1.civilNow)();
-            const nowMs = (0, farm_time_1.unixMsNow)();
-            const startTime = civilTimeOnly(schedule.start_time);
-            const endTime = civilTimeOnly(schedule.end_time);
-            const rangeStart = civilDateOnly(schedule.start_date);
-            const rangeEnd = civilDateOnly(schedule.end_date);
-            if (rangeStart && rangeEnd && (farm.date < rangeStart || farm.date > rangeEnd)) {
-                this.debugLog(`Schedule ${schedule.name} is outside enabled range (${rangeStart} - ${rangeEnd})`);
-                return false;
+            const decision = (0, schedule_run_window_1.evaluateScheduleRun)(schedule, (_a = schedule.schedulePlan) !== null && _a !== void 0 ? _a : null, (0, farm_time_1.unixMsNow)());
+            if ('reason' in decision && decision.reason === 'missing_time') {
+                console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
             }
-            if (schedule.interval && schedule.interval.trim() !== '') {
-                const currentDayOfWeek = farm.weekday;
-                let allowedDays = [];
-                try {
-                    const trimmedInterval = schedule.interval.trim();
-                    if (trimmedInterval.startsWith('[') && trimmedInterval.endsWith(']')) {
-                        allowedDays = JSON.parse(trimmedInterval);
-                    }
-                    else if (trimmedInterval.includes(',')) {
-                        allowedDays = trimmedInterval.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-                    }
-                    else {
-                        const dayNum = parseInt(trimmedInterval);
-                        if (!isNaN(dayNum)) {
-                            allowedDays = [dayNum];
-                        }
-                    }
-                    if (allowedDays.length > 0 && !allowedDays.includes(currentDayOfWeek)) {
-                        this.debugLog(`Schedule ${schedule.name} skipped: current day ${currentDayOfWeek} not in interval ${JSON.stringify(allowedDays)}`);
-                        return false;
-                    }
-                    this.debugLog(`Schedule ${schedule.name} interval check passed: day ${currentDayOfWeek} in ${JSON.stringify(allowedDays)}`);
-                }
-                catch (error) {
-                    console.error(`Error parsing interval for schedule ${schedule.name}: ${error.message}`);
-                }
-            }
-            const isDue = isNowInCivilWindow(nowMs, farm.date, startTime, endTime);
-            this.debugLog(JSON.stringify({
-                now: farm.time,
-                farmDate: farm.date,
-                startTime,
-                endTime,
-                isDue,
-            }));
-            this.debugLog(`Schedule ${schedule.name} isDue: ${isDue}`);
-            return isDue;
+            this.debugLog(`Schedule ${schedule.name} isDue: ${JSON.stringify(decision)}`);
+            return decision.due;
         }
         catch (error) {
             console.error(`Error in isScheduleDue for ${schedule.name}: ${error.message}`);
@@ -1085,8 +1017,8 @@ let ScheduleService = class ScheduleService {
             if (this.syncScheduleService) {
                 const startedAt = (0, farm_time_1.unixMsNow)();
                 const { date } = (0, farm_time_1.unixMsToCivil)(startedAt);
-                const startTime = civilTimeOnly(schedule.start_time);
-                const endTime = civilTimeOnly(schedule.end_time);
+                const startTime = (0, schedule_run_window_1.civilTimeOnly)(schedule.start_time);
+                const endTime = (0, schedule_run_window_1.civilTimeOnly)(schedule.end_time);
                 const { endMs } = startTime && endTime
                     ? (0, farm_time_1.plannedWindowUnixMs)(date, startTime, endTime)
                     : { endMs: startedAt };
@@ -1181,9 +1113,9 @@ let ScheduleService = class ScheduleService {
         for (const schedule of schedules) {
             if (schedule.status !== 'running')
                 continue;
-            const endDate = civilDateOnly(schedule.end_date);
-            const startTime = civilTimeOnly(schedule.start_time);
-            const endTime = civilTimeOnly(schedule.end_time);
+            const endDate = (0, schedule_run_window_1.civilDateOnly)(schedule.end_date);
+            const startTime = (0, schedule_run_window_1.civilTimeOnly)(schedule.start_time);
+            const endTime = (0, schedule_run_window_1.civilTimeOnly)(schedule.end_time);
             if (!endDate || !endTime)
                 continue;
             const { endMs } = (0, farm_time_1.plannedWindowUnixMs)(endDate, startTime || endTime, endTime);

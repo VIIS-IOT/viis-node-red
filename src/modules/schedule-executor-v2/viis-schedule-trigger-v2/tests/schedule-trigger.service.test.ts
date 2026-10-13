@@ -65,6 +65,7 @@ describe('ScheduleTriggerService', () => {
         mockRepository = {
             createQueryBuilder: jest.fn().mockReturnValue({
                 leftJoin: jest.fn().mockReturnThis(),
+                leftJoinAndSelect: jest.fn().mockReturnThis(),
                 addSelect: jest.fn().mockReturnThis(),
                 where: jest.fn().mockReturnThis(),
                 andWhere: jest.fn().mockReturnThis(),
@@ -315,6 +316,7 @@ describe('ScheduleTriggerService', () => {
 
             mockRepository.createQueryBuilder.mockReturnValue({
                 leftJoin: jest.fn().mockReturnThis(),
+                leftJoinAndSelect: jest.fn().mockReturnThis(),
                 addSelect: jest.fn().mockReturnThis(),
                 where: jest.fn().mockReturnThis(),
                 andWhere: jest.fn().mockReturnThis(),
@@ -330,6 +332,7 @@ describe('ScheduleTriggerService', () => {
         it('should return empty array on database error', async () => {
             mockRepository.createQueryBuilder.mockReturnValue({
                 leftJoin: jest.fn().mockReturnThis(),
+                leftJoinAndSelect: jest.fn().mockReturnThis(),
                 addSelect: jest.fn().mockReturnThis(),
                 where: jest.fn().mockReturnThis(),
                 andWhere: jest.fn().mockReturnThis(),
@@ -484,6 +487,7 @@ describe('ScheduleTriggerService', () => {
 
             mockRepository.createQueryBuilder.mockReturnValue({
                 leftJoin: jest.fn().mockReturnThis(),
+                leftJoinAndSelect: jest.fn().mockReturnThis(),
                 addSelect: jest.fn().mockReturnThis(),
                 where: jest.fn().mockReturnThis(),
                 andWhere: jest.fn().mockReturnThis(),
@@ -501,6 +505,7 @@ describe('ScheduleTriggerService', () => {
         it('should handle empty schedule list', async () => {
             mockRepository.createQueryBuilder.mockReturnValue({
                 leftJoin: jest.fn().mockReturnThis(),
+                leftJoinAndSelect: jest.fn().mockReturnThis(),
                 addSelect: jest.fn().mockReturnThis(),
                 where: jest.fn().mockReturnThis(),
                 andWhere: jest.fn().mockReturnThis(),

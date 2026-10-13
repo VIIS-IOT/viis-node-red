@@ -116,7 +116,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
 
             expect(isDue).toBe(true);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('interval check passed: day 3 in [3]')
+                expect.stringContaining('"due":true')
             );
         });
 
@@ -134,7 +134,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
 
             expect(isDue).toBe(false);
             expect(mockNode.warn).toHaveBeenCalledWith(
-                expect.stringContaining('skipped: current day 4 not in interval [3]')
+                expect.stringContaining('"reason":"weekday"')
             );
         });
     });

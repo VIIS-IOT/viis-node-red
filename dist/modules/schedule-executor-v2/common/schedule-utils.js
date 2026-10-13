@@ -14,6 +14,8 @@ exports.calculateDurationSeconds = calculateDurationSeconds;
 exports.getCurrentTimestamp = getCurrentTimestamp;
 exports.delay = delay;
 const moment_1 = __importDefault(require("moment"));
+const farm_time_1 = require("../../../core/farm-time");
+const schedule_run_window_1 = require("../../../core/schedule-run-window");
 /**
  * Check if a value is falsy (should be skipped during schedule execution)
  * Falsy values: 0, "0", false, "false", null, undefined, ""
@@ -49,96 +51,27 @@ function isFalsyValue(value) {
     return false;
 }
 /**
- * Check if a schedule is due based on time, date, and interval
- * @param schedule - The schedule to check
+ * Check if a schedule is due. Same rule as executor v1 and the mobile app: start/end time, the
+ * schedule's and the plan's date ranges, and the weekday of the day the window starts
+ * (see core/schedule-run-window.ts).
+ * @param schedule - The schedule to check (with its schedulePlan loaded)
  * @param debugLog - Optional debug logging function
  * @returns true if schedule should execute
  */
 function isScheduleDue(schedule, debugLog) {
+    var _a;
     const log = debugLog || (() => { });
     try {
-        if (!schedule.start_time || !schedule.end_time) {
-            console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
-            return false;
-        }
         if (schedule.enable !== 1) {
             log(`Schedule ${schedule.name} is not enabled`);
             return false;
         }
-        // Get current time in UTC+7
-        const now = (0, moment_1.default)().utc().add(7, 'hours');
-        const today = now.clone().startOf('day');
-        // Check date range if specified
-        if (schedule.start_date && schedule.end_date) {
-            const startDate = (0, moment_1.default)(schedule.start_date, "YYYY-MM-DD");
-            const endDate = (0, moment_1.default)(schedule.end_date, "YYYY-MM-DD");
-            if (!now.isBetween(startDate, endDate, 'day', '[]')) {
-                log(`Schedule ${schedule.name} is outside enabled range (${startDate.format('YYYY-MM-DD')} - ${endDate.format('YYYY-MM-DD')})`);
-                return false;
-            }
+        const decision = (0, schedule_run_window_1.evaluateScheduleRun)(schedule, (_a = schedule.schedulePlan) !== null && _a !== void 0 ? _a : null, (0, farm_time_1.unixMsNow)());
+        if ('reason' in decision && decision.reason === 'missing_time') {
+            console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
         }
-        // Check interval (day of week)
-        if (schedule.interval && schedule.interval.trim() !== '') {
-            const currentDayOfWeek = now.day(); // 0=Sunday, 1=Monday, ..., 6=Saturday
-            let allowedDays = [];
-            try {
-                const trimmedInterval = schedule.interval.trim();
-                if (trimmedInterval.startsWith('[') && trimmedInterval.endsWith(']')) {
-                    // JSON array format
-                    allowedDays = JSON.parse(trimmedInterval);
-                }
-                else if (trimmedInterval.includes(',')) {
-                    // Comma-separated format
-                    allowedDays = trimmedInterval.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-                }
-                else {
-                    // Single number format
-                    const dayNum = parseInt(trimmedInterval);
-                    if (!isNaN(dayNum)) {
-                        allowedDays = [dayNum];
-                    }
-                }
-                // Check if current day is in allowed days
-                if (allowedDays.length > 0 && !allowedDays.includes(currentDayOfWeek)) {
-                    log(`Schedule ${schedule.name} skipped: current day ${currentDayOfWeek} not in interval ${JSON.stringify(allowedDays)}`);
-                    return false;
-                }
-                log(`Schedule ${schedule.name} interval check passed: day ${currentDayOfWeek} in ${JSON.stringify(allowedDays)}`);
-            }
-            catch (error) {
-                console.error(`Error parsing interval for schedule ${schedule.name}: ${error.message}`);
-                // If parse fails, allow schedule to run (fallback)
-            }
-        }
-        // Parse start_time and end_time
-        const startTime = (0, moment_1.default)(schedule.start_time, "HH:mm:ss");
-        const endTime = (0, moment_1.default)(schedule.end_time, "HH:mm:ss");
-        // Assign date to startTime and endTime
-        let startDateTime = today.clone().set({
-            hour: startTime.hour(),
-            minute: startTime.minute(),
-            second: startTime.second(),
-        });
-        let endDateTime = today.clone().set({
-            hour: endTime.hour(),
-            minute: endTime.minute(),
-            second: endTime.second(),
-        });
-        // Handle cross-midnight schedules
-        if (startDateTime.isAfter(endDateTime)) {
-            if (now.isBefore(endDateTime)) {
-                // Current time is after midnight but before endTime, schedule started yesterday
-                startDateTime.subtract(1, 'day');
-            }
-            else {
-                // Current time is after startTime, endTime is tomorrow
-                endDateTime.add(1, 'day');
-            }
-        }
-        // Check if current time is within range [start, end)
-        const isDue = now.isBetween(startDateTime, endDateTime, undefined, "[)");
-        log(`Schedule ${schedule.name} isDue: ${isDue}`);
-        return isDue;
+        log(`Schedule ${schedule.name} isDue: ${JSON.stringify(decision)}`);
+        return decision.due;
     }
     catch (error) {
         console.error(`Error in isScheduleDue for ${schedule.name}: ${error.message}`);

@@ -80,7 +80,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
             });
             const isDue = scheduleService.isScheduleDue(schedule);
             expect(isDue).toBe(true);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('interval check passed: day 3 in [3]'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('"due":true'));
         });
         test('should block schedule on different day (Thursday when interval is Wednesday)', () => {
             // Set system time to Thursday 10:00 AM (2025-01-09 is Thursday)
@@ -92,7 +92,7 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
             });
             const isDue = scheduleService.isScheduleDue(schedule);
             expect(isDue).toBe(false);
-            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('skipped: current day 4 not in interval [3]'));
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('"reason":"weekday"'));
         });
     });
     describe('Multiple Days Interval - Comma-separated Format', () => {
