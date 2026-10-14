@@ -23,6 +23,7 @@ import {
 import { executeWithTimeout } from "./resilience-utils";
 import { v4 as uuidv4 } from "uuid";
 import { activeRunId, forgetRunId, rememberRunId } from "./schedule-run-identity";
+import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -468,7 +469,8 @@ module.exports = function (RED: NodeAPI) {
                         const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
 
                         if (statusChanged) {
-                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true, { runId: activeRunId(globalContext, schedule.name) }));
+                            // ADR-033: a run turned off before its window ends is stopped, not completed.
+                            await sideEffect(`stopped notification ${schedule.name}`, () => scheduleService.sendStoppedNotification(schedule, 'schedule_disabled', activeRunId(globalContext, schedule.name)));
                             await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
 
                             try {
@@ -944,18 +946,21 @@ module.exports = function (RED: NodeAPI) {
 
                 const enabledScheduleIds = schedules.map(s => s.name);
 
-                for (const scheduleId in activeModbusCommands) {
-                    if (!enabledScheduleIds.includes(scheduleId)) {
-                        const commands = activeModbusCommands[scheduleId];
-                        const { allSuccessful: resetSuccess } = await scheduleService.resetModbusCommands(modbusClient, commands);
-                        if (resetSuccess) {
-                            scheduleService.clearActiveCommands(scheduleId);
-                            debugLog(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
-                        } else {
-                            debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
-                        }
-                    }
-                }
+                // A run whose schedule left the enabled list (plan off, schedule off by sync, deleted)
+                // is turned off, finished and reported as stopped (ADR-033).
+                await stopRunsNoLongerEnabled({
+                    activeCommands: () => activeModbusCommands,
+                    resetCommands: async (scheduleId, commands) => {
+                        const { allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, commands as any);
+                        if (!allSuccessful) debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
+                        return allSuccessful;
+                    },
+                    clearActiveCommands: (scheduleId) => scheduleService.clearActiveCommands(scheduleId),
+                    loadStopped: (scheduleId) => scheduleService.loadStoppedSchedule(scheduleId),
+                    finishSchedule: (stopped) => sideEffect(`finish stopped ${stopped.name}`, () => scheduleService.updateScheduleStatus(stopped, "finished")),
+                    sendStopped: (stopped, reason, runId) => sideEffect(`stopped notification ${stopped.name}`, () => scheduleService.sendStoppedNotification(stopped, reason, runId)),
+                    runIds: globalContext,
+                }, enabledScheduleIds);
 
                 const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
                 for (const scheduleId in statusHistory) {

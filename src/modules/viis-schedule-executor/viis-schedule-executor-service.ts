@@ -1,5 +1,6 @@
 import { TabiotSchedule, TabiotScheduleLog } from "../../orm/entities/schedule/TabiotSchedule";
 import { ScheduleEventParams, scheduleEventParams } from './schedule-run-identity';
+import { StopReason } from './schedule-stop-cleanup';
 import moment from "moment";
 import {
     plannedWindowUnixMs,
@@ -2494,6 +2495,110 @@ export class ScheduleService {
                 this.node.warn(`❌ HTTP VERIFY FAIL NOTIFICATION: ${schedule.name} | ${errorMessage}`);
             }
             return false;
+        }
+    }
+
+    /**
+     * ADR-033 D2: report a run that ended before its window, with why. Severity `notification`
+     * (the customer's general opt-out applies to delivery; the backend still stores the row).
+     */
+    async sendStoppedNotification(
+        schedule: TabiotSchedule,
+        reason: StopReason,
+        runId: string | null = null
+    ): Promise<boolean> {
+        const backendUrl = this.globalHelper ? this.globalHelper.getEnvVar('VIIS_BACKEND', '') : '';
+        const deviceAccessToken = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '') : '';
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        if (!backendUrl || !deviceAccessToken) {
+            if (this.node) {
+                this.node.warn('⚠️ HTTP NOTIFICATION SKIPPED: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+            }
+            return false;
+        }
+
+        const label = schedule.label || schedule.name;
+        const why: Record<StopReason, string> = {
+            schedule_disabled: ': lịch bị tắt',
+            plan_disabled: ': kế hoạch bị tắt',
+            deleted: ': lịch đã bị xoá',
+            unknown: '',
+        };
+        const payload = {
+            alarm_name: label,
+            id: deviceId,
+            msg: `Lịch trình "${label}" đã dừng${why[reason] ?? ''}`,
+            message_key: 'iot.notification.schedule.stopped',
+            message_params: { ...scheduleEventParams(schedule, runId), reason },
+            message_locale: 'vi-VN',
+            severity: 'notification',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: schedule.name,
+            alarm_status: 'Clear',
+            clear_by: 'Value',
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+        const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+
+        try {
+            await this.executeWithResilience(
+                async () => {
+                    const response = await axios.post(url, payload, {
+                        params: { device_access_token: deviceAccessToken },
+                        headers: { 'Content-Type': 'application/json' },
+                        timeout: 10000,
+                    });
+                    if (response.status !== 200 && response.status !== 201) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.data;
+                },
+                {
+                    maxRetries: 3,
+                    baseDelay: 1000,
+                    maxDelay: 10000,
+                    timeout: 10000,
+                    circuitBreakerKey: 'backend-notification',
+                    circuitBreakerThreshold: 5,
+                    circuitBreakerTimeout: 30000,
+                }
+            );
+            if (this.node) {
+                this.node.warn(`📡 HTTP NOTIFICATION SENT: ${schedule.name} | Action: stopped (${reason})`);
+            }
+            return true;
+        } catch (error) {
+            const errorMessage = error instanceof AxiosError
+                ? `${error.message} (${error.response?.status || 'N/A'})`
+                : (error as Error).message;
+            if (this.node) {
+                this.node.warn(`❌ HTTP NOTIFICATION FAILED: ${schedule.name} | ${errorMessage}`);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * The local row of a schedule that left the enabled list, and why: deleted (flag or row gone),
+     * its plan turned off, itself turned off, or unknown.
+     */
+    async loadStoppedSchedule(scheduleName: string): Promise<{ schedule: TabiotSchedule | null; reason: StopReason }> {
+        try {
+            if (!AppDataSource.isInitialized) await AppDataSource.initialize();
+            const schedule = await AppDataSource.getRepository(TabiotSchedule).findOne({
+                where: { name: scheduleName },
+                relations: ['schedulePlan'],
+            });
+            if (!schedule || Number(schedule.is_deleted) === 1) return { schedule, reason: 'deleted' };
+            if (schedule.schedulePlan && Number(schedule.schedulePlan.enable) === 0) {
+                return { schedule, reason: 'plan_disabled' };
+            }
+            if (Number(schedule.enable) === 0) return { schedule, reason: 'schedule_disabled' };
+            return { schedule, reason: 'unknown' };
+        } catch (error) {
+            console.error(`Error loading stopped schedule ${scheduleName}: ${(error as Error).message}`);
+            return { schedule: null, reason: 'unknown' };
         }
     }
 
