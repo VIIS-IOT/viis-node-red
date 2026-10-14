@@ -97,12 +97,21 @@ module.exports = function (RED: NodeAPI) {
           selectedDevice.accessToken,
           node.context()
         );
-        node.context().set("intents", intents || []);
+        if (intents === null) {
+          // Fetch failed: keep the cached intents and send nothing; output 2 must only carry the server's list.
+          node.status({
+            fill: "yellow",
+            shape: "ring",
+            text: "Intent sync failed; keeping cached intents",
+          });
+          return;
+        }
+        node.context().set("intents", intents);
 
         node.status({
           fill: "green",
           shape: "dot",
-          text: `Loaded ${intents ? intents.length : 0} intents`,
+          text: `Loaded ${intents.length} intents`,
         });
 
         node.send([

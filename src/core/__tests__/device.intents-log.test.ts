@@ -53,7 +53,7 @@ describe("getDeviceIntentsByToken logging", () => {
 
     const intents = await getDeviceIntentsByToken(TOKEN);
 
-    expect(intents).toEqual([]);
+    expect(intents).toBeNull();
     expect(loggedText()).not.toContain(TOKEN);
   });
 
@@ -74,7 +74,7 @@ describe("getDeviceIntentsByToken logging", () => {
 
     const intents = await getDeviceIntentsByToken(TOKEN);
 
-    expect(intents).toEqual([]);
+    expect(intents).toBeNull();
     expect(loggedText()).toContain("Failed to fetch device intents");
     expect(loggedText()).toContain(expectedFragment);
     expect(loggedText()).not.toContain(TOKEN);
