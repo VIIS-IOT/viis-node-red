@@ -27,7 +27,9 @@ export async function emitStartSideEffects(
     schedule: TabiotSchedule,
     report: ExecutionReport,
     clients: { tb: MqttClientCore; emqx: MqttClientCore },
-    commands: { holdingCommands: ModbusCmd[]; coilCommands: ModbusCmd[] }
+    commands: { holdingCommands: ModbusCmd[]; coilCommands: ModbusCmd[] },
+    /** The run the events belong to (ADR-033): the start's runId, not this report's own. */
+    eventRunId: string | null = report.runId ?? null
 ): Promise<void> {
     await service.publishAuditLog(
         clients.tb,
@@ -40,7 +42,7 @@ export async function emitStartSideEffects(
         { runId: report.runId, steps: report.steps }
     );
     for (const outcome of failedOutcomes(report)) {
-        await service.sendKeyVerifyFailNotification(schedule, 'start', outcome);
+        await service.sendKeyVerifyFailNotification(schedule, 'start', outcome, eventRunId);
     }
 }
 
@@ -49,7 +51,9 @@ export async function emitEndSideEffects(
     schedule: TabiotSchedule,
     report: ExecutionReport,
     clients: { tb: MqttClientCore; emqx: MqttClientCore },
-    commands: { holdingCommands: ModbusCmd[]; coilCommands: ModbusCmd[] }
+    commands: { holdingCommands: ModbusCmd[]; coilCommands: ModbusCmd[] },
+    /** The run the events belong to (ADR-033): the start's runId, not this report's own. */
+    eventRunId: string | null = report.runId ?? null
 ): Promise<void> {
     await service.publishAuditLog(
         clients.tb,
@@ -62,6 +66,6 @@ export async function emitEndSideEffects(
         { runId: report.runId, steps: report.steps }
     );
     for (const outcome of failedOutcomes(report)) {
-        await service.sendKeyVerifyFailNotification(schedule, 'end', outcome);
+        await service.sendKeyVerifyFailNotification(schedule, 'end', outcome, eventRunId);
     }
 }

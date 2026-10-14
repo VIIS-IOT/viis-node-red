@@ -1,4 +1,5 @@
 import { TabiotSchedule, TabiotScheduleLog } from "../../orm/entities/schedule/TabiotSchedule";
+import { ScheduleEventParams, scheduleEventParams } from './schedule-run-identity';
 import moment from "moment";
 import {
     plannedWindowUnixMs,
@@ -2271,13 +2272,17 @@ export class ScheduleService {
             maxRetries?: number;
             baseDelay?: number;
             timeout?: number;
+            /** The run this event belongs to (ADR-033); null when unknown. */
+            runId?: string | null;
         }
     ): Promise<boolean> {
         const {
             maxRetries = 3,
             baseDelay = 1000,
-            timeout = 10000
+            timeout = 10000,
+            runId = null
         } = options || {};
+        const identity: ScheduleEventParams = scheduleEventParams(schedule, runId);
 
         // Get backend URL and device access token from global context
         const backendUrl = this.globalHelper
@@ -2312,23 +2317,23 @@ export class ScheduleService {
 
         if (isStart) {
             if (success) {
-                message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy thành công`;
+                message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy`;
                 messageKey = 'iot.notification.schedule.started';
-                messageParams = { scheduleName: schedule.label || schedule.name };
+                messageParams = { ...identity };
             } else {
                 message = `Lịch trình "${schedule.label || schedule.name}" không thể bắt đầu - Lỗi ghi Modbus sau ${retryCount} lần retry`;
                 messageKey = 'iot.notification.schedule.failed';
-                messageParams = { scheduleName: schedule.label || schedule.name, retryCount };
+                messageParams = { ...identity, retryCount };
             }
         } else {
             if (success) {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`;
                 messageKey = 'iot.notification.schedule.completed';
-                messageParams = { scheduleName: schedule.label || schedule.name };
+                messageParams = { ...identity };
             } else {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã kết thúc nhưng KHÔNG THỂ TẮT thiết bị - Lỗi ghi Modbus sau retry`;
                 messageKey = 'iot.notification.schedule.failed';
-                messageParams = { scheduleName: schedule.label || schedule.name };
+                messageParams = { ...identity };
             }
         }
 
@@ -2402,7 +2407,8 @@ export class ScheduleService {
     async sendKeyVerifyFailNotification(
         schedule: TabiotSchedule,
         action: ScheduleAction,
-        outcome: KeyOutcome
+        outcome: KeyOutcome,
+        runId: string | null = null
     ): Promise<boolean> {
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
@@ -2427,7 +2433,7 @@ export class ScheduleService {
             msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${outcome.read ?? 'n/a'} attempts=${outcome.attempts}`,
             message_key: 'iot.notification.schedule.verify_failed',
             message_params: {
-                scheduleName: schedule.label || schedule.name,
+                ...scheduleEventParams(schedule, runId),
                 key: outcome.key,
                 expected: outcome.expected,
                 read: outcome.read ?? null,

@@ -22,6 +22,7 @@ import {
 } from "./schedule-tick-guard";
 import { executeWithTimeout } from "./resilience-utils";
 import { v4 as uuidv4 } from "uuid";
+import { activeRunId, forgetRunId, rememberRunId } from "./schedule-run-identity";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -467,7 +468,7 @@ module.exports = function (RED: NodeAPI) {
                         const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
 
                         if (statusChanged) {
-                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true, { runId: activeRunId(globalContext, schedule.name) }));
                             await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
 
                             try {
@@ -489,16 +490,18 @@ module.exports = function (RED: NodeAPI) {
                                     schedule,
                                     rpcReport,
                                     { tb: thingsboardClient, emqx: emqxClient },
-                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }
+                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                    activeRunId(globalContext, schedule.name)
                                 ));
                             } catch (auditError) {
                                 debugLog(`Failed to publish audit log for RPC disable: ${(auditError as Error).message}`);
                             }
                         } else {
                             for (const outcome of failedOutcomes(rpcReport)) {
-                                await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome));
+                                await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, activeRunId(globalContext, schedule.name)));
                             }
                         }
+                        forgetRunId(globalContext, schedule.name);
                     } else {
                         debugLog(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
                         schedule.enable = 0;
@@ -595,7 +598,8 @@ module.exports = function (RED: NodeAPI) {
                         clearStatusHistory(schedule.name);
 
                         // Send success notification
-                        await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                        await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true, { runId: activeRunId(globalContext, schedule.name) }));
+                        forgetRunId(globalContext, schedule.name);
                         await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
 
                         // Publish telemetry for manual recovery (all config values cleared)
@@ -781,9 +785,10 @@ module.exports = function (RED: NodeAPI) {
                                 startReport.steps = [...unusedResetSteps, ...startReport.steps];
                             }
                             scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
+                            rememberRunId(globalContext, schedule.name, startRunId);
 
                             if (statusChanged) {
-                                await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true));
+                                await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true, { runId: startRunId }));
                                 await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
 
                                 try {
@@ -809,14 +814,15 @@ module.exports = function (RED: NodeAPI) {
                                         schedule,
                                         startReport,
                                         { tb: thingsboardClient, emqx: emqxClient },
-                                        { holdingCommands, coilCommands }
+                                        { holdingCommands, coilCommands },
+                                        startRunId
                                     ));
                                 } catch (auditError) {
                                     debugLog(`Failed to publish audit log for schedule start: ${(auditError as Error).message}`);
                                 }
                             } else {
                                 for (const outcome of failedOutcomes(startReport)) {
-                                    await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome));
+                                    await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome, startRunId));
                                 }
                             }
                         }
@@ -879,7 +885,7 @@ module.exports = function (RED: NodeAPI) {
                         const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => ({ ...cmd, value: 0 }));
 
                         if (statusChanged) {
-                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true, { runId: activeRunId(globalContext, schedule.name) }));
                             await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
 
                             try {
@@ -901,16 +907,18 @@ module.exports = function (RED: NodeAPI) {
                                     schedule,
                                     finishReport,
                                     { tb: thingsboardClient, emqx: emqxClient },
-                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }
+                                    { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands },
+                                    activeRunId(globalContext, schedule.name)
                                 ));
                             } catch (auditError) {
                                 debugLog(`Failed to publish audit log for schedule end: ${(auditError as Error).message}`);
                             }
                         } else {
                             for (const outcome of failedOutcomes(finishReport)) {
-                                await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome));
+                                await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, activeRunId(globalContext, schedule.name)));
                             }
                         }
+                        forgetRunId(globalContext, schedule.name);
                         } finally {
                             endScheduleTransition(globalContext, schedule.name);
                         }
