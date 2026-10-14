@@ -25,7 +25,15 @@ export interface MqttConfig {
     healthCheckInterval?: number;
     messageQueueSize?: number;
     enableCircuitBreaker?: boolean;
+    /**
+     * Upper bound for one `publish()`, waiting for the connection included. A QoS 1 publish
+     * whose PUBACK never comes (session dropped, client replaced) rejects after this instead
+     * of hanging its caller forever.
+     */
+    publishTimeoutMs?: number;
 }
+
+const DEFAULT_PUBLISH_TIMEOUT_MS = 35000;
 
 export interface MqttMessage {
     topic: string;
@@ -60,6 +68,8 @@ export class MqttClientCore extends EventEmitter {
     private node: Node;
     private connectionPromise: Promise<void> | null = null;
     private subscribedTopics: Set<string> = new Set();
+    /** Rejecters of publishes still waiting for their callback, so a client swap can fail them. */
+    private pendingPublishes: Set<(error: Error) => void> = new Set();
 
     // Enhanced state management
     private readonly RECONNECT_INTERVAL_MIN = 500; // 500ms - more aggressive
@@ -91,6 +101,7 @@ export class MqttClientCore extends EventEmitter {
             healthCheckInterval: this.HEALTH_CHECK_INTERVAL,
             messageQueueSize: 100,
             enableCircuitBreaker: true,
+            publishTimeoutMs: DEFAULT_PUBLISH_TIMEOUT_MS,
             ...config,
         };
         this.node = node;
@@ -140,6 +151,11 @@ export class MqttClientCore extends EventEmitter {
                 qos: 1,
                 retain: false,
             };
+        }
+
+        if (this.client) {
+            // The old client's QoS 1 callbacks never fire once it is dropped.
+            this.rejectPendingPublishes("MQTT client replaced before the publish was acknowledged");
         }
 
         try {
@@ -560,6 +576,38 @@ export class MqttClientCore extends EventEmitter {
 
     // Publish message only when connected
     public async publish(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
+        const timeoutMs = this.config.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
+        let rejectPending: (error: Error) => void = () => {};
+        let timer: NodeJS.Timeout | undefined;
+        const deadline = new Promise<never>((_, reject) => {
+            rejectPending = reject;
+            timer = setTimeout(
+                () => reject(new Error(`MQTT publish to ${topic} timed out after ${timeoutMs}ms`)),
+                timeoutMs
+            );
+        });
+        this.pendingPublishes.add(rejectPending);
+        const attempt = this.publishOnce(topic, message, options);
+        // The losing side of the race must not surface as an unhandled rejection.
+        attempt.catch(() => {});
+        try {
+            await Promise.race([attempt, deadline]);
+        } finally {
+            if (timer) clearTimeout(timer);
+            this.pendingPublishes.delete(rejectPending);
+        }
+    }
+
+    /** Fail every publish still waiting for its callback. */
+    private rejectPendingPublishes(reason: string): void {
+        if (this.pendingPublishes.size === 0) return;
+        const error = new Error(reason);
+        const rejecters = Array.from(this.pendingPublishes);
+        this.pendingPublishes.clear();
+        rejecters.forEach((reject) => reject(error));
+    }
+
+    private async publishOnce(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
         if (!this.client) throw new Error("MQTT client not initialized");
         if (!this.client.connected) {
             this.node.warn(`MQTT client not connected to ${this.config.broker}, waiting for connection...`);
@@ -676,6 +724,8 @@ export class MqttClientCore extends EventEmitter {
             clearInterval(this.healthCheckTimer);
             this.healthCheckTimer = null;
         }
+
+        this.rejectPendingPublishes("MQTT client force disconnected before the publish was acknowledged");
 
         if (this.client) {
             this.client.end(true); // Force close

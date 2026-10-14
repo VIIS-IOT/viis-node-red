@@ -4,6 +4,7 @@ import {
     createSerializedQueue,
     endScheduleTransition,
     isScheduleTransitionInFlight,
+    runBoundedSideEffect,
     tryBeginScheduleTransition,
 } from '../schedule-tick-guard';
 
@@ -77,5 +78,56 @@ describe('schedule transition in-flight guard', () => {
         clearAllScheduleTransitions(store);
         expect(isScheduleTransitionInFlight(store, 'Lô 11')).toBe(false);
         expect(tryBeginScheduleTransition(store, 'Lô 11', 'finish')).toBe(true);
+    });
+});
+
+describe('createSerializedQueue tick watchdog', () => {
+    test('a hung tick is abandoned after jobTimeoutMs so later ticks still run', async () => {
+        const onJobTimeout = jest.fn();
+        const enqueue = createSerializedQueue({ jobTimeoutMs: 50, onJobTimeout });
+
+        const hung = enqueue(() => new Promise<string>(() => { /* never settles */ }));
+        const next = enqueue(async () => 'next tick ran');
+
+        await expect(hung).rejects.toThrow(/tick exceeded 50ms/);
+        await expect(next).resolves.toBe('next tick ran');
+        expect(onJobTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    test('a tick that finishes in time is unaffected', async () => {
+        const onJobTimeout = jest.fn();
+        const enqueue = createSerializedQueue({ jobTimeoutMs: 1000, onJobTimeout });
+
+        await expect(enqueue(async () => 'ok')).resolves.toBe('ok');
+        expect(onJobTimeout).not.toHaveBeenCalled();
+    });
+});
+
+describe('runBoundedSideEffect', () => {
+    test('gives up on a side effect that never settles and reports it', async () => {
+        const onFailure = jest.fn();
+
+        const started = Date.now();
+        await expect(
+            runBoundedSideEffect('schedule telemetry', () => new Promise(() => { /* never settles */ }), 50, onFailure)
+        ).resolves.toBe(false);
+        expect(Date.now() - started).toBeLessThan(1000);
+        expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/schedule telemetry.*timed out after 50ms/));
+    });
+
+    test('swallows a rejected side effect so the tick continues', async () => {
+        const onFailure = jest.fn();
+
+        await expect(
+            runBoundedSideEffect('audit log', async () => { throw new Error('broker down'); }, 1000, onFailure)
+        ).resolves.toBe(false);
+        expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/audit log.*broker down/));
+    });
+
+    test('returns true when the side effect completes', async () => {
+        const onFailure = jest.fn();
+
+        await expect(runBoundedSideEffect('notification', async () => undefined, 1000, onFailure)).resolves.toBe(true);
+        expect(onFailure).not.toHaveBeenCalled();
     });
 });
