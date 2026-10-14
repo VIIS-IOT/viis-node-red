@@ -103,11 +103,16 @@ class DeviceIntentService {
         var _a;
         const actions = [];
         for (const action of intent.device_actions) {
-            const dataType = (_a = action.function) === null || _a === void 0 ? void 0 : _a.data_type;
+            const key = (_a = action.function) === null || _a === void 0 ? void 0 : _a.identifier;
+            if (!key) {
+                // A deleted/unloaded function must not abort the evaluation of every intent: skip this action only.
+                console.warn(`Skipping action ${action.id} of intent ${intent.id}: its function is missing`);
+                continue;
+            }
+            const dataType = action.function.data_type;
             const value = (0, intentValue_1.resolveIntentActionValue)(action, dataType);
             if (value === undefined)
                 continue;
-            const key = action.function.identifier;
             const current = this.getLatestDeviceKeyValueData(action.device_id, key);
             if (current && (0, intentValue_1.intentActionAlreadyApplied)(current.value, action, dataType)) {
                 continue;

@@ -156,6 +156,20 @@ describe("DeviceIntentService.processDeviceIntents", () => {
         await expect(run([action({ str_v: "2" })], [{ key: "mode", value: 0 }], enumCondition)).resolves.toEqual([]);
         await expect(run([action({ str_v: "2" })], [{ key: "mode", value: "AUTO" }], enumCondition)).resolves.toHaveLength(1);
     });
+    it("skips an action whose function is missing and still evaluates the other intents", async () => {
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const broken = Object.assign(Object.assign({}, intentWith([action({ id: "action-broken", key: "mode", function: undefined, str_v: "1" })])), { id: "intent-broken" });
+        const healthy = Object.assign(Object.assign({}, intentWith([action({ id: "action-2", function: fn("Value", "set_ec"), dbl_v: 12 })])), { id: "intent-healthy" });
+        const results = await new deviceIntents_1.DeviceIntentService([broken, healthy], latestData(TRIGGER)).processDeviceIntents();
+        expect(results.map((r) => [r.id, r.device_actions])).toEqual([
+            ["intent-broken", []],
+            ["intent-healthy", [{ device_id: DEVICE_ID, key: "set_ec", value: 12 }]],
+        ]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("action-broken");
+        expect(String(warn.mock.calls[0][0])).toContain("intent-broken");
+        warn.mockRestore();
+    });
     it("ignores disabled and ONLINE intents", async () => {
         const disabled = Object.assign(Object.assign({}, intentWith([action({ str_v: "2" })])), { enable: false });
         const online = Object.assign(Object.assign({}, intentWith([action({ str_v: "2" })])), { type: "ONLINE" });
