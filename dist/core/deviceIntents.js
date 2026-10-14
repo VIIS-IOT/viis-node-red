@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DeviceIntentService = void 0;
+const intentValue_1 = require("./intentValue");
 class DeviceIntentService {
     constructor(intents, devicesData) {
         this.intents = intents;
@@ -27,72 +28,9 @@ class DeviceIntentService {
             const fnc = node.function;
             if (!fnc)
                 return false;
-            const value = latestDeviceData.value;
-            switch (node.operation) {
-                case "!=":
-                    if (fnc.data_type === "Bool") {
-                        return Boolean(value) !== Boolean(node.bool_v);
-                    }
-                    else if (["Value", "Accumulate", "Raw", "Enum"].includes(fnc.data_type || "")) {
-                        return Number(value) !== Number(node.dbl_v);
-                    }
-                    else {
-                        return String(value) !== String(node.str_v);
-                    }
-                case "<":
-                    if (fnc.data_type === "Bool") {
-                        return Boolean(value) < Boolean(node.bool_v);
-                    }
-                    else if (["Value", "Accumulate", "Raw", "Enum"].includes(fnc.data_type || "")) {
-                        return Number(value) < Number(node.dbl_v);
-                    }
-                    else {
-                        return String(value) < String(node.str_v);
-                    }
-                case "=":
-                    if (fnc.data_type === "Bool") {
-                        return Boolean(value) == Boolean(node.bool_v);
-                    }
-                    else if (["Value", "Accumulate", "Raw", "Enum"].includes(fnc.data_type || "")) {
-                        return Number(value) == Number(node.dbl_v);
-                    }
-                    else {
-                        return String(value) == String(node.str_v);
-                    }
-                case "<=":
-                    if (fnc.data_type === "Bool") {
-                        return Boolean(value) <= Boolean(node.bool_v);
-                    }
-                    else if (["Value", "Accumulate", "Raw", "Enum"].includes(fnc.data_type || "")) {
-                        return Number(value) <= Number(node.dbl_v);
-                    }
-                    else {
-                        return String(value) <= String(node.str_v);
-                    }
-                case ">":
-                    if (fnc.data_type === "Bool") {
-                        return Boolean(value) > Boolean(node.bool_v);
-                    }
-                    else if (["Value", "Accumulate", "Raw", "Enum"].includes(fnc.data_type || "")) {
-                        return Number(value) > Number(node.dbl_v);
-                    }
-                    else {
-                        return String(value) > String(node.str_v);
-                    }
-                case ">=":
-                    if (fnc.data_type === "Bool") {
-                        return Boolean(value) >= Boolean(node.bool_v);
-                    }
-                    else if (["Value", "Accumulate", "Raw", "Enum"].includes(fnc.data_type || "")) {
-                        return Number(value) >= Number(node.dbl_v);
-                    }
-                    else {
-                        return String(value) >= String(node.str_v);
-                    }
-                default:
-                    break;
-            }
-            return false;
+            // The populated predicate column decides how the value is read
+            // (see ./intentValue.ts); data_type only breaks a multi-column tie.
+            return (0, intentValue_1.compareIntentPredicate)(latestDeviceData.value, node, fnc.data_type);
         }
         catch (error) {
             throw error;
@@ -156,6 +94,33 @@ class DeviceIntentService {
             throw error;
         }
     }
+    /**
+     * The set-state commands a fired intent sends. The value comes from the populated action
+     * column (see ./intentValue.ts). An action without a usable value is dropped, and so is one
+     * the device already reports.
+     */
+    getDeviceActionsToSend(intent) {
+        var _a;
+        const actions = [];
+        for (const action of intent.device_actions) {
+            const key = (_a = action.function) === null || _a === void 0 ? void 0 : _a.identifier;
+            if (!key) {
+                // A deleted/unloaded function must not abort the evaluation of every intent: skip this action only.
+                console.warn(`Skipping action ${action.id} of intent ${intent.id}: its function is missing`);
+                continue;
+            }
+            const dataType = action.function.data_type;
+            const value = (0, intentValue_1.resolveIntentActionValue)(action, dataType);
+            if (value === undefined)
+                continue;
+            const current = this.getLatestDeviceKeyValueData(action.device_id, key);
+            if (current && (0, intentValue_1.intentActionAlreadyApplied)(current.value, action, dataType)) {
+                continue;
+            }
+            actions.push({ device_id: action.device_id, key, value });
+        }
+        return actions;
+    }
     async processDeviceIntents() {
         try {
             const results = [];
@@ -166,28 +131,7 @@ class DeviceIntentService {
                     results.push({
                         id: intent.id,
                         schedule_plan_actions: intent.schedule_plan_actions,
-                        device_actions: intent.device_actions
-                            .map((d) => {
-                            let value = undefined;
-                            if (d.function.data_type === "Bool") {
-                                value = Boolean(d.bool_v);
-                            }
-                            else if (["Value", "Accumulate", "Raw", "Enum"].includes(d.function.data_type || "")) {
-                                value = Number(d.dbl_v);
-                            }
-                            else {
-                                value = String(d.str_v);
-                            }
-                            return {
-                                device_id: d.device_id,
-                                key: d.function.identifier,
-                                value: value,
-                            };
-                        })
-                            .filter((d) => {
-                            const curValue = this.getLatestDeviceKeyValueData(d.device_id, d.key);
-                            return curValue ? (curValue === null || curValue === void 0 ? void 0 : curValue.value) !== d.value : true;
-                        }),
+                        device_actions: this.getDeviceActionsToSend(intent),
                     });
                 }
             }

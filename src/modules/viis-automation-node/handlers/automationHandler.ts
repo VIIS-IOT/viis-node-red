@@ -134,6 +134,11 @@ export class AutomationHandler {
     async syncIntents(): Promise<void> {
         try {
             const intents = await this.intentService.syncIntents();
+            if (intents === null) {
+                // Output 2 is read as the server's authoritative list; on a failed fetch send nothing.
+                this.logger.warn("Intent sync failed; local intents kept");
+                return;
+            }
 
             // Send intents to output 2
             this.node.send([
