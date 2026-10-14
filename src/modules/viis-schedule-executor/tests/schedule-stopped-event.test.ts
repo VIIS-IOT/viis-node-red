@@ -120,6 +120,14 @@ describe('stopRunsNoLongerEnabled', () => {
         expect(active[SCHEDULE_ID]).toBeDefined();
     });
 
+    test('an unknown enabled list (local query failed) stops nothing', async () => {
+        const { d, active } = deps();
+        await stopRunsNoLongerEnabled(d, null);
+        expect(d.resetCommands).not.toHaveBeenCalled();
+        expect(d.sendStopped).not.toHaveBeenCalled();
+        expect(active[SCHEDULE_ID]).toBeDefined();
+    });
+
     test('a deleted schedule is reported but not written back', async () => {
         const { d } = deps({
             loadStopped: jest.fn().mockResolvedValue({ schedule: schedule({ is_deleted: 1 }), reason: 'deleted' }),
@@ -145,6 +153,11 @@ describe('executor wiring', () => {
         const rpcBlock = src.slice(rpcStart, rpcEnd);
         expect(rpcBlock).toContain("sendStoppedNotification(schedule, 'schedule_disabled'");
         expect(rpcBlock).not.toContain("sendNotificationToBackend(schedule, 'end'");
+    });
+
+    test('a failed schedule query is not passed to the cleanup as an empty list', () => {
+        expect(src).toContain('getDueSchedulesOrNull()');
+        expect(src).toMatch(/stopRunsNoLongerEnabled\([\s\S]*?dueSchedules === null \? null : enabledScheduleIds\)/);
     });
 
     test('the tick cleanup goes through stopRunsNoLongerEnabled', () => {

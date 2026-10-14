@@ -519,10 +519,24 @@ export class ScheduleService {
             this.debugLog(`Retrieved ${schedules.length} schedules from DB for device_id: ${deviceId}`);
             return schedules;
         } catch (error) {
+            this.dueQueryFailures += 1;
             console.error(`Error in getDueSchedules: ${(error as Error).message}`);
             return []; // Trả về mảng rỗng thay vì throw lỗi
         }
     }
+
+    /**
+     * Like [getDueSchedules], but null when the local query failed, so a database hiccup is not
+     * read as "no schedule is enabled any more" (which would stop every running schedule).
+     */
+    async getDueSchedulesOrNull(): Promise<TabiotSchedule[] | null> {
+        const failuresBefore = this.dueQueryFailures;
+        const schedules = await this.getDueSchedules();
+        return this.dueQueryFailures > failuresBefore ? null : schedules;
+    }
+
+    /** Count of getDueSchedules calls that failed (read by getDueSchedulesOrNull). */
+    private dueQueryFailures = 0;
 
     /**
      * Kiểm tra xem schedule có đang trong khung thời gian thực thi hay không.

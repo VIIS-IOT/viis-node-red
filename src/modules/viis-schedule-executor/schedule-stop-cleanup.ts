@@ -29,7 +29,12 @@ export interface StopCleanupDeps {
  * because a successful reset clears its commands. A failed reset keeps the commands and reports
  * nothing; the next tick retries.
  */
-export async function stopRunsNoLongerEnabled(deps: StopCleanupDeps, enabledScheduleNames: string[]): Promise<void> {
+export async function stopRunsNoLongerEnabled(
+    deps: StopCleanupDeps,
+    /** null = the enabled list is unknown (the local query failed): stop nothing this tick. */
+    enabledScheduleNames: string[] | null
+): Promise<void> {
+    if (enabledScheduleNames === null) return;
     const active = deps.activeCommands();
     for (const scheduleName of Object.keys(active)) {
         if (enabledScheduleNames.includes(scheduleName)) continue;

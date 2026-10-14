@@ -674,7 +674,8 @@ module.exports = function (RED: NodeAPI) {
                     return null;
                 }
 
-                const schedules: TabiotSchedule[] = await scheduleService.getDueSchedules();
+                const dueSchedules = await scheduleService.getDueSchedulesOrNull();
+                const schedules: TabiotSchedule[] = dueSchedules ?? [];
 
                 // Run hourly cleanup of stale status history entries
                 cleanStaleStatusHistory();
@@ -960,7 +961,7 @@ module.exports = function (RED: NodeAPI) {
                     finishSchedule: (stopped) => sideEffect(`finish stopped ${stopped.name}`, () => scheduleService.updateScheduleStatus(stopped, "finished")),
                     sendStopped: (stopped, reason, runId) => sideEffect(`stopped notification ${stopped.name}`, () => scheduleService.sendStoppedNotification(stopped, reason, runId)),
                     runIds: globalContext,
-                }, enabledScheduleIds);
+                }, dueSchedules === null ? null : enabledScheduleIds);
 
                 const statusHistory: Record<string, string> = (globalContext.get("scheduleStatusHistory") as Record<string, string>) || {};
                 for (const scheduleId in statusHistory) {
