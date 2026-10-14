@@ -12,6 +12,8 @@ const schedule_side_effects_1 = require("./schedule-side-effects");
 const schedule_tick_guard_1 = require("./schedule-tick-guard");
 const resilience_utils_1 = require("./resilience-utils");
 const uuid_1 = require("uuid");
+const schedule_run_identity_1 = require("./schedule-run-identity");
+const schedule_stop_cleanup_1 = require("./schedule-stop-cleanup");
 const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -401,7 +403,8 @@ module.exports = function (RED) {
                             const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
                             const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
                             if (statusChanged) {
-                                await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                                // ADR-033: a run turned off before its window ends is stopped, not completed.
+                                await sideEffect(`stopped notification ${schedule.name}`, () => scheduleService.sendStoppedNotification(schedule, 'schedule_disabled', (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
                                 await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                                 try {
                                     await sideEffect(`schedule telemetry ${schedule.name}`, () => scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues));
@@ -410,7 +413,7 @@ module.exports = function (RED) {
                                     debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
                                 }
                                 try {
-                                    await sideEffect(`end audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }));
+                                    await sideEffect(`end audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
                                 }
                                 catch (auditError) {
                                     debugLog(`Failed to publish audit log for RPC disable: ${auditError.message}`);
@@ -418,9 +421,10 @@ module.exports = function (RED) {
                             }
                             else {
                                 for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(rpcReport)) {
-                                    await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome));
+                                    await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
                                 }
                             }
+                            (0, schedule_run_identity_1.forgetRunId)(globalContext, schedule.name);
                         }
                         else {
                             debugLog(`Schedule id: ${schedule.name}, label: ${schedule.label} is not running, only disabling`);
@@ -505,7 +509,8 @@ module.exports = function (RED) {
                             // Clear status history after successful finish so next run will trigger notification
                             clearStatusHistory(schedule.name);
                             // Send success notification
-                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true, { runId: (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name) }));
+                            (0, schedule_run_identity_1.forgetRunId)(globalContext, schedule.name);
                             await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                             // Publish telemetry for manual recovery (all config values cleared)
                             try {
@@ -659,8 +664,13 @@ module.exports = function (RED) {
                                         startReport.steps = [...unusedResetSteps, ...startReport.steps];
                                     }
                                     scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
+                                    (0, schedule_run_identity_1.rememberRunId)(globalContext, schedule.name, startRunId);
                                     if (statusChanged) {
-                                        await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true));
+                                        // ADR-033: "started" only after the start verify passed; a miss is reported by
+                                        // the verify-fail notifications that emitStartSideEffects sends below.
+                                        if ((0, schedule_side_effects_1.startNotificationDue)(startReport)) {
+                                            await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true, { runId: startRunId }));
+                                        }
                                         await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                                         try {
                                             const configValuesForTelemetry = {};
@@ -673,7 +683,7 @@ module.exports = function (RED) {
                                             debugLog(`Failed to publish schedule start telemetry: ${telemetryError.message}`);
                                         }
                                         try {
-                                            await sideEffect(`start audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands }));
+                                            await sideEffect(`start audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands }, startRunId));
                                         }
                                         catch (auditError) {
                                             debugLog(`Failed to publish audit log for schedule start: ${auditError.message}`);
@@ -681,7 +691,7 @@ module.exports = function (RED) {
                                     }
                                     else {
                                         for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(startReport)) {
-                                            await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome));
+                                            await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome, startRunId));
                                         }
                                     }
                                 }
@@ -737,7 +747,7 @@ module.exports = function (RED) {
                                 const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
                                 const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
                                 if (statusChanged) {
-                                    await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                                    await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true, { runId: (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name) }));
                                     await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                                     try {
                                         await sideEffect(`schedule telemetry ${schedule.name}`, () => scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues));
@@ -746,7 +756,7 @@ module.exports = function (RED) {
                                         debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
                                     }
                                     try {
-                                        await sideEffect(`end audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }));
+                                        await sideEffect(`end audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
                                     }
                                     catch (auditError) {
                                         debugLog(`Failed to publish audit log for schedule end: ${auditError.message}`);
@@ -754,9 +764,10 @@ module.exports = function (RED) {
                                 }
                                 else {
                                     for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(finishReport)) {
-                                        await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome));
+                                        await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
                                     }
                                 }
+                                (0, schedule_run_identity_1.forgetRunId)(globalContext, schedule.name);
                             }
                             finally {
                                 (0, schedule_tick_guard_1.endScheduleTransition)(globalContext, schedule.name);
@@ -776,19 +787,22 @@ module.exports = function (RED) {
                         debugLog(`Error in recovery check: ${error.message}`);
                     }
                     const enabledScheduleIds = schedules.map(s => s.name);
-                    for (const scheduleId in activeModbusCommands) {
-                        if (!enabledScheduleIds.includes(scheduleId)) {
-                            const commands = activeModbusCommands[scheduleId];
-                            const { allSuccessful: resetSuccess } = await scheduleService.resetModbusCommands(modbusClient, commands);
-                            if (resetSuccess) {
-                                scheduleService.clearActiveCommands(scheduleId);
-                                debugLog(`Cleaned up stale commands for schedule ${scheduleId} (not in enabled schedules)`);
-                            }
-                            else {
+                    // A run whose schedule left the enabled list (plan off, schedule off by sync, deleted)
+                    // is turned off, finished and reported as stopped (ADR-033).
+                    await (0, schedule_stop_cleanup_1.stopRunsNoLongerEnabled)({
+                        activeCommands: () => activeModbusCommands,
+                        resetCommands: async (scheduleId, commands) => {
+                            const { allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, commands);
+                            if (!allSuccessful)
                                 debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
-                            }
-                        }
-                    }
+                            return allSuccessful;
+                        },
+                        clearActiveCommands: (scheduleId) => scheduleService.clearActiveCommands(scheduleId),
+                        loadStopped: (scheduleId) => scheduleService.loadStoppedSchedule(scheduleId),
+                        finishSchedule: (stopped) => sideEffect(`finish stopped ${stopped.name}`, () => scheduleService.updateScheduleStatus(stopped, "finished")),
+                        sendStopped: (stopped, reason, runId) => sideEffect(`stopped notification ${stopped.name}`, () => scheduleService.sendStoppedNotification(stopped, reason, runId)),
+                        runIds: globalContext,
+                    }, enabledScheduleIds);
                     const statusHistory = globalContext.get("scheduleStatusHistory") || {};
                     for (const scheduleId in statusHistory) {
                         if (!enabledScheduleIds.includes(scheduleId)) {

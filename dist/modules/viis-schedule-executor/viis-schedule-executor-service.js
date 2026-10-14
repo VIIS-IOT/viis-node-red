@@ -48,6 +48,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleService = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
 exports.resolveWaterHammerDelayMs = resolveWaterHammerDelayMs;
 const TabiotSchedule_1 = require("../../orm/entities/schedule/TabiotSchedule");
+const schedule_run_identity_1 = require("./schedule-run-identity");
 const moment_1 = __importDefault(require("moment"));
 const farm_time_1 = require("../../core/farm-time");
 const schedule_run_window_1 = require("../../core/schedule-run-window");
@@ -1959,7 +1960,8 @@ let ScheduleService = class ScheduleService {
      */
     async sendNotificationToBackend(schedule, action, success = true, options) {
         var _a, _b;
-        const { maxRetries = 3, baseDelay = 1000, timeout = 10000 } = options || {};
+        const { maxRetries = 3, baseDelay = 1000, timeout = 10000, runId = null } = options || {};
+        const identity = (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId);
         // Get backend URL and device access token from global context
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
@@ -1987,26 +1989,26 @@ let ScheduleService = class ScheduleService {
         const retryCount = ((_a = this.globalHelper) === null || _a === void 0 ? void 0 : _a.getEnvVar('MODBUS_MAX_RETRIES', 3)) || 3;
         if (isStart) {
             if (success) {
-                message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy thành công`;
+                message = `Lịch trình "${schedule.label || schedule.name}" đã bắt đầu chạy`;
                 messageKey = 'iot.notification.schedule.started';
-                messageParams = { scheduleName: schedule.label || schedule.name };
+                messageParams = Object.assign({}, identity);
             }
             else {
                 message = `Lịch trình "${schedule.label || schedule.name}" không thể bắt đầu - Lỗi ghi Modbus sau ${retryCount} lần retry`;
                 messageKey = 'iot.notification.schedule.failed';
-                messageParams = { scheduleName: schedule.label || schedule.name, retryCount };
+                messageParams = Object.assign(Object.assign({}, identity), { retryCount });
             }
         }
         else {
             if (success) {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã hoàn thành`;
                 messageKey = 'iot.notification.schedule.completed';
-                messageParams = { scheduleName: schedule.label || schedule.name };
+                messageParams = Object.assign({}, identity);
             }
             else {
                 message = `Lịch trình "${schedule.label || schedule.name}" đã kết thúc nhưng KHÔNG THỂ TẮT thiết bị - Lỗi ghi Modbus sau retry`;
                 messageKey = 'iot.notification.schedule.failed';
-                messageParams = { scheduleName: schedule.label || schedule.name };
+                messageParams = Object.assign({}, identity);
             }
         }
         // Prepare request payload (ThingsboardAlarm format) with i18n support
@@ -2065,7 +2067,7 @@ let ScheduleService = class ScheduleService {
             return false;
         }
     }
-    async sendKeyVerifyFailNotification(schedule, action, outcome) {
+    async sendKeyVerifyFailNotification(schedule, action, outcome, runId = null) {
         var _a, _b, _c, _d;
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
@@ -2087,15 +2089,7 @@ let ScheduleService = class ScheduleService {
             id: deviceId,
             msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${(_a = outcome.read) !== null && _a !== void 0 ? _a : 'n/a'} attempts=${outcome.attempts}`,
             message_key: 'iot.notification.schedule.verify_failed',
-            message_params: {
-                scheduleName: schedule.label || schedule.name,
-                key: outcome.key,
-                expected: outcome.expected,
-                read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null,
-                attempts: outcome.attempts,
-                action,
-                error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null,
-            },
+            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { key: outcome.key, expected: outcome.expected, read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null, attempts: outcome.attempts, action, error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null }),
             message_locale: 'vi-VN',
             severity: 'error',
             trigger_time: new Date().toISOString(),
@@ -2143,6 +2137,105 @@ let ScheduleService = class ScheduleService {
                 this.node.warn(`❌ HTTP VERIFY FAIL NOTIFICATION: ${schedule.name} | ${errorMessage}`);
             }
             return false;
+        }
+    }
+    /**
+     * ADR-033 D2: report a run that ended before its window, with why. Severity `notification`
+     * (the customer's general opt-out applies to delivery; the backend still stores the row).
+     */
+    async sendStoppedNotification(schedule, reason, runId = null) {
+        var _a, _b;
+        const backendUrl = this.globalHelper ? this.globalHelper.getEnvVar('VIIS_BACKEND', '') : '';
+        const deviceAccessToken = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '') : '';
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        if (!backendUrl || !deviceAccessToken) {
+            if (this.node) {
+                this.node.warn('⚠️ HTTP NOTIFICATION SKIPPED: Missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN');
+            }
+            return false;
+        }
+        const label = schedule.label || schedule.name;
+        const why = {
+            schedule_disabled: ': lịch bị tắt',
+            plan_disabled: ': kế hoạch bị tắt',
+            deleted: ': lịch đã bị xoá',
+            unknown: '',
+        };
+        const payload = {
+            alarm_name: label,
+            id: deviceId,
+            msg: `Lịch trình "${label}" đã dừng${(_a = why[reason]) !== null && _a !== void 0 ? _a : ''}`,
+            message_key: 'iot.notification.schedule.stopped',
+            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { reason }),
+            message_locale: 'vi-VN',
+            severity: 'notification',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: schedule.name,
+            alarm_status: 'Clear',
+            clear_by: 'Value',
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+        const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
+        try {
+            await this.executeWithResilience(async () => {
+                const response = await axios_1.default.post(url, payload, {
+                    params: { device_access_token: deviceAccessToken },
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 10000,
+                });
+                if (response.status !== 200 && response.status !== 201) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.data;
+            }, {
+                maxRetries: 3,
+                baseDelay: 1000,
+                maxDelay: 10000,
+                timeout: 10000,
+                circuitBreakerKey: 'backend-notification',
+                circuitBreakerThreshold: 5,
+                circuitBreakerTimeout: 30000,
+            });
+            if (this.node) {
+                this.node.warn(`📡 HTTP NOTIFICATION SENT: ${schedule.name} | Action: stopped (${reason})`);
+            }
+            return true;
+        }
+        catch (error) {
+            const errorMessage = error instanceof axios_1.AxiosError
+                ? `${error.message} (${((_b = error.response) === null || _b === void 0 ? void 0 : _b.status) || 'N/A'})`
+                : error.message;
+            if (this.node) {
+                this.node.warn(`❌ HTTP NOTIFICATION FAILED: ${schedule.name} | ${errorMessage}`);
+            }
+            return false;
+        }
+    }
+    /**
+     * The local row of a schedule that left the enabled list, and why: deleted (flag or row gone),
+     * its plan turned off, itself turned off, or unknown.
+     */
+    async loadStoppedSchedule(scheduleName) {
+        try {
+            if (!dataSource_1.AppDataSource.isInitialized)
+                await dataSource_1.AppDataSource.initialize();
+            const schedule = await dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule).findOne({
+                where: { name: scheduleName },
+                relations: ['schedulePlan'],
+            });
+            if (!schedule || Number(schedule.is_deleted) === 1)
+                return { schedule, reason: 'deleted' };
+            if (schedule.schedulePlan && Number(schedule.schedulePlan.enable) === 0) {
+                return { schedule, reason: 'plan_disabled' };
+            }
+            if (Number(schedule.enable) === 0)
+                return { schedule, reason: 'schedule_disabled' };
+            return { schedule, reason: 'unknown' };
+        }
+        catch (error) {
+            console.error(`Error loading stopped schedule ${scheduleName}: ${error.message}`);
+            return { schedule: null, reason: 'unknown' };
         }
     }
     /**
