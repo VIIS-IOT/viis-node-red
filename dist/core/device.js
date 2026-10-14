@@ -34,6 +34,11 @@ async function sendTelemetryByHttp(token, telemetryData, context) {
         return false;
     }
 }
+/**
+ * The device's intents as the backend lists them. An array (possibly empty) is the server's authoritative
+ * answer; `null` means the fetch failed and callers must keep their cached intents (the gateway clears its
+ * local OFFLINE intents when the list holds none, so a failure must never look like an empty list).
+ */
 async function getDeviceIntentsByToken(token, context) {
     try {
         // Use GlobalContextHelper to get server URL (hot-reload support)
@@ -48,10 +53,17 @@ async function getDeviceIntentsByToken(token, context) {
             headers: { "Content-Type": "application/json" },
             timeout: 10000 // 10 second timeout
         });
-        return response.data.result;
+        const body = response.data;
+        if (body && typeof body === "object" && Array.isArray(body.result))
+            return body.result;
+        // A device without intents gets the empty envelope `{}` (the controller returns nothing).
+        if (body && typeof body === "object" && (body.result === undefined || body.result === null))
+            return [];
+        console.error("Failed to fetch device intents: the response is not an intent list");
+        return null;
     }
     catch (error) {
-        // Log error but return empty array instead of throwing to prevent crash
+        // Log the failure and return null (not []) so callers keep their cached intents
         if (axios_1.default.isAxiosError(error)) {
             console.error(`Failed to fetch device intents: ${maskToken(error.message, token)} (network may be down)`);
         }
@@ -60,6 +72,6 @@ async function getDeviceIntentsByToken(token, context) {
             // object carries the request URL in `input`, and that URL contains the device token. Message only.
             console.error("Failed to fetch device intents:", maskToken(error instanceof Error ? error.message : String(error), token));
         }
-        return []; // Return empty array to allow node to continue
+        return null;
     }
 }

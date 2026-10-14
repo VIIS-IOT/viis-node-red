@@ -18,14 +18,19 @@ class IntentService {
         this.credentials = credentials;
     }
     /**
-     * Fetch intents from server using device access token
+     * Fetch intents from server using device access token.
+     * Returns null when the fetch failed (the cached intents stay authoritative).
      */
     async fetchIntentsFromServer() {
         try {
             this.logger.log(`Fetching intents for device: ${this.credentials.id}`);
             const intents = await (0, device_1.getDeviceIntentsByToken)(this.credentials.accessToken, this.node.context());
-            this.logger.log(`Fetched ${intents ? intents.length : 0} intents from server`);
-            return intents || [];
+            if (intents === null) {
+                this.logger.warn("Intent fetch failed; keeping cached intents");
+                return null;
+            }
+            this.logger.log(`Fetched ${intents.length} intents from server`);
+            return intents;
         }
         catch (error) {
             this.logger.error(`Failed to fetch intents: ${error.message}`);
@@ -59,8 +64,8 @@ class IntentService {
         }
     }
     /**
-     * Sync intents from server and update context
-     * Returns the fetched intents
+     * Sync intents from server and update context.
+     * Returns the fetched intents, or null when the fetch failed (context left untouched).
      */
     async syncIntents() {
         try {
@@ -70,6 +75,14 @@ class IntentService {
                 text: "Syncing intents..."
             });
             const intents = await this.fetchIntentsFromServer();
+            if (intents === null) {
+                this.node.status({
+                    fill: "yellow",
+                    shape: "ring",
+                    text: "Sync failed; keeping cached intents"
+                });
+                return null;
+            }
             this.saveIntentsToContext(intents);
             this.node.status({
                 fill: "green",
@@ -85,8 +98,8 @@ class IntentService {
                 shape: "ring",
                 text: `Sync error: ${error.message}`
             });
-            // Return cached intents on error
-            return this.getIntentsFromContext();
+            // Keep the cached intents in context; null tells the caller not to publish them as the server's list
+            return null;
         }
     }
     /**

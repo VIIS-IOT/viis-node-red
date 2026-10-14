@@ -75,7 +75,7 @@ describe("getDeviceIntentsByToken logging", () => {
         const url = `http://backend.test/api/v2/device-intent/by-device-token/${TOKEN}`;
         getSpy.mockRejectedValue(new axios_1.AxiosError("Request failed with status code 404", "ERR_BAD_REQUEST", { url }));
         const intents = await (0, device_1.getDeviceIntentsByToken)(TOKEN);
-        expect(intents).toEqual([]);
+        expect(intents).toBeNull();
         expect(loggedText()).not.toContain(TOKEN);
     });
     it.each([
@@ -93,7 +93,7 @@ describe("getDeviceIntentsByToken logging", () => {
         // A malformed VIIS_BACKEND is rejected by the URL parser before axios builds an AxiosError.
         getSpy.mockRejectedValue(makeError());
         const intents = await (0, device_1.getDeviceIntentsByToken)(TOKEN);
-        expect(intents).toEqual([]);
+        expect(intents).toBeNull();
         expect(loggedText()).toContain("Failed to fetch device intents");
         expect(loggedText()).toContain(expectedFragment);
         expect(loggedText()).not.toContain(TOKEN);
