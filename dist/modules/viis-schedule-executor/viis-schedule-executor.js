@@ -9,7 +9,13 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_side_effects_1 = require("./schedule-side-effects");
 const schedule_tick_guard_1 = require("./schedule-tick-guard");
+const resilience_utils_1 = require("./resilience-utils");
 const uuid_1 = require("uuid");
+/** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
+const SIDE_EFFECT_TIMEOUT_MS = 15000;
+/** Watchdog for one executor tick; START with water-hammer delay and verify retries stays well under it. */
+const TICK_TIMEOUT_MS = 180000;
+const SCHEDULE_EXECUTOR_HEARTBEAT_KEY = "scheduleExecutorHeartbeat";
 module.exports = function (RED) {
     function ScheduleExecutorNode(config) {
         RED.nodes.createNode(this, config);
@@ -283,10 +289,18 @@ module.exports = function (RED) {
         }).catch(error => {
             node.error(`Failed to initialize Modbus client: ${error.message}`);
         });
-        const enqueueInput = (0, schedule_tick_guard_1.createSerializedQueue)();
+        const enqueueInput = (0, schedule_tick_guard_1.createSerializedQueue)({
+            jobTimeoutMs: TICK_TIMEOUT_MS,
+            onJobTimeout: (timeoutMs) => {
+                node.error(`🚨 SCHEDULE EXECUTOR WATCHDOG: tick still running after ${timeoutMs}ms, abandoned so schedules keep running. In flight: ${JSON.stringify(globalContext.get(schedule_tick_guard_1.SCHEDULE_IN_FLIGHT_KEY) || {})}`);
+                node.status({ fill: "red", shape: "ring", text: "Tick watchdog fired" });
+            },
+        });
+        const sideEffect = (label, work) => (0, schedule_tick_guard_1.runBoundedSideEffect)(label, work, SIDE_EFFECT_TIMEOUT_MS, (message) => node.warn(`⚠️ SIDE EFFECT ${message}`));
         node.on("input", function (msg, send, done) {
             enqueueInput(async () => {
                 var _a;
+                globalContext.set(SCHEDULE_EXECUTOR_HEARTBEAT_KEY, { lastTickAt: Date.now() });
                 try {
                     // Ensure Modbus client is ready before processing
                     if (!modbusClient) {
@@ -337,7 +351,7 @@ module.exports = function (RED) {
                             if (configParameters && configParameters.length > 0) {
                                 for (const configParam of configParameters) {
                                     try {
-                                        await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                        await (0, resilience_utils_1.executeWithTimeout)(() => scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam), SIDE_EFFECT_TIMEOUT_MS, `Config publish ${configParam.key} timed out after ${SIDE_EFFECT_TIMEOUT_MS}ms`);
                                         debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
                                     }
                                     catch (error) {
@@ -384,16 +398,16 @@ module.exports = function (RED) {
                             const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
                             const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
                             if (statusChanged) {
-                                await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                                await scheduleService.syncScheduleLog(schedule, true);
+                                await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                                await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                                 try {
-                                    await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
+                                    await sideEffect(`schedule telemetry ${schedule.name}`, () => scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues));
                                 }
                                 catch (telemetryError) {
                                     debugLog(`Failed to publish RPC disable telemetry: ${telemetryError.message}`);
                                 }
                                 try {
-                                    await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
+                                    await sideEffect(`end audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, rpcReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }));
                                 }
                                 catch (auditError) {
                                     debugLog(`Failed to publish audit log for RPC disable: ${auditError.message}`);
@@ -401,7 +415,7 @@ module.exports = function (RED) {
                             }
                             else {
                                 for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(rpcReport)) {
-                                    await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
+                                    await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome));
                                 }
                             }
                         }
@@ -488,14 +502,14 @@ module.exports = function (RED) {
                             // Clear status history after successful finish so next run will trigger notification
                             clearStatusHistory(schedule.name);
                             // Send success notification
-                            await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                            await scheduleService.syncScheduleLog(schedule, true);
+                            await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                            await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                             // Publish telemetry for manual recovery (all config values cleared)
                             try {
                                 const activeCommands = scheduleService.getActiveCommands(schedule.name);
                                 const resetCoilCommands = activeCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
                                 const resetHoldingCommands = activeCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
-                                await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
+                                await sideEffect(`schedule telemetry ${schedule.name}`, () => scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues));
                             }
                             catch (telemetryError) {
                                 debugLog(`Failed to publish manual recovery telemetry: ${telemetryError.message}`);
@@ -623,7 +637,7 @@ module.exports = function (RED) {
                                     scheduleService.clearPublishedValueCacheForKeys(configParameters.map(cp => cp.key));
                                     for (const configParam of configParameters) {
                                         try {
-                                            await scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam);
+                                            await (0, resilience_utils_1.executeWithTimeout)(() => scheduleService.publishConfigUpdate(thingsboardClient, emqxClient, configParam), SIDE_EFFECT_TIMEOUT_MS, `Config publish ${configParam.key} timed out after ${SIDE_EFFECT_TIMEOUT_MS}ms`);
                                             publishedConfigParams.push(configParam);
                                             debugLog(`Published config parameter: ${configParam.key}=${configParam.value} for schedule ${schedule.name}`);
                                         }
@@ -643,20 +657,20 @@ module.exports = function (RED) {
                                     }
                                     scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
                                     if (statusChanged) {
-                                        await scheduleService.sendNotificationToBackend(schedule, 'start', true);
-                                        await scheduleService.syncScheduleLog(schedule, true);
+                                        await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true));
+                                        await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                                         try {
                                             const configValuesForTelemetry = {};
                                             for (const cp of configParameters) {
                                                 configValuesForTelemetry[cp.key] = cp.value;
                                             }
-                                            await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands }, configValuesForTelemetry);
+                                            await sideEffect(`schedule telemetry ${schedule.name}`, () => scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'start', { holdingCommands, coilCommands }, configValuesForTelemetry));
                                         }
                                         catch (telemetryError) {
                                             debugLog(`Failed to publish schedule start telemetry: ${telemetryError.message}`);
                                         }
                                         try {
-                                            await (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands });
+                                            await sideEffect(`start audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitStartSideEffects)(scheduleService, schedule, startReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands, coilCommands }));
                                         }
                                         catch (auditError) {
                                             debugLog(`Failed to publish audit log for schedule start: ${auditError.message}`);
@@ -664,7 +678,7 @@ module.exports = function (RED) {
                                     }
                                     else {
                                         for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(startReport)) {
-                                            await scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome);
+                                            await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'start', outcome));
                                         }
                                     }
                                 }
@@ -720,16 +734,16 @@ module.exports = function (RED) {
                                 const resetCoilCommands = allResetCommands.filter(cmd => cmd.fc === 5).map(cmd => (Object.assign(Object.assign({}, cmd), { value: false })));
                                 const resetHoldingCommands = allResetCommands.filter(cmd => cmd.fc === 6).map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 })));
                                 if (statusChanged) {
-                                    await scheduleService.sendNotificationToBackend(schedule, 'end', true);
-                                    await scheduleService.syncScheduleLog(schedule, true);
+                                    await sideEffect(`end notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'end', true));
+                                    await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
                                     try {
-                                        await scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues);
+                                        await sideEffect(`schedule telemetry ${schedule.name}`, () => scheduleService.publishScheduleTelemetry(thingsboardClient, emqxClient, schedule, 'end', { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }, resetConfigValues));
                                     }
                                     catch (telemetryError) {
                                         debugLog(`Failed to publish schedule end telemetry: ${telemetryError.message}`);
                                     }
                                     try {
-                                        await (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands });
+                                        await sideEffect(`end audit ${schedule.name}`, () => (0, schedule_side_effects_1.emitEndSideEffects)(scheduleService, schedule, finishReport, { tb: thingsboardClient, emqx: emqxClient }, { holdingCommands: resetHoldingCommands, coilCommands: resetCoilCommands }));
                                     }
                                     catch (auditError) {
                                         debugLog(`Failed to publish audit log for schedule end: ${auditError.message}`);
@@ -737,7 +751,7 @@ module.exports = function (RED) {
                                 }
                                 else {
                                     for (const outcome of (0, schedule_execution_types_1.failedOutcomes)(finishReport)) {
-                                        await scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome);
+                                        await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome));
                                     }
                                 }
                             }
@@ -789,6 +803,8 @@ module.exports = function (RED) {
                     node.status({ fill: "red", shape: "ring", text: "Processing error" });
                     done(err);
                 }
+            }).catch(() => {
+                // Only the tick watchdog rejects here (the tick catches its own errors); onJobTimeout reported it.
             });
         });
         node.on("close", function (done) {
