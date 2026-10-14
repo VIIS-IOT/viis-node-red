@@ -566,7 +566,8 @@ module.exports = function (RED) {
                         debugLog(`Unknown RPC method: ${payload.method}`);
                         return null;
                     }
-                    const schedules = await scheduleService.getDueSchedules();
+                    const dueSchedules = await scheduleService.getDueSchedulesOrNull();
+                    const schedules = dueSchedules !== null && dueSchedules !== void 0 ? dueSchedules : [];
                     // Run hourly cleanup of stale status history entries
                     cleanStaleStatusHistory();
                     const allModbusCoils = scheduleService.getAllModbusCoils();
@@ -802,7 +803,7 @@ module.exports = function (RED) {
                         finishSchedule: (stopped) => sideEffect(`finish stopped ${stopped.name}`, () => scheduleService.updateScheduleStatus(stopped, "finished")),
                         sendStopped: (stopped, reason, runId) => sideEffect(`stopped notification ${stopped.name}`, () => scheduleService.sendStoppedNotification(stopped, reason, runId)),
                         runIds: globalContext,
-                    }, enabledScheduleIds);
+                    }, dueSchedules === null ? null : enabledScheduleIds);
                     const statusHistory = globalContext.get("scheduleStatusHistory") || {};
                     for (const scheduleId in statusHistory) {
                         if (!enabledScheduleIds.includes(scheduleId)) {

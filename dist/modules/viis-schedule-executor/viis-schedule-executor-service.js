@@ -134,6 +134,8 @@ let ScheduleService = class ScheduleService {
         this.CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
         this.PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
         this.protectionGate = null;
+        /** Count of getDueSchedules calls that failed (read by getDueSchedulesOrNull). */
+        this.dueQueryFailures = 0;
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
@@ -475,9 +477,19 @@ let ScheduleService = class ScheduleService {
             return schedules;
         }
         catch (error) {
+            this.dueQueryFailures += 1;
             console.error(`Error in getDueSchedules: ${error.message}`);
             return []; // Trả về mảng rỗng thay vì throw lỗi
         }
+    }
+    /**
+     * Like [getDueSchedules], but null when the local query failed, so a database hiccup is not
+     * read as "no schedule is enabled any more" (which would stop every running schedule).
+     */
+    async getDueSchedulesOrNull() {
+        const failuresBefore = this.dueQueryFailures;
+        const schedules = await this.getDueSchedules();
+        return this.dueQueryFailures > failuresBefore ? null : schedules;
     }
     /**
      * Kiểm tra xem schedule có đang trong khung thời gian thực thi hay không.
