@@ -10,7 +10,7 @@ import { ActiveModbusCommands, ManualModbusOverrides, RpcPayload, RpcControlResu
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ProtectionGateService, resolveProtectionGate } from "../viis-device-protection/services/protection-gate-service";
 import { ExecutionReport, failedOutcomes } from "./schedule-execution-types";
-import { configParamsToStep, emitEndSideEffects, emitStartSideEffects } from "./schedule-side-effects";
+import { configParamsToStep, emitEndSideEffects, emitStartSideEffects, startNotificationDue } from "./schedule-side-effects";
 import {
     SCHEDULE_IN_FLIGHT_KEY,
     clearAllScheduleTransitions,
@@ -788,7 +788,11 @@ module.exports = function (RED: NodeAPI) {
                             rememberRunId(globalContext, schedule.name, startRunId);
 
                             if (statusChanged) {
-                                await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true, { runId: startRunId }));
+                                // ADR-033: "started" only after the start verify passed; a miss is reported by
+                                // the verify-fail notifications that emitStartSideEffects sends below.
+                                if (startNotificationDue(startReport)) {
+                                    await sideEffect(`start notification ${schedule.name}`, () => scheduleService.sendNotificationToBackend(schedule, 'start', true, { runId: startRunId }));
+                                }
                                 await sideEffect(`schedule log ${schedule.name}`, () => scheduleService.syncScheduleLog(schedule, true));
 
                                 try {

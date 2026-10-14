@@ -22,6 +22,14 @@ export function configParamsToStep(params: ConfigParameter[]): ExecutionStep {
     };
 }
 
+/**
+ * ADR-033 D1: a run is reported `started` only when every key of its start report passed verify.
+ * A miss is reported by the verify-fail notifications alone.
+ */
+export function startNotificationDue(report: ExecutionReport): boolean {
+    return failedOutcomes(report).length === 0;
+}
+
 export async function emitStartSideEffects(
     service: ScheduleService,
     schedule: TabiotSchedule,
