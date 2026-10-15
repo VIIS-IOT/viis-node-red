@@ -14,6 +14,7 @@ import { AppDataSource } from "../../orm/dataSource";
 import { SyncScheduleService } from "../../services/syncSchedule/SyncScheduleService";
 import Container, { Service } from "typedi";
 import { Node } from "node-red";
+import { readGlobalScaleConfigs } from "../../ultils/global-scale-configs";
 import { ActiveModbusCommands, ManualModbusOverrides, ModbusCmd, ScaleConfig, ScheduleConfigValues, ConfigParameter } from "./type";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import {
@@ -228,7 +229,7 @@ export class ScheduleService {
 
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
     private scaleValue(key: string, value: number, direction: 'read' | 'write'): number {
-        const scaleConfigs: ScaleConfig[] = this.node?.context().global.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
+        const scaleConfigs: ScaleConfig[] = readGlobalScaleConfigs(this.node?.context().global);
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
             this.debugLog(`No scale config for ${key} in ${direction}, returning ${value}`);
