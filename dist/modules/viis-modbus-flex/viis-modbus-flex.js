@@ -8,6 +8,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const modbusGetterService_1 = require("./services/modbusGetterService");
 const logger_1 = require("./utils/logger");
 const constants_1 = require("./constants");
+const scenarioTriggerTracker_1 = require("../viis-automation-node/services/scenarioTriggerTracker");
 /**
  * The device access token is the device's MQTT credential: the notification request needs it in the
  * query string, but it must never reach a log line. Masks the value of every `device_access_token=`
@@ -388,6 +389,12 @@ module.exports = function (RED) {
                             const response = await modbusGetterService.processRequest(msg.payload);
                             // Update message payload with response
                             msg.payload = response;
+                            try {
+                                (0, scenarioTriggerTracker_1.reportScenarioWriteFromMsg)(msg, response);
+                            }
+                            catch (reportError) {
+                                logger.warn(`[SCENARIO-EVENT] write report skipped: ${reportError.message}`);
+                            }
                             // Log successful response if logging is enabled
                             if (config.enableLogging) {
                                 logger.debug(`Response: ${JSON.stringify(response)}`);
@@ -412,6 +419,12 @@ module.exports = function (RED) {
                                 error: errorMessage,
                                 timestamp: Date.now()
                             };
+                            try {
+                                (0, scenarioTriggerTracker_1.reportScenarioWriteFromMsg)(msg, msg.payload);
+                            }
+                            catch (reportError) {
+                                logger.warn(`[SCENARIO-EVENT] write report skipped: ${reportError.message}`);
+                            }
                             send(msg);
                             // Call done with error
                             if (done) {

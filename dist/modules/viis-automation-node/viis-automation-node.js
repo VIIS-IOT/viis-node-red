@@ -11,6 +11,9 @@ const processingService_1 = require("./services/processingService");
 const mqttService_1 = require("./services/mqttService");
 const automationHandler_1 = require("./handlers/automationHandler");
 const logger_1 = require("./utils/logger");
+const scenarioTriggerTracker_1 = require("./services/scenarioTriggerTracker");
+const scenarioTriggerEvents_1 = require("./services/scenarioTriggerEvents");
+const scenarioTriggerSender_1 = require("./services/scenarioTriggerSender");
 const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 // Global flag to ensure error handlers are setup only once
 let globalErrorHandlersInitialized = false;
@@ -109,8 +112,15 @@ module.exports = function (RED) {
                 const intentService = new intentService_1.IntentService(serviceOptions, credentials);
                 const processingService = new processingService_1.ProcessingService(serviceOptions);
                 const mqttService = new mqttService_1.MqttAutomationService(serviceOptions);
+                // Scenario trigger events (ADR-035): rising edges persist in the node context.
+                const scenarioTriggers = new scenarioTriggerTracker_1.ScenarioTriggerReporter({
+                    deviceId,
+                    edges: new scenarioTriggerEvents_1.ScenarioTriggerEdges(node.context()),
+                    sink: (0, scenarioTriggerSender_1.createScenarioTriggerSender)(globalHelper, logger),
+                    logger,
+                });
                 // Initialize handler
-                const automationHandler = new automationHandler_1.AutomationHandler(serviceOptions, intentService, processingService, mqttService);
+                const automationHandler = new automationHandler_1.AutomationHandler(serviceOptions, intentService, processingService, mqttService, scenarioTriggers);
                 // Initialize MQTT service with message handler
                 try {
                     await mqttService.initialize(mqttClient, subscribeTopic, (message) => {

@@ -2,12 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AutomationHandler = void 0;
 const logger_1 = require("../utils/logger");
+const scenarioTriggerEvents_1 = require("../services/scenarioTriggerEvents");
 /**
  * Main handler for automation node logic
  * Coordinates between services and manages node behavior
  */
 class AutomationHandler {
-    constructor(options, intentService, processingService, mqttService) {
+    constructor(options, intentService, processingService, mqttService, scenarioTriggers = null) {
         this.node = options.node;
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
@@ -15,6 +16,7 @@ class AutomationHandler {
         this.intentService = intentService;
         this.processingService = processingService;
         this.mqttService = mqttService;
+        this.scenarioTriggers = scenarioTriggers;
     }
     /**
      * Handle MQTT connection status change
@@ -133,9 +135,19 @@ class AutomationHandler {
             const results = await this.processingService.processIntents(intents, devicesData);
             // Build output payload
             const payload = this.processingService.buildSuccessPayload(intents, devicesData, results);
+            // Scenario trigger events (ADR-035): register this evaluation's triggers before the writes start.
+            // onEvaluation never throws; the event itself is sent asynchronously.
+            const outMsg = { payload };
+            const batchId = this.scenarioTriggers
+                ? this.scenarioTriggers.onEvaluation(intents, devicesData, results)
+                : null;
+            if (batchId) {
+                // The flow's "Intent actions -> Modbus commands" copies this onto every write command.
+                outMsg[scenarioTriggerEvents_1.SCENARIO_TRIGGER_BATCH_PROP] = batchId;
+            }
             // Send to output 1
             this.node.send([
-                { payload },
+                outMsg,
                 null
             ]);
             this.logger.log(`Processed automation with ${results.length} results`);
