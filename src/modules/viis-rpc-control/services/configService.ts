@@ -13,6 +13,7 @@ import {
 import { CONTEXT_KEYS, VALIDATION, ERROR_MESSAGES } from "../constants";
 import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { Logger } from "../utils/logger";
+import { readGlobalScaleConfigs } from "../../../ultils/global-scale-configs";
 
 export class ConfigService implements IConfigService {
     private globalContext: any;
@@ -34,7 +35,8 @@ export class ConfigService implements IConfigService {
      * Get scale configurations from flow context
      */
     getScaleConfigs(): ScaleConfig[] {
-        return this.globalContext.get(GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) as ScaleConfig[] || [];
+        // Includes the device JSON's scale configs that env-loader stores as `scale_configs`.
+        return readGlobalScaleConfigs(this.globalContext);
     }
 
     /**

@@ -52,11 +52,11 @@ const moment_1 = __importDefault(require("moment"));
 const dataSource_1 = require("../../orm/dataSource");
 const SyncScheduleService_1 = require("../../services/syncSchedule/SyncScheduleService");
 const typedi_1 = __importStar(require("typedi"));
+const global_scale_configs_1 = require("../../ultils/global-scale-configs");
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const resilience_utils_1 = require("./resilience-utils");
 const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
-const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
 const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
@@ -214,7 +214,7 @@ let ScheduleService = class ScheduleService {
     // Hàm scaleValue trả về giá trị đã scale hoặc giá trị gốc nếu không có config
     scaleValue(key, value, direction) {
         var _a;
-        const scaleConfigs = ((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS)) || [];
+        const scaleConfigs = (0, global_scale_configs_1.readGlobalScaleConfigs)((_a = this.node) === null || _a === void 0 ? void 0 : _a.context().global);
         const config = scaleConfigs.find(c => c.key === key && c.direction === direction);
         if (!config) {
             this.debugLog(`No scale config for ${key} in ${direction}, returning ${value}`);

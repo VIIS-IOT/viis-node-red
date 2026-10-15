@@ -8,6 +8,7 @@ exports.ConfigService = void 0;
 const constants_1 = require("../constants");
 const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const logger_1 = require("../utils/logger");
+const global_scale_configs_1 = require("../../../ultils/global-scale-configs");
 class ConfigService {
     constructor(options) {
         this.globalContext = options.globalContext;
@@ -23,7 +24,8 @@ class ConfigService {
      * Get scale configurations from flow context
      */
     getScaleConfigs() {
-        return this.globalContext.get(viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.SCALE_CONFIGS) || [];
+        // Includes the device JSON's scale configs that env-loader stores as `scale_configs`.
+        return (0, global_scale_configs_1.readGlobalScaleConfigs)(this.globalContext);
     }
     /**
      * Get configuration key values from global context
