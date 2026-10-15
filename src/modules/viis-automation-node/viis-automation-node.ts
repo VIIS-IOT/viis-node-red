@@ -13,6 +13,9 @@ import {
     DeviceCredentials
 } from "./interfaces/types";
 import { Logger } from "./utils/logger";
+import { ScenarioTriggerReporter } from "./services/scenarioTriggerTracker";
+import { ScenarioTriggerEdges } from "./services/scenarioTriggerEvents";
+import { createScenarioTriggerSender } from "./services/scenarioTriggerSender";
 import {
     resolveThingsboardMqttBroker,
     buildDeviceRpcSubscribeTopic,
@@ -137,12 +140,21 @@ module.exports = function (RED: NodeAPI) {
                 const processingService = new ProcessingService(serviceOptions);
                 const mqttService = new MqttAutomationService(serviceOptions);
 
+                // Scenario trigger events (ADR-035): rising edges persist in the node context.
+                const scenarioTriggers = new ScenarioTriggerReporter({
+                    deviceId,
+                    edges: new ScenarioTriggerEdges(node.context()),
+                    sink: createScenarioTriggerSender(globalHelper, logger),
+                    logger,
+                });
+
                 // Initialize handler
                 const automationHandler = new AutomationHandler(
                     serviceOptions,
                     intentService,
                     processingService,
-                    mqttService
+                    mqttService,
+                    scenarioTriggers
                 );
 
                 // Initialize MQTT service with message handler

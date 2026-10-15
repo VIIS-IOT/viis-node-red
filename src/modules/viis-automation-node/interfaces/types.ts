@@ -28,10 +28,18 @@ export interface ServiceOptions {
 export interface IntentProcessingResult {
     id: string;
     schedule_plan_actions: SchedulePlanAction[];
+    /** Actions to write (the protection gate allowed them). */
     device_actions: Array<{
         device_id: string;
         key: string;
         value: any;
+    }>;
+    /** Actions the protection gate blocked (not written; reported in the scenario trigger event). */
+    blocked_actions?: Array<{
+        device_id: string;
+        key: string;
+        value: any;
+        reason: string;
     }>;
 }
 

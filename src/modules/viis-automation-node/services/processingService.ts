@@ -3,7 +3,7 @@ import { DeviceIntent, DeviceLatestData } from "../../../core/type";
 import { DeviceIntentService } from "../../../core/deviceIntents";
 import { ServiceOptions, IntentProcessingResult, AutomationPayload } from "../interfaces/types";
 import { Logger } from "../utils/logger";
-import { ProtectionGateService } from "../../viis-device-protection/services/protection-gate-service";
+import { ProtectionGateService, resolveProtectionGate } from "../../viis-device-protection/services/protection-gate-service";
 
 /**
  * Service for processing automation intents
@@ -32,6 +32,16 @@ export class ProcessingService {
         this.protectionGate = gate;
     }
 
+    /** The explicitly set gate, else the live shared gate of `viis-device-protection` (if deployed). */
+    private resolveGate(): ProtectionGateService | null {
+        if (this.protectionGate) return this.protectionGate;
+        try {
+            return resolveProtectionGate(this.globalContext?.get?.('protectionGateService'));
+        } catch {
+            return null;
+        }
+    }
+
     /**
      * Process automation intents with device data
      */
@@ -52,18 +62,22 @@ export class ProcessingService {
             const intentService = new DeviceIntentService(intents, devicesData);
             const results = await intentService.processDeviceIntents() as IntentProcessingResult[];
 
-            // Filter device actions through protection gate
+            // Filter device actions through protection gate. Blocked actions are kept apart (not written)
+            // so the scenario trigger event can report them.
             let filteredResults = results;
-            if (this.protectionGate) {
+            const gate = this.resolveGate();
+            if (gate) {
                 filteredResults = results.map(result => {
-                    const blockedActions: { key: string; value: any; reason: string }[] = [];
+                    const blockedActions: { device_id: string; key: string; value: any; reason: string }[] = [];
                     const allowedActions = result.device_actions.filter((action: any) => {
-                        const gate = this.protectionGate!.checkGate(action.key, action.value, 'intent');
-                        if (!gate.allowed) {
-                            blockedActions.push({ key: action.key, value: action.value, reason: gate.reason });
-                            this.logger.warn(`Intent action blocked: ${action.key}=${action.value} - ${gate.reason}`);
+                        // Coil (on/off) actions only, as the RPC and schedule sources gate fc=5 writes only.
+                        if (typeof action.value !== "boolean") return true;
+                        const check = gate.checkGate(action.key, action.value, 'intent');
+                        if (!check.allowed) {
+                            blockedActions.push({ device_id: action.device_id, key: action.key, value: action.value, reason: check.reason });
+                            this.logger.warn(`Intent action blocked: ${action.key}=${action.value} - ${check.reason}`);
                         }
-                        return gate.allowed;
+                        return check.allowed;
                     });
 
                     if (blockedActions.length > 0) {
@@ -73,6 +87,7 @@ export class ProcessingService {
                     return {
                         ...result,
                         device_actions: allowedActions,
+                        blocked_actions: blockedActions,
                     };
                 });
             }

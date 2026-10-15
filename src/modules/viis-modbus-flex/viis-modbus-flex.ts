@@ -5,6 +5,7 @@ import { ViisModbusGetterNodeDef, ServiceOptions, NodeStatus } from "./interface
 import { ModbusGetterService } from "./services/modbusGetterService";
 import { Logger } from "./utils/logger";
 import { DEFAULT_CONFIG, ENV_KEYS, STATUS_MESSAGES } from "./constants";
+import { reportScenarioWriteFromMsg } from "../viis-automation-node/services/scenarioTriggerTracker";
 
 /**
  * The device access token is the device's MQTT credential: the notification request needs it in the
@@ -439,6 +440,11 @@ module.exports = function (RED: NodeAPI) {
 
                     // Update message payload with response
                     msg.payload = response;
+                    try {
+                        reportScenarioWriteFromMsg(msg, response);
+                    } catch (reportError) {
+                        logger.warn(`[SCENARIO-EVENT] write report skipped: ${(reportError as Error).message}`);
+                    }
 
                     // Log successful response if logging is enabled
                     if (config.enableLogging) {
@@ -470,6 +476,11 @@ module.exports = function (RED: NodeAPI) {
                         error: errorMessage,
                         timestamp: Date.now()
                     };
+                    try {
+                        reportScenarioWriteFromMsg(msg, msg.payload);
+                    } catch (reportError) {
+                        logger.warn(`[SCENARIO-EVENT] write report skipped: ${(reportError as Error).message}`);
+                    }
                     send(msg);
 
                     // Call done with error

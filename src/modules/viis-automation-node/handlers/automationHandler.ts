@@ -9,6 +9,8 @@ import {
     IntentProcessingResult
 } from "../interfaces/types";
 import { Logger } from "../utils/logger";
+import { ScenarioTriggerReporter } from "../services/scenarioTriggerTracker";
+import { SCENARIO_TRIGGER_BATCH_PROP } from "../services/scenarioTriggerEvents";
 
 /**
  * Main handler for automation node logic
@@ -22,12 +24,14 @@ export class AutomationHandler {
     private intentService: IntentService;
     private processingService: ProcessingService;
     private mqttService: MqttAutomationService;
+    private scenarioTriggers: ScenarioTriggerReporter | null;
 
     constructor(
         options: ServiceOptions,
         intentService: IntentService,
         processingService: ProcessingService,
-        mqttService: MqttAutomationService
+        mqttService: MqttAutomationService,
+        scenarioTriggers: ScenarioTriggerReporter | null = null
     ) {
         this.node = options.node;
         this.flowContext = options.flowContext;
@@ -36,6 +40,7 @@ export class AutomationHandler {
         this.intentService = intentService;
         this.processingService = processingService;
         this.mqttService = mqttService;
+        this.scenarioTriggers = scenarioTriggers;
     }
 
     /**
@@ -175,9 +180,20 @@ export class AutomationHandler {
                 results
             );
 
+            // Scenario trigger events (ADR-035): register this evaluation's triggers before the writes start.
+            // onEvaluation never throws; the event itself is sent asynchronously.
+            const outMsg: Record<string, any> = { payload };
+            const batchId = this.scenarioTriggers
+                ? this.scenarioTriggers.onEvaluation(intents, devicesData, results)
+                : null;
+            if (batchId) {
+                // The flow's "Intent actions -> Modbus commands" copies this onto every write command.
+                outMsg[SCENARIO_TRIGGER_BATCH_PROP] = batchId;
+            }
+
             // Send to output 1
             this.node.send([
-                { payload },
+                outMsg,
                 null
             ]);
 
