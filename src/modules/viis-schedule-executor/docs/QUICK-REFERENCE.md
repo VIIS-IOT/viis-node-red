@@ -242,7 +242,7 @@ msg = {
 - Error notification sent **ONCE** (no spam on subsequent triggers)
 
 ### Power Outage Recovery
-- Detects "running" schedules with no active commands
+- Detects "running" schedules with no active commands whose START would write Modbus (config-only schedules are skipped)
 - Re-executes start sequence
 - Publishes telemetry and notifications
 

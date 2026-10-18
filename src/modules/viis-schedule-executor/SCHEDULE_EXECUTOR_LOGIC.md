@@ -131,6 +131,8 @@ Schedule bắt đầu khi:
 - `isDue = true` (đến giờ chạy) **VÀ**
 - Status chưa phải `running` (hoặc đang `running` nhưng không có active commands — power recovery)
 
+`isStaleRunningStatus` dùng `isStaleRunningSchedule()` (`schedule-tick-guard.ts`): chỉ coi là stale khi START thực sự ghi ít nhất 1 lệnh Modbus (`hasWritableModbusCommands`, dry run của `mapScheduleToModbus`). Schedule chỉ có config (coil toàn `false`, luoi = 2) không bao giờ lưu active commands, nên không bị restart mỗi tick.
+
 ### 4.2 Step-by-Step Flow
 
 ```

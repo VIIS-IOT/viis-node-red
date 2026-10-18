@@ -851,7 +851,7 @@ graph TD
 
 ### Power Outage Recovery (Schedule Level)
 
-Detects schedules marked "running" but with no active commands:
+Detects schedules marked "running" but with no active commands, **only when their START would write at least one Modbus command** (`ScheduleService.hasWritableModbusCommands`, a dry run of `mapScheduleToModbus`). A config-only schedule (all coils `false`, luoi N/A, the rest config keys) never stores active commands, so it is not treated as stale. Before this guard it was restarted on every tick.
 
 ```mermaid
 sequenceDiagram
