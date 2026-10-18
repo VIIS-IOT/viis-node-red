@@ -234,6 +234,7 @@ let ScheduleService = class ScheduleService {
      * Returns:
      * - 0: thu=true, dai=false
      * - 1: thu=false, dai=true
+     * - 2: N/A (no action — skip coil entirely)
      * - null: invalid value
      */
     normalizeLuoiValue(value) {
@@ -242,6 +243,9 @@ let ScheduleService = class ScheduleService {
         }
         if (value === 1 || value === "1" || value === true || value === "true") {
             return 1;
+        }
+        if (value === 2 || value === "2") {
+            return 2;
         }
         return null;
     }
@@ -259,6 +263,12 @@ let ScheduleService = class ScheduleService {
             if (mode === null) {
                 console.warn(`Invalid ${luoiKey} value in schedule ${scheduleName}: ${JSON.stringify(expanded[luoiKey])}`);
                 delete expanded[luoiKey];
+                continue;
+            }
+            // N/A (2) — không tác động coil, xóa key và skip
+            if (mode === 2) {
+                delete expanded[luoiKey];
+                this.debugLog(`Skipped ${luoiKey}=2 (N/A) in schedule ${scheduleName}`);
                 continue;
             }
             expanded[mapping.thu] = mode === 0;
@@ -520,9 +530,18 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
+     * True when starting the schedule would write at least one Modbus command.
+     * Uses the same mapping as START (falsy coils skipped, invalid luoi dropped) without side effects.
+     */
+    hasWritableModbusCommands(schedule) {
+        const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule, { dryRun: true });
+        return holdingCommands.length + coilCommands.length > 0;
+    }
+    /**
  * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
+ * dryRun: only compute commands; do not store config parameters or warn.
  */
-    mapScheduleToModbus(schedule) {
+    mapScheduleToModbus(schedule, options = {}) {
         const holdingCommands = [];
         const coilCommands = [];
         const configParameters = [];
@@ -620,7 +639,7 @@ let ScheduleService = class ScheduleService {
                         });
                         this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                     }
-                    else {
+                    else if (!options.dryRun) {
                         // Xử lý unmapped keys như configuration parameters
                         console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}, storing as config parameter`);
                         try {

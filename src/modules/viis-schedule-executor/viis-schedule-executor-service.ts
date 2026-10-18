@@ -558,9 +558,22 @@ export class ScheduleService {
 
 
     /**
+     * True when starting the schedule would write at least one Modbus command.
+     * Uses the same mapping as START (falsy coils skipped, invalid luoi dropped) without side effects.
+     */
+    hasWritableModbusCommands(schedule: TabiotSchedule): boolean {
+        const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule, { dryRun: true });
+        return holdingCommands.length + coilCommands.length > 0;
+    }
+
+    /**
  * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
+ * dryRun: only compute commands; do not store config parameters or warn.
  */
-    mapScheduleToModbus(schedule: TabiotSchedule): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[], configParameters: ConfigParameter[] } {
+    mapScheduleToModbus(
+        schedule: TabiotSchedule,
+        options: { dryRun?: boolean } = {}
+    ): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[], configParameters: ConfigParameter[] } {
         const holdingCommands: ModbusCmd[] = [];
         const coilCommands: ModbusCmd[] = [];
         const configParameters: ConfigParameter[] = [];
@@ -661,7 +674,7 @@ export class ScheduleService {
                             quantity: 1,
                         });
                         this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
-                    } else {
+                    } else if (!options.dryRun) {
                         // Xử lý unmapped keys như configuration parameters
                         console.warn(`No modbus mapping found for key: ${key} in schedule ${schedule.name}, storing as config parameter`);
                         try {

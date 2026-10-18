@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("./viis-schedule-executor-service");
+const schedule_stale_guard_1 = require("./schedule-stale-guard");
 const client_registry_1 = __importDefault(require("../../core/client-registry"));
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 module.exports = function (RED) {
@@ -554,34 +555,13 @@ module.exports = function (RED) {
                 debugLog(`Found ${schedules.length} schedule(s).`);
                 // Run hourly cleanup of stale status history entries
                 cleanStaleStatusHistory();
-                const allModbusCoils = scheduleService.getAllModbusCoils();
-                const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
-                const hasMappedModbusCommands = (schedule) => {
-                    let actionObj = {};
-                    if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
-                        try {
-                            actionObj = JSON.parse(schedule.action);
-                        }
-                        catch (_a) {
-                            return false;
-                        }
-                    }
-                    else if (typeof schedule.action === 'object' && schedule.action !== null) {
-                        actionObj = schedule.action;
-                    }
-                    else {
-                        return false;
-                    }
-                    return Object.entries(actionObj).some(([key, value]) => Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key));
-                };
                 for (const schedule of schedules) {
                     const isDue = scheduleService.isScheduleDue(schedule);
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
-                    // This happens after power outage when activeModbusCommands was cleared on startup
+                    // This happens after power outage when activeModbusCommands was cleared on startup.
+                    // Config-only schedules never store commands, so only count writes START would make.
                     const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
-                    const isStaleRunningStatus = schedule.status === "running" &&
-                        existingActiveCommands.length === 0 &&
-                        hasMappedModbusCommands(schedule);
+                    const isStaleRunningStatus = isDue && (0, schedule_stale_guard_1.isStaleRunningSchedule)(schedule.status, existingActiveCommands.length, () => scheduleService.hasWritableModbusCommands(schedule));
                     if (isStaleRunningStatus && isDue) {
                         node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
                     }
