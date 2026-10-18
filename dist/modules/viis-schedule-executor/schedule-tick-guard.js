@@ -7,6 +7,7 @@ exports.tryBeginScheduleTransition = tryBeginScheduleTransition;
 exports.endScheduleTransition = endScheduleTransition;
 exports.isScheduleTransitionInFlight = isScheduleTransitionInFlight;
 exports.clearAllScheduleTransitions = clearAllScheduleTransitions;
+exports.isStaleRunningSchedule = isStaleRunningSchedule;
 exports.SCHEDULE_IN_FLIGHT_KEY = "scheduleTransitionsInFlight";
 /** Reject with `message` after `timeoutMs`; `clear` stops the timer once the race is decided. */
 function deadline(timeoutMs, message) {
@@ -95,4 +96,15 @@ function isScheduleTransitionInFlight(store, scheduleName) {
 }
 function clearAllScheduleTransitions(store) {
     store.set(exports.SCHEDULE_IN_FLIGHT_KEY, {});
+}
+/**
+ * Power-recovery check: a "running" schedule with no stored active commands is stale
+ * only if its START would write Modbus. A config-only start never stores commands,
+ * so treating it as stale restarts it on every tick.
+ */
+function isStaleRunningSchedule(status, activeCommandCount, hasWritableCommands) {
+    if (status !== "running" || activeCommandCount > 0) {
+        return false;
+    }
+    return hasWritableCommands();
 }

@@ -17,6 +17,7 @@ import {
     createSerializedQueue,
     endScheduleTransition,
     isScheduleTransitionInFlight,
+    isStaleRunningSchedule,
     runBoundedSideEffect,
     tryBeginScheduleTransition,
 } from "./schedule-tick-guard";
@@ -671,27 +672,6 @@ module.exports = function (RED: NodeAPI) {
                 // Run hourly cleanup of stale status history entries
                 cleanStaleStatusHistory();
 
-                const allModbusCoils = scheduleService.getAllModbusCoils();
-                const allModbusHolding = scheduleService.getAllModbusHoldingRegisters();
-                const hasMappedModbusCommands = (schedule: TabiotSchedule): boolean => {
-                    let actionObj: Record<string, any> = {};
-                    if (typeof schedule.action === 'string' && schedule.action.trim() !== '') {
-                        try {
-                            actionObj = JSON.parse(schedule.action);
-                        } catch {
-                            return false;
-                        }
-                    } else if (typeof schedule.action === 'object' && schedule.action !== null) {
-                        actionObj = schedule.action as Record<string, any>;
-                    } else {
-                        return false;
-                    }
-
-                    return Object.entries(actionObj).some(([key, value]) =>
-                        Object.prototype.hasOwnProperty.call(allModbusCoils, key) || Object.prototype.hasOwnProperty.call(allModbusHolding, key)
-                    );
-                };
-
                 for (const schedule of schedules) {
                     if (isScheduleTransitionInFlight(globalContext, schedule.name)) {
                         debugLog(`Skip ${schedule.name}: start/finish already in flight`);
@@ -701,11 +681,14 @@ module.exports = function (RED: NodeAPI) {
                     const isDue = scheduleService.isScheduleDue(schedule);
 
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
-                    // This happens after power outage when activeModbusCommands was cleared on startup
+                    // This happens after power outage when activeModbusCommands was cleared on startup.
+                    // Config-only schedules never store commands, so only count writes START would make.
                     const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
-                    const isStaleRunningStatus = schedule.status === "running" &&
-                        existingActiveCommands.length === 0 &&
-                        hasMappedModbusCommands(schedule);
+                    const isStaleRunningStatus = isDue && isStaleRunningSchedule(
+                        schedule.status,
+                        existingActiveCommands.length,
+                        () => scheduleService.hasWritableModbusCommands(schedule)
+                    );
 
                     if (isStaleRunningStatus && isDue) {
                         node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);

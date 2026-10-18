@@ -625,9 +625,22 @@ export class ScheduleService {
 
 
     /**
+     * True when starting the schedule would write at least one Modbus command.
+     * Uses the same mapping as START (falsy coils skipped, luoi N/A dropped) without side effects.
+     */
+    hasWritableModbusCommands(schedule: TabiotSchedule): boolean {
+        const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule, { dryRun: true });
+        return holdingCommands.length + coilCommands.length > 0;
+    }
+
+    /**
  * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
+ * dryRun: only compute commands; do not store config parameters or warn.
  */
-    mapScheduleToModbus(schedule: TabiotSchedule): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[], configParameters: ConfigParameter[] } {
+    mapScheduleToModbus(
+        schedule: TabiotSchedule,
+        options: { dryRun?: boolean } = {}
+    ): { holdingCommands: ModbusCmd[], coilCommands: ModbusCmd[], configParameters: ConfigParameter[] } {
         let holdingCommands: ModbusCmd[] = [];
         const coilCommands: ModbusCmd[] = [];
         const configParameters: ConfigParameter[] = [];
@@ -731,7 +744,7 @@ export class ScheduleService {
                             quantity: 1,
                         });
                         this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
-                    } else {
+                    } else if (!options.dryRun) {
                         // Unmapped keys → config parameters (MQTT publish)
                         try {
                             const configParam = this.storeConfigParameter(key, value, schedule.name);
@@ -753,7 +766,7 @@ export class ScheduleService {
             if (valveProgramCmd && hasNumberedValves) {
                 holdingCommands = holdingCommands.filter(cmd => !isValveProgramHoldingKey(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
-            } else if (hasNumberedValves && !valveProgramCmd) {
+            } else if (hasNumberedValves && !valveProgramCmd && !options.dryRun) {
                 this.node?.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
             }
         } catch (error) {

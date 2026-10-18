@@ -574,9 +574,18 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
+     * True when starting the schedule would write at least one Modbus command.
+     * Uses the same mapping as START (falsy coils skipped, luoi N/A dropped) without side effects.
+     */
+    hasWritableModbusCommands(schedule) {
+        const { holdingCommands, coilCommands } = this.mapScheduleToModbus(schedule, { dryRun: true });
+        return holdingCommands.length + coilCommands.length > 0;
+    }
+    /**
  * Map schedule thành danh sách các lệnh modbus và xử lý unmapped keys như config parameters
+ * dryRun: only compute commands; do not store config parameters or warn.
  */
-    mapScheduleToModbus(schedule) {
+    mapScheduleToModbus(schedule, options = {}) {
         var _a;
         let holdingCommands = [];
         const coilCommands = [];
@@ -678,7 +687,7 @@ let ScheduleService = class ScheduleService {
                         });
                         this.debugLog(`Mapped ${key} to coil at address ${modbusCoils[key]}`);
                     }
-                    else {
+                    else if (!options.dryRun) {
                         // Unmapped keys → config parameters (MQTT publish)
                         try {
                             const configParam = this.storeConfigParameter(key, value, schedule.name);
@@ -701,7 +710,7 @@ let ScheduleService = class ScheduleService {
                 holdingCommands = holdingCommands.filter(cmd => !(0, schedule_valve_program_1.isValveProgramHoldingKey)(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
             }
-            else if (hasNumberedValves && !valveProgramCmd) {
+            else if (hasNumberedValves && !valveProgramCmd && !options.dryRun) {
                 (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
             }
         }
