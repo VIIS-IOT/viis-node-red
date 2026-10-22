@@ -76,6 +76,7 @@ class MqttClientCore extends events_1.EventEmitter {
         if (this.client) {
             // The old client's QoS 1 callbacks never fire once it is dropped.
             this.rejectPendingPublishes("MQTT client replaced before the publish was acknowledged");
+            this.retireClient(this.client);
         }
         try {
             this.client = mqtt_1.default.connect(this.config.broker, options);
@@ -84,6 +85,22 @@ class MqttClientCore extends events_1.EventEmitter {
         }
         catch (error) {
             this.handleConnectionError(error);
+        }
+    }
+    /**
+     * Detach and close a client that is being replaced. Left open, it keeps its socket and its handlers: the new
+     * connection reuses the same client id, the broker drops the old session, and the old client's `close` handler
+     * scheduled yet another reconnect, which dropped the new one in turn (a reconnect every few seconds, forever).
+     */
+    retireClient(client) {
+        client.removeAllListeners();
+        // An `error` emitted while it closes must not become an uncaught exception.
+        client.on("error", () => undefined);
+        try {
+            client.end(true);
+        }
+        catch (_a) {
+            // Already closed.
         }
     }
     // Create a fresh connection promise for each connection attempt
@@ -165,7 +182,8 @@ class MqttClientCore extends events_1.EventEmitter {
         // Process queued messages
         this.processMessageQueue();
         // Send device online status to ThingsBoard
-        this.publishDeviceStatus("online");
+        // Already warned inside; a failed status publish must not become an unhandled rejection.
+        this.publishDeviceStatus("online").catch(() => undefined);
     }
     onDisconnected() {
         this.connectionState.isConnected = false;
