@@ -384,7 +384,9 @@ module.exports = function (RED: NodeAPI) {
                             logger.error(`Resubscription attempt failed: ${(retryError as Error).message}`);
                         }
                     }, 3000);
-                    return;
+                    // No return: the handler below must be attached even when the first subscribe fails (a gateway
+                    // that boots before the broker is reachable). Returning here left the recovered subscription
+                    // with no handler, so every RPC timed out until the next restart.
                 }
 
                 // Set up MQTT message handler
