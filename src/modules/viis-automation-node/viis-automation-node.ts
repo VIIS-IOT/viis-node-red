@@ -6,6 +6,7 @@ import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { IntentService } from "./services/intentService";
 import { ProcessingService } from "./services/processingService";
 import { MqttAutomationService } from "./services/mqttService";
+import { MqttInitRetry } from "./services/mqttInitRetry";
 import { AutomationHandler } from "./handlers/automationHandler";
 import {
     ViisAutomationNodeDef,
@@ -110,24 +111,6 @@ module.exports = function (RED: NodeAPI) {
 
                 logger.log(`MQTT config: ${mqttConfig.broker}, topic: ${subscribeTopic}`);
 
-                // Initialize MQTT client from ClientRegistry (ThingsBoard)
-                let mqttClient: any;
-                try {
-                    logger.log("Initializing ThingsBoard MQTT client from ClientRegistry...");
-                    mqttClient = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
-
-                    if (!mqttClient) {
-                        throw new Error("Failed to get MQTT client from registry");
-                    }
-
-                    logger.log("MQTT client initialized successfully");
-                } catch (error) {
-                    const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
-                    logger.error(errorMsg);
-                    node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
-                    return;
-                }
-
                 // Initialize services
                 const intentService = new IntentService(serviceOptions, credentials);
                 const processingService = new ProcessingService(serviceOptions);
@@ -141,39 +124,55 @@ module.exports = function (RED: NodeAPI) {
                     mqttService
                 );
 
-                // Initialize MQTT service with message handler
-                try {
-                    await mqttService.initialize(
-                        mqttClient,
-                        subscribeTopic,
-                        (message) => {
-                            automationHandler.handleMqttMessage(message);
-                        }
-                    );
-
-                    logger.log("MQTT service initialized with message handler");
-
-                    // Initial sync of intents
-                    await automationHandler.syncIntents();
-                } catch (error) {
-                    logger.error(`Failed to initialize MQTT service: ${(error as Error).message}`);
-                    node.status({ fill: "red", shape: "ring", text: "MQTT subscription failed" });
-                    return;
-                }
-
-                // Handle input messages
+                // OFFLINE intents run from the local cache, so input must work even while MQTT is down.
                 node.on("input", function (msg: any) {
                     automationHandler.handleInput(msg);
+                });
+
+                // Initialize ThingsBoard MQTT client + subscription, retrying until the broker is reachable
+                let mqttClient: any = null;
+                const mqttInit = new MqttInitRetry({
+                    attempt: async () => {
+                        if (!mqttClient) {
+                            logger.log("Initializing ThingsBoard MQTT client from ClientRegistry...");
+                            mqttClient = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
+                            if (!mqttClient) {
+                                throw new Error("Failed to get MQTT client from registry");
+                            }
+                            logger.log("MQTT client initialized successfully");
+                        }
+
+                        await mqttService.initialize(
+                            mqttClient,
+                            subscribeTopic,
+                            (message) => {
+                                automationHandler.handleMqttMessage(message);
+                            }
+                        );
+                    },
+                    onSuccess: () => {
+                        logger.log("MQTT service initialized with message handler");
+                        node.status({ fill: "green", shape: "dot", text: "Ready" });
+                        // Initial sync of intents
+                        void automationHandler.syncIntents();
+                    },
+                    onFailure: (error, retryInMs, attemptNumber) => {
+                        logger.error(`Failed to initialize MQTT service (attempt ${attemptNumber}), retry in ${retryInMs / 1000}s: ${error.message}`);
+                        node.status({ fill: "red", shape: "ring", text: `MQTT subscription failed, retry in ${retryInMs / 1000}s` });
+                    },
                 });
 
                 // Cleanup on node close
                 node.on("close", (done: () => void) => {
                     try {
                         logger.log("Closing automation node");
+                        mqttInit.stop();
                         automationHandler.cleanup();
 
                         // Release ThingsBoard MQTT client
-                        ClientRegistry.releaseClient("thingsboard", node);
+                        if (mqttClient) {
+                            ClientRegistry.releaseClient("thingsboard", node);
+                        }
 
                         done();
                     } catch (error) {
@@ -182,8 +181,8 @@ module.exports = function (RED: NodeAPI) {
                     }
                 });
 
-                logger.log("Automation node initialized successfully");
-                node.status({ fill: "green", shape: "dot", text: "Ready" });
+                mqttInit.start();
+                logger.log("Automation node initialized");
 
             } catch (error) {
                 logger.error(`Node initialization failed: ${(error as Error).message}`);
