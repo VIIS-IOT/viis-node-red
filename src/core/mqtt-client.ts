@@ -156,6 +156,7 @@ export class MqttClientCore extends EventEmitter {
         if (this.client) {
             // The old client's QoS 1 callbacks never fire once it is dropped.
             this.rejectPendingPublishes("MQTT client replaced before the publish was acknowledged");
+            this.retireClient(this.client);
         }
 
         try {
@@ -164,6 +165,22 @@ export class MqttClientCore extends EventEmitter {
             this.createConnectionPromise();
         } catch (error) {
             this.handleConnectionError(error as Error);
+        }
+    }
+
+    /**
+     * Detach and close a client that is being replaced. Left open, it keeps its socket and its handlers: the new
+     * connection reuses the same client id, the broker drops the old session, and the old client's `close` handler
+     * scheduled yet another reconnect, which dropped the new one in turn (a reconnect every few seconds, forever).
+     */
+    private retireClient(client: MqttClient): void {
+        client.removeAllListeners();
+        // An `error` emitted while it closes must not become an uncaught exception.
+        client.on("error", () => undefined);
+        try {
+            client.end(true);
+        } catch {
+            // Already closed.
         }
     }
 
@@ -256,7 +273,8 @@ export class MqttClientCore extends EventEmitter {
         this.processMessageQueue();
 
         // Send device online status to ThingsBoard
-        this.publishDeviceStatus("online");
+        // Already warned inside; a failed status publish must not become an unhandled rejection.
+        this.publishDeviceStatus("online").catch(() => undefined);
     }
 
     private onDisconnected(): void {
@@ -375,7 +393,7 @@ export class MqttClientCore extends EventEmitter {
         this.healthCheckTimer = setInterval(() => {
             if (this.connectionState.isConnected && this.client) {
                 // Refresh lastConnectTime before the 10-minute trusted window expires.
-                this.publishDeviceStatus("online");
+                this.publishDeviceStatus("online").catch(() => undefined);
                 this.publishHealthCheck();
             }
         }, this.config.healthCheckInterval);
