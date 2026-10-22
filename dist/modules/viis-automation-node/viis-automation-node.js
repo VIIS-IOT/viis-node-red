@@ -9,6 +9,7 @@ const global_context_helper_1 = require("../../ultils/global-context-helper");
 const intentService_1 = require("./services/intentService");
 const processingService_1 = require("./services/processingService");
 const mqttService_1 = require("./services/mqttService");
+const mqttInitRetry_1 = require("./services/mqttInitRetry");
 const automationHandler_1 = require("./handlers/automationHandler");
 const logger_1 = require("./utils/logger");
 const scenarioTriggerTracker_1 = require("./services/scenarioTriggerTracker");
@@ -92,22 +93,6 @@ module.exports = function (RED) {
                 };
                 const subscribeTopic = (0, demeter_mqtt_topics_1.buildDeviceRpcSubscribeTopic)(deviceId);
                 logger.log(`MQTT config: ${mqttConfig.broker}, topic: ${subscribeTopic}`);
-                // Initialize MQTT client from ClientRegistry (ThingsBoard)
-                let mqttClient;
-                try {
-                    logger.log("Initializing ThingsBoard MQTT client from ClientRegistry...");
-                    mqttClient = await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
-                    if (!mqttClient) {
-                        throw new Error("Failed to get MQTT client from registry");
-                    }
-                    logger.log("MQTT client initialized successfully");
-                }
-                catch (error) {
-                    const errorMsg = `MQTT initialization failed: ${error.message}`;
-                    logger.error(errorMsg);
-                    node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
-                    return;
-                }
                 // Initialize services
                 const intentService = new intentService_1.IntentService(serviceOptions, credentials);
                 const processingService = new processingService_1.ProcessingService(serviceOptions);
@@ -121,31 +106,47 @@ module.exports = function (RED) {
                 });
                 // Initialize handler
                 const automationHandler = new automationHandler_1.AutomationHandler(serviceOptions, intentService, processingService, mqttService, scenarioTriggers);
-                // Initialize MQTT service with message handler
-                try {
-                    await mqttService.initialize(mqttClient, subscribeTopic, (message) => {
-                        automationHandler.handleMqttMessage(message);
-                    });
-                    logger.log("MQTT service initialized with message handler");
-                    // Initial sync of intents
-                    await automationHandler.syncIntents();
-                }
-                catch (error) {
-                    logger.error(`Failed to initialize MQTT service: ${error.message}`);
-                    node.status({ fill: "red", shape: "ring", text: "MQTT subscription failed" });
-                    return;
-                }
-                // Handle input messages
+                // OFFLINE intents run from the local cache, so input must work even while MQTT is down.
                 node.on("input", function (msg) {
                     automationHandler.handleInput(msg);
+                });
+                // Initialize ThingsBoard MQTT client + subscription, retrying until the broker is reachable
+                let mqttClient = null;
+                const mqttInit = new mqttInitRetry_1.MqttInitRetry({
+                    attempt: async () => {
+                        if (!mqttClient) {
+                            logger.log("Initializing ThingsBoard MQTT client from ClientRegistry...");
+                            mqttClient = await client_registry_1.default.getThingsboardMqttClient(mqttConfig, node);
+                            if (!mqttClient) {
+                                throw new Error("Failed to get MQTT client from registry");
+                            }
+                            logger.log("MQTT client initialized successfully");
+                        }
+                        await mqttService.initialize(mqttClient, subscribeTopic, (message) => {
+                            automationHandler.handleMqttMessage(message);
+                        });
+                    },
+                    onSuccess: () => {
+                        logger.log("MQTT service initialized with message handler");
+                        node.status({ fill: "green", shape: "dot", text: "Ready" });
+                        // Initial sync of intents
+                        void automationHandler.syncIntents();
+                    },
+                    onFailure: (error, retryInMs, attemptNumber) => {
+                        logger.error(`Failed to initialize MQTT service (attempt ${attemptNumber}), retry in ${retryInMs / 1000}s: ${error.message}`);
+                        node.status({ fill: "red", shape: "ring", text: `MQTT subscription failed, retry in ${retryInMs / 1000}s` });
+                    },
                 });
                 // Cleanup on node close
                 node.on("close", (done) => {
                     try {
                         logger.log("Closing automation node");
+                        mqttInit.stop();
                         automationHandler.cleanup();
                         // Release ThingsBoard MQTT client
-                        client_registry_1.default.releaseClient("thingsboard", node);
+                        if (mqttClient) {
+                            client_registry_1.default.releaseClient("thingsboard", node);
+                        }
                         done();
                     }
                     catch (error) {
@@ -153,8 +154,8 @@ module.exports = function (RED) {
                         done();
                     }
                 });
-                logger.log("Automation node initialized successfully");
-                node.status({ fill: "green", shape: "dot", text: "Ready" });
+                mqttInit.start();
+                logger.log("Automation node initialized");
             }
             catch (error) {
                 logger.error(`Node initialization failed: ${error.message}`);
