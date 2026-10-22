@@ -39,6 +39,7 @@ const typeorm_1 = require("typeorm");
 const global_context_helper_1 = require("../ultils/global-context-helper");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const entity_files_1 = require("./entity-files");
 function resolveCommonJsonPath() {
     const containerPath = path.resolve(__dirname, "../../../../app/env/configs/common.json");
     const hostPath = path.resolve(__dirname, "../../../../../env/configs/common.json");
@@ -117,7 +118,7 @@ class DataSourceManager {
             username: cfg.username,
             password: cfg.password,
             database: cfg.database,
-            entities: [__dirname + "/entities/**/*.{js,ts}"],
+            entities: (0, entity_files_1.entityFiles)(path.join(__dirname, "entities")),
             migrations: [__dirname + "/migrations/**/*.{js,ts}"],
             synchronize: false,
             logging: false,
@@ -167,7 +168,7 @@ exports.AppDataSource = new typeorm_1.DataSource({
     username: cfg.username,
     password: cfg.password,
     database: cfg.database,
-    entities: [__dirname + "/entities/**/*.{js,ts}"],
+    entities: (0, entity_files_1.entityFiles)(path.join(__dirname, "entities")),
     migrations: [__dirname + "/migrations/**/*.{js,ts}"],
     synchronize: false,
     logging: false,
