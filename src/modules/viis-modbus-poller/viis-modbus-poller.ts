@@ -298,27 +298,29 @@ function writeLatestGlobalState(
   mergeGlobalTelemetry(globalContext, GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, split.holding, timestamp);
 }
 
+/**
+ * Local EMQX keeps the flat `{...values, ts}` shape its consumers read. The cloud message gets `{ts, values}`, so `ts`
+ * is the sample time and not a telemetry key. `_poll_duration_ms` is a diagnostic and only rides along when enabled.
+ */
 function buildTelemetryMessages(
   config: ResolvedPollerConfig,
   changedData: Record<string, TelemetryValue>,
-  pollDurationMs: number,
+  pollDurationMs: number | null,
 ) {
-  const payload = {
-    ...changedData,
-    ts: Date.now(),
-    _poll_duration_ms: pollDurationMs,
-  };
+  const ts = Date.now();
+  const values: Record<string, TelemetryValue> =
+    pollDurationMs === null ? { ...changedData } : { ...changedData, _poll_duration_ms: pollDurationMs };
 
   return [
     {
       topic: buildDeviceTelemetryTopic(config.deviceId),
-      payload,
+      payload: { ...values, ts },
       qos: 0,
       retain: false,
     },
     {
       topic: buildDeviceTelemetryTopic(config.deviceId),
-      payload,
+      payload: { ts, values },
       qos: 0,
       retain: false,
     },
@@ -331,7 +333,8 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
 
     const node = this;
     const options = parseOptions(config);
-    const previousState: Record<string, TelemetryValue> = {};
+    // Change thresholds compare against the last published value, so a slow drift is published once it adds up.
+    const publishedState: Record<string, TelemetryValue> = {};
     const lastPollTimes: Record<string, number> = {};
     const emittedWarnings = new Set<string>();
 
@@ -478,7 +481,7 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
               mappings: board.mappings,
               pollingConfig: board.pollingConfig,
             },
-            previousState,
+            previousState: publishedState,
             options: {
               maxGap: options.maxGap,
               maxCoilsPerRead: options.maxCoilsPerRead,
@@ -493,7 +496,6 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
 
         const latestCount = Object.keys(result.latestData).length;
         if (latestCount > 0) {
-          Object.assign(previousState, result.latestData);
           firstSuccessfulRead = false;
           writeLatestGlobalState(
             node.context().global,
@@ -519,10 +521,11 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
           return;
         }
 
+        Object.assign(publishedState, result.changedData);
         const [localMessage, thingsboardMessage] = buildTelemetryMessages(
           resolvedConfig,
           result.changedData,
-          Date.now() - startedAt,
+          options.enableDiagnostics ? Date.now() - startedAt : null,
         );
         const statusText = result.diagnostics.errorCount > 0
           ? `Published ${changedCount} keys, ${result.diagnostics.errorCount} errors`
