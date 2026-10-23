@@ -9,10 +9,13 @@ import {
     offFailedAlarmKey,
     offReportForAudit,
     pendingOffRetry,
+    rebuildOffCommands,
     retryNeedsImpliedPumps,
 } from '../schedule-finish';
 import { ExecutionReport, KeyOutcome } from '../schedule-execution-types';
 import { ModbusCmd } from '../type';
+import { ScheduleService } from '../viis-schedule-executor-service';
+import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 
 function memoryStore() {
     const values = new Map<string, unknown>();
@@ -112,4 +115,51 @@ test('the end audit after a retry lists every key once, each with its passing ou
     const keys = audit.steps.flatMap(step => step.keys.map(k => `${k.key}:${k.status}`));
     expect(keys).toEqual(['pump_1:pass', 'time_valve_1:pass', 'valve_1:pass']);
     expect(audit.steps.every(step => step.ok)).toBe(true);
+});
+
+describe('OFF after a restart that spanned the window end', () => {
+    test('rebuilds every mapped output at its OFF value, coils then holdings, addresses kept', () => {
+        // mapScheduleToModbus of `{ valve_1: true, time_valve_1: 30 }`.
+        expect(rebuildOffCommands({ coilCommands: [valve1], holdingCommands: [timeValve1] })).toEqual([
+            { ...valve1, value: false },
+            { ...timeValve1, value: 0 },
+        ]);
+        expect(rebuildOffCommands({ coilCommands: [], holdingCommands: [] })).toEqual([]);
+    });
+
+    function stuckRecoveryService() {
+        const store = memoryStore();
+        const node = { context: () => ({ global: store }), warn: jest.fn() } as any;
+        const service = new ScheduleService(node);
+        jest.spyOn(service, 'mapScheduleToModbus').mockReturnValue({ coilCommands: [valve1], holdingCommands: [timeValve1], configParameters: [] });
+        jest.spyOn(service, 'updateScheduleStatus').mockResolvedValue(undefined as any);
+        jest.spyOn(service, 'sendNotificationToBackend').mockResolvedValue(true as any);
+        return service;
+    }
+
+    // Past its end date: the restart cleared the active commands, but the coil may still be ON.
+    const stuck = { name: 's1', status: 'running', action: '{"valve_1":true,"time_valve_1":30}', end_date: '2020-01-01', start_time: '08:00:00', end_time: '08:01:00' } as unknown as TabiotSchedule;
+
+    test('stuck recovery with no active commands writes the OFF before it finishes the run', async () => {
+        const service = stuckRecoveryService();
+        const reset = jest.spyOn(service, 'resetModbusCommands')
+            .mockResolvedValue({ allSuccessful: true, report: report([outcome(valve1, 'pass'), outcome(timeValve1, 'pass')]) });
+
+        await service.checkAndRecoverStuckSchedules({} as any, [stuck]);
+
+        expect(reset).toHaveBeenCalledWith({}, [{ ...valve1, value: false }, { ...timeValve1, value: 0 }], stuck, true);
+        expect(service.updateScheduleStatus).toHaveBeenCalledWith(stuck, 'finished');
+    });
+
+    test('stuck recovery whose OFF failed keeps the run running with the failed commands', async () => {
+        const service = stuckRecoveryService();
+        jest.spyOn(service, 'resetModbusCommands')
+            .mockResolvedValue({ allSuccessful: false, report: report([outcome(valve1, 'fail'), outcome(timeValve1, 'pass')]) });
+
+        await service.checkAndRecoverStuckSchedules({} as any, [stuck]);
+
+        expect(service.updateScheduleStatus).not.toHaveBeenCalled();
+        expect(service.sendNotificationToBackend).not.toHaveBeenCalled();
+        expect(service.getActiveCommands('s1')).toEqual([{ ...valve1, value: false }]);
+    });
 });

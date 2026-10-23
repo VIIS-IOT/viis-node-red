@@ -54,6 +54,17 @@ export function retryNeedsImpliedPumps(commands: ModbusCmd[]): boolean {
     return commands.some(cmd => cmd.fc === 5 && isValveKey(cmd.key));
 }
 
+/**
+ * The OFF of a run whose active commands were lost (a restart clears them) is rebuilt from the
+ * schedule: every mapped coil OFF, every mapped register 0, in mapping order.
+ */
+export function rebuildOffCommands(mapped: { coilCommands: ModbusCmd[]; holdingCommands: ModbusCmd[] }): ModbusCmd[] {
+    return [
+        ...mapped.coilCommands.map(cmd => ({ ...cmd, value: false })),
+        ...mapped.holdingCommands.map(cmd => ({ ...cmd, value: 0 })),
+    ];
+}
+
 export function offFailedAlarmKey(scheduleId: string): string {
     return `schedule_off_failed:${scheduleId}`;
 }

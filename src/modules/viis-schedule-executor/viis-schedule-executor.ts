@@ -24,7 +24,7 @@ import { executeWithTimeout } from "./resilience-utils";
 import { v4 as uuidv4 } from "uuid";
 import { activeRunId, forgetRunId, rememberRunId } from "./schedule-run-identity";
 import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
-import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, retryNeedsImpliedPumps } from "./schedule-finish";
+import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, rebuildOffCommands, retryNeedsImpliedPumps } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -748,7 +748,8 @@ module.exports = function (RED: NodeAPI) {
                                 address: Number(address),
                                 quantity: 1
                             }));
-                        const startRunId = uuidv4();
+                        // A restart inside the window continues the run it interrupted (same runId, ADR-033).
+                        const startRunId = (isStaleRunningStatus && activeRunId(globalContext, schedule.name)) || uuidv4();
                         let unusedResetSteps: ExecutionReport['steps'] = [];
                         if (resetKeys.length > 0) {
                             const unusedReset = await scheduleService.resetModbusCommands(
@@ -856,7 +857,12 @@ module.exports = function (RED: NodeAPI) {
                         delete lastCheckTimestamps[schedule.name];
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
 
-                        const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                        const storedCommands = scheduleService.getActiveCommands(schedule.name);
+                        // A restart cleared the active commands of a run that is still running: its OFF
+                        // is rebuilt from the schedule, or the outputs it turned ON would stay ON.
+                        const activeCommands = storedCommands.length > 0
+                            ? storedCommands
+                            : rebuildOffCommands(scheduleService.mapScheduleToModbus(schedule));
                         const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -874,7 +880,7 @@ module.exports = function (RED: NodeAPI) {
                         // An earlier OFF of this run failed: write only the commands still active, but
                         // report the first attempt's full list once the OFF passed.
                         const eventRunId = activeRunId(globalContext, schedule.name);
-                        const offRetry = activeCommands.length > 0
+                        const offRetry = storedCommands.length > 0
                             ? pendingOffRetry(globalContext, schedule.name, eventRunId)
                             : null;
                         const allResetCommands = offRetry?.commands ?? scheduleService.mergeValveProgramOffCommand(

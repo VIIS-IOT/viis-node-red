@@ -4,6 +4,7 @@ exports.SCHEDULE_OFF_FAILED_KEY = void 0;
 exports.offFailures = offFailures;
 exports.decideFinish = decideFinish;
 exports.retryNeedsImpliedPumps = retryNeedsImpliedPumps;
+exports.rebuildOffCommands = rebuildOffCommands;
 exports.offFailedAlarmKey = offFailedAlarmKey;
 exports.pendingOffRetry = pendingOffRetry;
 exports.noteOffFailure = noteOffFailure;
@@ -38,6 +39,16 @@ function decideFinish(reset, commands) {
  */
 function retryNeedsImpliedPumps(commands) {
     return commands.some(cmd => cmd.fc === 5 && (0, schedule_coil_classify_1.isValveKey)(cmd.key));
+}
+/**
+ * The OFF of a run whose active commands were lost (a restart clears them) is rebuilt from the
+ * schedule: every mapped coil OFF, every mapped register 0, in mapping order.
+ */
+function rebuildOffCommands(mapped) {
+    return [
+        ...mapped.coilCommands.map(cmd => (Object.assign(Object.assign({}, cmd), { value: false }))),
+        ...mapped.holdingCommands.map(cmd => (Object.assign(Object.assign({}, cmd), { value: 0 }))),
+    ];
 }
 function offFailedAlarmKey(scheduleId) {
     return `schedule_off_failed:${scheduleId}`;

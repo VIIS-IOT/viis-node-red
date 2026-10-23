@@ -62,6 +62,7 @@ const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
 const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
+const schedule_finish_1 = require("./schedule-finish");
 const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
 const schedule_execution_types_1 = require("./schedule-execution-types");
@@ -1139,7 +1140,22 @@ let ScheduleService = class ScheduleService {
             // Get the commands that should have been reset
             const activeCommands = this.getActiveCommands(schedule.name);
             if (activeCommands.length === 0) {
+                // A restart cleared the active commands, but the outputs may still be ON: write the
+                // schedule's OFF before finishing. A failed OFF stays active and is retried.
+                const offCommands = (0, schedule_finish_1.rebuildOffCommands)(this.mapScheduleToModbus(schedule));
+                if (offCommands.length > 0) {
+                    const reset = await this.resetModbusCommands(modbusClient, offCommands, schedule, true);
+                    const finish = (0, schedule_finish_1.decideFinish)(reset, offCommands);
+                    if (!finish.done) {
+                        this.storeActiveCommands(schedule.name, finish.retainCommands);
+                        if (this.node) {
+                            this.node.warn(`❌ RECOVERY: OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), retrying`);
+                        }
+                        continue;
+                    }
+                }
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                this.clearScheduleConfigValues(schedule.name);
                 this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);

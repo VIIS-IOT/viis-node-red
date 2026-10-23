@@ -32,6 +32,7 @@ import { v4 as uuidv4 } from "uuid";
 import { ProtectionGateService, resolveProtectionGate } from "../viis-device-protection/services/protection-gate-service";
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classify";
+import { decideFinish, rebuildOffCommands } from "./schedule-finish";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
 import {
@@ -1289,7 +1290,22 @@ export class ScheduleService {
             // Get the commands that should have been reset
             const activeCommands = this.getActiveCommands(schedule.name);
             if (activeCommands.length === 0) {
+                // A restart cleared the active commands, but the outputs may still be ON: write the
+                // schedule's OFF before finishing. A failed OFF stays active and is retried.
+                const offCommands = rebuildOffCommands(this.mapScheduleToModbus(schedule));
+                if (offCommands.length > 0) {
+                    const reset = await this.resetModbusCommands(modbusClient, offCommands, schedule, true);
+                    const finish = decideFinish(reset, offCommands);
+                    if (!finish.done) {
+                        this.storeActiveCommands(schedule.name, finish.retainCommands);
+                        if (this.node) {
+                            this.node.warn(`❌ RECOVERY: OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), retrying`);
+                        }
+                        continue;
+                    }
+                }
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                this.clearScheduleConfigValues(schedule.name);
                 this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);

@@ -634,7 +634,8 @@ module.exports = function (RED) {
                                     address: Number(address),
                                     quantity: 1
                                 }));
-                                const startRunId = (0, uuid_1.v4)();
+                                // A restart inside the window continues the run it interrupted (same runId, ADR-033).
+                                const startRunId = (isStaleRunningStatus && (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)) || (0, uuid_1.v4)();
                                 let unusedResetSteps = [];
                                 if (resetKeys.length > 0) {
                                     const unusedReset = await scheduleService.resetModbusCommands(modbusClient, resetKeys, schedule, false, { runId: startRunId, unusedHoldingReset: true });
@@ -721,7 +722,12 @@ module.exports = function (RED) {
                                 const lastCheckTimestamps = globalContext.get("scheduleLastCheckTimestamps") || {};
                                 delete lastCheckTimestamps[schedule.name];
                                 globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
-                                const activeCommands = scheduleService.getActiveCommands(schedule.name);
+                                const storedCommands = scheduleService.getActiveCommands(schedule.name);
+                                // A restart cleared the active commands of a run that is still running: its OFF
+                                // is rebuilt from the schedule, or the outputs it turned ON would stay ON.
+                                const activeCommands = storedCommands.length > 0
+                                    ? storedCommands
+                                    : (0, schedule_finish_1.rebuildOffCommands)(scheduleService.mapScheduleToModbus(schedule));
                                 const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                                 const extraResetKeys = Object.entries(holdingRegisters)
                                     .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -739,7 +745,7 @@ module.exports = function (RED) {
                                 // An earlier OFF of this run failed: write only the commands still active, but
                                 // report the first attempt's full list once the OFF passed.
                                 const eventRunId = (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name);
-                                const offRetry = activeCommands.length > 0
+                                const offRetry = storedCommands.length > 0
                                     ? (0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, eventRunId)
                                     : null;
                                 const allResetCommands = (_b = offRetry === null || offRetry === void 0 ? void 0 : offRetry.commands) !== null && _b !== void 0 ? _b : scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
