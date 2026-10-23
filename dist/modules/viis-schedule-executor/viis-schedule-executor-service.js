@@ -1221,13 +1221,15 @@ let ScheduleService = class ScheduleService {
     /**
      * Reset lại các lệnh modbus
      */
-    async resetModbusCommands(modbusClient, commands, schedule, isFinishing = false, options) {
+    async resetModbusCommands(modbusClient, commands, schedule, isFinishing = false, 
+    /** impliedPumps=false: a finish retry that has no valve to close stops only the listed pumps. */
+    options) {
         var _a, _b;
         const buffer = new schedule_execution_buffer_1.ExecutionStepBuffer((_a = options === null || options === void 0 ? void 0 : options.runId) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)(), isFinishing || (options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? ((options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? 'start' : 'end') : 'end', (_b = schedule === null || schedule === void 0 ? void 0 : schedule.name) !== null && _b !== void 0 ? _b : 'unknown');
         const deps = this.makeKeyWriterDeps(modbusClient);
         const coilCommands = [
             ...commands.filter(cmd => cmd.fc === 5),
-            ...(isFinishing ? (0, schedule_coil_classify_1.impliedFinishPumpCommands)(commands, this.getAllModbusCoils()) : []),
+            ...(isFinishing && (options === null || options === void 0 ? void 0 : options.impliedPumps) !== false ? (0, schedule_coil_classify_1.impliedFinishPumpCommands)(commands, this.getAllModbusCoils()) : []),
         ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = (0, schedule_coil_classify_1.classifyCoils)(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);

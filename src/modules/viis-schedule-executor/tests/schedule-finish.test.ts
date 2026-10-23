@@ -7,7 +7,9 @@ import {
     decideFinish,
     noteOffFailure,
     offFailedAlarmKey,
+    offReportForAudit,
     pendingOffRetry,
+    retryNeedsImpliedPumps,
 } from '../schedule-finish';
 import { ExecutionReport, KeyOutcome } from '../schedule-execution-types';
 import { ModbusCmd } from '../type';
@@ -38,12 +40,17 @@ const pump1 = cmd('pump_1', 5, 0, true);
 const timeValve1 = cmd('time_valve_1', 6, 31, 30);
 
 describe('decideFinish', () => {
-    test('a failed OFF keeps only the failed command and is not done', () => {
+    test('a failed OFF keeps only the failed commands, at their OFF value, and is not done', () => {
         const result = decideFinish(
-            { allSuccessful: false, report: report([outcome(pump1, 'pass'), outcome(valve1, 'fail')]) },
+            { allSuccessful: false, report: report([outcome(pump1, 'pass'), outcome(valve1, 'fail'), outcome(timeValve1, 'fail')]) },
             [pump1, valve1, timeValve1]
         );
-        expect(result).toEqual({ done: false, retainCommands: [valve1], failedKeys: ['valve_1'] });
+        // Not the start values (true / 30): stuck recovery would read a register still at 30 as OFF.
+        expect(result).toEqual({
+            done: false,
+            retainCommands: [{ ...valve1, value: false }, { ...timeValve1, value: 0 }],
+            failedKeys: ['valve_1', 'time_valve_1'],
+        });
     });
 
     test('every OFF passed: done with nothing retained', () => {
@@ -65,6 +72,11 @@ describe('decideFinish', () => {
     });
 });
 
+test('a retry stops every mapped pump only when it has a valve to close', () => {
+    expect(retryNeedsImpliedPumps([{ ...valve1, value: false }])).toBe(true);
+    expect(retryNeedsImpliedPumps([{ ...timeValve1, value: 0 }, cmd('mixer', 5, 9, false)])).toBe(false);
+});
+
 describe('OFF failure marker', () => {
     test('alarm key names the schedule', () => {
         expect(offFailedAlarmKey('s1')).toBe('schedule_off_failed:s1');
@@ -74,16 +86,30 @@ describe('OFF failure marker', () => {
         const store = memoryStore();
         expect(pendingOffRetry(store, 's1', 'run-1')).toBeNull();
 
-        expect(noteOffFailure(store, 's1', 'run-1', [pump1, valve1])).toBe(true);
-        expect(noteOffFailure(store, 's1', 'run-1', [valve1])).toBe(false);
+        const failed = report([outcome(valve1, 'fail')]);
+        expect(noteOffFailure(store, 's1', 'run-1', [pump1, valve1], failed)).toBe(true);
+        expect(noteOffFailure(store, 's1', 'run-1', [valve1], failed)).toBe(false);
         expect(pendingOffRetry(store, 's1', 'run-1')?.commands).toEqual([pump1, valve1]);
 
         // A marker left by an earlier run does not count for the next run.
         expect(pendingOffRetry(store, 's1', 'run-2')).toBeNull();
-        expect(noteOffFailure(store, 's1', 'run-2', [valve1])).toBe(true);
+        expect(noteOffFailure(store, 's1', 'run-2', [valve1], failed)).toBe(true);
 
         expect(clearOffFailure(store, 's1')).toBe(true);
         expect(clearOffFailure(store, 's1')).toBe(false);
         expect(pendingOffRetry(store, 's1', 'run-2')).toBeNull();
     });
+});
+
+test('the end audit after a retry lists every key once, each with its passing outcome', () => {
+    const store = memoryStore();
+    noteOffFailure(store, 's1', 'run-1', [pump1, valve1, timeValve1],
+        report([outcome(pump1, 'pass'), outcome(valve1, 'fail'), outcome(timeValve1, 'fail')]));
+    noteOffFailure(store, 's1', 'run-1', [valve1, timeValve1],
+        report([outcome(valve1, 'fail'), outcome(timeValve1, 'pass')]));
+
+    const audit = offReportForAudit(pendingOffRetry(store, 's1', 'run-1'), report([outcome(valve1, 'pass')]));
+    const keys = audit.steps.flatMap(step => step.keys.map(k => `${k.key}:${k.status}`));
+    expect(keys).toEqual(['pump_1:pass', 'time_valve_1:pass', 'valve_1:pass']);
+    expect(audit.steps.every(step => step.ok)).toBe(true);
 });

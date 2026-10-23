@@ -24,7 +24,7 @@ import { executeWithTimeout } from "./resilience-utils";
 import { v4 as uuidv4 } from "uuid";
 import { activeRunId, forgetRunId, rememberRunId } from "./schedule-run-identity";
 import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
-import { clearOffFailure, decideFinish, noteOffFailure, offFailures, pendingOffRetry } from "./schedule-finish";
+import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, retryNeedsImpliedPumps } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -790,6 +790,8 @@ module.exports = function (RED: NodeAPI) {
                             }
                             scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
                             rememberRunId(globalContext, schedule.name, startRunId);
+                            // A new run: an OFF retry an earlier run left behind is over.
+                            clearOffFailure(globalContext, schedule.name);
 
                             if (statusChanged) {
                                 // ADR-033: "started" only after the start verify passed; a miss is reported by
@@ -839,6 +841,11 @@ module.exports = function (RED: NodeAPI) {
                         }
                     } else if (schedule.status === "running" && isDue) {
                         // Schedule still running and still due — no action needed
+                        if (pendingOffRetry(globalContext, schedule.name, activeRunId(globalContext, schedule.name))) {
+                            // The next window of a recurring schedule came while the last OFF still failed:
+                            // that window is not started and the OFF retry waits until it ends.
+                            debugLog(`Schedule ${schedule.name} is due again while its OFF retry is pending; window not started`);
+                        }
                     } else if (schedule.status === "running" && !isDue) {
                         if (!tryBeginScheduleTransition(globalContext, schedule.name, "finish")) {
                             debugLog(`Skip finish for ${schedule.name}: transition already in flight`);
@@ -885,7 +892,8 @@ module.exports = function (RED: NodeAPI) {
                         let resetSuccessful = true;
                         if (writeCommands.length > 0) {
                             const resetResult = await scheduleService.resetModbusCommands(
-                                modbusClient, writeCommands, schedule, true, { runId: finishRunId }
+                                modbusClient, writeCommands, schedule, true,
+                                { runId: finishRunId, impliedPumps: !offRetry || retryNeedsImpliedPumps(writeCommands) }
                             );
                             finishReport = resetResult.report;
                             resetSuccessful = resetResult.allSuccessful;
@@ -896,7 +904,7 @@ module.exports = function (RED: NodeAPI) {
                             // Not completed: the run stays running and the next tick retries only these.
                             scheduleService.storeActiveCommands(schedule.name, finish.retainCommands);
                             node.warn(`❌ OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), retrying next tick`);
-                            if (noteOffFailure(globalContext, schedule.name, eventRunId, allResetCommands)) {
+                            if (noteOffFailure(globalContext, schedule.name, eventRunId, allResetCommands, finishReport)) {
                                 for (const outcome of offFailures(finishReport)) {
                                     await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, eventRunId));
                                 }
@@ -904,6 +912,8 @@ module.exports = function (RED: NodeAPI) {
                             continue;
                         }
                         clearOffFailure(globalContext, schedule.name);
+                        // After retries the end audit also lists the keys that passed on the failed attempts.
+                        finishReport = offReportForAudit(offRetry, finishReport);
 
                         scheduleService.clearActiveCommands(schedule.name);
 
@@ -961,8 +971,10 @@ module.exports = function (RED: NodeAPI) {
                 // AUTO-RECOVERY: Check for stuck 'running' schedules and try to recover
                 // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
                 try {
+                    // A run whose OFF failed is retried by its finish branch, not finished here on a read.
                     const recoverableSchedules = schedules.filter(
                         (schedule) => !isScheduleTransitionInFlight(globalContext, schedule.name)
+                            && !pendingOffRetry(globalContext, schedule.name, activeRunId(globalContext, schedule.name))
                     );
                     await scheduleService.checkAndRecoverStuckSchedules(modbusClient, recoverableSchedules);
                 } catch (error) {

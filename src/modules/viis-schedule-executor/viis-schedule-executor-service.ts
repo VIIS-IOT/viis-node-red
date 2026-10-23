@@ -1380,7 +1380,8 @@ export class ScheduleService {
         commands: ModbusCmd[],
         schedule?: TabiotSchedule,
         isFinishing: boolean = false,
-        options?: { runId?: string; unusedHoldingReset?: boolean }
+        /** impliedPumps=false: a finish retry that has no valve to close stops only the listed pumps. */
+        options?: { runId?: string; unusedHoldingReset?: boolean; impliedPumps?: boolean }
     ): Promise<{ report: ExecutionReport; allSuccessful: boolean }> {
         const buffer = new ExecutionStepBuffer(
             options?.runId ?? uuidv4(),
@@ -1390,7 +1391,7 @@ export class ScheduleService {
         const deps = this.makeKeyWriterDeps(modbusClient);
         const coilCommands = [
             ...commands.filter(cmd => cmd.fc === 5),
-            ...(isFinishing ? impliedFinishPumpCommands(commands, this.getAllModbusCoils()) : []),
+            ...(isFinishing && options?.impliedPumps !== false ? impliedFinishPumpCommands(commands, this.getAllModbusCoils()) : []),
         ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);

@@ -1,4 +1,5 @@
-import { ExecutionReport, KeyOutcome } from './schedule-execution-types';
+import { isValveKey } from './schedule-coil-classify';
+import { ExecutionReport, ExecutionStep, KeyOutcome } from './schedule-execution-types';
 import { ModbusCmd } from './type';
 
 /**
@@ -13,7 +14,7 @@ type ContextStore = {
 
 export interface FinishOutcome {
     done: boolean;
-    /** Commands whose OFF did not pass: they stay active and are retried next tick. */
+    /** Commands whose OFF did not pass, at their OFF value: they stay active and are retried next tick. */
     retainCommands: ModbusCmd[];
     failedKeys: string[];
 }
@@ -32,12 +33,25 @@ export function decideFinish(
         return { done: true, retainCommands: [], failedKeys: [] };
     }
     const unitid = commands[0]?.unitid ?? 1;
-    const retainCommands = failed.map(outcome =>
-        commands.find(c => c.key === outcome.key && c.fc === outcome.fc)
+    // Kept at the OFF value, not the start value: stuck recovery reads a register that still holds
+    // its start value as OFF when the active command carries that value.
+    const retainCommands = failed.map(outcome => {
+        const cmd = commands.find(c => c.key === outcome.key && c.fc === outcome.fc);
         // An implied pump-off is added by the reset itself, so it is not in the list.
-        ?? { key: outcome.key, fc: outcome.fc, address: outcome.address, value: outcome.expected, unitid, quantity: 1 }
-    );
+        return cmd
+            ? { ...cmd, value: outcome.expected }
+            : { key: outcome.key, fc: outcome.fc, address: outcome.address, value: outcome.expected, unitid, quantity: 1 };
+    });
     return { done: false, retainCommands, failedKeys: failed.map(outcome => outcome.key) };
+}
+
+/**
+ * A retry writes the implied pump-off of every mapped pump only when a valve is retried, so the
+ * pumps are off before it closes. Retrying a register or another coil each tick must not keep
+ * stopping pumps that other schedules or the PLC run.
+ */
+export function retryNeedsImpliedPumps(commands: ModbusCmd[]): boolean {
+    return commands.some(cmd => cmd.fc === 5 && isValveKey(cmd.key));
 }
 
 export function offFailedAlarmKey(scheduleId: string): string {
@@ -51,6 +65,16 @@ export interface OffRetryState {
     runId: string | null;
     /** The first attempt's full reset list, reported at the end instead of only the retried keys. */
     commands: ModbusCmd[];
+    /** The keys that passed on the failed attempts, so the end audit shows every key once. */
+    passedSteps: ExecutionStep[];
+}
+
+/** The steps of a failed attempt with only their passed keys; a step with none left is dropped. */
+function passedSteps(report: ExecutionReport): ExecutionStep[] {
+    return report.steps
+        .map(step => ({ step, keys: step.keys.filter(k => k.status === 'pass') }))
+        .filter(({ step, keys }) => keys.length > 0 || (step.keys.length === 0 && step.ok))
+        .map(({ step, keys }) => ({ ...step, ok: true, keys }));
 }
 
 function readMarkers(store: ContextStore): Record<string, OffRetryState> {
@@ -63,13 +87,27 @@ export function pendingOffRetry(store: ContextStore, scheduleName: string, runId
     return marker && marker.runId === runId ? marker : null;
 }
 
-/** Record a failed OFF; true only on the first failed attempt of this run (notify once). */
-export function noteOffFailure(store: ContextStore, scheduleName: string, runId: string | null, commands: ModbusCmd[]): boolean {
-    if (pendingOffRetry(store, scheduleName, runId)) return false;
+/** Record a failed OFF attempt; true only on the first failed attempt of this run (notify once). */
+export function noteOffFailure(
+    store: ContextStore,
+    scheduleName: string,
+    runId: string | null,
+    commands: ModbusCmd[],
+    report: ExecutionReport
+): boolean {
+    const pending = pendingOffRetry(store, scheduleName, runId);
     const markers = readMarkers(store);
-    markers[scheduleName] = { runId, commands };
+    markers[scheduleName] = pending
+        ? { ...pending, passedSteps: [...(pending.passedSteps ?? []), ...passedSteps(report)] }
+        : { runId, commands, passedSteps: passedSteps(report) };
     store.set(SCHEDULE_OFF_FAILED_KEY, markers);
-    return true;
+    return !pending;
+}
+
+/** The end audit after retries: the keys that passed earlier, then the attempt that finished the OFF. */
+export function offReportForAudit(retry: OffRetryState | null, finalReport: ExecutionReport): ExecutionReport {
+    if (!retry) return finalReport;
+    return { ...finalReport, steps: [...(retry.passedSteps ?? []), ...finalReport.steps] };
 }
 
 /** Forget the OFF failure once the OFF passed; true when an earlier attempt had failed. */
