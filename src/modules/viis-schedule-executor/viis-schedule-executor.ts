@@ -24,6 +24,7 @@ import { executeWithTimeout } from "./resilience-utils";
 import { v4 as uuidv4 } from "uuid";
 import { activeRunId, forgetRunId, rememberRunId } from "./schedule-run-identity";
 import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
+import { clearOffFailure, decideFinish, noteOffFailure, offFailures, pendingOffRetry } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -863,9 +864,16 @@ module.exports = function (RED: NodeAPI) {
                         const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        const allResetCommands = scheduleService.mergeValveProgramOffCommand(
+                        // An earlier OFF of this run failed: write only the commands still active, but
+                        // report the first attempt's full list once the OFF passed.
+                        const eventRunId = activeRunId(globalContext, schedule.name);
+                        const offRetry = activeCommands.length > 0
+                            ? pendingOffRetry(globalContext, schedule.name, eventRunId)
+                            : null;
+                        const allResetCommands = offRetry?.commands ?? scheduleService.mergeValveProgramOffCommand(
                             [...activeCommands, ...extraResetCommands]
                         );
+                        const writeCommands = offRetry ? activeCommands : allResetCommands;
 
                         const finishRunId = uuidv4();
                         let finishReport: ExecutionReport = {
@@ -874,12 +882,28 @@ module.exports = function (RED: NodeAPI) {
                             scheduleId: schedule.name,
                             steps: [],
                         };
-                        if (allResetCommands.length > 0) {
+                        let resetSuccessful = true;
+                        if (writeCommands.length > 0) {
                             const resetResult = await scheduleService.resetModbusCommands(
-                                modbusClient, allResetCommands, schedule, true, { runId: finishRunId }
+                                modbusClient, writeCommands, schedule, true, { runId: finishRunId }
                             );
                             finishReport = resetResult.report;
+                            resetSuccessful = resetResult.allSuccessful;
                         }
+
+                        const finish = decideFinish({ allSuccessful: resetSuccessful, report: finishReport }, writeCommands);
+                        if (!finish.done) {
+                            // Not completed: the run stays running and the next tick retries only these.
+                            scheduleService.storeActiveCommands(schedule.name, finish.retainCommands);
+                            node.warn(`❌ OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), retrying next tick`);
+                            if (noteOffFailure(globalContext, schedule.name, eventRunId, allResetCommands)) {
+                                for (const outcome of offFailures(finishReport)) {
+                                    await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, eventRunId));
+                                }
+                            }
+                            continue;
+                        }
+                        clearOffFailure(globalContext, schedule.name);
 
                         scheduleService.clearActiveCommands(schedule.name);
 
