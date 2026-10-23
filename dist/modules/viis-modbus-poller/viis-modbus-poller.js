@@ -171,18 +171,23 @@ function writeLatestGlobalState(globalContext, config, latestData) {
     mergeGlobalTelemetry(globalContext, viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.INPUT_REGISTER_DATA, split.input, timestamp);
     mergeGlobalTelemetry(globalContext, viis_telemetry_constants_1.GLOBAL_CONTEXT_KEYS.HOLDING_REGISTER_DATA, split.holding, timestamp);
 }
+/**
+ * Local EMQX keeps the flat `{...values, ts}` shape its consumers read. ThingsBoard gets `{ts, values}`, so `ts` is
+ * the sample time and not a telemetry key. `_poll_duration_ms` is a diagnostic and only rides along when enabled.
+ */
 function buildTelemetryMessages(config, changedData, pollDurationMs) {
-    const payload = Object.assign(Object.assign({}, changedData), { ts: Date.now(), _poll_duration_ms: pollDurationMs });
+    const ts = Date.now();
+    const values = pollDurationMs === null ? Object.assign({}, changedData) : Object.assign(Object.assign({}, changedData), { _poll_duration_ms: pollDurationMs });
     return [
         {
             topic: `v1/devices/me/telemetry/${config.deviceId}`,
-            payload,
+            payload: Object.assign(Object.assign({}, values), { ts }),
             qos: 0,
             retain: false,
         },
         {
             topic: "v1/devices/me/telemetry",
-            payload,
+            payload: { ts, values },
             qos: 0,
             retain: false,
         },
@@ -193,7 +198,8 @@ module.exports = function registerViisModbusPoller(RED) {
         RED.nodes.createNode(this, config);
         const node = this;
         const options = parseOptions(config);
-        const previousState = {};
+        // Change thresholds compare against the last published value, so a slow drift is published once it adds up.
+        const publishedState = {};
         const lastPollTimes = {};
         const emittedWarnings = new Set();
         let firstSuccessfulRead = true;
@@ -303,7 +309,7 @@ module.exports = function registerViisModbusPoller(RED) {
                         modbusClient: client,
                         dueGroups,
                         config: Object.assign(Object.assign({}, resolvedConfig), { boardId: board.boardId, mappings: board.mappings, pollingConfig: board.pollingConfig }),
-                        previousState,
+                        previousState: publishedState,
                         options: {
                             maxGap: options.maxGap,
                             maxCoilsPerRead: options.maxCoilsPerRead,
@@ -315,7 +321,6 @@ module.exports = function registerViisModbusPoller(RED) {
                 const result = (0, multi_board_poll_1.mergePollTickResults)(tickResults);
                 const latestCount = Object.keys(result.latestData).length;
                 if (latestCount > 0) {
-                    Object.assign(previousState, result.latestData);
                     firstSuccessfulRead = false;
                     writeLatestGlobalState(node.context().global, Object.assign(Object.assign({}, resolvedConfig), { mappings: (0, multi_board_poll_1.mergeBoardMappings)(targets.map((board) => board.mappings)) }), result.latestData);
                 }
@@ -331,7 +336,8 @@ module.exports = function registerViisModbusPoller(RED) {
                     done === null || done === void 0 ? void 0 : done();
                     return;
                 }
-                const [localMessage, thingsboardMessage] = buildTelemetryMessages(resolvedConfig, result.changedData, Date.now() - startedAt);
+                Object.assign(publishedState, result.changedData);
+                const [localMessage, thingsboardMessage] = buildTelemetryMessages(resolvedConfig, result.changedData, options.enableDiagnostics ? Date.now() - startedAt : null);
                 const statusText = result.diagnostics.errorCount > 0
                     ? `Published ${changedCount} keys, ${result.diagnostics.errorCount} errors`
                     : `Published ${changedCount} keys`;
