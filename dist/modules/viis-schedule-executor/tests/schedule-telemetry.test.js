@@ -7,6 +7,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const viis_schedule_executor_service_1 = require("../viis-schedule-executor-service");
+const arbiter_registry_1 = require("../../viis-actuator-arbiter/arbiter-registry");
 // Use a plain object as our mock global context
 let globalStore = {};
 function resetGlobalStore() {
@@ -151,6 +152,31 @@ describe('ScheduleService - Telemetry Publishing', () => {
             const payload = JSON.parse(tbCall[1]);
             expect(payload.user_id).toBe('farmer_001');
             expect(payload.irrigation_mode).toBe('automatic');
+        });
+    });
+    describe('publishScheduleTelemetry with the arbiter enforcing', () => {
+        it('leaves managed coils to the arbiter and still publishes hold coils and registers', async () => {
+            const arbiter = {
+                mode: () => 'enforce',
+                keyMode: (key) => (key === 'valve_2' ? 'managed' : key === 'pump_air' ? 'hold' : 'unmanaged'),
+            };
+            (0, arbiter_registry_1.registerArbiter)(arbiter);
+            try {
+                await service.publishScheduleTelemetry(mockThingsboardClient, mockEmqxClient, createMockSchedule('sch-arb', 'running'), 'start', {
+                    holdingCommands: [{ key: 'set_ec', value: 2.5, fc: 6, unitid: 1, address: 16, quantity: 1 }],
+                    coilCommands: [
+                        { key: 'valve_2', value: true, fc: 5, unitid: 1, address: 1, quantity: 1 },
+                        { key: 'pump_air', value: true, fc: 5, unitid: 1, address: 0, quantity: 1 },
+                    ],
+                });
+            }
+            finally {
+                (0, arbiter_registry_1.unregisterArbiter)(arbiter);
+            }
+            const payload = JSON.parse(mockThingsboardClient.publish.mock.calls[0][1]);
+            expect(payload).not.toHaveProperty('valve_2');
+            expect(payload.pump_air).toBe(true);
+            expect(payload.set_ec).toBe(2.5);
         });
     });
     describe('publishScheduleTelemetry on schedule finish', () => {

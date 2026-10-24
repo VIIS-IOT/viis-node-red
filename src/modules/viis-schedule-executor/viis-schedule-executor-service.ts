@@ -986,7 +986,10 @@ export class ScheduleService {
         try {
             const changedValues: Record<string, any> = {};
 
-            for (const cmd of [...commands.holdingCommands, ...commands.coilCommands]) {
+            // ARBITER_MODE=enforce: a managed coil is written by the arbiter, which publishes what it actually
+            // wrote. Publishing the schedule's wish here would report ON for a coil the arbiter kept OFF (a
+            // manual claim winning), and an ONLINE scenario would then skip its action as "already applied".
+            for (const cmd of [...commands.holdingCommands, ...withoutArbitratedCoils(commands.coilCommands)]) {
                 const cacheKey = `telemetry:${cmd.key}`;
                 if (this.hasPublishedValueChanged(cacheKey, cmd.value)) {
                     changedValues[cmd.key] = cmd.value;
