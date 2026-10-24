@@ -9,65 +9,80 @@ const modbusGetterService_1 = require("./services/modbusGetterService");
 const logger_1 = require("./utils/logger");
 const constants_1 = require("./constants");
 const scenarioTriggerTracker_1 = require("../viis-automation-node/services/scenarioTriggerTracker");
+const registry_1 = require("../../services/event-outbox/registry");
+const outbox_sender_1 = require("../../services/event-outbox/outbox-sender");
+/** Status events that raise `board_offline:<boardId>`; `connected` clears it. */
+const BOARD_OFFLINE_STATUSES = new Set(['circuit-breaker-open', 'prolonged-disconnect']);
 /**
- * The device access token is the device's MQTT credential: the notification request needs it in the
- * query string, but it must never reach a log line. Masks the value of every `device_access_token=`
- * query parameter in `text` (a URL, or an error message that quotes one).
+ * Every flex node on a board gets the board's status events; the first node that handles one reports the
+ * board until it closes, so the board is one alarm and one request per change.
  */
-function redactDeviceToken(text) {
-    return String(text).replace(/(device_access_token=)[^&\s]*/g, '$1***');
-}
+const boardAlarmReporters = new Map();
+/** Without the outbox: boards whose Pending reached the backend; only those send a Clear on reconnect. */
+const boardsRaisedDirect = new Set();
 /**
- * 🆕 MỚI: Helper function để gọi notification API
+ * Reports a board's connection state as the gateway state alarm `board_offline:<boardId>` (backend
+ * `iot_alarm_state`, one raise and one clear per outage). With the event outbox on the alarm is raised or
+ * cleared there; otherwise the same payload is POSTed once (no retry) to `/api/v2/alarm/notification-by-token`,
+ * and the backend drops a repeated Pending.
+ * The device access token goes only in that request's query string, never in a log line.
  */
-async function sendNotification(node, logger, globalHelper, boardId, alertData) {
+async function reportBoardAlarm(logger, globalHelper, boardId, event, raise) {
+    var _a;
     try {
-        const deviceId = globalHelper.getEnvVar('DEVICE_ID', null) || node.context().global.get('device_id') || 'unknown_device';
-        const deviceAccessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', null) || node.context().global.get('device_access_token');
-        const backendUrl = globalHelper.getEnvVar('BACKEND_URL', null) || node.context().global.get('BACKEND_URL') || 'https://nodered.viis.tech';
-        if (!deviceAccessToken) {
-            logger.warn('[NOTIFICATION] device_access_token not found, skipping alert');
+        const alarmKey = `board_offline:${boardId}`;
+        const deviceId = globalHelper.getEnvVar('DEVICE_ID', null) || 'unknown_device';
+        const payload = {
+            alarm_name: alarmKey,
+            alarm_key: alarmKey,
+            id: deviceId,
+            msg: raise ? `Mất kết nối bộ điều khiển ${boardId}` : `Đã kết nối lại bộ điều khiển ${boardId}`,
+            message_key: 'iot.notification.device.board_offline',
+            message_params: { boardId, status: event.status, error: (_a = event.error) !== null && _a !== void 0 ? _a : null },
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: alarmKey,
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (outbox) {
+            try {
+                const stored = raise ? await outbox.raise(alarmKey, payload) : await outbox.clear(alarmKey, payload);
+                if (stored)
+                    logger.log(`[NOTIFICATION] ${alarmKey} ${raise ? 'raised' : 'cleared'} (outbox)`);
+                return;
+            }
+            catch (error) {
+                logger.warn(`[NOTIFICATION] outbox failed for ${alarmKey}, sending directly: ${error.message}`);
+            }
+        }
+        if (!raise && !boardsRaisedDirect.has(boardId))
+            return;
+        const deviceAccessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', null);
+        const backendUrl = globalHelper.getEnvVar('VIIS_BACKEND', null);
+        if (!deviceAccessToken || !backendUrl) {
+            logger.warn('[NOTIFICATION] VIIS_BACKEND or device_access_token not found, skipping alert');
             return;
         }
-        // Construct alarm payload matching ThingsboardAlarm interface
-        const alarmPayload = {
-            alarm_name: `MODBUS_CONNECTION_ALERT_${boardId || 'UNKNOWN'}`,
-            alarm_type: 'ModbusConnectionAlert',
-            severity: alertData.status === 'circuit-breaker-open' ? 'CRITICAL' : 'MAJOR',
-            entity_type: 'DEVICE',
-            entity_id: deviceId,
-            start_ts: Date.now(),
-            end_ts: alertData.status === 'connected' ? Date.now() : undefined,
-            ack_ts: undefined,
-            clear_ts: undefined,
-            status: alertData.status === 'connected' ? 'CLEARED' : 'ACTIVE',
-            details: {
-                boardId: boardId,
-                deviceId: deviceId,
-                status: alertData.status,
-                error: alertData.error,
-                recoveryAt: alertData.recoveryAt,
-                failedCount: alertData.failedCount,
-                disconnectDuration: alertData.disconnectStartTime ?
-                    Date.now() - alertData.disconnectStartTime : 0,
-                timestamp: Date.now()
-            },
-            propagate: false
-        };
-        // Append device_access_token to URL
-        const urlWithToken = `${backendUrl}/api/v2/notification-by-token?device_access_token=${encodeURIComponent(deviceAccessToken)}`;
-        logger.log(`[NOTIFICATION] Sending alert to: ${redactDeviceToken(urlWithToken)}`);
+        payload.alarm_status = raise ? 'Pending' : 'Clear';
+        payload.clear_by = raise ? '' : 'Value';
+        const urlWithToken = `${backendUrl}/api/v2/alarm/notification-by-token?device_access_token=${encodeURIComponent(deviceAccessToken)}`;
+        logger.log(`[NOTIFICATION] Sending alert to: ${(0, outbox_sender_1.redactDeviceToken)(urlWithToken)}`);
         const response = await fetch(urlWithToken, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(alarmPayload)
+            body: JSON.stringify(payload)
         });
         if (response.ok) {
-            const result = await response.json();
-            logger.log(`[NOTIFICATION] Alert sent successfully: ${alertData.status}`);
-            return result;
+            if (raise)
+                boardsRaisedDirect.add(boardId);
+            else
+                boardsRaisedDirect.delete(boardId);
+            logger.log(`[NOTIFICATION] Alert sent successfully: ${event.status}`);
         }
         else {
             const errorText = await response.text();
@@ -76,7 +91,7 @@ async function sendNotification(node, logger, globalHelper, boardId, alertData) 
     }
     catch (error) {
         // fetch quotes the whole request URL in some failures (e.g. "Failed to parse URL from <url>").
-        logger.error(`[NOTIFICATION] Error sending alert: ${redactDeviceToken(error.message)}`);
+        logger.error(`[NOTIFICATION] Error sending alert: ${(0, outbox_sender_1.redactDeviceToken)(error.message)}`);
     }
 }
 /**
@@ -94,6 +109,8 @@ module.exports = function (RED) {
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
         let detachModbusStatus = () => undefined;
+        /** The board this node's status events describe (`board_offline:<id>`). */
+        const alarmBoardId = config.boardId || 'default';
         try {
             // Initialize logger with enableLogging flag from config
             logger = new logger_1.Logger(node, node.id, config.enableLogging);
@@ -111,15 +128,14 @@ module.exports = function (RED) {
                 }
                 const handler = async (event) => {
                     logger.log(`[EVENT] Board ${config.boardId}: ${event.status} - ${event.error || ''}`);
-                    if (event.status === 'circuit-breaker-open' ||
-                        event.status === 'prolonged-disconnect') {
-                        await sendNotification(node, logger, globalHelper, config.boardId, {
-                            status: event.status,
-                            error: event.error,
-                            recoveryAt: event.recoveryAt,
-                            failedCount: event.failedCount,
-                            disconnectStartTime: event.disconnectStartTime
-                        });
+                    const raise = BOARD_OFFLINE_STATUSES.has(event.status);
+                    if (raise || event.status === 'connected') {
+                        const reporter = boardAlarmReporters.get(alarmBoardId);
+                        if (!reporter)
+                            boardAlarmReporters.set(alarmBoardId, node.id);
+                        if (!reporter || reporter === node.id) {
+                            await reportBoardAlarm(logger, globalHelper, alarmBoardId, event, raise);
+                        }
                     }
                     switch (event.status) {
                         case 'connected':
@@ -458,6 +474,8 @@ module.exports = function (RED) {
                 logger.log("Closing VIIS Modbus Flex Node...");
                 detachModbusStatus();
                 detachModbusStatus = () => undefined;
+                if (boardAlarmReporters.get(alarmBoardId) === node.id)
+                    boardAlarmReporters.delete(alarmBoardId);
                 // Stop config check interval
                 if (configCheckInterval) {
                     clearInterval(configCheckInterval);
