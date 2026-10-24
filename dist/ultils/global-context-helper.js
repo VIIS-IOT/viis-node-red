@@ -98,7 +98,9 @@ const ENV_TO_GLOBAL_MAPPING = {
     'DH6400_POLLING_INTERVAL': 'dh6400_polling_interval',
     'DH6400_ENABLED_CHANNELS': 'dh6400_enabled_channels',
     // Gateway event outbox flag (device1.json / common.json via env-loader)
-    'EVENT_OUTBOX_ENABLED': 'event_outbox_enabled'
+    'EVENT_OUTBOX_ENABLED': 'event_outbox_enabled',
+    // Actuator arbiter policy: device1.json `actuatorPolicy` as one JSON string (env-loader)
+    'ACTUATOR_POLICY': 'actuator_policy'
 };
 /**
  * Global Context Helper class
