@@ -31,7 +31,7 @@ function redactDeviceToken(text) {
 }
 class OutboxSender {
     constructor(outbox, env, opts = {}) {
-        var _a, _b, _c, _d, _e;
+        var _a, _b, _c, _d, _e, _f;
         this.outbox = outbox;
         this.env = env;
         this.timer = null;
@@ -43,9 +43,12 @@ class OutboxSender {
         this.missingConfigWarned = false;
         this.intervalMs = (_a = opts.intervalMs) !== null && _a !== void 0 ? _a : 5000;
         this.batch = (_b = opts.batch) !== null && _b !== void 0 ? _b : 20;
-        this.maxBackoffMs = (_c = opts.maxBackoffMs) !== null && _c !== void 0 ? _c : 300000;
+        // 60 s cap: after an outage the next attempt is never minutes away (a 5 min cap made delivery
+        // lag recovery by up to 5 min in the local E2E).
+        this.maxBackoffMs = (_c = opts.maxBackoffMs) !== null && _c !== void 0 ? _c : 60000;
         this.timeoutMs = (_d = opts.timeoutMs) !== null && _d !== void 0 ? _d : 10000;
         this.logger = (_e = opts.logger) !== null && _e !== void 0 ? _e : consoleLogger;
+        this.random = (_f = opts.random) !== null && _f !== void 0 ? _f : Math.random;
     }
     start() {
         var _a, _b;
@@ -97,7 +100,10 @@ class OutboxSender {
                 continue;
             }
             if (outcome.retry) {
-                const delay = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** ((_b = row.attempts) !== null && _b !== void 0 ? _b : 0));
+                // Exponential backoff with ±20 % jitter, so gateways that lost the backend together do not
+                // all retry in the same second when it is back.
+                const base = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** ((_b = row.attempts) !== null && _b !== void 0 ? _b : 0));
+                const delay = Math.round(base * (0.8 + 0.4 * this.random()));
                 await this.outbox.markRetry(row.seq, attempts, new Date(now.getTime() + delay), outcome.error);
                 this.logger.warn(`[OUTBOX] ${describe(row)} failed (${outcome.error}), attempt ${attempts}, retry in ${delay} ms`);
                 this.failing = true;

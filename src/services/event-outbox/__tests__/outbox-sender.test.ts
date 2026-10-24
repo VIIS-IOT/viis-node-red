@@ -20,7 +20,7 @@ function setup(env: Record<string, any> = { VIIS_BACKEND: BACKEND, DEVICE_ACCESS
     const outbox = new EventOutbox(ds as any);
     const logs: string[] = [];
     const logger = { log: (m: string) => logs.push(m), warn: (m: string) => logs.push(m), error: (m: string) => logs.push(m) };
-    const sender = new OutboxSender(outbox, { getEnvVar: (n: string, d?: any) => env[n] ?? d }, { logger });
+    const sender = new OutboxSender(outbox, { getEnvVar: (n: string, d?: any) => env[n] ?? d }, { logger, random: () => 0.5 });
     const rows = () => ds.getRepository(TabiotEventOutbox).rows;
     const eventPosts = () => post.mock.calls.filter(c => c[0] === EVENT_URL);
     return { ds, outbox, sender, logs, rows, eventPosts };
@@ -66,7 +66,7 @@ describe("OutboxSender", () => {
     it("backoff doubles per attempt up to maxBackoffMs", async () => {
         const { outbox, rows } = setup();
         const sender = new OutboxSender(outbox, { getEnvVar: (n: string) => ({ VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN } as any)[n] }, {
-            maxBackoffMs: 12_000, logger: { log() {}, warn() {}, error() {} },
+            maxBackoffMs: 12_000, random: () => 0.5, logger: { log() {}, warn() {}, error() {} },
         });
         await outbox.enqueue({ msg: "e1" });
         post.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
@@ -79,6 +79,24 @@ describe("OutboxSender", () => {
         }
         expect(delays).toEqual([5_000, 10_000, 12_000]);
         expect(rows()[0].attempts).toBe(3);
+    });
+
+    it("retries carry ±20 % jitter and the default cap is 60 s", async () => {
+        const env = { getEnvVar: (n: string) => ({ VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN } as any)[n] };
+        const quiet = { log() {}, warn() {}, error() {} };
+        post.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+        const delays: number[] = [];
+        for (const random of [0, 0.999]) {
+            const { outbox, rows } = setup();
+            await outbox.enqueue({ msg: "e1" });
+            const now = later();
+            await new OutboxSender(outbox, env, { random: () => random, logger: quiet }).flush(now);
+            delays.push(rows()[0].next_attempt_at.getTime() - now.getTime());
+        }
+        expect(delays[0]).toBe(4_000);
+        expect(delays[1]).toBeGreaterThan(5_990);
+        expect(delays[1]).toBeLessThanOrEqual(6_000);
+        expect((new OutboxSender(setup().outbox, env, { logger: quiet }) as any).maxBackoffMs).toBe(60_000);
     });
 
     it("4xx other than 408/409/429 marks the row dead and moves on", async () => {

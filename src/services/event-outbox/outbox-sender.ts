@@ -29,6 +29,8 @@ export interface OutboxSenderOptions {
     maxBackoffMs?: number;
     timeoutMs?: number;
     logger?: OutboxLogger;
+    /** Jitter source in [0, 1); tests pass a constant. */
+    random?: () => number;
 }
 
 export interface FlushResult {
@@ -62,6 +64,7 @@ export class OutboxSender {
     private readonly maxBackoffMs: number;
     private readonly timeoutMs: number;
     private readonly logger: OutboxLogger;
+    private readonly random: () => number;
     private timer: NodeJS.Timeout | null = null;
     private flushing: Promise<FlushResult> | null = null;
     /** A send failed and no send has succeeded since. */
@@ -73,9 +76,12 @@ export class OutboxSender {
     constructor(private readonly outbox: EventOutbox, private readonly env: EnvReader, opts: OutboxSenderOptions = {}) {
         this.intervalMs = opts.intervalMs ?? 5000;
         this.batch = opts.batch ?? 20;
-        this.maxBackoffMs = opts.maxBackoffMs ?? 300000;
+        // 60 s cap: after an outage the next attempt is never minutes away (a 5 min cap made delivery
+        // lag recovery by up to 5 min in the local E2E).
+        this.maxBackoffMs = opts.maxBackoffMs ?? 60000;
         this.timeoutMs = opts.timeoutMs ?? 10000;
         this.logger = opts.logger ?? consoleLogger;
+        this.random = opts.random ?? Math.random;
     }
 
     start(): void {
@@ -127,7 +133,10 @@ export class OutboxSender {
                 continue;
             }
             if (outcome.retry) {
-                const delay = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** (row.attempts ?? 0));
+                // Exponential backoff with ±20 % jitter, so gateways that lost the backend together do not
+                // all retry in the same second when it is back.
+                const base = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** (row.attempts ?? 0));
+                const delay = Math.round(base * (0.8 + 0.4 * this.random()));
                 await this.outbox.markRetry(row.seq, attempts, new Date(now.getTime() + delay), outcome.error);
                 this.logger.warn(`[OUTBOX] ${describe(row)} failed (${outcome.error}), attempt ${attempts}, retry in ${delay} ms`);
                 this.failing = true;
