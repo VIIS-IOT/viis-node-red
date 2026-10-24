@@ -11,6 +11,7 @@ import { civilDateOnly, civilTimeOnly, evaluateScheduleRun } from "../../core/sc
 import { ModbusClientCore } from "../../core/modbus-client";
 import { MqttClientCore } from "../../core/mqtt-client";
 import { AppDataSource } from "../../orm/dataSource";
+import { Repository } from "typeorm";
 import { SyncScheduleService } from "../../services/syncSchedule/SyncScheduleService";
 import Container, { Service } from "typedi";
 import { Node } from "node-red";
@@ -63,6 +64,8 @@ import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
 /** Default water-hammer delay between valves and pump/power (start), or power and valves (finish). */
 export const DEFAULT_WATER_HAMMER_DELAY_SEC = 7;
 export const DEFAULT_WATER_HAMMER_DELAY_MS = DEFAULT_WATER_HAMMER_DELAY_SEC * 1000;
+/** Least time between two re-posts of unsynced status rows (retryUnsyncedStatuses). */
+export const UNSYNCED_STATUS_RETRY_MS = 30_000;
 
 export function resolveWaterHammerDelayMs(seconds: unknown): number {
     if (seconds === undefined || seconds === null || seconds === '') {
@@ -1232,6 +1235,9 @@ export class ScheduleService {
             }
 
             schedule.modified = new Date();
+            // Unsynced until the backend took this status; retryUnsyncedStatuses re-posts it otherwise
+            // (a POST lost while the backend was down left the server row "running" for good).
+            schedule.is_synced = 0;
 
             // Lưu entity với giá trị modified đã chỉnh sửa
             await repository.save(schedule);
@@ -1241,6 +1247,7 @@ export class ScheduleService {
             if (this.syncScheduleService) {
                 try {
                     await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                    await this.acknowledgeStatusSynced(repository, schedule);
                     if (this.node) {
                         this.node.warn(`✅ SERVER SYNC SUCCESS: ${schedule.name} | Status: ${status}`);
                     }
@@ -1262,6 +1269,59 @@ export class ScheduleService {
             }
             console.error(`Error updating status for ${schedule.name}: ${(error as Error).message}`);
         }
+    }
+
+    /** `is_synced = 1` without touching the LWW clock (same rule as viis-crud-schedule's outboxAck). */
+    private async acknowledgeStatusSynced(repository: Repository<TabiotSchedule>, schedule: TabiotSchedule): Promise<void> {
+        await repository.query(`UPDATE tabiot_schedule SET is_synced = 1, modified = modified WHERE name = ?`, [schedule.name]);
+        schedule.is_synced = 1;
+    }
+
+    private lastUnsyncedStatusRetryMs: number | null = null;
+
+    /**
+     * Re-posts executor status changes the backend never acknowledged (`is_from_local = 0 AND is_synced = 0`,
+     * flagged by updateScheduleStatus when its POST failed, e.g. the backend was down at a window end
+     * right after a reboot). Called every tick, sends at most once per UNSYNCED_STATUS_RETRY_MS.
+     * The backend upsert keeps the newer row, so a 409 ("server data is newer") ends the retry.
+     * @returns number of rows posted in this call
+     */
+    async retryUnsyncedStatuses(nowMs: number = Date.now()): Promise<number> {
+        if (!this.syncScheduleService) return 0;
+        if (this.lastUnsyncedStatusRetryMs !== null && nowMs - this.lastUnsyncedStatusRetryMs < UNSYNCED_STATUS_RETRY_MS) return 0;
+        this.lastUnsyncedStatusRetryMs = nowMs;
+
+        if (!AppDataSource.isInitialized) await AppDataSource.initialize();
+        const repository = AppDataSource.getRepository(TabiotSchedule);
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : "";
+        const rows = await repository.find({
+            where: { is_from_local: 0, is_synced: 0, is_deleted: 0, ...(deviceId ? { device_id: deviceId } : {}) },
+        });
+        let posted = 0;
+        for (const schedule of rows) {
+            try {
+                await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                await this.acknowledgeStatusSynced(repository, schedule);
+                posted++;
+                if (this.node) {
+                    this.node.warn(`✅ SERVER SYNC RETRY OK: ${schedule.name} | Status: ${schedule.status}`);
+                }
+            } catch (error) {
+                const httpStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
+                if (httpStatus === 409) {
+                    // The server holds a newer copy of this schedule: nothing of ours to deliver.
+                    await this.acknowledgeStatusSynced(repository, schedule);
+                    if (this.node) {
+                        this.node.warn(`⚠️ SERVER SYNC RETRY DROPPED (server newer): ${schedule.name} | Status: ${schedule.status}`);
+                    }
+                    continue;
+                }
+                if (this.node) {
+                    this.node.warn(`❌ SERVER SYNC RETRY FAILED: ${schedule.name} | ${(error as Error).message}`);
+                }
+            }
+        }
+        return posted;
     }
 
     /**
