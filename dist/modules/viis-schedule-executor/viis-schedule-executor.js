@@ -569,6 +569,9 @@ module.exports = function (RED) {
                     }
                     const dueSchedules = await scheduleService.getDueSchedulesOrNull();
                     const schedules = dueSchedules !== null && dueSchedules !== void 0 ? dueSchedules : [];
+                    // The schedule read opened the MySQL DataSource the process's event outbox lives on.
+                    if (dueSchedules)
+                        await scheduleService.ensureEventOutbox();
                     // Run hourly cleanup of stale status history entries
                     cleanStaleStatusHistory();
                     const allModbusCoils = scheduleService.getAllModbusCoils();
@@ -773,9 +776,13 @@ module.exports = function (RED) {
                                             await sideEffect(`verify-fail notification ${schedule.name}`, () => scheduleService.sendKeyVerifyFailNotification(schedule, 'end', outcome, eventRunId));
                                         }
                                     }
+                                    // Outbox only; raised once per failure, so a retry each tick stores nothing new.
+                                    await sideEffect(`off-failed alarm ${schedule.name}`, () => scheduleService.raiseOffFailedAlarm(schedule, (0, schedule_finish_1.offFailures)(finishReport), eventRunId));
                                     continue;
                                 }
                                 (0, schedule_finish_1.clearOffFailure)(globalContext, schedule.name);
+                                // Outbox only; a no-op unless this schedule's OFF-failed alarm is raised (also after a restart).
+                                await sideEffect(`off-failed alarm clear ${schedule.name}`, () => scheduleService.clearOffFailedAlarm(schedule, eventRunId));
                                 // After retries the end audit also lists the keys that passed on the failed attempts.
                                 finishReport = (0, schedule_finish_1.offReportForAudit)(offRetry, finishReport);
                                 scheduleService.clearActiveCommands(schedule.name);

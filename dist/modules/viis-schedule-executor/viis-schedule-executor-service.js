@@ -63,6 +63,7 @@ const uuid_1 = require("uuid");
 const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
 const schedule_finish_1 = require("./schedule-finish");
+const registry_1 = require("../../services/event-outbox/registry");
 const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
 const schedule_execution_types_1 = require("./schedule-execution-types");
@@ -1983,6 +1984,46 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
+     * Starts the process's event outbox on this executor's MySQL DataSource once the flag
+     * `EVENT_OUTBOX_ENABLED` is on; other nodes reach it through `getEventOutbox()`. Called every tick after
+     * the schedules were read (env-loader may set the flag after this node started); a no-op once started
+     * and while the flag is off.
+     */
+    async ensureEventOutbox() {
+        if (!this.globalHelper || !(0, registry_1.isEventOutboxEnabled)(this.globalHelper) || !dataSource_1.AppDataSource.isInitialized)
+            return;
+        try {
+            await (0, registry_1.initEventOutbox)(dataSource_1.AppDataSource, this.globalHelper);
+        }
+        catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EVENT OUTBOX not started: ${error.message}`);
+            }
+        }
+    }
+    /**
+     * With the event outbox on, stores `payload` for ordered, retried delivery instead of POSTing it.
+     * null = the outbox is off or could not store the event: the caller POSTs it as before.
+     */
+    async enqueueEvent(payload, label) {
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (!outbox)
+            return null;
+        try {
+            await outbox.enqueue(payload);
+            if (this.node) {
+                this.node.warn(`📥 EVENT QUEUED: ${label}`);
+            }
+            return true;
+        }
+        catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EVENT OUTBOX FAILED, sending directly: ${label} | ${error.message}`);
+            }
+            return null;
+        }
+    }
+    /**
      * Send notification to backend via HTTP API
      * This bypasses MQTT ThingsBoard and sends directly to backend
      * Note: Failure notifications (success=false, severity 'error') are always sent;
@@ -2057,6 +2098,9 @@ let ScheduleService = class ScheduleService {
             clear_by_user_id: '',
             entity: deviceId
         };
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | Action: ${action} | Status: ${alarmStatus}`);
+        if (queued !== null)
+            return queued;
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
             await this.executeWithResilience(async () => {
@@ -2098,7 +2142,7 @@ let ScheduleService = class ScheduleService {
         }
     }
     async sendKeyVerifyFailNotification(schedule, action, outcome, runId = null) {
-        var _a, _b, _c, _d;
+        var _a;
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
             : '';
@@ -2114,21 +2158,10 @@ let ScheduleService = class ScheduleService {
             }
             return false;
         }
-        const payload = {
-            alarm_name: schedule.label || schedule.name,
-            id: deviceId,
-            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${(_a = outcome.read) !== null && _a !== void 0 ? _a : 'n/a'} attempts=${outcome.attempts}`,
-            message_key: 'iot.notification.schedule.verify_failed',
-            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { key: outcome.key, expected: outcome.expected, read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null, attempts: outcome.attempts, action, error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null }),
-            message_locale: 'vi-VN',
-            severity: 'error',
-            trigger_time: new Date().toISOString(),
-            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
-            alarm_status: 'Pending',
-            clear_by: '',
-            clear_by_user_id: '',
-            entity: deviceId,
-        };
+        const payload = this.keyVerifyFailPayload(schedule, action, outcome, runId, deviceId);
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | verify fail ${outcome.key} | ${action}`);
+        if (queued !== null)
+            return queued;
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
             await this.executeWithResilience(async () => {
@@ -2161,13 +2194,69 @@ let ScheduleService = class ScheduleService {
         }
         catch (error) {
             const errorMessage = error instanceof axios_1.AxiosError
-                ? `${error.message} (${((_d = error.response) === null || _d === void 0 ? void 0 : _d.status) || 'N/A'})`
+                ? `${error.message} (${((_a = error.response) === null || _a === void 0 ? void 0 : _a.status) || 'N/A'})`
                 : error.message;
             if (this.node) {
                 this.node.warn(`❌ HTTP VERIFY FAIL NOTIFICATION: ${schedule.name} | ${errorMessage}`);
             }
             return false;
         }
+    }
+    keyVerifyFailPayload(schedule, action, outcome, runId, deviceId) {
+        var _a, _b, _c;
+        return {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${(_a = outcome.read) !== null && _a !== void 0 ? _a : 'n/a'} attempts=${outcome.attempts}`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { key: outcome.key, expected: outcome.expected, read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null, attempts: outcome.attempts, action, error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null }),
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
+            alarm_status: 'Pending',
+            clear_by: '',
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+    }
+    /**
+     * Outbox only: raises the state alarm `schedule_off_failed:<schedule>` for a run whose OFF failed (the
+     * per-key `verify_failed` events stay the run history). false = outbox off or already raised.
+     */
+    async raiseOffFailedAlarm(schedule, failed, runId) {
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (!outbox || failed.length === 0)
+            return false;
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        const alarmKey = (0, schedule_finish_1.offFailedAlarmKey)(schedule.name);
+        const keys = failed.map(outcome => outcome.key);
+        const payload = this.keyVerifyFailPayload(schedule, 'end', failed[0], runId, deviceId);
+        payload.msg = `Lịch trình "${schedule.label || schedule.name}" không tắt được thiết bị: ${keys.join(', ')}`;
+        payload.message_params = Object.assign(Object.assign({}, payload.message_params), { keys });
+        payload.tb_alarm_id = alarmKey;
+        return outbox.raise(alarmKey, payload);
+    }
+    /** Outbox only: clears `schedule_off_failed:<schedule>` once the OFF passed. false = outbox off or not raised. */
+    async clearOffFailedAlarm(schedule, runId) {
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (!outbox)
+            return false;
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        const alarmKey = (0, schedule_finish_1.offFailedAlarmKey)(schedule.name);
+        return outbox.clear(alarmKey, {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" đã tắt được thiết bị`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { action: 'end' }),
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: alarmKey,
+            clear_by_user_id: '',
+            entity: deviceId,
+        });
     }
     /**
      * ADR-033 D2: report a run that ended before its window, with why. Severity `notification`
@@ -2206,6 +2295,9 @@ let ScheduleService = class ScheduleService {
             clear_by_user_id: '',
             entity: deviceId,
         };
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | Action: stopped (${reason})`);
+        if (queued !== null)
+            return queued;
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
             await this.executeWithResilience(async () => {

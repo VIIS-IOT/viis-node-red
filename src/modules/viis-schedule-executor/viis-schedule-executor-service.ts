@@ -32,7 +32,8 @@ import { v4 as uuidv4 } from "uuid";
 import { ProtectionGateService, resolveProtectionGate } from "../viis-device-protection/services/protection-gate-service";
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classify";
-import { decideFinish, rebuildOffCommands } from "./schedule-finish";
+import { decideFinish, offFailedAlarmKey, rebuildOffCommands } from "./schedule-finish";
+import { getEventOutbox, initEventOutbox, isEventOutboxEnabled } from "../../services/event-outbox/registry";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
 import {
@@ -2292,6 +2293,44 @@ export class ScheduleService {
     }
 
     /**
+     * Starts the process's event outbox on this executor's MySQL DataSource once the flag
+     * `EVENT_OUTBOX_ENABLED` is on; other nodes reach it through `getEventOutbox()`. Called every tick after
+     * the schedules were read (env-loader may set the flag after this node started); a no-op once started
+     * and while the flag is off.
+     */
+    async ensureEventOutbox(): Promise<void> {
+        if (!this.globalHelper || !isEventOutboxEnabled(this.globalHelper) || !AppDataSource.isInitialized) return;
+        try {
+            await initEventOutbox(AppDataSource, this.globalHelper);
+        } catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EVENT OUTBOX not started: ${(error as Error).message}`);
+            }
+        }
+    }
+
+    /**
+     * With the event outbox on, stores `payload` for ordered, retried delivery instead of POSTing it.
+     * null = the outbox is off or could not store the event: the caller POSTs it as before.
+     */
+    private async enqueueEvent(payload: Record<string, any>, label: string): Promise<boolean | null> {
+        const outbox = getEventOutbox();
+        if (!outbox) return null;
+        try {
+            await outbox.enqueue(payload);
+            if (this.node) {
+                this.node.warn(`📥 EVENT QUEUED: ${label}`);
+            }
+            return true;
+        } catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EVENT OUTBOX FAILED, sending directly: ${label} | ${(error as Error).message}`);
+            }
+            return null;
+        }
+    }
+
+    /**
      * Send notification to backend via HTTP API
      * This bypasses MQTT ThingsBoard and sends directly to backend
      * Note: Failure notifications (success=false, severity 'error') are always sent;
@@ -2387,6 +2426,9 @@ export class ScheduleService {
             entity: deviceId
         };
 
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | Action: ${action} | Status: ${alarmStatus}`);
+        if (queued !== null) return queued;
+
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
 
         try {
@@ -2460,29 +2502,10 @@ export class ScheduleService {
             return false;
         }
 
-        const payload = {
-            alarm_name: schedule.label || schedule.name,
-            id: deviceId,
-            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${outcome.read ?? 'n/a'} attempts=${outcome.attempts}`,
-            message_key: 'iot.notification.schedule.verify_failed',
-            message_params: {
-                ...scheduleEventParams(schedule, runId),
-                key: outcome.key,
-                expected: outcome.expected,
-                read: outcome.read ?? null,
-                attempts: outcome.attempts,
-                action,
-                error: outcome.error ?? null,
-            },
-            message_locale: 'vi-VN',
-            severity: 'error',
-            trigger_time: new Date().toISOString(),
-            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
-            alarm_status: 'Pending',
-            clear_by: '',
-            clear_by_user_id: '',
-            entity: deviceId,
-        };
+        const payload = this.keyVerifyFailPayload(schedule, action, outcome, runId, deviceId);
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | verify fail ${outcome.key} | ${action}`);
+        if (queued !== null) return queued;
+
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
 
         try {
@@ -2530,6 +2553,76 @@ export class ScheduleService {
         }
     }
 
+    private keyVerifyFailPayload(
+        schedule: TabiotSchedule,
+        action: ScheduleAction,
+        outcome: KeyOutcome,
+        runId: string | null,
+        deviceId: string
+    ): Record<string, any> {
+        return {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${outcome.read ?? 'n/a'} attempts=${outcome.attempts}`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: {
+                ...scheduleEventParams(schedule, runId),
+                key: outcome.key,
+                expected: outcome.expected,
+                read: outcome.read ?? null,
+                attempts: outcome.attempts,
+                action,
+                error: outcome.error ?? null,
+            },
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
+            alarm_status: 'Pending',
+            clear_by: '',
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+    }
+
+    /**
+     * Outbox only: raises the state alarm `schedule_off_failed:<schedule>` for a run whose OFF failed (the
+     * per-key `verify_failed` events stay the run history). false = outbox off or already raised.
+     */
+    async raiseOffFailedAlarm(schedule: TabiotSchedule, failed: KeyOutcome[], runId: string | null): Promise<boolean> {
+        const outbox = getEventOutbox();
+        if (!outbox || failed.length === 0) return false;
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        const alarmKey = offFailedAlarmKey(schedule.name);
+        const keys = failed.map(outcome => outcome.key);
+        const payload = this.keyVerifyFailPayload(schedule, 'end', failed[0], runId, deviceId);
+        payload.msg = `Lịch trình "${schedule.label || schedule.name}" không tắt được thiết bị: ${keys.join(', ')}`;
+        payload.message_params = { ...payload.message_params, keys };
+        payload.tb_alarm_id = alarmKey;
+        return outbox.raise(alarmKey, payload);
+    }
+
+    /** Outbox only: clears `schedule_off_failed:<schedule>` once the OFF passed. false = outbox off or not raised. */
+    async clearOffFailedAlarm(schedule: TabiotSchedule, runId: string | null): Promise<boolean> {
+        const outbox = getEventOutbox();
+        if (!outbox) return false;
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        const alarmKey = offFailedAlarmKey(schedule.name);
+        return outbox.clear(alarmKey, {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" đã tắt được thiết bị`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: { ...scheduleEventParams(schedule, runId), action: 'end' },
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: alarmKey,
+            clear_by_user_id: '',
+            entity: deviceId,
+        });
+    }
+
     /**
      * ADR-033 D2: report a run that ended before its window, with why. Severity `notification`
      * (the customer's general opt-out applies to delivery; the backend still stores the row).
@@ -2571,6 +2664,9 @@ export class ScheduleService {
             clear_by_user_id: '',
             entity: deviceId,
         };
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | Action: stopped (${reason})`);
+        if (queued !== null) return queued;
+
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
 
         try {
