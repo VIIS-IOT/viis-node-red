@@ -26,7 +26,9 @@ const registerArbiterNode = require('../viis-actuator-arbiter') as (RED: any) =>
 
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 
-function startNode(globals: Record<string, unknown>) {
+/** globals get this run's env-loader stamp unless the test sets env_loader_loaded_at itself. */
+function startNode(input: Record<string, unknown>) {
+    const globals: Record<string, unknown> = { env_loader_loaded_at: Date.now(), ...input };
     let NodeType: any;
     const events = new EventEmitter();
     const node: any = {};
@@ -57,7 +59,7 @@ function startNode(globals: Record<string, unknown>) {
             if (listeners.length === 0) return resolve();
             (listeners[0] as any)(() => resolve());
         });
-    return { node, close };
+    return { node, close, globals };
 }
 
 const BOARDS = JSON.stringify([{ id: 'board1', type: 'TCP', host: 'sim', tcpPort: 502, unitId: 1 }]);
@@ -115,6 +117,29 @@ describe('viis-actuator-arbiter node', () => {
         await close();
         expect(getArbiter()).toBeNull();
         expect(DataSourceManager.release).toHaveBeenCalledTimes(1);
+    });
+    test('waits for the env-loader stamp of this run before reading ARBITER_MODE', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+        try {
+            // A stamp from an earlier run: the persisted arbiter_mode may be stale, so nothing starts yet.
+            const { globals, close } = startNode({
+                env_loader_loaded_at: Date.now() - 3_600_000,
+                arbiter_mode: 'enforce',
+                modbus_boards: BOARDS,
+                modbus_board1_coils: { valve_1: 0 },
+                actuator_policy: '{"valve_1":"managed"}',
+            });
+            await jest.advanceTimersByTimeAsync(2000);
+            expect(getArbiter()).toBeNull();
+
+            globals.env_loader_loaded_at = Date.now();
+            await jest.advanceTimersByTimeAsync(1000);
+            await flush();
+            expect(getArbiter()).not.toBeNull();
+            await close();
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });
 
