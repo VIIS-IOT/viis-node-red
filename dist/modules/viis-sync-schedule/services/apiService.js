@@ -14,6 +14,7 @@ const constants_1 = require("../constants");
 const retry_1 = require("../utils/retry");
 const resolve_backend_url_1 = require("../../../ultils/resolve-backend-url");
 const demeter_schedule_protocol_1 = require("../../../core/demeter-schedule-protocol");
+const outbox_sender_1 = require("../../../services/event-outbox/outbox-sender");
 /**
  * Service for making API requests to the server
  */
@@ -38,6 +39,11 @@ class ApiService {
     resolveBaseUrl() {
         return (0, resolve_backend_url_1.resolveViisBackendUrl)(this.nodeContext);
     }
+    /** The device token is in the request path (and may be in a query): mask it before logging a URL. */
+    redact(text) {
+        const masked = (0, outbox_sender_1.redactDeviceToken)(text);
+        return this.accessToken ? masked.split(this.accessToken).join('***') : masked;
+    }
     /**
      * Fetches all schedule plans and their schedules for the device
      * @returns Promise that resolves to the server response
@@ -48,7 +54,7 @@ class ApiService {
         return (0, retry_1.withRetry)(async () => {
             try {
                 this.instance.defaults.baseURL = this.resolveBaseUrl();
-                logger_1.logger.debug(null, `Making GET request to: ${this.instance.defaults.baseURL}${url}`);
+                logger_1.logger.debug(null, `Making GET request to: ${this.redact(`${this.instance.defaults.baseURL}${url}`)}`);
                 const response = await this.instance.get(url);
                 const plans = (0, demeter_schedule_protocol_1.unwrapDevicePlanList)(response.data).map((plan) => {
                     const local = (0, demeter_schedule_protocol_1.fromDeviceSchedulePlan)(plan);
@@ -81,17 +87,17 @@ class ApiService {
         const errorMessage = error instanceof Error
             ? error.message
             : 'Unknown error';
-        logger_1.logger.error(null, `Failed to ${operation}: ${errorMessage}`);
+        logger_1.logger.error(null, `Failed to ${operation}: ${this.redact(errorMessage)}`);
         if (axios_1.default.isAxiosError(error)) {
             const axiosError = error;
             if (axiosError.response) {
                 logger_1.logger.error(null, `Server responded with status ${axiosError.response.status}: ${JSON.stringify(axiosError.response.data)}`);
             }
             else if (axiosError.request) {
-                logger_1.logger.error(null, `No response received from server: ${axiosError.message}`);
+                logger_1.logger.error(null, `No response received from server: ${this.redact(axiosError.message)}`);
             }
             if (axiosError.config) {
-                logger_1.logger.debug(null, `Request was made to: ${axiosError.config.url}`);
+                logger_1.logger.debug(null, `Request was made to: ${this.redact(axiosError.config.url)}`);
             }
         }
     }
