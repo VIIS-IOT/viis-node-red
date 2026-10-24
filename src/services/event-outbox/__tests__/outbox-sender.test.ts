@@ -1,0 +1,190 @@
+jest.mock("axios");
+import axios from "axios";
+import { EventOutbox } from "../event-outbox";
+import { OutboxSender } from "../outbox-sender";
+import { FakeDataSource } from "./fake-datasource";
+import { TabiotEventOutbox } from "../../../orm/entities/event-outbox/TabiotEventOutbox";
+
+const post = axios.post as jest.Mock;
+const TOKEN = "tok-secret-123";
+const BACKEND = "http://backend.local:4008";
+const EVENT_URL = `${BACKEND}/api/v2/alarm/notification-by-token`;
+const SNAPSHOT_URL = `${BACKEND}/api/v2/alarm/snapshot-by-token`;
+
+function httpError(status: number) {
+    return Object.assign(new Error(`Request failed with status code ${status}`), { isAxiosError: true, response: { status } });
+}
+
+function setup(env: Record<string, any> = { VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN }) {
+    const ds = new FakeDataSource();
+    const outbox = new EventOutbox(ds as any);
+    const logs: string[] = [];
+    const logger = { log: (m: string) => logs.push(m), warn: (m: string) => logs.push(m), error: (m: string) => logs.push(m) };
+    const sender = new OutboxSender(outbox, { getEnvVar: (n: string, d?: any) => env[n] ?? d }, { logger });
+    const rows = () => ds.getRepository(TabiotEventOutbox).rows;
+    const eventPosts = () => post.mock.calls.filter(c => c[0] === EVENT_URL);
+    return { ds, outbox, sender, logs, rows, eventPosts };
+}
+
+const later = (ms = 60_000) => new Date(Date.now() + ms);
+
+beforeEach(() => post.mockReset());
+
+describe("OutboxSender", () => {
+    it("flush delivers in seq order and stamps sent_at", async () => {
+        const { outbox, sender, rows, eventPosts } = setup();
+        for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
+        post.mockResolvedValue({ status: 200, data: {} });
+        const now = later();
+
+        expect(await sender.flush(now)).toEqual({ sent: 3, failed: 0, dead: 0, snapshotSent: false });
+        expect(eventPosts().map(c => c[1].msg)).toEqual(["e1", "e2", "e3"]);
+        expect(eventPosts()[0][1].event_id).toBe(rows()[0].event_id);
+        expect(eventPosts()[0][2].params).toEqual({ device_access_token: TOKEN });
+        expect(rows().every(r => r.sent_at?.getTime() === now.getTime())).toBe(true);
+        expect((await sender.flush(now)).sent).toBe(0);
+    });
+
+    it("5xx → attempts++ and the batch stops", async () => {
+        const { outbox, sender, rows, eventPosts } = setup();
+        for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
+        post.mockResolvedValueOnce({ status: 200 }).mockRejectedValueOnce(httpError(500));
+        const now = later();
+
+        expect(await sender.flush(now)).toEqual({ sent: 1, failed: 1, dead: 0, snapshotSent: false });
+        expect(eventPosts()).toHaveLength(2);
+        expect(rows()[1]).toMatchObject({ attempts: 1, sent_at: null, dead: false });
+        expect(rows()[1].next_attempt_at.getTime()).toBe(now.getTime() + 5_000);
+        expect(rows()[1].last_error).toContain("500");
+        expect(rows()[2].sent_at).toBeNull();
+
+        // Still backing off: e3 must not overtake e2.
+        expect((await sender.flush(new Date(now.getTime() + 1_000))).sent).toBe(0);
+        expect(eventPosts()).toHaveLength(2);
+    });
+
+    it("backoff doubles per attempt up to maxBackoffMs", async () => {
+        const { outbox, rows } = setup();
+        const sender = new OutboxSender(outbox, { getEnvVar: (n: string) => ({ VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN } as any)[n] }, {
+            maxBackoffMs: 12_000, logger: { log() {}, warn() {}, error() {} },
+        });
+        await outbox.enqueue({ msg: "e1" });
+        post.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+        let now = later();
+        const delays: number[] = [];
+        for (let i = 0; i < 3; i++) {
+            await sender.flush(now);
+            delays.push(rows()[0].next_attempt_at.getTime() - now.getTime());
+            now = new Date(rows()[0].next_attempt_at.getTime());
+        }
+        expect(delays).toEqual([5_000, 10_000, 12_000]);
+        expect(rows()[0].attempts).toBe(3);
+    });
+
+    it("4xx other than 408/409/429 marks the row dead and moves on", async () => {
+        const { outbox, sender, rows, eventPosts } = setup();
+        for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
+        post.mockResolvedValueOnce({ status: 200 }).mockRejectedValueOnce(httpError(401)).mockResolvedValueOnce({ status: 200 });
+
+        expect(await sender.flush(later())).toEqual({ sent: 2, failed: 0, dead: 1, snapshotSent: false });
+        expect(eventPosts().map(c => c[1].msg)).toEqual(["e1", "e2", "e3"]);
+        expect(rows()[1]).toMatchObject({ dead: true, sent_at: null });
+    });
+
+    it.each([408, 409, 429])("%i is retried, not dead", async status => {
+        const { outbox, sender, rows } = setup();
+        await outbox.enqueue({ msg: "e1" });
+        post.mockRejectedValueOnce(httpError(status));
+
+        expect(await sender.flush(later())).toMatchObject({ failed: 1, dead: 0 });
+        expect(rows()[0]).toMatchObject({ dead: false, attempts: 1 });
+    });
+
+    it("first success after failure posts one snapshot", async () => {
+        const { outbox, sender } = setup();
+        await outbox.raise("board_offline:board1", { severity: "error", msg: "down" });
+        post.mockRejectedValueOnce(httpError(503));
+        const now = later();
+        await sender.flush(now);
+
+        post.mockResolvedValue({ status: 200 });
+        const recovered = await sender.flush(new Date(now.getTime() + 5_000));
+        expect(recovered).toEqual({ sent: 1, failed: 0, dead: 0, snapshotSent: true });
+        const snapshots = post.mock.calls.filter(c => c[0] === SNAPSHOT_URL);
+        expect(snapshots).toHaveLength(1);
+        expect(snapshots[0][1]).toEqual({ active: [{ alarm_key: "board_offline:board1", severity: "error" }] });
+        expect(snapshots[0][2].params).toEqual({ device_access_token: TOKEN });
+
+        await outbox.enqueue({ msg: "next" });
+        expect((await sender.flush(new Date(now.getTime() + 6_000))).snapshotSent).toBe(false);
+        expect(post.mock.calls.filter(c => c[0] === SNAPSHOT_URL)).toHaveLength(1);
+    });
+
+    it("a row that already failed before a restart triggers the snapshot when it goes through", async () => {
+        const { outbox, sender } = setup();
+        await outbox.raise("board_offline:board1", { severity: "error", msg: "down" });
+        post.mockRejectedValueOnce(httpError(503));
+        const now = later();
+        await sender.flush(now);
+
+        const restarted = new OutboxSender(outbox, { getEnvVar: (n: string) => ({ VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN } as any)[n] }, {
+            logger: { log() {}, warn() {}, error() {} },
+        });
+        post.mockResolvedValue({ status: 200 });
+        expect((await restarted.flush(new Date(now.getTime() + 5_000))).snapshotSent).toBe(true);
+    });
+
+    it("a failed snapshot is retried on the next flush", async () => {
+        const { outbox, sender } = setup();
+        await outbox.enqueue({ msg: "e1" });
+        post.mockRejectedValueOnce(httpError(503));
+        const now = later();
+        await sender.flush(now);
+
+        post.mockImplementation(async (url: string) => {
+            if (url === SNAPSHOT_URL) throw httpError(502);
+            return { status: 200 };
+        });
+        expect((await sender.flush(new Date(now.getTime() + 5_000))).snapshotSent).toBe(false);
+
+        post.mockResolvedValue({ status: 200 });
+        expect((await sender.flush(new Date(now.getTime() + 6_000))).snapshotSent).toBe(true);
+    });
+
+    it("skips sending while VIIS_BACKEND or the token is missing", async () => {
+        const { outbox, sender, rows } = setup({ VIIS_BACKEND: BACKEND });
+        await outbox.enqueue({ msg: "e1" });
+
+        expect(await sender.flush(later())).toEqual({ sent: 0, failed: 0, dead: 0, snapshotSent: false });
+        expect(post).not.toHaveBeenCalled();
+        expect(rows()[0].attempts).toBe(0);
+    });
+
+    it("deletes sent rows older than 7 days", async () => {
+        const { outbox, sender, rows } = setup();
+        for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
+        const now = later();
+        rows()[0].sent_at = new Date(now.getTime() - 8 * 86_400_000);
+        rows()[1].sent_at = new Date(now.getTime() - 1 * 86_400_000);
+        rows()[2].dead = true;
+        rows()[2].created_at = new Date(now.getTime() - 30 * 86_400_000);
+
+        await sender.flush(now);
+        expect(rows().map(r => r.payload.msg)).toEqual(["e2", "e3"]);
+    });
+
+    it("log lines never contain the token", async () => {
+        const { outbox, sender, logs, rows } = setup();
+        for (const n of [1, 2]) await outbox.enqueue({ msg: `e${n}` });
+        post.mockResolvedValueOnce({ status: 200 })
+            .mockRejectedValueOnce(new Error(`connect failed for ${EVENT_URL}?device_access_token=${TOKEN}`));
+        const now = later();
+        await sender.flush(now);
+        post.mockResolvedValue({ status: 200 });
+        await sender.flush(new Date(now.getTime() + 5_000));
+
+        expect(logs.length).toBeGreaterThan(0);
+        expect(logs.join("\n")).not.toContain(TOKEN);
+        expect(JSON.stringify(rows())).not.toContain(TOKEN);
+    });
+});
