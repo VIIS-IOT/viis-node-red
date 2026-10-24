@@ -1,9 +1,12 @@
 /**
  * HTTP transport of scenario trigger events: the same endpoint, retry/backoff and circuit breaker as the
  * schedule executor's event senders (`viis-schedule-executor-service.ts` `sendNotificationToBackend`).
+ * With the event outbox on (`EVENT_OUTBOX_ENABLED`, started by the schedule executor) the event is stored
+ * there instead; until the outbox is started, or when it cannot store the event, it is POSTed as before.
  */
 import axios, { AxiosError } from "axios";
 import { executeWithResilience } from "../../viis-schedule-executor/resilience-utils";
+import { getEventOutbox } from "../../../services/event-outbox/registry";
 import { ScenarioTriggeredEvent } from "./scenarioTriggerEvents";
 import { ScenarioTriggerLogger } from "./scenarioTriggerTracker";
 
@@ -31,6 +34,18 @@ export function createScenarioTriggerSender(
         if (!backendUrl || !deviceAccessToken) {
             logger.warn("[SCENARIO-EVENT] skipped: missing VIIS_BACKEND or DEVICE_ACCESS_TOKEN");
             return false;
+        }
+        const outbox = getEventOutbox();
+        if (outbox) {
+            try {
+                await outbox.enqueue({ ...event });
+                logger.log(
+                    `[SCENARIO-EVENT] queued ${event.message_params.scenarioId} trigger ${event.message_params.triggerId} (${event.message_params.result})`
+                );
+                return true;
+            } catch (error) {
+                logger.warn(`[SCENARIO-EVENT] outbox failed, sending directly: ${(error as Error)?.message ?? String(error)}`);
+            }
         }
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
