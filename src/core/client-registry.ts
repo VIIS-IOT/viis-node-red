@@ -329,11 +329,62 @@ class ClientRegistry {
 
         // Store board configurations
         for (const board of config.boards) {
+            const previous = this.modbusBoardConfigs.get(board.id);
             this.modbusBoardConfigs.set(board.id, board);
+            if (previous) this.retargetBoardClient(board.id, previous, board, node);
             //node.warn(`[MODBUS-MULTI] Registered board: ${board.id} - ${board.name || 'Unnamed'} (${board.host}:${board.tcpPort})`);
         }
 
         //node.warn(`[MODBUS-MULTI] Initialized ${config.boards.length} boards, default: ${this.defaultBoardId}`);
+    }
+
+    /**
+     * A board client handed out earlier was built from another config. On the first boot after a
+     * device1.json board change, nodes that start before env-loader read the previous run's board config
+     * from the persistent global context; the fresh config arrives later. Every holder of the board
+     * client moves to the new transport (or unit id), and the old socket closes once nobody uses it.
+     */
+    private static retargetBoardClient(boardId: string, previous: ModbusBoardConfig, next: ModbusBoardConfig, node: Node): void {
+        const client = this.modbusBoardPool.get(boardId);
+        if (!(client instanceof BoardScopedModbusClient)) return;
+
+        const oldKey = this.boardTransportKey.get(boardId);
+        const newKey = getModbusTransportKey(next);
+        const unitId = next.unitId ?? 1;
+        if (oldKey === newKey) {
+            const transport = this.transportPool.get(newKey);
+            if (transport) client.retarget(transport, unitId);
+            return;
+        }
+
+        let transport = this.transportPool.get(newKey);
+        if (!transport) {
+            transport = new ModbusClientCore(next, node);
+            this.transportPool.set(newKey, transport);
+            this.transportRefCount.set(newKey, 0);
+            this.adjustHostConnectionCount(next, +1);
+        }
+        client.retarget(transport, unitId);
+        this.boardTransportKey.set(boardId, newKey);
+        this.transportRefCount.set(newKey, (this.transportRefCount.get(newKey) || 0) + 1);
+
+        if (oldKey) {
+            const remaining = (this.transportRefCount.get(oldKey) || 1) - 1;
+            this.transportRefCount.set(oldKey, remaining);
+            if (remaining <= 0) {
+                this.transportPool.get(oldKey)?.disconnect();
+                this.transportPool.delete(oldKey);
+                this.transportRefCount.delete(oldKey);
+                this.adjustHostConnectionCount(previous, -1);
+            }
+        }
+        node.warn(`[MODBUS-MULTI] Board ${boardId} config changed (${oldKey ?? 'none'} → ${newKey}); existing clients now use the new board`);
+    }
+
+    private static adjustHostConnectionCount(board: ModbusBoardConfig, delta: number): void {
+        if (board.type !== 'TCP' || !board.host || !board.tcpPort) return;
+        const hostKey = `${board.host}:${board.tcpPort}`;
+        this.hostConnectionCount.set(hostKey, Math.max(0, (this.hostConnectionCount.get(hostKey) || 0) + delta));
     }
 
     /**
