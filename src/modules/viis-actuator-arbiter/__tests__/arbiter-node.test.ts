@@ -118,6 +118,32 @@ describe('viis-actuator-arbiter node', () => {
         expect(getArbiter()).toBeNull();
         expect(DataSourceManager.release).toHaveBeenCalledTimes(1);
     });
+
+    test('a new env_loader_loaded_at reloads the manual lease on the next tick; a changed key list only warns', async () => {
+        const { node, globals, close } = startNode({
+            arbiter_mode: 'enforce',
+            modbus_boards: BOARDS,
+            modbus_board1_coils: { valve_1: 0, valve_2: 1 },
+            actuator_policy: '{"valve_1":"managed"}',
+            arbiter_manual_lease_s: '90',
+        });
+        await flush();
+        await flush();
+        const arbiter = getArbiter()!;
+        expect(arbiter.leaseMs('manual', 'valve_1')).toBe(90_000);
+
+        // device1.json was synced: new lease and one more managed key, with a fresh load stamp.
+        globals.arbiter_manual_lease_s = '120';
+        globals.actuator_policy = '{"valve_1":"managed","valve_2":"managed"}';
+        globals.env_loader_loaded_at = Date.now() + 1;
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:r1', expiresAt: Date.now() + 60_000 });
+
+        expect(arbiter.leaseMs('manual', 'valve_1')).toBe(120_000);
+        expect(arbiter.manages('valve_2')).toBe(false);
+        expect(node.warn).toHaveBeenCalledWith(expect.stringContaining('redeploy'));
+        await close();
+    });
+
     test('waits for the env-loader stamp of this run before reading ARBITER_MODE', async () => {
         jest.useFakeTimers({ doNotFake: ['setImmediate'] });
         try {

@@ -11,10 +11,14 @@
  * - A key whose write failed on 3 consecutive ticks raises the gateway state alarm
  *   `actuator_write_failed:<key>` through the event outbox (nothing when the outbox is off); the next
  *   good write clears it.
+ * - A manual ON lease is a ceiling, not a timer: once the coil was seen ON under the claim and later
+ *   reads OFF (the PLC closed it), the claim is released before the tick could write it back. When the
+ *   ceiling ends with the coil still ON the arbiter drives it OFF and raises
+ *   `manual_runtime_exceeded:<key>`, cleared when the coil reads OFF or another claim takes the key.
  */
 import type { EventOutbox } from '../../services/event-outbox/event-outbox';
 import { ActuatorPolicy, KeyMode } from './actuator-policy';
-import { ArbiterCore, ClaimSource } from './arbiter-core';
+import { ActuatorClaim, ArbiterCore, ClaimSource } from './arbiter-core';
 import type { ClaimStore } from './arbiter-store';
 import { CoilTarget, Reconciler, ReconcilerDeps, TickReport } from './reconciler';
 
@@ -33,7 +37,14 @@ export interface ClaimResult {
     mode: 'observe' | 'enforce';
 }
 
-export type ArbiterOwners = Record<string, { source: ClaimSource; ownerId: string; expiresAt: number | null }>;
+export interface OwnerInfo {
+    source: ClaimSource;
+    ownerId: string;
+    expiresAt: number | null;
+}
+
+/** Winner per key; `next` is the live claim that takes over when the winner ends (null = none). */
+export type ArbiterOwners = Record<string, OwnerInfo & { next: OwnerInfo | null }>;
 
 export interface ActuatorArbiterApi {
     /** policy mode managed | hold */
@@ -72,6 +83,7 @@ export interface ArbiterOptions {
     onOwnersChange?: (owners: ArbiterOwners) => void;
     onTickReport?: (report: TickReport) => void;
     warn?: (message: string) => void;
+    log?: (message: string) => void;
 }
 
 export const DEFAULT_TICK_MS = 5000;
@@ -81,6 +93,7 @@ export const CLAIM_MAX_WAIT_MS = 15_000;
 /** Consecutive failed write ticks before `actuator_write_failed:<key>` is raised. */
 export const WRITE_FAILED_ALARM_TICKS = 3;
 const WRITE_FAILED_PREFIX = 'actuator_write_failed:';
+const RUNTIME_EXCEEDED_PREFIX = 'manual_runtime_exceeded:';
 
 type TickWaiter = (report: TickReport | null) => void;
 
@@ -96,6 +109,9 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     private readonly debounceMs: number;
     private readonly claimWaitMs: number;
     private readonly warn: (message: string) => void;
+    private readonly log: (message: string) => void;
+    /** Source of `leaseMs`; setPolicy swaps it. Modes and targets stay those of `opts.policy` for the run. */
+    private leasePolicy: ActuatorPolicy;
 
     private waiters: TickWaiter[] = [];
     private tickChain: Promise<unknown> = Promise.resolve();
@@ -107,6 +123,12 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     private lastOwners = '{}';
     /** `actuator_write_failed:<key>` alarms raised (or found Pending in the outbox on start). */
     private readonly alarmed = new Set<string>();
+    /** `manual_runtime_exceeded:<key>` alarms raised (or found Pending on start) -> owner of the key then (null = none). */
+    private readonly ceilingAlarmed = new Map<string, string | null>();
+    /** Manual ON claims (`ownerId NUL key`) seen ON on the coil: only these are released when the coil later reads OFF. */
+    private readonly confirmedOn = new Set<string>();
+    /** Manual ON claims whose lease ended and whose tick has not reported yet. */
+    private pendingExpired: ActuatorClaim[] = [];
 
     constructor(private readonly opts: ArbiterOptions) {
         this.core = new ArbiterCore(opts.policy);
@@ -116,6 +138,8 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         this.debounceMs = opts.debounceMs ?? CLAIM_DEBOUNCE_MS;
         this.claimWaitMs = opts.claimWaitMs ?? CLAIM_MAX_WAIT_MS;
         this.warn = opts.warn ?? ((message: string) => console.warn(message));
+        this.log = opts.log ?? ((message: string) => console.log(message));
+        this.leasePolicy = opts.policy;
     }
 
     manages(key: string): boolean {
@@ -135,8 +159,16 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     }
 
     leaseMs(source: ClaimSource, key: string): number {
-        const seconds = source === 'manual' ? this.opts.policy.manualLeaseS(key) : this.opts.scenarioLeaseS;
+        const seconds = source === 'manual' ? this.leasePolicy.manualLeaseS(key) : this.opts.scenarioLeaseS;
         return seconds * 1000;
+    }
+
+    /**
+     * Takes the manual leases from a reloaded policy (device1.json changed after a gateway sync). Claims
+     * already submitted keep their expiry. Which keys are managed, and in what mode, is not reloaded.
+     */
+    setPolicy(policy: ActuatorPolicy): void {
+        this.leasePolicy = policy;
     }
 
     /** Loads saved claims, picks up Pending write alarms and starts ticking. */
@@ -153,8 +185,13 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         const outbox = this.outbox();
         if (outbox) {
             try {
+                const now = this.now();
                 for (const { alarm_key } of await outbox.activeAlarms()) {
                     if (alarm_key.startsWith(WRITE_FAILED_PREFIX)) this.alarmed.add(alarm_key);
+                    if (alarm_key.startsWith(RUNTIME_EXCEEDED_PREFIX)) {
+                        const key = alarm_key.slice(RUNTIME_EXCEEDED_PREFIX.length);
+                        this.ceilingAlarmed.set(alarm_key, this.core.resolve(key, now).winner?.ownerId ?? null);
+                    }
                 }
             } catch (error) {
                 this.warn(`[arbiter] active alarms not read: ${errorText(error)}`);
@@ -197,9 +234,13 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     }
 
     owners(): ArbiterOwners {
+        const now = this.now();
+        const info = (c: ActuatorClaim): OwnerInfo => ({ source: c.source, ownerId: c.ownerId, expiresAt: c.expiresAt });
         const owners: ArbiterOwners = {};
-        for (const { key, winner } of this.core.resolveAll(this.now())) {
-            if (winner) owners[key] = { source: winner.source, ownerId: winner.ownerId, expiresAt: winner.expiresAt };
+        for (const { key, winner } of this.core.resolveAll(now)) {
+            if (!winner) continue;
+            const runnerUp = this.core.rankedClaims(key, now)[1];
+            owners[key] = { ...info(winner), next: runnerUp ? info(runnerUp) : null };
         }
         return owners;
     }
@@ -219,10 +260,17 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         const waiters = this.waiters.splice(0);
         let report: TickReport | null = null;
         try {
-            if (this.core.expire(this.now()).length > 0) this.persist();
+            const expired = this.core.expire(this.now());
+            if (expired.length > 0) {
+                this.persist();
+                this.pendingExpired.push(...expired.filter(c => c.source === 'manual' && c.value));
+            }
+            await this.releaseClosedByDevice();
             report = await this.reconciler.tick();
             this.opts.onTickReport?.(report);
             await this.updateWriteAlarms(report);
+            await this.updateCeilingAlarms(report);
+            this.rememberConfirmedOn(report);
         } catch (error) {
             this.warn(`[arbiter] tick failed: ${errorText(error)}`);
         }
@@ -316,6 +364,110 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
             clear_by_user_id: '',
             entity: deviceId,
         };
+    }
+
+    private ceilingPayload(key: string, alarmKey: string, raise: boolean): Record<string, unknown> {
+        const deviceId = this.opts.deviceId?.() || 'unknown_device';
+        return {
+            alarm_name: `Quá mức trần bật tay ${key}`,
+            alarm_key: alarmKey,
+            id: deviceId,
+            msg: raise ? `${key} đã tắt: quá mức trần bật tay` : `${key} đã tắt hẳn`,
+            message_key: 'iot.notification.device.manual_runtime_exceeded',
+            message_params: { key },
+            message_locale: 'vi-VN',
+            severity: 'notification',
+            trigger_time: new Date(this.now()).toISOString(),
+            tb_alarm_id: alarmKey,
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+    }
+
+    /**
+     * A manual ON claim that was seen ON on the coil and now reads OFF was closed by the device (the PLC
+     * ran its own program out): release it before the tick would write ON again. A claim never seen ON
+     * (its first write is still due), a failed read or a key with failed writes releases nothing.
+     */
+    private async releaseClosedByDevice(): Promise<void> {
+        if (this.confirmedOn.size === 0) return;
+        const now = this.now();
+        let released = false;
+        for (const id of Array.from(this.confirmedOn)) {
+            const [ownerId, key] = id.split('\u0000');
+            const { winner } = this.core.resolve(key, now);
+            if (!winner) {
+                this.confirmedOn.delete(id);
+                continue;
+            }
+            if (winner.ownerId !== ownerId || !winner.value) continue;
+            const target = this.target(key);
+            if (!target || this.reconciler.consecutiveFailures(key) > 0) continue;
+            let actual: boolean;
+            try {
+                actual = Boolean(await this.opts.reconcilerDeps.readCoil(target));
+            } catch {
+                continue;
+            }
+            if (actual) continue;
+            this.core.release(ownerId, key);
+            this.confirmedOn.delete(id);
+            released = true;
+            this.log(`[arbiter] manual claim released: ${key} closed by device`);
+        }
+        if (released) this.persist();
+    }
+
+    /** Remembers the manual ON claims this tick saw ON on the coil; forgets claims that are gone. */
+    private rememberConfirmedOn(report: TickReport): void {
+        const now = this.now();
+        const present = new Set(this.core.snapshot().map(c => `${c.ownerId}\u0000${c.key}`));
+        for (const id of Array.from(this.confirmedOn)) {
+            if (!present.has(id)) this.confirmedOn.delete(id);
+        }
+        for (const key of Object.keys(report.actual)) {
+            const { winner } = this.core.resolve(key, now);
+            if (winner && winner.source === 'manual' && winner.value && report.desired[key] === true && report.actual[key] === true) {
+                this.confirmedOn.add(`${winner.ownerId}\u0000${key}`);
+            }
+        }
+    }
+
+    /**
+     * `manual_runtime_exceeded:<key>`: a manual ON claim ended while its coil still read ON and the
+     * arbiter is driving it OFF (enforce only; nothing is raised when the outbox is off). Cleared once the
+     * coil reads OFF, or when a claim other than the one that held the key at raise time wins it.
+     */
+    private async updateCeilingAlarms(report: TickReport): Promise<void> {
+        const expired = this.pendingExpired.splice(0);
+        const now = this.now();
+        for (const claim of expired) {
+            const alarmKey = `${RUNTIME_EXCEEDED_PREFIX}${claim.key}`;
+            if (this.opts.mode !== 'enforce' || this.ceilingAlarmed.has(alarmKey)) continue;
+            if (report.actual[claim.key] !== true || report.desired[claim.key] !== false) continue;
+            const outbox = this.outbox();
+            if (!outbox) continue;
+            try {
+                await outbox.raise(alarmKey, this.ceilingPayload(claim.key, alarmKey, true));
+                this.ceilingAlarmed.set(alarmKey, this.core.resolve(claim.key, now).winner?.ownerId ?? null);
+            } catch (error) {
+                this.warn(`[arbiter] ${alarmKey} not raised: ${errorText(error)}`);
+            }
+        }
+        for (const [alarmKey, raisedOwner] of Array.from(this.ceilingAlarmed)) {
+            const key = alarmKey.slice(RUNTIME_EXCEEDED_PREFIX.length);
+            const owner = this.core.resolve(key, now).winner?.ownerId ?? null;
+            const newWinner = owner !== null && owner !== raisedOwner;
+            if (report.actual[key] !== false && !newWinner) continue;
+            const outbox = this.outbox();
+            if (!outbox) continue;
+            try {
+                await outbox.clear(alarmKey, this.ceilingPayload(key, alarmKey, false));
+                this.ceilingAlarmed.delete(alarmKey);
+            } catch (error) {
+                this.warn(`[arbiter] ${alarmKey} not cleared: ${errorText(error)}`);
+            }
+        }
     }
 
     /** Saves the current claims; saves run one after another so the last one holds the latest set. */

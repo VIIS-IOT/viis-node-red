@@ -62,6 +62,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
         },
         onOwnersChange: owners => ownerEvents.push(owners),
         warn: () => undefined,
+        log: () => undefined,
         ...over,
     });
     return {
@@ -89,7 +90,7 @@ describe('ActuatorArbiter', () => {
         expect(writes).toEqual(['valve_1=true']);
         expect(state.valve_1).toBe(true);
         expect(arbiter.owners()).toEqual({
-            valve_1: { source: 'manual', ownerId: 'manual:cmd-1', expiresAt: T0 + 60_000 },
+            valve_1: { source: 'manual', ownerId: 'manual:cmd-1', expiresAt: T0 + 60_000, next: null },
         });
         await arbiter.stop();
     });
@@ -133,7 +134,7 @@ describe('ActuatorArbiter', () => {
         await second.arbiter.start();
 
         expect(second.arbiter.owners()).toEqual({
-            valve_1: { source: 'manual', ownerId: 'manual:long', expiresAt: T0 + 3_600_000 },
+            valve_1: { source: 'manual', ownerId: 'manual:long', expiresAt: T0 + 3_600_000, next: null },
         });
         await second.arbiter.stop();
     });
@@ -147,7 +148,7 @@ describe('ActuatorArbiter', () => {
         await arbiter.tick();
         await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000 });
 
-        expect(ownerEvents).toEqual([{ valve_1: { source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000 } }]);
+        expect(ownerEvents).toEqual([{ valve_1: { source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000, next: null } }]);
 
         await arbiter.release('manual:*');
         expect(ownerEvents).toHaveLength(2);
@@ -190,6 +191,142 @@ describe('ActuatorArbiter', () => {
         expect(arbiter.leaseMs('manual', 'valve_2')).toBe(60_000);
         expect(arbiter.leaseMs('scenario', 'valve_1')).toBe(600_000);
         expect(arbiter.leaseMs('alarm_action', 'valve_1')).toBe(600_000);
+    });
+
+    test('owners: a manual claim over a schedule claim names the schedule as next', async () => {
+        const { arbiter } = setup();
+        await arbiter.start();
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'schedule', ownerId: 'schedule:s1', expiresAt: T0 + 3_600_000 });
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:m1', expiresAt: T0 + 60_000 });
+
+        expect(arbiter.owners().valve_1).toEqual({
+            source: 'manual',
+            ownerId: 'manual:m1',
+            expiresAt: T0 + 60_000,
+            next: { source: 'schedule', ownerId: 'schedule:s1', expiresAt: T0 + 3_600_000 },
+        });
+        await arbiter.stop();
+    });
+
+    describe('manual lease as a ceiling', () => {
+        const outboxMock = (active: { alarm_key: string }[] = []) => ({
+            raise: jest.fn().mockResolvedValue(true),
+            clear: jest.fn().mockResolvedValue(true),
+            activeAlarms: jest.fn().mockResolvedValue(active),
+        });
+
+        test('the coil read OFF after it was seen ON releases the manual claim: no alarm, no write back', async () => {
+            const outbox = outboxMock();
+            const { arbiter, state, writes, advance } = setup({ outbox: () => outbox });
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:c1', expiresAt: T0 + 60_000 });
+            expect(writes).toEqual(['valve_1=true']);
+            await arbiter.tick(); // reads ON: confirmed
+
+            state.valve_1 = false; // the PLC closed it
+            await arbiter.tick();
+
+            expect(arbiter.owners()).toEqual({});
+            expect(writes).toEqual(['valve_1=true']);
+            advance(60_000);
+            await arbiter.tick();
+            expect(outbox.raise).not.toHaveBeenCalled();
+            await arbiter.stop();
+        });
+
+        test('a claim never seen ON is kept while its first write is still due', async () => {
+            const { arbiter, state, failWrite } = setup();
+            await arbiter.start();
+            failWrite.add('valve_1');
+
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:c2', expiresAt: T0 + 60_000 });
+            await arbiter.tick();
+
+            expect(state.valve_1).toBeUndefined();
+            expect(arbiter.owners().valve_1?.ownerId).toBe('manual:c2');
+            await arbiter.stop();
+        });
+
+        test('a manual OFF claim is a block, not a run: the coil reading OFF never releases it', async () => {
+            const { arbiter } = setup();
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_1', value: false, source: 'manual', ownerId: 'manual:off', expiresAt: T0 + 60_000 });
+            await arbiter.tick();
+            await arbiter.tick();
+
+            expect(arbiter.owners().valve_1?.ownerId).toBe('manual:off');
+            await arbiter.stop();
+        });
+
+        test('ceiling reached with the coil still ON: OFF is written, manual_runtime_exceeded is raised once and cleared when the coil reads OFF', async () => {
+            const outbox = outboxMock();
+            const { arbiter, state, advance } = setup({ outbox: () => outbox, deviceId: () => 'device-1' });
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_2', value: true, source: 'manual', ownerId: 'manual:l', expiresAt: T0 + 60_000 });
+            await arbiter.tick();
+
+            advance(60_000);
+            await arbiter.tick();
+
+            expect(state.valve_2).toBe(false);
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+            expect(outbox.raise).toHaveBeenCalledWith('manual_runtime_exceeded:valve_2', expect.objectContaining({
+                alarm_key: 'manual_runtime_exceeded:valve_2',
+                alarm_name: 'Quá mức trần bật tay valve_2',
+                msg: 'valve_2 đã tắt: quá mức trần bật tay',
+                message_key: 'iot.notification.device.manual_runtime_exceeded',
+                message_params: { key: 'valve_2' },
+                severity: 'notification',
+                id: 'device-1',
+            }));
+            expect(outbox.clear).not.toHaveBeenCalled();
+
+            await arbiter.tick();
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+            expect(outbox.clear).toHaveBeenCalledTimes(1);
+            expect(outbox.clear).toHaveBeenCalledWith('manual_runtime_exceeded:valve_2', expect.objectContaining({
+                msg: 'valve_2 đã tắt hẳn',
+            }));
+            await arbiter.stop();
+        });
+
+        test('an alarm found Pending on start is cleared when a new claim wins the key, even while the coil still reads ON', async () => {
+            const outbox = outboxMock([{ alarm_key: 'manual_runtime_exceeded:valve_1' }]);
+            const { arbiter } = setup({ outbox: () => outbox }, { valve_1: true });
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'schedule', ownerId: 'schedule:s9', expiresAt: T0 + 600_000 });
+
+            await arbiter.tick();
+
+            expect(outbox.clear).toHaveBeenCalledTimes(1);
+            expect(outbox.clear).toHaveBeenCalledWith('manual_runtime_exceeded:valve_1', expect.anything());
+            await arbiter.stop();
+        });
+
+        test('no outbox: the ceiling ends quietly', async () => {
+            const { arbiter, state, advance } = setup({ outbox: () => null });
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_2', value: true, source: 'manual', ownerId: 'manual:q', expiresAt: T0 + 60_000 });
+            advance(60_000);
+            await arbiter.tick();
+            expect(state.valve_2).toBe(false);
+            await arbiter.stop();
+        });
+    });
+
+    test('setPolicy: a reloaded policy changes the manual lease of the next claim only', () => {
+        const { arbiter } = setup();
+        expect(arbiter.leaseMs('manual', 'valve_1')).toBe(1_800_000);
+
+        arbiter.setPolicy(loadActuatorPolicy(
+            { valve_1: { mode: 'managed', manualLeaseS: 90 } },
+            { manualLeaseS: 600, coilKeys: coilKeysFromMappings(mappings), warn: () => undefined },
+        ));
+
+        expect(arbiter.leaseMs('manual', 'valve_1')).toBe(90_000);
+        expect(arbiter.leaseMs('manual', 'valve_2')).toBe(600_000);
+        expect(arbiter.leaseMs('scenario', 'valve_1')).toBe(600_000);
+        expect(arbiter.manages('valve_2')).toBe(true);
     });
 
     test('3 failed write ticks raise actuator_write_failed once; a good write clears it', async () => {

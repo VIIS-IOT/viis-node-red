@@ -95,6 +95,24 @@ class ArbiterCore {
         }
         return { key, desired: mode === 'managed' ? false : null, winner: null };
     }
+    /**
+     * Live claims for `key`, best first: the order `resolve` picks its winner by (priority, then
+     * createdAt, then the claim submitted later). `[0]` is the winner, `[1]` the claim that takes over
+     * when it ends.
+     */
+    rankedClaims(key, now) {
+        const live = [];
+        let position = 0;
+        for (const c of this.claims.values()) {
+            if (c.key === key && isLive(c, now))
+                live.push({ claim: c, position });
+            position++;
+        }
+        live.sort((a, b) => exports.SOURCE_PRIORITY[b.claim.source] - exports.SOURCE_PRIORITY[a.claim.source] ||
+            b.claim.createdAt - a.claim.createdAt ||
+            b.position - a.position);
+        return live.map(({ claim }) => (Object.assign({}, claim)));
+    }
     /** One resolution per managed/hold key, in policy order. */
     resolveAll(now) {
         return this.policy.managedKeys().map(key => this.resolve(key, now));

@@ -63,11 +63,16 @@ module.exports = function (RED) {
             const defaultBoard = String(helper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id) || boards[0].id);
             client_registry_1.default.initializeMultiBoardConfig({ mode: 'multi', defaultBoard, boards: boards }, node);
             const allTargets = (0, arbiter_targets_1.buildCoilTargets)(boards, boardId => helper.getJsonEnvVar(`MODBUS_${boardId.toUpperCase()}_COILS`, {}), helper.getJsonEnvVar('MODBUS_COILS', {}), defaultBoard);
-            const policy = (0, actuator_policy_1.loadActuatorPolicy)(helper.getEnvVar('ACTUATOR_POLICY', null), {
+            const coilKeys = allTargets.map(t => t.key);
+            const readPolicy = () => (0, actuator_policy_1.loadActuatorPolicy)(helper.getEnvVar('ACTUATOR_POLICY', null), {
                 manualLeaseS: positive(helper.getNumericEnvVar('ARBITER_MANUAL_LEASE_S', DEFAULT_MANUAL_LEASE_S), DEFAULT_MANUAL_LEASE_S),
-                coilKeys: allTargets.map(t => t.key),
+                coilKeys,
                 warn: message => node.warn(message),
             });
+            const policy = readPolicy();
+            const modeSignature = (p) => p.managedKeys().map(key => `${key}:${p.mode(key)}`).join(',');
+            let loadedAt = node.context().global.get('env_loader_loaded_at');
+            let warnedModeChange = false;
             const targets = allTargets.filter(t => policy.mode(t.key) !== 'unmanaged');
             // One board client per board for the node's lifetime (each getModbusClientV2 call takes a reference).
             const clients = new Map();
@@ -100,6 +105,19 @@ module.exports = function (RED) {
             };
             let arbiter = null;
             let dataSourceAcquired = false;
+            /** Takes new manual leases when env-loader stamped another load since the policy was read. */
+            const reloadLeasePolicy = (target) => {
+                const stamp = node.context().global.get('env_loader_loaded_at');
+                if (stamp === loadedAt)
+                    return;
+                loadedAt = stamp;
+                const reloaded = readPolicy();
+                target.setPolicy(reloaded);
+                if (modeSignature(reloaded) !== modeSignature(policy) && !warnedModeChange) {
+                    warnedModeChange = true;
+                    node.warn('[arbiter] actuatorPolicy keys or modes changed: redeploy to apply them (manual leases were reloaded)');
+                }
+            };
             /** Gives back the board clients and the DataSource reference (close, or a start that lost to close). */
             const releaseResources = async () => {
                 for (const boardId of acquiredBoards) {
@@ -141,6 +159,7 @@ module.exports = function (RED) {
                     deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
                     onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
                     onTickReport: report => {
+                        reloadLeasePolicy(next);
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;
                         node.status({ fill: report.readFailed.length > 0 ? 'yellow' : 'green', shape: 'dot', text });
                         if (mode === 'observe') {
@@ -152,6 +171,7 @@ module.exports = function (RED) {
                             node.send([null, { topic: 'arbiter_tick', payload: report }]);
                     },
                     warn: message => node.warn(message),
+                    log: message => node.log(message),
                 });
                 await next.start();
                 if (closing) {

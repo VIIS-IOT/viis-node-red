@@ -75,6 +75,20 @@ describe('ArbiterCore', () => {
         expect(core.release('nobody')).toEqual([]);
     });
 
+    test('rankedClaims: same order as resolve, expired claims left out', () => {
+        const core = new ArbiterCore(policy);
+        core.claim(claim({ source: 'schedule', ownerId: 'schedule:s1', createdAt: NOW }));
+        core.claim(claim({ source: 'schedule', ownerId: 'schedule:s2', createdAt: NOW + 5 }));
+        core.claim(claim({ source: 'manual', ownerId: 'manual:old', createdAt: NOW - 1, expiresAt: NOW + 10 }));
+        core.claim(claim({ source: 'manual', ownerId: 'manual:c1', createdAt: NOW }));
+        core.claim(claim({ source: 'scenario', ownerId: 'offline:i1', key: 'valve_2' }));
+
+        expect(core.rankedClaims('valve_1', NOW).map(c => c.ownerId)).toEqual(['manual:c1', 'manual:old', 'schedule:s2', 'schedule:s1']);
+        expect(core.rankedClaims('valve_1', NOW + 10).map(c => c.ownerId)).toEqual(['manual:c1', 'schedule:s2', 'schedule:s1']);
+        expect(core.rankedClaims('valve_1', NOW)[0].ownerId).toBe(core.resolve('valve_1', NOW).winner?.ownerId);
+        expect(core.rankedClaims('valve_3', NOW)).toEqual([]);
+    });
+
     test('managed with no claim → false', () => {
         const core = new ArbiterCore(policy);
         expect(core.resolve('valve_2', NOW)).toEqual({ key: 'valve_2', desired: false, winner: null });

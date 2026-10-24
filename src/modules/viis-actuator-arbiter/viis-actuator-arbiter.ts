@@ -8,6 +8,10 @@
  * - `observe`: claims are recorded and coils read, diffs reported, nothing is written by the arbiter.
  * - `enforce`: sources submit claims instead of writing; the arbiter writes the winning value.
  *
+ * The manual lease (ARBITER_MANUAL_LEASE_S, `actuatorPolicy.<key>.manualLeaseS`) is read again whenever
+ * env-loader stamps a new `env_loader_loaded_at` (a gateway config sync rewrote device1.json), so a changed
+ * ceiling needs no restart. Which keys are managed, and their mode, still need a redeploy.
+ *
  * Outputs: 1 = `{ topic: 'actuator_owners', payload: owners }` when ownership changes;
  *          2 = the tick report when `debugEnable` is on.
  */
@@ -17,7 +21,7 @@ import { GlobalContextHelper } from '../../ultils/global-context-helper';
 import { DataSourceManager } from '../../orm/dataSource';
 import { getEventOutbox } from '../../services/event-outbox/registry';
 import { WATER_HAMMER_DELAY_MS } from '../shared/fertigation-start-sequence';
-import { loadActuatorPolicy } from './actuator-policy';
+import { ActuatorPolicy, loadActuatorPolicy } from './actuator-policy';
 import { ActuatorArbiter, DEFAULT_TICK_MS } from './arbiter-api';
 import { parseArbiterMode, registerArbiter, unregisterArbiter } from './arbiter-registry';
 import { ClaimStore } from './arbiter-store';
@@ -90,11 +94,17 @@ module.exports = function (RED: NodeAPI) {
                 helper.getJsonEnvVar('MODBUS_COILS', {}),
                 defaultBoard
             );
-            const policy = loadActuatorPolicy(helper.getEnvVar('ACTUATOR_POLICY', null), {
-                manualLeaseS: positive(helper.getNumericEnvVar('ARBITER_MANUAL_LEASE_S', DEFAULT_MANUAL_LEASE_S), DEFAULT_MANUAL_LEASE_S),
-                coilKeys: allTargets.map(t => t.key),
-                warn: message => node.warn(message),
-            });
+            const coilKeys = allTargets.map(t => t.key);
+            const readPolicy = () =>
+                loadActuatorPolicy(helper.getEnvVar('ACTUATOR_POLICY', null), {
+                    manualLeaseS: positive(helper.getNumericEnvVar('ARBITER_MANUAL_LEASE_S', DEFAULT_MANUAL_LEASE_S), DEFAULT_MANUAL_LEASE_S),
+                    coilKeys,
+                    warn: message => node.warn(message),
+                });
+            const policy = readPolicy();
+            const modeSignature = (p: ActuatorPolicy) => p.managedKeys().map(key => `${key}:${p.mode(key)}`).join(',');
+            let loadedAt = node.context().global.get('env_loader_loaded_at');
+            let warnedModeChange = false;
             const targets = allTargets.filter(t => policy.mode(t.key) !== 'unmanaged');
 
             // One board client per board for the node's lifetime (each getModbusClientV2 call takes a reference).
@@ -126,6 +136,19 @@ module.exports = function (RED: NodeAPI) {
 
             let arbiter: ActuatorArbiter | null = null;
             let dataSourceAcquired = false;
+
+            /** Takes new manual leases when env-loader stamped another load since the policy was read. */
+            const reloadLeasePolicy = (target: ActuatorArbiter) => {
+                const stamp = node.context().global.get('env_loader_loaded_at');
+                if (stamp === loadedAt) return;
+                loadedAt = stamp;
+                const reloaded = readPolicy();
+                target.setPolicy(reloaded);
+                if (modeSignature(reloaded) !== modeSignature(policy) && !warnedModeChange) {
+                    warnedModeChange = true;
+                    node.warn('[arbiter] actuatorPolicy keys or modes changed: redeploy to apply them (manual leases were reloaded)');
+                }
+            };
 
             /** Gives back the board clients and the DataSource reference (close, or a start that lost to close). */
             const releaseResources = async () => {
@@ -172,6 +195,7 @@ module.exports = function (RED: NodeAPI) {
                     deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
                     onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
                     onTickReport: report => {
+                        reloadLeasePolicy(next);
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;
                         node.status({ fill: report.readFailed.length > 0 ? 'yellow' : 'green', shape: 'dot', text });
                         if (mode === 'observe') {
@@ -181,6 +205,7 @@ module.exports = function (RED: NodeAPI) {
                         if (config.debugEnable) node.send([null, { topic: 'arbiter_tick', payload: report }]);
                     },
                     warn: message => node.warn(message),
+                    log: message => node.log(message),
                 });
                 await next.start();
                 if (closing) {
