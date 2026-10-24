@@ -17,8 +17,8 @@ function setup() {
     jest.spyOn(Date, 'now').mockImplementation(() => now);
     const coils: Record<string, boolean> = {};
     const policy = loadActuatorPolicy(
-        { valve_1: 'managed' },
-        { manualLeaseS: 1800, coilKeys: coilKeysFromMappings({ board1: { coils: { valve_1: 0, valve_2: 1 } } }), warn: () => undefined },
+        { valve_1: 'managed', valve_3: 'hold' },
+        { manualLeaseS: 1800, coilKeys: coilKeysFromMappings({ board1: { coils: { valve_1: 0, valve_2: 1, valve_3: 2 } } }), warn: () => undefined },
     );
     const arbiter = new ActuatorArbiter({
         policy,
@@ -27,7 +27,10 @@ function setup() {
         tickMs: 60_000,
         debounceMs: 5,
         reconcilerDeps: {
-            targets: [{ key: 'valve_1', boardId: 'board1', address: 0, unitId: 1 }],
+            targets: [
+                { key: 'valve_1', boardId: 'board1', address: 0, unitId: 1 },
+                { key: 'valve_3', boardId: 'board1', address: 2, unitId: 1 },
+            ],
             readCoil: async t => coils[t.key] ?? false,
             writeCoil: async (t, value) => { coils[t.key] = value; },
             classify: classifyActuatorKey,
@@ -43,7 +46,7 @@ function setup() {
 }
 
 const intentMsg = (key: string, value: boolean, intentId = 'intent-7') => ({
-    payload: { fc: 5, unitid: 1, address: key === 'valve_1' ? 0 : 1, value, boardId: 'board1' },
+    payload: { fc: 5, unitid: 1, address: ({ valve_1: 0, valve_2: 1, valve_3: 2 } as Record<string, number>)[key], value, boardId: 'board1' },
     offlineKey: key,
     offlineIntentId: intentId,
 });
@@ -105,6 +108,17 @@ describe('viis-modbus-flex OFFLINE writes with the arbiter enforcing', () => {
         await service.processRequest(other.payload, offlineWriteOrigin(other, ''));
 
         expect(client.writeCoil.mock.calls).toEqual([[1, true], [0, true]]);
+    });
+
+    test('a hold key keeps the direct write', async () => {
+        const { arbiter, client, service } = ctx;
+        const hold = intentMsg('valve_3', true);
+
+        await service.processRequest(hold.payload, offlineWriteOrigin(hold, 'intent'));
+
+        expect(client.writeCoil).toHaveBeenCalledWith(2, true);
+        expect(arbiter.owners().valve_3).toBeUndefined();
+        expect(arbiter.owners()).toEqual({});
     });
 
     test('a managed key whose action targets another coil is written directly to that address', async () => {

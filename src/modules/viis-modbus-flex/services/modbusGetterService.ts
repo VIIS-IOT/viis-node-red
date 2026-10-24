@@ -236,7 +236,8 @@ export class ModbusGetterService {
 
             // ARBITER_MODE=enforce: an OFFLINE scenario write to a managed coil is a claim, not a write.
             const arbiter = request.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL && origin?.key ? getArbiter() : null;
-            if (arbiter && arbiter.mode() === "enforce" && arbiter.manages(origin!.key!)) {
+            // Only `managed` keys: a `hold` key keeps its direct write, as the schedule executor does.
+            if (arbiter && arbiter.mode() === "enforce" && arbiter.keyMode(origin!.key!) === "managed") {
                 // Only when the write goes to the coil the arbiter reconciles for that key: an explicit
                 // fc/address/boardId in the action may point elsewhere, and that address must still be written.
                 const target = arbiter.target(origin!.key!);
