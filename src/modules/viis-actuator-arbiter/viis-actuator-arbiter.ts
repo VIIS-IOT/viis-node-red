@@ -23,6 +23,7 @@ import { parseArbiterMode, registerArbiter, unregisterArbiter } from './arbiter-
 import { ClaimStore } from './arbiter-store';
 import { buildCoilTargets, parseBoards } from './arbiter-targets';
 import { waitForEnvLoad } from './env-load-wait';
+import { createObserveDiffLog } from './observe-diff';
 import { classifyActuatorKey, CoilTarget } from './reconciler';
 
 interface ViisActuatorArbiterNodeDef extends NodeDef {
@@ -149,6 +150,7 @@ module.exports = function (RED: NodeAPI) {
                     node.warn(`[arbiter] gateway MySQL unavailable, claims are not persisted: ${(error as Error).message}`);
                 }
 
+                const observeDiffLog = createObserveDiffLog();
                 const next = new ActuatorArbiter({
                     policy,
                     mode,
@@ -172,6 +174,10 @@ module.exports = function (RED: NodeAPI) {
                     onTickReport: report => {
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;
                         node.status({ fill: report.readFailed.length > 0 ? 'yellow' : 'green', shape: 'dot', text });
+                        if (mode === 'observe') {
+                            const line = observeDiffLog.next(report);
+                            if (line) node.warn(line);
+                        }
                         if (config.debugEnable) node.send([null, { topic: 'arbiter_tick', payload: report }]);
                     },
                     warn: message => node.warn(message),

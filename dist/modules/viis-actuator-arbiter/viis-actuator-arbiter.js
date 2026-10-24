@@ -14,6 +14,7 @@ const arbiter_registry_1 = require("./arbiter-registry");
 const arbiter_store_1 = require("./arbiter-store");
 const arbiter_targets_1 = require("./arbiter-targets");
 const env_load_wait_1 = require("./env-load-wait");
+const observe_diff_1 = require("./observe-diff");
 const reconciler_1 = require("./reconciler");
 const DEFAULT_MANUAL_LEASE_S = 1800;
 const DEFAULT_SCENARIO_LEASE_S = 600;
@@ -121,6 +122,7 @@ module.exports = function (RED) {
                 catch (error) {
                     node.warn(`[arbiter] gateway MySQL unavailable, claims are not persisted: ${error.message}`);
                 }
+                const observeDiffLog = (0, observe_diff_1.createObserveDiffLog)();
                 const next = new arbiter_api_1.ActuatorArbiter({
                     policy,
                     mode,
@@ -141,6 +143,11 @@ module.exports = function (RED) {
                     onTickReport: report => {
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;
                         node.status({ fill: report.readFailed.length > 0 ? 'yellow' : 'green', shape: 'dot', text });
+                        if (mode === 'observe') {
+                            const line = observeDiffLog.next(report);
+                            if (line)
+                                node.warn(line);
+                        }
                         if (config.debugEnable)
                             node.send([null, { topic: 'arbiter_tick', payload: report }]);
                     },
