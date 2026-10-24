@@ -158,6 +158,7 @@ module.exports = function (RED) {
                     outbox: registry_1.getEventOutbox,
                     deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
                     onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
+                    onCoilWrite: write => node.send([{ topic: 'actuator_write', payload: write }, null]),
                     onTickReport: report => {
                         reloadLeasePolicy(next);
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;

@@ -119,6 +119,27 @@ describe('viis-actuator-arbiter node', () => {
         expect(DataSourceManager.release).toHaveBeenCalledTimes(1);
     });
 
+    test('a confirmed coil write goes out on output 1 as actuator_write (same wire as actuator_owners)', async () => {
+        const { node, close } = startNode({
+            arbiter_mode: 'enforce',
+            modbus_boards: BOARDS,
+            modbus_board1_coils: { valve_1: 0 },
+            actuator_policy: '{"valve_1":"managed"}',
+        });
+        await flush();
+        await flush();
+        const arbiter = getArbiter()!;
+
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:r1', expiresAt: Date.now() + 60_000 });
+
+        const sent = (node.send as jest.Mock).mock.calls.map((call: any[]) => call[0]?.[0]).filter(Boolean);
+        expect(sent).toEqual([
+            { topic: 'actuator_owners', payload: expect.objectContaining({ valve_1: expect.objectContaining({ ownerId: 'manual:r1' }) }) },
+            { topic: 'actuator_write', payload: { key: 'valve_1', value: true, ts: expect.any(Number) } },
+        ]);
+        await close();
+    });
+
     test('a new env_loader_loaded_at reloads the manual lease on the next tick; a changed key list only warns', async () => {
         const { node, globals, close } = startNode({
             arbiter_mode: 'enforce',

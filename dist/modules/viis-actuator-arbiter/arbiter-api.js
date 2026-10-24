@@ -168,6 +168,7 @@ class ActuatorArbiter {
             }
             await this.releaseClosedByDevice();
             report = await this.reconciler.tick();
+            this.emitCoilWrites(report);
             (_b = (_a = this.opts).onTickReport) === null || _b === void 0 ? void 0 : _b.call(_a, report);
             await this.updateWriteAlarms(report);
             await this.updateCeilingAlarms(report);
@@ -400,6 +401,23 @@ class ActuatorArbiter {
         this.saveChain = this.saveChain
             .then(() => store.save(this.core.snapshot()))
             .catch(error => this.warn(`[arbiter] claims not saved: ${errorText(error)}`));
+    }
+    /** Reports the writes of this tick that did not throw; a listener error must not fail the tick. */
+    emitCoilWrites(report) {
+        const { onCoilWrite } = this.opts;
+        if (!onCoilWrite)
+            return;
+        const ts = this.now();
+        for (const write of report.writes) {
+            if (!write.ok)
+                continue;
+            try {
+                onCoilWrite({ key: write.key, value: write.value, ts });
+            }
+            catch (error) {
+                this.warn(`[arbiter] coil write of ${write.key} not reported: ${errorText(error)}`);
+            }
+        }
     }
     emitOwnersIfChanged() {
         var _a, _b;

@@ -12,7 +12,9 @@
  * env-loader stamps a new `env_loader_loaded_at` (a gateway config sync rewrote device1.json), so a changed
  * ceiling needs no restart. Which keys are managed, and their mode, still need a redeploy.
  *
- * Outputs: 1 = `{ topic: 'actuator_owners', payload: owners }` when ownership changes;
+ * Outputs: 1 = `{ topic: 'actuator_owners', payload: owners }` when ownership changes, and
+ *              `{ topic: 'actuator_write', payload: { key, value, ts } }` for every coil the arbiter wrote
+ *              (the flow maps both to telemetry: the poller alone would leave an arbiter OFF stale);
  *          2 = the tick report when `debugEnable` is on.
  */
 import { NodeAPI, Node, NodeDef } from 'node-red';
@@ -194,6 +196,7 @@ module.exports = function (RED: NodeAPI) {
                     outbox: getEventOutbox,
                     deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
                     onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
+                    onCoilWrite: write => node.send([{ topic: 'actuator_write', payload: write }, null]),
                     onTickReport: report => {
                         reloadLeasePolicy(next);
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;

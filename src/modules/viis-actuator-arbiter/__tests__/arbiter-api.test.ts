@@ -156,6 +156,33 @@ describe('ActuatorArbiter', () => {
         await arbiter.stop();
     });
 
+    test('a reconciler write emits one actuator_write message: confirmed writes only, nothing when the coil already matches', async () => {
+        const coilWrites: { key: string; value: boolean; ts: number }[] = [];
+        const { arbiter, failWrite, advance } = setup({ onCoilWrite: write => coilWrites.push(write) });
+        await arbiter.start();
+
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:w', expiresAt: T0 + 60_000 });
+        expect(coilWrites).toEqual([{ key: 'valve_1', value: true, ts: T0 }]);
+
+        // The coil already reads ON: a tick without a diff writes and publishes nothing.
+        await arbiter.tick();
+        expect(coilWrites).toHaveLength(1);
+
+        // The lease ended: the OFF the arbiter writes is published too (the poller would not see it in time).
+        advance(60_000);
+        await arbiter.tick();
+        expect(coilWrites).toEqual([
+            { key: 'valve_1', value: true, ts: T0 },
+            { key: 'valve_1', value: false, ts: T0 + 60_000 },
+        ]);
+
+        // A write that threw is not a coil value: nothing is published for it.
+        failWrite.add('valve_2');
+        await arbiter.claim({ key: 'valve_2', value: true, source: 'manual', ownerId: 'manual:f', expiresAt: T0 + 120_000 });
+        expect(coilWrites).toHaveLength(2);
+        await arbiter.stop();
+    });
+
     test('expired lease: the tick drops the claim and drives a managed key OFF', async () => {
         const { arbiter, state, advance } = setup();
         await arbiter.start();

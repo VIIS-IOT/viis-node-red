@@ -11,6 +11,9 @@
  * - A key whose write failed on 3 consecutive ticks raises the gateway state alarm
  *   `actuator_write_failed:<key>` through the event outbox (nothing when the outbox is off); the next
  *   good write clears it.
+ * - Every coil write that did not throw is reported through `onCoilWrite` so the node can publish the
+ *   value as telemetry: the Modbus poller only publishes changes it polled itself, so an arbiter OFF
+ *   (expired or released claim) would otherwise leave the key's telemetry stale until the next poll.
  * - A manual ON lease is a ceiling, not a timer: once the coil was seen ON under the claim and later
  *   reads OFF (the PLC closed it), the claim is released before the tick could write it back. When the
  *   ceiling ends with the coil still ON the arbiter drives it OFF and raises
@@ -45,6 +48,13 @@ export interface OwnerInfo {
 
 /** Winner per key; `next` is the live claim that takes over when the winner ends (null = none). */
 export type ArbiterOwners = Record<string, OwnerInfo & { next: OwnerInfo | null }>;
+
+/** A coil value the reconciler wrote (the write did not throw); `ts` is the arbiter clock at the tick. */
+export interface CoilWrite {
+    key: string;
+    value: boolean;
+    ts: number;
+}
 
 export interface ActuatorArbiterApi {
     /** policy mode managed | hold */
@@ -81,6 +91,8 @@ export interface ArbiterOptions {
     outbox?: () => AlarmOutbox | null;
     deviceId?: () => string;
     onOwnersChange?: (owners: ArbiterOwners) => void;
+    /** Called once per confirmed write of a tick, in write order (enforce only; observe never writes). */
+    onCoilWrite?: (write: CoilWrite) => void;
     onTickReport?: (report: TickReport) => void;
     warn?: (message: string) => void;
     log?: (message: string) => void;
@@ -267,6 +279,7 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
             }
             await this.releaseClosedByDevice();
             report = await this.reconciler.tick();
+            this.emitCoilWrites(report);
             this.opts.onTickReport?.(report);
             await this.updateWriteAlarms(report);
             await this.updateCeilingAlarms(report);
@@ -479,6 +492,21 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         this.saveChain = this.saveChain
             .then(() => store.save(this.core.snapshot()))
             .catch(error => this.warn(`[arbiter] claims not saved: ${errorText(error)}`));
+    }
+
+    /** Reports the writes of this tick that did not throw; a listener error must not fail the tick. */
+    private emitCoilWrites(report: TickReport): void {
+        const { onCoilWrite } = this.opts;
+        if (!onCoilWrite) return;
+        const ts = this.now();
+        for (const write of report.writes) {
+            if (!write.ok) continue;
+            try {
+                onCoilWrite({ key: write.key, value: write.value, ts });
+            } catch (error) {
+                this.warn(`[arbiter] coil write of ${write.key} not reported: ${errorText(error)}`);
+            }
+        }
     }
 
     private emitOwnersIfChanged(): void {
