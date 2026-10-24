@@ -157,7 +157,7 @@ module.exports = function (RED) {
         }
         // ── Core sync logic ───────────────────────────────────────────────────
         async function handleSync(params) {
-            var _a, _b, _c;
+            var _a, _b, _c, _d;
             if (isSyncing) {
                 log.warn(node, 'Sync already in progress, skipping');
                 return;
@@ -168,7 +168,11 @@ module.exports = function (RED) {
                 // Step 1: Build config URL
                 // Prefer editor override, then common.json via env-loader (lazy — after node construct)
                 const backendUrl = resolveBackendUrl();
-                const configUrl = `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
+                // The backend's sync-full-config RPC carries a signed export URL (tenantId, exp, sig);
+                // the export route refuses an unsigned GET. Keep its path + query but reach the
+                // backend by the gateway's own origin: the backend signs with its public host, which
+                // is not always how this gateway reaches it (local stacks, private networks).
+                const configUrl = (_a = signedConfigUrl(backendUrl, params === null || params === void 0 ? void 0 : params.configUrl)) !== null && _a !== void 0 ? _a : `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
                 log.info(node, `Config URL: ${configUrl}`);
                 log.info(node, `Device ID in URL: ${deviceId}`);
                 // Step 2: Fetch config from backend
@@ -178,12 +182,12 @@ module.exports = function (RED) {
                 log.info(node, `Response keys: ${fetchedConfig ? Object.keys(fetchedConfig).join(', ') : 'null'}`);
                 // Unwrap { result: { ... } } wrapper if present (backend API response format)
                 const config = (fetchedConfig === null || fetchedConfig === void 0 ? void 0 : fetchedConfig.result) || fetchedConfig;
-                log.info(node, `Config deviceIdentity.DEVICE_ID: ${((_a = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _a === void 0 ? void 0 : _a.DEVICE_ID) || 'MISSING'}`);
+                log.info(node, `Config deviceIdentity.DEVICE_ID: ${((_b = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _b === void 0 ? void 0 : _b.DEVICE_ID) || 'MISSING'}`);
                 // Step 3: Validate
-                if (!((_b = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _b === void 0 ? void 0 : _b.DEVICE_ID)) {
+                if (!((_c = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _c === void 0 ? void 0 : _c.DEVICE_ID)) {
                     throw new Error('Invalid config: missing deviceIdentity.DEVICE_ID');
                 }
-                if (!((_c = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _c === void 0 ? void 0 : _c.DEVICE_ACCESS_TOKEN)) {
+                if (!((_d = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _d === void 0 ? void 0 : _d.DEVICE_ACCESS_TOKEN)) {
                     throw new Error('Invalid config: missing deviceIdentity.DEVICE_ACCESS_TOKEN');
                 }
                 log.info(node, `Config fetched for device: ${config.deviceIdentity.DEVICE_ID}`);
@@ -198,7 +202,7 @@ module.exports = function (RED) {
                             log.info(node, 'Config unchanged, skipping write');
                         }
                     }
-                    catch (_d) {
+                    catch (_e) {
                         // If current file is invalid, we'll overwrite it
                     }
                 }
@@ -240,6 +244,20 @@ module.exports = function (RED) {
             }
         }
         // ── Fetch with retry + detailed error logging ────────────────────────
+        /** `${origin}${path}${query}` of the RPC's signed export URL, or null when it is absent/invalid. */
+        function signedConfigUrl(origin, raw) {
+            if (typeof raw !== 'string' || !raw.trim())
+                return null;
+            try {
+                const url = new URL(raw);
+                if (!url.pathname.endsWith('/export-nodered'))
+                    return null;
+                return `${origin}${url.pathname}${url.search}`;
+            }
+            catch (_a) {
+                return null;
+            }
+        }
         async function fetchWithRetry(url) {
             var _a, _b, _c, _d;
             let lastError = null;

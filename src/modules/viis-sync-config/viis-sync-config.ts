@@ -159,7 +159,12 @@ export = function (RED: NodeAPI) {
                 // Step 1: Build config URL
                 // Prefer editor override, then common.json via env-loader (lazy — after node construct)
                 const backendUrl = resolveBackendUrl();
-                const configUrl = `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
+                // The backend's sync-full-config RPC carries a signed export URL (tenantId, exp, sig);
+                // the export route refuses an unsigned GET. Keep its path + query but reach the
+                // backend by the gateway's own origin: the backend signs with its public host, which
+                // is not always how this gateway reaches it (local stacks, private networks).
+                const configUrl = signedConfigUrl(backendUrl, params?.configUrl)
+                    ?? `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
 
                 log.info(node, `Config URL: ${configUrl}`);
                 log.info(node, `Device ID in URL: ${deviceId}`);
@@ -242,6 +247,18 @@ export = function (RED: NodeAPI) {
         }
 
         // ── Fetch with retry + detailed error logging ────────────────────────
+        /** `${origin}${path}${query}` of the RPC's signed export URL, or null when it is absent/invalid. */
+        function signedConfigUrl(origin: string, raw: unknown): string | null {
+            if (typeof raw !== 'string' || !raw.trim()) return null;
+            try {
+                const url = new URL(raw);
+                if (!url.pathname.endsWith('/export-nodered')) return null;
+                return `${origin}${url.pathname}${url.search}`;
+            } catch {
+                return null;
+            }
+        }
+
         async function fetchWithRetry(url: string): Promise<any> {
             let lastError: Error | null = null;
             for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
