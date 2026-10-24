@@ -1,0 +1,73 @@
+<script type="text/html" data-template-name="viis-actuator-arbiter">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-debugEnable"><i class="fa fa-bug"></i> Debug</label>
+        <input type="checkbox" id="node-input-debugEnable" style="width: auto;">
+        <span style="margin-left: 10px;">Send each tick report on output 2</span>
+    </div>
+    <div class="form-row">
+        <p style="color: #666; font-size: 13px;"><i class="fa fa-info-circle"></i> Mode and keys come from device1.json (<code>ARBITER_MODE</code>, <code>actuatorPolicy</code>). With <code>ARBITER_MODE</code> off this node does nothing.</p>
+    </div>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType("viis-actuator-arbiter", {
+        category: "function",
+        color: "#98D2C0",
+        defaults: {
+            name: { value: "" },
+            debugEnable: { value: false }
+        },
+        inputs: 0,
+        outputs: 2,
+        outputLabels: ["actuator owners", "tick report"],
+        icon: "switch.svg",
+        label: function () {
+            return this.name || "viis-actuator-arbiter";
+        }
+    });
+</script>
+
+<script type="text/html" data-help-name="viis-actuator-arbiter">
+    <p>One owner-aware writer for the actuator coils listed in device1.json <code>actuatorPolicy</code>. Deploy one per gateway.</p>
+
+    <h3>Modes (<code>ARBITER_MODE</code>)</h3>
+    <dl class="message-properties">
+        <dt>off <span class="property-type">default</span></dt>
+        <dd>The node does nothing. RPC, schedules and scenarios write coils directly, as before.</dd>
+        <dt>observe</dt>
+        <dd>Claims are recorded and coils are read; differences are reported, the arbiter writes nothing.</dd>
+        <dt>enforce</dt>
+        <dd>Writers submit expiring claims for managed keys; the arbiter writes the winning value.</dd>
+    </dl>
+
+    <h3>Priorities</h3>
+    <p><code>safety 100 &gt; alarm_action 90 &gt; manual 80 &gt; scenario 60 &gt; schedule 50 &gt; automation 30</code>; on a tie the newest claim wins.
+       With no live claim a <code>managed</code> key is driven OFF and a <code>hold</code> key is left alone. Unlisted keys are never touched.</p>
+
+    <h3>Settings</h3>
+    <ul>
+        <li><code>actuatorPolicy</code>: <code>{ "valve_1": "managed", "valve_2": { "mode": "hold", "manualLeaseS": 60 } }</code> (fc=5 coils only)</li>
+        <li><code>ARBITER_MANUAL_LEASE_S</code> (1800), <code>ARBITER_SCENARIO_LEASE_S</code> (600), <code>ARBITER_TICK_MS</code> (5000, min 2000)</li>
+        <li>RPC method <code>release_claims</code> with optional <code>params.keys</code> drops manual claims.</li>
+    </ul>
+
+    <h3>Outputs</h3>
+    <ol class="node-ports">
+        <li>Actuator owners
+            <dl class="message-properties">
+                <dt>topic <span class="property-type">string</span></dt><dd><code>actuator_owners</code></dd>
+                <dt>payload <span class="property-type">object</span></dt><dd><code>{ key: { source, ownerId, expiresAt } }</code>, sent when ownership changes.</dd>
+            </dl>
+        </li>
+        <li>Tick report (Debug only)
+            <dl class="message-properties">
+                <dt>payload <span class="property-type">object</span></dt><dd><code>{ desired, actual, diffs, writes, readFailed }</code></dd>
+            </dl>
+        </li>
+    </ol>
+    <p>Claims are kept in the gateway table <code>tabiot_actuator_claim</code> across restarts. A key whose write fails on 3 ticks in a row raises <code>actuator_write_failed:&lt;key&gt;</code> through the event outbox.</p>
+</script>

@@ -4,7 +4,8 @@
  * Handles RPC request processing and coordination between services
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RpcHandler = void 0;
+exports.RpcHandler = exports.RELEASE_CLAIMS_METHOD = void 0;
+exports.rpcClaimSource = rpcClaimSource;
 const constants_1 = require("../constants");
 const rpc_deadline_1 = require("../utils/rpc-deadline");
 const logger_1 = require("../utils/logger");
@@ -13,6 +14,16 @@ const fertigation_start_sequence_1 = require("../../shared/fertigation-start-seq
 const schedule_coil_classify_1 = require("../../viis-schedule-executor/schedule-coil-classify");
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
 const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
+const arbiter_registry_1 = require("../../viis-actuator-arbiter/arbiter-registry");
+/** RPC method that drops manual arbiter claims (`params.keys?: string[]`). Handled only while an arbiter runs. */
+exports.RELEASE_CLAIMS_METHOD = "release_claims";
+/**
+ * RPC envelope `source` → arbiter claim source. Portal/mobile/MCP send none (a person: `manual`);
+ * the backend tags ONLINE scenarios and alarm actions. A remote caller never claims as `safety`.
+ */
+function rpcClaimSource(raw) {
+    return raw === "scenario" || raw === "alarm_action" ? raw : "manual";
+}
 class RpcHandler {
     static getCommandPriority(key) {
         const lower = key.toLowerCase();
@@ -135,7 +146,7 @@ class RpcHandler {
      * Internal request processor executed in serialized queue
      */
     async publishRpcAck(rpcBody, result, ctx = (0, rpc_deadline_1.currentRpcDeadline)()) {
-        if (!(0, demeter_mqtt_topics_1.isHandledRpcControlMethod)(rpcBody.method)) {
+        if (!(0, demeter_mqtt_topics_1.isHandledRpcControlMethod)(rpcBody.method) && !this.isArbiterReleaseRequest(rpcBody)) {
             return;
         }
         if (ctx) {
@@ -208,11 +219,17 @@ class RpcHandler {
         }
         return rpcBody;
     }
+    isArbiterReleaseRequest(rpcBody) {
+        return rpcBody.method === exports.RELEASE_CLAIMS_METHOD && (0, arbiter_registry_1.getArbiter)() !== null;
+    }
     async handleRpcRequestInternal(rpcBody, maxRetries = 3) {
         let lastError = null;
         const startTime = Date.now();
         rpcBody = this.normalizeRpcBody(rpcBody);
         const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
+        if (ctx && typeof rpcBody.source === "string") {
+            ctx.source = rpcBody.source;
+        }
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             if (attempt > 1 && (0, rpc_deadline_1.isRpcExpired)(ctx)) {
                 this.logger.warn(`[RPC-EXPIRED] Not retrying (attempt ${attempt}/${maxRetries}): request deadline passed`);
@@ -230,6 +247,11 @@ class RpcHandler {
                     this.logger.log(`Processing batch RPC request (attempt ${attempt}/${maxRetries})`);
                     await this.handleSetStateBatchRequest(rpcBody.params);
                     this.logger.log(`[RPC-DONE] Batch request completed in ${Date.now() - startTime}ms`);
+                    await this.publishRpcAck(rpcBody, { success: true });
+                    return;
+                }
+                else if (this.isArbiterReleaseRequest(rpcBody)) {
+                    await this.handleReleaseClaims((0, arbiter_registry_1.getArbiter)(), rpcBody.params);
                     await this.publishRpcAck(rpcBody, { success: true });
                     return;
                 }
@@ -682,6 +704,13 @@ class RpcHandler {
                 throw new Error(`Protection blocked: ${gate.reason}`);
             }
         }
+        // Actuator arbiter (ARBITER_MODE observe|enforce, fc=5 keys listed managed/hold): null when off.
+        const arbiter = mapping.fc === 5 ? (0, arbiter_registry_1.getArbiter)() : null;
+        const arbitrated = arbiter !== null && arbiter.manages(key);
+        if (arbitrated && arbiter.mode() === 'enforce') {
+            await this.claimThroughArbiter(arbiter, key, Boolean(value), mapping);
+            return;
+        }
         (0, rpc_deadline_1.assertRpcNotExpired)(`Modbus write ${key}=${value}`);
         this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
         // Write to Modbus with connection error handling.
@@ -722,6 +751,71 @@ class RpcHandler {
                 this.resolveGate().updateState(key, Boolean(value));
             }
         }
+        if (arbitrated) {
+            // observe: the write above is today's; the claim only records who owns the coil.
+            const claim = this.buildArbiterClaim(arbiter, key, Boolean(value));
+            void arbiter.claim(claim).catch((error) => {
+                this.logger.warn(`[ARBITER] Observe claim for ${key} not recorded: ${error.message}`);
+            });
+        }
+    }
+    buildArbiterClaim(arbiter, key, value) {
+        const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
+        const source = rpcClaimSource(ctx === null || ctx === void 0 ? void 0 : ctx.source);
+        return {
+            key,
+            value,
+            source,
+            // A command without command_id (local flow input) has one owner per source: the newer replaces it.
+            ownerId: `${source}:${(ctx === null || ctx === void 0 ? void 0 : ctx.commandId) || 'local'}`,
+            expiresAt: Date.now() + arbiter.leaseMs(source, key),
+        };
+    }
+    /**
+     * enforce: the RPC does not write a managed coil; it claims it and the arbiter writes the winner.
+     * ACKED only when this claim won and the coil reads the requested value. A claim that lost is
+     * withdrawn (the caller is told FAILED `blocked_by:<source>`, so it must not take effect later). A claim
+     * that won but is not on the coil yet (Modbus down) stays: the arbiter keeps reconciling it.
+     */
+    async claimThroughArbiter(arbiter, key, value, mapping) {
+        var _a, _b;
+        (0, rpc_deadline_1.assertRpcNotExpired)(`Arbiter claim ${key}=${value}`);
+        const claim = this.buildArbiterClaim(arbiter, key, value);
+        this.logger.log(`[ARBITER] Claim ${key}=${value} (${claim.ownerId})`);
+        const result = await arbiter.claim(claim);
+        if (!result.applied) {
+            try {
+                await arbiter.release(claim.ownerId, key);
+            }
+            catch (error) {
+                this.logger.warn(`[ARBITER] Could not withdraw blocked claim ${claim.ownerId}: ${error.message}`);
+            }
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} blocked by ${(_a = result.blockedBy) !== null && _a !== void 0 ? _a : 'expired'}` });
+            throw new Error(`blocked_by:${(_b = result.blockedBy) !== null && _b !== void 0 ? _b : 'expired'}`);
+        }
+        if (result.actual !== value) {
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} claimed, not confirmed` });
+            throw new Error(`not_confirmed:${key} reads ${String(result.actual)}; the arbiter keeps the claim and retries`);
+        }
+        this.modbusService.updateGlobalContextCacheAfterVerification(key, result.actual, mapping.fc);
+        if (this.resolveGate()) {
+            this.resolveGate().updateState(key, result.actual);
+        }
+        await this.publishResultWithRetry(key, result.actual);
+        this.node.status({ fill: "green", shape: "dot", text: `${key}=${result.actual} (arbiter)` });
+    }
+    /** `release_claims`: drops manual claims on `params.keys`, or every manual claim. */
+    async handleReleaseClaims(arbiter, params) {
+        const keys = Array.isArray(params === null || params === void 0 ? void 0 : params.keys) ? params.keys.map((k) => String(k)) : null;
+        if (keys && keys.length > 0) {
+            for (const key of keys) {
+                await arbiter.release('manual:*', key);
+            }
+        }
+        else {
+            await arbiter.release('manual:*');
+        }
+        this.logger.log(`[ARBITER] Released manual claims${keys && keys.length > 0 ? ` on ${keys.join(', ')}` : ''}`);
     }
     /**
      * Handle parameter that only updates configuration (no Modbus mapping)

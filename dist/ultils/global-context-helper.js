@@ -100,7 +100,12 @@ const ENV_TO_GLOBAL_MAPPING = {
     // Gateway event outbox flag (device1.json / common.json via env-loader)
     'EVENT_OUTBOX_ENABLED': 'event_outbox_enabled',
     // Actuator arbiter policy: device1.json `actuatorPolicy` as one JSON string (env-loader)
-    'ACTUATOR_POLICY': 'actuator_policy'
+    'ACTUATOR_POLICY': 'actuator_policy',
+    // Actuator arbiter flags (device1.json / common.json via env-loader)
+    'ARBITER_MODE': 'arbiter_mode',
+    'ARBITER_MANUAL_LEASE_S': 'arbiter_manual_lease_s',
+    'ARBITER_SCENARIO_LEASE_S': 'arbiter_scenario_lease_s',
+    'ARBITER_TICK_MS': 'arbiter_tick_ms'
 };
 /**
  * Global Context Helper class

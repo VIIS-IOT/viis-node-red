@@ -71,6 +71,7 @@
       "viis-schedule-logic-v2": "dist/modules/schedule-executor-v2/viis-schedule-logic-v2/viis-schedule-logic-v2.js",
       "viis-schedule-executor-v2": "dist/modules/schedule-executor-v2/viis-schedule-executor-v2/viis-schedule-executor-v2.js",
       "viis-device-protection": "dist/modules/viis-device-protection/viis-device-protection.js",
+      "viis-actuator-arbiter": "dist/modules/viis-actuator-arbiter/viis-actuator-arbiter.js",
       "viis-crud-schedule": "dist/modules/viis-crud-schedule/viis-crud-schedule.js",
       "viis-sync-schedule": "dist/modules/viis-sync-schedule/viis-sync-schedule.js",
       "viis-sync-customer-user": "dist/modules/viis-sync-customer-user/viis-sync-customer-user.js",
