@@ -54,6 +54,11 @@ export class ClaimStore {
         }));
     }
 
+    /** False once the shared DataSource was destroyed (another node closing first); no save can succeed then. */
+    isAvailable(): boolean {
+        return this.ds.isInitialized;
+    }
+
     /** Replaces every stored claim with `claims` in one transaction. */
     async save(claims: ActuatorClaim[]): Promise<void> {
         await this.ds.transaction(async manager => {

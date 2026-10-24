@@ -42,6 +42,10 @@ class ClaimStore {
             createdAt: Number(row.created_at),
         }));
     }
+    /** False once the shared DataSource was destroyed (another node closing first); no save can succeed then. */
+    isAvailable() {
+        return this.ds.isInitialized;
+    }
     /** Replaces every stored claim with `claims` in one transaction. */
     async save(claims) {
         await this.ds.transaction(async (manager) => {

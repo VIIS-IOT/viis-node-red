@@ -22,6 +22,10 @@ const T0 = 1_800_000_000_000;
 class MemoryStore implements ClaimStoreLike {
     rows: ActuatorClaim[] = [];
     saves = 0;
+    available = true;
+    isAvailable() {
+        return this.available;
+    }
     async ensureTable() {}
     async load() {
         return this.rows.map(r => ({ ...r }));
@@ -163,6 +167,21 @@ describe('ActuatorArbiter', () => {
         expect(state.valve_2).toBe(false);
         expect(arbiter.owners()).toEqual({});
         await arbiter.stop();
+    });
+
+    test('stop() after the DataSource was closed by another node does not warn and keeps the rows saved while running', async () => {
+        const store = new MemoryStore();
+        const warns: string[] = [];
+        const { arbiter } = setup({ store, warn: m => warns.push(m) });
+        await arbiter.start();
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:s', expiresAt: T0 + 600_000 });
+        expect(store.saves).toBeGreaterThan(0);
+
+        store.available = false;
+        await arbiter.stop();
+
+        expect(warns).toEqual([]);
+        expect(store.rows.map(r => r.ownerId)).toEqual(['manual:s']);
     });
 
     test('leaseMs: manual from the key policy, scenario and alarm_action from ARBITER_SCENARIO_LEASE_S', () => {

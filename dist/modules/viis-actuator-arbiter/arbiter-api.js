@@ -244,8 +244,11 @@ class ActuatorArbiter {
     }
     /** Saves the current claims; saves run one after another so the last one holds the latest set. */
     persist() {
+        var _a;
         const { store } = this.opts;
-        if (!store)
+        // Every change is saved while running, so a store whose DataSource another node already closed
+        // (node close order) has nothing new to take; warning there was only noise.
+        if (!store || ((_a = store.isAvailable) === null || _a === void 0 ? void 0 : _a.call(store)) === false)
             return;
         this.saveChain = this.saveChain
             .then(() => store.save(this.core.snapshot()))

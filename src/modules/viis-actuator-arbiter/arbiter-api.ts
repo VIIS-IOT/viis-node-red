@@ -51,7 +51,7 @@ export interface ActuatorArbiterApi {
     owners(): ArbiterOwners;
 }
 
-export type ClaimStoreLike = Pick<ClaimStore, 'ensureTable' | 'load' | 'save'>;
+export type ClaimStoreLike = Pick<ClaimStore, 'ensureTable' | 'load' | 'save'> & { isAvailable?: () => boolean };
 export type AlarmOutbox = Pick<EventOutbox, 'raise' | 'clear' | 'activeAlarms'>;
 
 export interface ArbiterOptions {
@@ -321,7 +321,9 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     /** Saves the current claims; saves run one after another so the last one holds the latest set. */
     private persist(): void {
         const { store } = this.opts;
-        if (!store) return;
+        // Every change is saved while running, so a store whose DataSource another node already closed
+        // (node close order) has nothing new to take; warning there was only noise.
+        if (!store || store.isAvailable?.() === false) return;
         this.saveChain = this.saveChain
             .then(() => store.save(this.core.snapshot()))
             .catch(error => this.warn(`[arbiter] claims not saved: ${errorText(error)}`));
