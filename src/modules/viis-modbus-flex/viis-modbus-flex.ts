@@ -2,7 +2,7 @@ import { NodeAPI, Node } from "node-red";
 import ClientRegistry, { MultiModbusConfig } from "../../core/client-registry";
 import { GlobalContextHelper } from "../../ultils/global-context-helper";
 import { ViisModbusGetterNodeDef, ServiceOptions, NodeStatus } from "./interfaces/types";
-import { ModbusGetterService } from "./services/modbusGetterService";
+import { ModbusGetterService, offlineWriteOrigin } from "./services/modbusGetterService";
 import { Logger } from "./utils/logger";
 import { DEFAULT_CONFIG, ENV_KEYS, STATUS_MESSAGES } from "./constants";
 import { reportScenarioWriteFromMsg } from "../viis-automation-node/services/scenarioTriggerTracker";
@@ -442,7 +442,8 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     // Process the modbus request
-                    const response = await modbusGetterService.processRequest(msg.payload);
+                    // OFFLINE intent chain: a managed coil becomes an arbiter claim (ARBITER_MODE=enforce).
+                    const response = await modbusGetterService.processRequest(msg.payload, offlineWriteOrigin(msg, config.writeSource));
 
                     // Update message payload with response
                     msg.payload = response;

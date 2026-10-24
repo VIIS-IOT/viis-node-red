@@ -5,7 +5,8 @@
         defaults: {
             name: { value: "" },
             enableLogging: { value: false }, // Add logging enable/disable option
-            boardId: { value: "board1" } // Board ID for multi-board mode
+            boardId: { value: "board1" }, // Board ID for multi-board mode
+            writeSource: { value: "" } // "intent": writes OFFLINE intent actions (actuator arbiter claims)
         },
         inputs: 1,
         outputs: 1,
@@ -60,6 +61,19 @@
         <div class="form-tips" style="margin-top: 5px; margin-bottom: 10px;">
             <small><i class="fa fa-info-circle"></i> Select a board (default: Board 1).
             You can override dynamically using <code>msg.payload.boardId</code></small>
+        </div>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-writeSource"><i class="fa fa-random"></i> Write source</label>
+        <select id="node-input-writeSource" style="width: 70%;">
+            <option value="">Direct (default)</option>
+            <option value="intent">OFFLINE intent actions</option>
+        </select>
+        <div class="form-tips" style="margin-top: 5px; margin-bottom: 10px;">
+            <small><i class="fa fa-info-circle"></i> With ARBITER_MODE=enforce, an OFFLINE intent write to a coil listed
+            in <code>actuatorPolicy</code> becomes an arbiter claim (<code>msg.offlineKey</code>, <code>msg.offlineIntentId</code>).
+            <code>msg.source = "intent"</code> does the same per message.</small>
         </div>
     </div>
 

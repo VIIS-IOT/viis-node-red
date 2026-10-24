@@ -402,7 +402,8 @@ module.exports = function (RED) {
                                 logger.debug(`Processing request: ${JSON.stringify(msg.payload)}`);
                             }
                             // Process the modbus request
-                            const response = await modbusGetterService.processRequest(msg.payload);
+                            // OFFLINE intent chain: a managed coil becomes an arbiter claim (ARBITER_MODE=enforce).
+                            const response = await modbusGetterService.processRequest(msg.payload, (0, modbusGetterService_1.offlineWriteOrigin)(msg, config.writeSource));
                             // Update message payload with response
                             msg.payload = response;
                             try {
