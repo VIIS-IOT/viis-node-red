@@ -852,6 +852,15 @@ module.exports = function (RED) {
                     catch (error) {
                         debugLog(`Error in recovery check: ${error.message}`);
                     }
+                    // A status change whose POST to the backend failed (backend down at a window end, e.g. right
+                    // after a reboot) is kept as is_synced = 0 and re-posted here, so the server never keeps a
+                    // stale "running" row (friction log 2026-10-24).
+                    try {
+                        await scheduleService.retryUnsyncedStatuses();
+                    }
+                    catch (error) {
+                        debugLog(`Error retrying unsynced statuses: ${error.message}`);
+                    }
                     const enabledScheduleIds = schedules.map(s => s.name);
                     // A run whose schedule left the enabled list (plan off, schedule off by sync, deleted)
                     // is turned off, finished and reported as stopped (ADR-033).

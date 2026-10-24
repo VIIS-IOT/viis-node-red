@@ -45,7 +45,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ScheduleService = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
+exports.ScheduleService = exports.UNSYNCED_STATUS_RETRY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
 exports.resolveWaterHammerDelayMs = resolveWaterHammerDelayMs;
 const TabiotSchedule_1 = require("../../orm/entities/schedule/TabiotSchedule");
 const schedule_run_identity_1 = require("./schedule-run-identity");
@@ -78,6 +78,8 @@ const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 /** Default water-hammer delay between valves and pump/power (start), or power and valves (finish). */
 exports.DEFAULT_WATER_HAMMER_DELAY_SEC = 7;
 exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC * 1000;
+/** Least time between two re-posts of unsynced status rows (retryUnsyncedStatuses). */
+exports.UNSYNCED_STATUS_RETRY_MS = 30000;
 function resolveWaterHammerDelayMs(seconds) {
     if (seconds === undefined || seconds === null || seconds === '') {
         return exports.DEFAULT_WATER_HAMMER_DELAY_MS;
@@ -139,6 +141,7 @@ let ScheduleService = class ScheduleService {
         this.protectionGate = null;
         /** Count of getDueSchedules calls that failed (read by getDueSchedulesOrNull). */
         this.dueQueryFailures = 0;
+        this.lastUnsyncedStatusRetryMs = null;
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
@@ -1087,6 +1090,9 @@ let ScheduleService = class ScheduleService {
                 this.node.warn(`${statusIcon} STATUS CHANGE: ${schedule.name} | ${previousStatus || 'none'} → ${status} | Label: ${schedule.label}`);
             }
             schedule.modified = new Date();
+            // Unsynced until the backend took this status; retryUnsyncedStatuses re-posts it otherwise
+            // (a POST lost while the backend was down left the server row "running" for good).
+            schedule.is_synced = 0;
             // Lưu entity với giá trị modified đã chỉnh sửa
             await repository.save(schedule);
             this.debugLog(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
@@ -1094,6 +1100,7 @@ let ScheduleService = class ScheduleService {
             if (this.syncScheduleService) {
                 try {
                     await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                    await this.acknowledgeStatusSynced(repository, schedule);
                     if (this.node) {
                         this.node.warn(`✅ SERVER SYNC SUCCESS: ${schedule.name} | Status: ${status}`);
                     }
@@ -1118,6 +1125,59 @@ let ScheduleService = class ScheduleService {
             }
             console.error(`Error updating status for ${schedule.name}: ${error.message}`);
         }
+    }
+    /** `is_synced = 1` without touching the LWW clock (same rule as viis-crud-schedule's outboxAck). */
+    async acknowledgeStatusSynced(repository, schedule) {
+        await repository.query(`UPDATE tabiot_schedule SET is_synced = 1, modified = modified WHERE name = ?`, [schedule.name]);
+        schedule.is_synced = 1;
+    }
+    /**
+     * Re-posts executor status changes the backend never acknowledged (`is_from_local = 0 AND is_synced = 0`,
+     * flagged by updateScheduleStatus when its POST failed, e.g. the backend was down at a window end
+     * right after a reboot). Called every tick, sends at most once per UNSYNCED_STATUS_RETRY_MS.
+     * The backend upsert keeps the newer row, so a 409 ("server data is newer") ends the retry.
+     * @returns number of rows posted in this call
+     */
+    async retryUnsyncedStatuses(nowMs = Date.now()) {
+        var _a;
+        if (!this.syncScheduleService)
+            return 0;
+        if (this.lastUnsyncedStatusRetryMs !== null && nowMs - this.lastUnsyncedStatusRetryMs < exports.UNSYNCED_STATUS_RETRY_MS)
+            return 0;
+        this.lastUnsyncedStatusRetryMs = nowMs;
+        if (!dataSource_1.AppDataSource.isInitialized)
+            await dataSource_1.AppDataSource.initialize();
+        const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : "";
+        const rows = await repository.find({
+            where: Object.assign({ is_from_local: 0, is_synced: 0, is_deleted: 0 }, (deviceId ? { device_id: deviceId } : {})),
+        });
+        let posted = 0;
+        for (const schedule of rows) {
+            try {
+                await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                await this.acknowledgeStatusSynced(repository, schedule);
+                posted++;
+                if (this.node) {
+                    this.node.warn(`✅ SERVER SYNC RETRY OK: ${schedule.name} | Status: ${schedule.status}`);
+                }
+            }
+            catch (error) {
+                const httpStatus = axios_1.default.isAxiosError(error) ? (_a = error.response) === null || _a === void 0 ? void 0 : _a.status : undefined;
+                if (httpStatus === 409) {
+                    // The server holds a newer copy of this schedule: nothing of ours to deliver.
+                    await this.acknowledgeStatusSynced(repository, schedule);
+                    if (this.node) {
+                        this.node.warn(`⚠️ SERVER SYNC RETRY DROPPED (server newer): ${schedule.name} | Status: ${schedule.status}`);
+                    }
+                    continue;
+                }
+                if (this.node) {
+                    this.node.warn(`❌ SERVER SYNC RETRY FAILED: ${schedule.name} | ${error.message}`);
+                }
+            }
+        }
+        return posted;
     }
     /**
      * Auto-detect and recover stuck 'running' schedules
