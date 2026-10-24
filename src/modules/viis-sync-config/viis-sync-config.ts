@@ -131,7 +131,9 @@ export = function (RED: NodeAPI) {
         function handleMqttMessage(event: any) {
             try {
                 const { topic, message } = event.message || event;
-                if (!topic || !topic.includes('rpc/request/')) return;
+                // Demeter publishes RPCs on v1/device/<id>/rpc/<commandId> (answers on rpc/response/…);
+                // the ThingsBoard-style rpc/request/<id> form is kept for older brokers.
+                if (!topic || !/\/rpc\/(request\/)?[^/]+$/.test(topic) || topic.includes('/rpc/response/')) return;
 
                 const rawMsg = typeof message === 'string' ? message : message.toString();
                 const parsed = JSON.parse(rawMsg);
