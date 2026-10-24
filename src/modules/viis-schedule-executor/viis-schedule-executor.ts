@@ -26,6 +26,8 @@ import { activeRunId, forgetRunId, rememberRunId } from "./schedule-run-identity
 import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
 import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, rebuildOffCommands, retryNeedsImpliedPumps } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
+import { unixMsNow } from "../../core/farm-time";
+import { enforcingArbiter, prepareScheduleFinish, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -437,8 +439,14 @@ module.exports = function (RED: NodeAPI) {
                         const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        const allResetCommands = scheduleService.mergeValveProgramOffCommand(
-                            [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]
+                        // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
+                        const allResetCommands = await prepareScheduleFinish(
+                            enforcingArbiter(),
+                            schedule.name,
+                            scheduleService.mergeValveProgramOffCommand(
+                                [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]
+                            ),
+                            (message) => node.warn(message)
                         );
 
                         const rpcRunId = uuidv4();
@@ -779,11 +787,25 @@ module.exports = function (RED: NodeAPI) {
 
                         if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                             await scheduleService.updateScheduleStatus(schedule, "running");
-                            const startReport = await scheduleService.executeModbusCommands(
-                                modbusClient,
-                                { holdingCommands, coilCommands },
-                                schedule,
-                                { runId: startRunId }
+                            // ARBITER_MODE=enforce: managed coils are claimed (schedule:<name>), not written.
+                            const startArbiter = enforcingArbiter();
+                            const startReport = await startScheduleCommands(
+                                {
+                                    arbiter: startArbiter,
+                                    execute: (commands) => scheduleService.executeModbusCommands(
+                                        modbusClient,
+                                        commands,
+                                        schedule,
+                                        { runId: startRunId }
+                                    ),
+                                    sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
+                                    waterHammerMs: waterHammerDelayMs,
+                                    now: unixMsNow,
+                                },
+                                schedule.name,
+                                startRunId,
+                                startArbiter ? scheduleWindowEndMs(schedule, schedule.schedulePlan ?? null, unixMsNow()) : null,
+                                { holdingCommands, coilCommands }
                             );
                             if (publishedConfigParams.length > 0) {
                                 startReport.steps = [configParamsToStep(publishedConfigParams), ...startReport.steps];
@@ -862,9 +884,16 @@ module.exports = function (RED: NodeAPI) {
                         const storedCommands = scheduleService.getActiveCommands(schedule.name);
                         // A restart cleared the active commands of a run that is still running: its OFF
                         // is rebuilt from the schedule, or the outputs it turned ON would stay ON.
-                        const activeCommands = storedCommands.length > 0
-                            ? storedCommands
-                            : rebuildOffCommands(scheduleService.mapScheduleToModbus(schedule));
+                        // ARBITER_MODE=enforce: the run's claims are released and the arbiter turns its
+                        // managed coils off; only the other commands are written here.
+                        const activeCommands = await prepareScheduleFinish(
+                            enforcingArbiter(),
+                            schedule.name,
+                            storedCommands.length > 0
+                                ? storedCommands
+                                : rebuildOffCommands(scheduleService.mapScheduleToModbus(schedule)),
+                            (message) => node.warn(message)
+                        );
                         const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -1000,7 +1029,9 @@ module.exports = function (RED: NodeAPI) {
                 await stopRunsNoLongerEnabled({
                     activeCommands: () => activeModbusCommands,
                     resetCommands: async (scheduleId, commands) => {
-                        const { allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, commands as any);
+                        // ARBITER_MODE=enforce: release the stopped run's claims; managed coils are the arbiter's.
+                        const writes = await prepareScheduleFinish(enforcingArbiter(), scheduleId, commands as any[], (message) => node.warn(message));
+                        const { allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, writes);
                         if (!allSuccessful) debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
                         return allSuccessful;
                     },

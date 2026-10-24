@@ -33,6 +33,7 @@ import { ProtectionGateService, resolveProtectionGate } from "../viis-device-pro
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classify";
 import { decideFinish, offFailedAlarmKey, rebuildOffCommands } from "./schedule-finish";
+import { enforcingArbiter, prepareScheduleFinish, withoutArbitratedCoils } from "./schedule-arbiter";
 import { getEventOutbox, initEventOutbox, isEventOutboxEnabled } from "../../services/event-outbox/registry";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
@@ -1293,7 +1294,13 @@ export class ScheduleService {
             if (activeCommands.length === 0) {
                 // A restart cleared the active commands, but the outputs may still be ON: write the
                 // schedule's OFF before finishing. A failed OFF stays active and is retried.
-                const offCommands = rebuildOffCommands(this.mapScheduleToModbus(schedule));
+                // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
+                const offCommands = await prepareScheduleFinish(
+                    enforcingArbiter(),
+                    schedule.name,
+                    rebuildOffCommands(this.mapScheduleToModbus(schedule)),
+                    (message) => this.node?.warn(message)
+                );
                 if (offCommands.length > 0) {
                     const reset = await this.resetModbusCommands(modbusClient, offCommands, schedule, true);
                     const finish = decideFinish(reset, offCommands);
@@ -1408,7 +1415,8 @@ export class ScheduleService {
         const deps = this.makeKeyWriterDeps(modbusClient);
         const coilCommands = [
             ...commands.filter(cmd => cmd.fc === 5),
-            ...(isFinishing && options?.impliedPumps !== false ? impliedFinishPumpCommands(commands, this.getAllModbusCoils()) : []),
+            // ARBITER_MODE=enforce: a managed pump is the arbiter's; only unmanaged pumps are implied off.
+            ...(isFinishing && options?.impliedPumps !== false ? withoutArbitratedCoils(impliedFinishPumpCommands(commands, this.getAllModbusCoils())) : []),
         ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
