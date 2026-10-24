@@ -127,7 +127,7 @@ describe('RPC through the actuator arbiter', () => {
         expect(modbus.writeToModbus).not.toHaveBeenCalled();
     });
 
-    test('won but the coil did not follow (Modbus down) → FAILED, claim kept for the arbiter to retry', async () => {
+    test('won but the coil did not follow (Modbus down) → FAILED and the claim is withdrawn (never applied later)', async () => {
         const arbiter = use(fakeArbiter('enforce', { applied: true, actual: undefined }));
         const { handler, mqtt } = createHandler();
 
@@ -136,7 +136,25 @@ describe('RPC through the actuator arbiter', () => {
         expect(mqtt.publishRpcResponse).toHaveBeenCalledWith(CMD, expect.objectContaining({
             status: 'FAILED', error: expect.stringContaining('not_confirmed:valve_1'),
         }));
-        expect(arbiter.release).not.toHaveBeenCalled();
+        expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'valve_1');
+    });
+
+    test('deadline passed while the claim was waiting → the claim is withdrawn even if it won', async () => {
+        const arbiter = use(fakeArbiter('enforce', { applied: true, actual: true }));
+        arbiter.claim.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve({ applied: true, actual: true, mode: 'enforce' }), 4000)));
+        const { handler, mqtt } = createHandler();
+        jest.useFakeTimers();
+        try {
+            const done = handler.handleRpcRequest({ method: 'set', command_id: CMD, params: { key: 'valve_1', value: true }, timeout: 5000 });
+            await jest.advanceTimersByTimeAsync(10000);
+            await done;
+        } finally {
+            jest.useRealTimers();
+        }
+
+        expect(mqtt.publishRpcResponse).toHaveBeenCalledTimes(1);
+        expect(mqtt.publishRpcResponse).toHaveBeenCalledWith(CMD, expect.objectContaining({ status: 'FAILED' }));
+        expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'valve_1');
     });
 
     test('unmanaged key → direct write as today', async () => {

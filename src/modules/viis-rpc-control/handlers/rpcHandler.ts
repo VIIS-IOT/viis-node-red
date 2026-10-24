@@ -135,6 +135,9 @@ export class RpcHandler implements IRpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody: RpcMessage, maxRetries: number = 3): Promise<void> {
+        // Mobile `set` / `control` become `set_state` before anything answers: the deadline watchdog and the
+        // queue-drop path reply with this body, and publishRpcAck only answers set_state / set_state_batch.
+        rpcBody = this.normalizeRpcBody(rpcBody);
         // The deadline starts when the command is received, not when it is dequeued:
         // time spent waiting behind other requests counts against it.
         const ctx = createRpcDeadline(extractRpcCommandId(rpcBody), this.resolveRequestTtl(rpcBody));
@@ -916,28 +919,37 @@ export class RpcHandler implements IRpcHandler {
 
     /**
      * enforce: the RPC does not write a managed coil; it claims it and the arbiter writes the winner.
-     * ACKED only when this claim won and the coil reads the requested value. A claim that lost is
-     * withdrawn (the caller is told FAILED `blocked_by:<source>`, so it must not take effect later). A claim
-     * that won but is not on the coil yet (Modbus down) stays: the arbiter keeps reconciling it.
+     * ACKED only when this claim won, the coil reads the requested value and the request deadline has not
+     * passed. Every other outcome answers FAILED and withdraws the claim, so a command the caller was told
+     * failed never takes effect later (same rule as the RPC deadline: a stale command is not applied late).
      */
     private async claimThroughArbiter(arbiter: ActuatorArbiterApi, key: string, value: boolean, mapping: any): Promise<void> {
         assertRpcNotExpired(`Arbiter claim ${key}=${value}`);
         const claim = this.buildArbiterClaim(arbiter, key, value);
         this.logger.log(`[ARBITER] Claim ${key}=${value} (${claim.ownerId})`);
         const result = await arbiter.claim(claim);
-
-        if (!result.applied) {
+        const withdraw = async (why: string) => {
             try {
                 await arbiter.release(claim.ownerId, key);
+                this.logger.warn(`[ARBITER] Withdrew claim ${claim.ownerId} on ${key}: ${why}`);
             } catch (error) {
-                this.logger.warn(`[ARBITER] Could not withdraw blocked claim ${claim.ownerId}: ${(error as Error).message}`);
+                this.logger.warn(`[ARBITER] Could not withdraw claim ${claim.ownerId}: ${(error as Error).message}`);
             }
+        };
+
+        if (isRpcExpired(currentRpcDeadline())) {
+            await withdraw('request deadline passed');
+            throw new RpcExpiredError(`Arbiter claim ${key}=${value}`);
+        }
+        if (!result.applied) {
+            await withdraw(`blocked by ${result.blockedBy ?? 'expired'}`);
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} blocked by ${result.blockedBy ?? 'expired'}` });
             throw new Error(`blocked_by:${result.blockedBy ?? 'expired'}`);
         }
         if (result.actual !== value) {
-            this.node.status({ fill: "yellow", shape: "ring", text: `${key} claimed, not confirmed` });
-            throw new Error(`not_confirmed:${key} reads ${String(result.actual)}; the arbiter keeps the claim and retries`);
+            await withdraw(`coil reads ${String(result.actual)}`);
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} not confirmed` });
+            throw new Error(`not_confirmed:${key} reads ${String(result.actual)}`);
         }
 
         this.modbusService.updateGlobalContextCacheAfterVerification(key, result.actual, mapping.fc);
