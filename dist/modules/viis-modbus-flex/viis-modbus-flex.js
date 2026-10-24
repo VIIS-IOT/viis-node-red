@@ -403,7 +403,7 @@ module.exports = function (RED) {
                             }
                             // Process the modbus request
                             // OFFLINE intent chain: a managed coil becomes an arbiter claim (ARBITER_MODE=enforce).
-                            const response = await modbusGetterService.processRequest(msg.payload, (0, modbusGetterService_1.offlineWriteOrigin)(msg, config.writeSource));
+                            const response = await modbusGetterService.processRequest(msg.payload, (0, modbusGetterService_1.offlineWriteOrigin)(msg, config.writeSource, targetBoardId !== null && targetBoardId !== void 0 ? targetBoardId : null));
                             // Update message payload with response
                             msg.payload = response;
                             try {

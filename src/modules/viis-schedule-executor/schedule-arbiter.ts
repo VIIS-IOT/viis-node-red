@@ -1,18 +1,20 @@
 /**
  * The schedule executor as a claim source of the actuator arbiter (plan Task 13). Applies only while the
- * arbiter enforces (`ARBITER_MODE=enforce`) and only to fc=5 keys that `actuatorPolicy` lists as managed
- * or hold; with the arbiter off or observing, every helper here hands back today's commands unchanged.
+ * arbiter enforces (`ARBITER_MODE=enforce`) and only to fc=5 keys whose `actuatorPolicy` mode is `managed`;
+ * `hold` keys, unmanaged keys and holdings keep today's direct writes. With the arbiter off or observing,
+ * every helper here hands back today's commands unchanged.
  *
  * - START: each truthy managed coil becomes the claim `schedule:<name>` (source `schedule`) that expires at
- *   the window end + 5 min, instead of a write. Holdings and unmanaged coils are written as today. A claim
- *   that lost is withdrawn and reported as a failed key (ADR-034: no `started` for a key that did not start).
- * - Finish (and every other OFF of a run): release `schedule:<name>`; the managed coils leave the reset list.
+ *   the window end + 5 min, instead of a write. A claim that lost is withdrawn and reported as a failed key
+ *   (ADR-034: no `started` for a key that did not start).
+ * - Finish (and every other OFF of a run): the managed coils leave the reset list and the run's claims are
+ *   released in the executor's water-hammer order (see beginScheduleFinish).
  */
 import { DEFAULT_FARM_TIMEZONE, plannedWindowUnixMs } from '../../core/farm-time';
 import { civilTimeOnly, evaluateScheduleRun, PlanDateRange, ScheduleRunFields } from '../../core/schedule-run-window';
 import type { ActuatorArbiterApi } from '../viis-actuator-arbiter/arbiter-api';
 import { getArbiter } from '../viis-actuator-arbiter/arbiter-registry';
-import { classifyCoils } from './schedule-coil-classify';
+import { classifyCoils, isSystemPowerKey, isValveKey } from './schedule-coil-classify';
 import { ExecutionReport, ExecutionStep, KeyOutcome, SchedulePhase } from './schedule-execution-types';
 import { ModbusCmd } from './type';
 
@@ -28,9 +30,12 @@ export function enforcingArbiter(arbiter: ActuatorArbiterApi | null = getArbiter
     return arbiter !== null && arbiter.mode() === 'enforce' ? arbiter : null;
 }
 
-/** An fc=5 command the enforcing arbiter writes (no one else may). */
+/**
+ * An fc=5 command on a `managed` key: the enforcing arbiter writes it (no one else may). A `hold` key is
+ * not one: with no claim the arbiter leaves it alone, so the schedule keeps writing it (and its OFF).
+ */
 export function isArbitratedCoil(command: { key: string; fc: number }, arbiter: ActuatorArbiterApi | null): boolean {
-    return arbiter !== null && command.fc === 5 && arbiter.manages(command.key);
+    return arbiter !== null && command.fc === 5 && arbiter.keyMode(command.key) === 'managed';
 }
 
 /** `commands` without the coils the arbiter writes; the same array when there is no enforcing arbiter. */
@@ -165,21 +170,76 @@ export async function startScheduleCommands(
     return { runId, action: 'start', scheduleId: scheduleName, steps };
 }
 
+export interface ScheduleFinish<T> {
+    /** The commands still written directly (the same array when there is no enforcing arbiter). */
+    commands: T[];
+    /**
+     * Call once the direct OFF of `commands` returned (also when it failed or there was nothing to write):
+     * waits the water-hammer delay when a pump stopped and no wait followed it yet, then releases the run's
+     * remaining claims (valves, power and anything else it still holds).
+     */
+    complete(report?: ExecutionReport | null): Promise<void>;
+}
+
+export interface ScheduleFinishDeps {
+    sleep(ms: number): Promise<void>;
+    waterHammerMs: number;
+    warn?: (message: string) => void;
+}
+
+/** A direct OFF that stopped a pump or another non-valve, non-power coil. */
+function stoppedNonValve(report: ExecutionReport | null | undefined): boolean {
+    return (report?.steps ?? []).some(step =>
+        step.keys.some(k => k.fc === 5 && !isValveKey(k.key) && !isSystemPowerKey(k.key)));
+}
+
 /**
- * Before a run's OFF: releases its claims (the arbiter turns those coils off unless another owner holds
- * them) and returns the commands still written directly. The same array when there is no enforcing arbiter.
+ * Before a run's OFF. The executor's finish order is pumps and other coils off, water-hammer delay, valves
+ * closed, power off; the arbiter follows it across the direct writes:
+ *
+ * 1. now: release the run's managed pumps and other coils (the arbiter stops them within one tick);
+ * 2. the caller writes `commands` directly (its own pumps → delay → valves order);
+ * 3. `complete()`: if managed valves remain and a pump or other coil stopped without a delay after it
+ *    (no direct valve made the reset wait), sleep `waterHammerMs`; then release the rest of the run's
+ *    claims, so a managed valve never closes while a pump of the same run may still run.
  */
-export async function prepareScheduleFinish<T extends { key: string; fc: number }>(
+export async function beginScheduleFinish<T extends { key: string; fc: number }>(
     arbiter: ActuatorArbiterApi | null,
     scheduleName: string,
     commands: T[],
-    warn: (message: string) => void = message => console.warn(message)
-): Promise<T[]> {
-    if (arbiter === null) return commands;
-    try {
-        await arbiter.release(scheduleOwnerId(scheduleName));
-    } catch (error) {
-        warn(`[ARBITER] Claims of ${scheduleName} not released: ${errorText(error)}`);
+    deps: ScheduleFinishDeps
+): Promise<ScheduleFinish<T>> {
+    if (arbiter === null) {
+        return { commands, complete: async () => undefined };
     }
-    return withoutArbitratedCoils(commands, arbiter);
+    const warn = deps.warn ?? ((message: string) => console.warn(message));
+    const ownerId = scheduleOwnerId(scheduleName);
+    const managed = commands.filter(command => isArbitratedCoil(command, arbiter));
+    const { pumpCoils, otherCoils, valveCoils } = classifyCoils(managed);
+
+    const firstKeys = Array.from(new Set([...pumpCoils, ...otherCoils].map(command => command.key)));
+    for (const key of firstKeys) {
+        try {
+            await arbiter.release(ownerId, key);
+        } catch (error) {
+            warn(`[ARBITER] Claim ${key} of ${scheduleName} not released: ${errorText(error)}`);
+        }
+    }
+
+    let completed = false;
+    const complete = async (report?: ExecutionReport | null): Promise<void> => {
+        if (completed) return;
+        completed = true;
+        const waited = (report?.steps ?? []).some(step => step.phase === 'water_hammer_delay');
+        if (valveCoils.length > 0 && !waited && (firstKeys.length > 0 || stoppedNonValve(report))) {
+            await deps.sleep(deps.waterHammerMs);
+        }
+        try {
+            await arbiter.release(ownerId);
+        } catch (error) {
+            warn(`[ARBITER] Claims of ${scheduleName} not released: ${errorText(error)}`);
+        }
+    };
+
+    return { commands: withoutArbitratedCoils(commands, arbiter), complete };
 }

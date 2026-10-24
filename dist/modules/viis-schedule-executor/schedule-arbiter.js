@@ -7,16 +7,18 @@ exports.isArbitratedCoil = isArbitratedCoil;
 exports.withoutArbitratedCoils = withoutArbitratedCoils;
 exports.scheduleWindowEndMs = scheduleWindowEndMs;
 exports.startScheduleCommands = startScheduleCommands;
-exports.prepareScheduleFinish = prepareScheduleFinish;
+exports.beginScheduleFinish = beginScheduleFinish;
 /**
  * The schedule executor as a claim source of the actuator arbiter (plan Task 13). Applies only while the
- * arbiter enforces (`ARBITER_MODE=enforce`) and only to fc=5 keys that `actuatorPolicy` lists as managed
- * or hold; with the arbiter off or observing, every helper here hands back today's commands unchanged.
+ * arbiter enforces (`ARBITER_MODE=enforce`) and only to fc=5 keys whose `actuatorPolicy` mode is `managed`;
+ * `hold` keys, unmanaged keys and holdings keep today's direct writes. With the arbiter off or observing,
+ * every helper here hands back today's commands unchanged.
  *
  * - START: each truthy managed coil becomes the claim `schedule:<name>` (source `schedule`) that expires at
- *   the window end + 5 min, instead of a write. Holdings and unmanaged coils are written as today. A claim
- *   that lost is withdrawn and reported as a failed key (ADR-034: no `started` for a key that did not start).
- * - Finish (and every other OFF of a run): release `schedule:<name>`; the managed coils leave the reset list.
+ *   the window end + 5 min, instead of a write. A claim that lost is withdrawn and reported as a failed key
+ *   (ADR-034: no `started` for a key that did not start).
+ * - Finish (and every other OFF of a run): the managed coils leave the reset list and the run's claims are
+ *   released in the executor's water-hammer order (see beginScheduleFinish).
  */
 const farm_time_1 = require("../../core/farm-time");
 const schedule_run_window_1 = require("../../core/schedule-run-window");
@@ -31,9 +33,12 @@ function scheduleOwnerId(scheduleName) {
 function enforcingArbiter(arbiter = (0, arbiter_registry_1.getArbiter)()) {
     return arbiter !== null && arbiter.mode() === 'enforce' ? arbiter : null;
 }
-/** An fc=5 command the enforcing arbiter writes (no one else may). */
+/**
+ * An fc=5 command on a `managed` key: the enforcing arbiter writes it (no one else may). A `hold` key is
+ * not one: with no claim the arbiter leaves it alone, so the schedule keeps writing it (and its OFF).
+ */
 function isArbitratedCoil(command, arbiter) {
-    return arbiter !== null && command.fc === 5 && arbiter.manages(command.key);
+    return arbiter !== null && command.fc === 5 && arbiter.keyMode(command.key) === 'managed';
 }
 /** `commands` without the coils the arbiter writes; the same array when there is no enforcing arbiter. */
 function withoutArbitratedCoils(commands, arbiter = enforcingArbiter()) {
@@ -126,18 +131,55 @@ async function startScheduleCommands(deps, scheduleName, runId, windowEndMs, com
     }
     return { runId, action: 'start', scheduleId: scheduleName, steps };
 }
+/** A direct OFF that stopped a pump or another non-valve, non-power coil. */
+function stoppedNonValve(report) {
+    var _a;
+    return ((_a = report === null || report === void 0 ? void 0 : report.steps) !== null && _a !== void 0 ? _a : []).some(step => step.keys.some(k => k.fc === 5 && !(0, schedule_coil_classify_1.isValveKey)(k.key) && !(0, schedule_coil_classify_1.isSystemPowerKey)(k.key)));
+}
 /**
- * Before a run's OFF: releases its claims (the arbiter turns those coils off unless another owner holds
- * them) and returns the commands still written directly. The same array when there is no enforcing arbiter.
+ * Before a run's OFF. The executor's finish order is pumps and other coils off, water-hammer delay, valves
+ * closed, power off; the arbiter follows it across the direct writes:
+ *
+ * 1. now: release the run's managed pumps and other coils (the arbiter stops them within one tick);
+ * 2. the caller writes `commands` directly (its own pumps → delay → valves order);
+ * 3. `complete()`: if managed valves remain and a pump or other coil stopped without a delay after it
+ *    (no direct valve made the reset wait), sleep `waterHammerMs`; then release the rest of the run's
+ *    claims, so a managed valve never closes while a pump of the same run may still run.
  */
-async function prepareScheduleFinish(arbiter, scheduleName, commands, warn = message => console.warn(message)) {
-    if (arbiter === null)
-        return commands;
-    try {
-        await arbiter.release(scheduleOwnerId(scheduleName));
+async function beginScheduleFinish(arbiter, scheduleName, commands, deps) {
+    var _a;
+    if (arbiter === null) {
+        return { commands, complete: async () => undefined };
     }
-    catch (error) {
-        warn(`[ARBITER] Claims of ${scheduleName} not released: ${errorText(error)}`);
+    const warn = (_a = deps.warn) !== null && _a !== void 0 ? _a : ((message) => console.warn(message));
+    const ownerId = scheduleOwnerId(scheduleName);
+    const managed = commands.filter(command => isArbitratedCoil(command, arbiter));
+    const { pumpCoils, otherCoils, valveCoils } = (0, schedule_coil_classify_1.classifyCoils)(managed);
+    const firstKeys = Array.from(new Set([...pumpCoils, ...otherCoils].map(command => command.key)));
+    for (const key of firstKeys) {
+        try {
+            await arbiter.release(ownerId, key);
+        }
+        catch (error) {
+            warn(`[ARBITER] Claim ${key} of ${scheduleName} not released: ${errorText(error)}`);
+        }
     }
-    return withoutArbitratedCoils(commands, arbiter);
+    let completed = false;
+    const complete = async (report) => {
+        var _a;
+        if (completed)
+            return;
+        completed = true;
+        const waited = ((_a = report === null || report === void 0 ? void 0 : report.steps) !== null && _a !== void 0 ? _a : []).some(step => step.phase === 'water_hammer_delay');
+        if (valveCoils.length > 0 && !waited && (firstKeys.length > 0 || stoppedNonValve(report))) {
+            await deps.sleep(deps.waterHammerMs);
+        }
+        try {
+            await arbiter.release(ownerId);
+        }
+        catch (error) {
+            warn(`[ARBITER] Claims of ${scheduleName} not released: ${errorText(error)}`);
+        }
+    };
+    return { commands: withoutArbitratedCoils(commands, arbiter), complete };
 }

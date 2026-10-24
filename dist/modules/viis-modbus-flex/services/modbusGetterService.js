@@ -10,17 +10,21 @@ const arbiter_registry_1 = require("../../viis-actuator-arbiter/arbiter-registry
  * The origin of a write that comes from the OFFLINE intent chain (`msg.source === 'intent'`, or the node's
  * `writeSource` config is `intent`); null for every other write.
  */
-function offlineWriteOrigin(msg, writeSource) {
+function offlineWriteOrigin(msg, writeSource, boardId) {
     var _a;
     if (!msg || (msg.source !== "intent" && writeSource !== "intent")) {
         return null;
     }
     const key = msg.offlineKey;
     const intentId = (_a = msg.offlineIntentId) !== null && _a !== void 0 ? _a : msg.intentId;
-    return {
+    const origin = {
         key: typeof key === "string" && key !== "" ? key : null,
         intentId: intentId === undefined || intentId === null || intentId === "" ? null : String(intentId),
     };
+    if (boardId !== undefined) {
+        origin.boardId = typeof boardId === "string" && boardId !== "" ? boardId : null;
+    }
+    return origin;
 }
 /**
  * Service for handling Modbus flex operations (read and write)
@@ -162,6 +166,7 @@ class ModbusGetterService {
      * Process modbus WRITE request
      */
     async processWriteRequest(payload, origin = null) {
+        var _a;
         try {
             // Validate write payload
             const validationResult = this.validateWritePayload(payload);
@@ -173,7 +178,17 @@ class ModbusGetterService {
             // ARBITER_MODE=enforce: an OFFLINE scenario write to a managed coil is a claim, not a write.
             const arbiter = request.fc === constants_1.MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL && (origin === null || origin === void 0 ? void 0 : origin.key) ? (0, arbiter_registry_1.getArbiter)() : null;
             if (arbiter && arbiter.mode() === "enforce" && arbiter.manages(origin.key)) {
-                return await this.claimThroughArbiter(arbiter, request, origin);
+                // Only when the write goes to the coil the arbiter reconciles for that key: an explicit
+                // fc/address/boardId in the action may point elsewhere, and that address must still be written.
+                const target = arbiter.target(origin.key);
+                const sameCoil = target !== undefined
+                    && Number(target.address) === Number(request.address)
+                    && (!origin.boardId || target.boardId === origin.boardId);
+                if (sameCoil) {
+                    return await this.claimThroughArbiter(arbiter, request, origin);
+                }
+                this.logger.warn(`[ARBITER] ${origin.key} is managed but this write targets ${(_a = origin.boardId) !== null && _a !== void 0 ? _a : "?"}:${request.address}`
+                    + ` (arbiter coil ${target ? `${target.boardId}:${target.address}` : "none"}); written directly`);
             }
             // Check if modbus client is ready
             if (!this.isModbusReady()) {

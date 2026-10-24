@@ -383,8 +383,10 @@ module.exports = function (RED) {
                             const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
                             const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
                             const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                            // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
-                            const allResetCommands = await (0, schedule_arbiter_1.prepareScheduleFinish)((0, schedule_arbiter_1.enforcingArbiter)(), schedule.name, scheduleService.mergeValveProgramOffCommand([...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]), (message) => node.warn(message));
+                            // ARBITER_MODE=enforce: managed coils are the arbiter's; the run's claims are released
+                            // around the direct OFF in water-hammer order.
+                            const arbiterFinish = await scheduleService.beginScheduleFinish(schedule.name, scheduleService.mergeValveProgramOffCommand([...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]));
+                            const allResetCommands = arbiterFinish.commands;
                             const rpcRunId = (0, uuid_1.v4)();
                             let rpcReport = {
                                 runId: rpcRunId,
@@ -398,6 +400,7 @@ module.exports = function (RED) {
                                 scheduleService.clearActiveCommands(schedule.name);
                                 debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
                             }
+                            await arbiterFinish.complete(rpcReport);
                             const statusChanged = hasStatusChanged(schedule.name, "finished");
                             schedule.status = "finished";
                             schedule.enable = 0;
@@ -739,11 +742,12 @@ module.exports = function (RED) {
                                 const storedCommands = scheduleService.getActiveCommands(schedule.name);
                                 // A restart cleared the active commands of a run that is still running: its OFF
                                 // is rebuilt from the schedule, or the outputs it turned ON would stay ON.
-                                // ARBITER_MODE=enforce: the run's claims are released and the arbiter turns its
-                                // managed coils off; only the other commands are written here.
-                                const activeCommands = await (0, schedule_arbiter_1.prepareScheduleFinish)((0, schedule_arbiter_1.enforcingArbiter)(), schedule.name, storedCommands.length > 0
+                                // ARBITER_MODE=enforce: the run's claims are released (water-hammer order) and the
+                                // arbiter turns its managed coils off; only the other commands are written here.
+                                const arbiterFinish = await scheduleService.beginScheduleFinish(schedule.name, storedCommands.length > 0
                                     ? storedCommands
-                                    : (0, schedule_finish_1.rebuildOffCommands)(scheduleService.mapScheduleToModbus(schedule)), (message) => node.warn(message));
+                                    : (0, schedule_finish_1.rebuildOffCommands)(scheduleService.mapScheduleToModbus(schedule)));
+                                const activeCommands = arbiterFinish.commands;
                                 const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                                 const extraResetKeys = Object.entries(holdingRegisters)
                                     .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -779,6 +783,7 @@ module.exports = function (RED) {
                                     finishReport = resetResult.report;
                                     resetSuccessful = resetResult.allSuccessful;
                                 }
+                                await arbiterFinish.complete(finishReport);
                                 const finish = (0, schedule_finish_1.decideFinish)({ allSuccessful: resetSuccessful, report: finishReport }, writeCommands);
                                 if (!finish.done) {
                                     // Not completed: the run stays running and the next tick retries only these.
@@ -854,8 +859,9 @@ module.exports = function (RED) {
                         activeCommands: () => activeModbusCommands,
                         resetCommands: async (scheduleId, commands) => {
                             // ARBITER_MODE=enforce: release the stopped run's claims; managed coils are the arbiter's.
-                            const writes = await (0, schedule_arbiter_1.prepareScheduleFinish)((0, schedule_arbiter_1.enforcingArbiter)(), scheduleId, commands, (message) => node.warn(message));
-                            const { allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, writes);
+                            const arbiterFinish = await scheduleService.beginScheduleFinish(scheduleId, commands);
+                            const { report, allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, arbiterFinish.commands);
+                            await arbiterFinish.complete(report);
                             if (!allSuccessful)
                                 debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
                             return allSuccessful;

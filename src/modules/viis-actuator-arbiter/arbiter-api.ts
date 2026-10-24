@@ -13,10 +13,10 @@
  *   good write clears it.
  */
 import type { EventOutbox } from '../../services/event-outbox/event-outbox';
-import { ActuatorPolicy } from './actuator-policy';
+import { ActuatorPolicy, KeyMode } from './actuator-policy';
 import { ArbiterCore, ClaimSource } from './arbiter-core';
 import type { ClaimStore } from './arbiter-store';
-import { Reconciler, ReconcilerDeps, TickReport } from './reconciler';
+import { CoilTarget, Reconciler, ReconcilerDeps, TickReport } from './reconciler';
 
 export interface ClaimInput {
     key: string;
@@ -38,6 +38,10 @@ export type ArbiterOwners = Record<string, { source: ClaimSource; ownerId: strin
 export interface ActuatorArbiterApi {
     /** policy mode managed | hold */
     manages(key: string): boolean;
+    /** Policy mode of `key` (`unmanaged` for a key the policy does not list). */
+    keyMode(key: string): KeyMode;
+    /** The coil the arbiter writes for `key` (board + address); undefined when it does not arbitrate the key. */
+    target(key: string): CoilTarget | undefined;
     mode(): 'observe' | 'enforce';
     /** Lease of a new claim from `source` on `key`, in ms (manual: key policy, others: scenario lease). */
     leaseMs(source: ClaimSource, key: string): number;
@@ -116,6 +120,14 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
 
     manages(key: string): boolean {
         return this.opts.policy.mode(key) !== 'unmanaged';
+    }
+
+    keyMode(key: string): KeyMode {
+        return this.opts.policy.mode(key);
+    }
+
+    target(key: string): CoilTarget | undefined {
+        return this.opts.reconcilerDeps.targets.find(t => t.key === key);
     }
 
     mode(): 'observe' | 'enforce' {

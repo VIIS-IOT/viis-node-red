@@ -443,7 +443,10 @@ module.exports = function (RED: NodeAPI) {
 
                     // Process the modbus request
                     // OFFLINE intent chain: a managed coil becomes an arbiter claim (ARBITER_MODE=enforce).
-                    const response = await modbusGetterService.processRequest(msg.payload, offlineWriteOrigin(msg, config.writeSource));
+                    const response = await modbusGetterService.processRequest(
+                        msg.payload,
+                        offlineWriteOrigin(msg, config.writeSource, targetBoardId ?? null)
+                    );
 
                     // Update message payload with response
                     msg.payload = response;

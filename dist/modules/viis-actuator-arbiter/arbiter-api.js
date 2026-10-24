@@ -38,6 +38,12 @@ class ActuatorArbiter {
     manages(key) {
         return this.opts.policy.mode(key) !== 'unmanaged';
     }
+    keyMode(key) {
+        return this.opts.policy.mode(key);
+    }
+    target(key) {
+        return this.opts.reconcilerDeps.targets.find(t => t.key === key);
+    }
     mode() {
         return this.opts.mode;
     }

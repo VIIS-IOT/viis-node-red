@@ -11,7 +11,8 @@ import { ExecutionReport } from '../schedule-execution-types';
 import { startNotificationDue } from '../schedule-side-effects';
 import {
     SCHEDULE_CLAIM_GRACE_MS,
-    prepareScheduleFinish,
+    beginScheduleFinish,
+    withoutArbitratedCoils,
     scheduleWindowEndMs,
     startScheduleCommands,
 } from '../schedule-arbiter';
@@ -26,12 +27,19 @@ const timeValve1 = cmd('time_valve_1', 6, 31, 30);
 
 const WINDOW_END = 1_800_000_000_000;
 
-/** Records calls; `managed` keys are arbitrated, `claimAnswer` decides each claim. */
-function fakeArbiter(managed: string[], claimAnswer: (c: ClaimInput) => ClaimResult = () => ({ applied: true, actual: true, mode: 'enforce' })) {
+/** Records calls; `managed` keys are arbitrated, `hold` keys are hold, `claimAnswer` decides each claim. */
+function fakeArbiter(
+    managed: string[],
+    claimAnswer: (c: ClaimInput) => ClaimResult = () => ({ applied: true, actual: true, mode: 'enforce' }),
+    hold: string[] = [],
+    log: string[] = [],
+) {
     const claims: ClaimInput[] = [];
     const releases: Array<[string, string | undefined]> = [];
     const arbiter: ActuatorArbiterApi = {
-        manages: key => managed.includes(key),
+        manages: key => managed.includes(key) || hold.includes(key),
+        keyMode: key => (managed.includes(key) ? 'managed' : hold.includes(key) ? 'hold' : 'unmanaged'),
+        target: () => undefined,
         mode: () => 'enforce',
         leaseMs: () => 600_000,
         claim: async c => {
@@ -40,6 +48,7 @@ function fakeArbiter(managed: string[], claimAnswer: (c: ClaimInput) => ClaimRes
         },
         release: async (ownerId, key) => {
             releases.push([ownerId, key]);
+            log.push(`release ${key ?? '*'}`);
         },
         owners: () => ({}),
     };
@@ -156,19 +165,87 @@ describe('schedule START with the arbiter enforcing', () => {
     });
 });
 
+const finishDeps = (log: string[] = []) => ({
+    sleep: async (ms: number) => { log.push(`sleep ${ms}`); },
+    waterHammerMs: 7000,
+    warn: () => undefined,
+});
+
 describe('schedule finish with the arbiter enforcing', () => {
     test('finish releases once and writes no managed coil', async () => {
         const { arbiter, releases } = fakeArbiter(['valve_1']);
 
-        const writes = await prepareScheduleFinish(arbiter, 's1', [valve1, pump1, timeValve1]);
+        const finish = await beginScheduleFinish(arbiter, 's1', [valve1, pump1, timeValve1], finishDeps());
+        expect(finish.commands).toEqual([pump1, timeValve1]);
+        await finish.complete(null);
+        await finish.complete(null);
 
         expect(releases).toEqual([['schedule:s1', undefined]]);
-        expect(writes).toEqual([pump1, timeValve1]);
     });
 
     test('no enforcing arbiter: the reset list is unchanged', async () => {
         const commands = [valve1, pump1];
-        expect(await prepareScheduleFinish(null, 's1', commands)).toBe(commands);
+        const log: string[] = [];
+        const finish = await beginScheduleFinish(null, 's1', commands, finishDeps(log));
+        await finish.complete(null);
+        expect(finish.commands).toBe(commands);
+        expect(log).toEqual([]);
+    });
+
+    test('managed valve, unmanaged pump: the pump OFF is written, then the delay, then the valve is released', async () => {
+        const log: string[] = [];
+        const { arbiter } = fakeArbiter(['valve_1'], undefined, [], log);
+
+        const finish = await beginScheduleFinish(arbiter, 's1', [valve1, pump1], finishDeps(log));
+        expect(log).toEqual([]);
+        // The direct reset: pump_1 OFF only (no direct valve, so the reset itself does not wait).
+        log.push(...finish.commands.map(c => `write ${c.key}=off`));
+        const resetReport: ExecutionReport = {
+            runId: 'r', action: 'end', scheduleId: 's1',
+            steps: [{ phase: 'stop_pumps', ts: 0, ok: true, keys: [{ key: 'pump_1', phase: 'stop_pumps', fc: 5, address: 3, expected: false, status: 'pass', attempts: 1 }] }],
+        };
+        await finish.complete(resetReport);
+
+        expect(log).toEqual(['write pump_1=off', 'sleep 7000', 'release *']);
+    });
+
+    test('managed pump and valve: the pump is released first, the valve after the delay', async () => {
+        const log: string[] = [];
+        const { arbiter } = fakeArbiter(['valve_1', 'pump_1'], undefined, [], log);
+
+        const finish = await beginScheduleFinish(arbiter, 's1', [valve1, pump1], finishDeps(log));
+        expect(finish.commands).toEqual([]);
+        await finish.complete(null);
+
+        expect(log).toEqual(['release pump_1', 'sleep 7000', 'release *']);
+    });
+
+    test('a direct valve made the reset wait: no second delay before the managed valve', async () => {
+        const log: string[] = [];
+        const { arbiter } = fakeArbiter(['valve_1', 'pump_1'], undefined, [], log);
+        const valve2 = cmd('valve_2', 5, 1, true);
+
+        const finish = await beginScheduleFinish(arbiter, 's1', [valve1, valve2, pump1], finishDeps(log));
+        expect(finish.commands).toEqual([valve2]);
+        await finish.complete({
+            runId: 'r', action: 'end', scheduleId: 's1',
+            steps: [{ phase: 'water_hammer_delay', ts: 0, ok: true, keys: [] }],
+        });
+
+        expect(log).toEqual(['release pump_1', 'release *']);
+    });
+
+    test('a hold key is not a schedule claim: START writes it and its OFF stays in the reset list', async () => {
+        const { arbiter, claims } = fakeArbiter([], undefined, ['valve_1']);
+        const writer = directWriter();
+
+        await startScheduleCommands(deps(arbiter, writer.execute), 's1', 'run-1', WINDOW_END, { holdingCommands: [], coilCommands: [valve1] });
+        expect(claims).toEqual([]);
+        expect(writer.calls).toEqual([{ holdingCommands: [], coilCommands: [valve1] }]);
+
+        const finish = await beginScheduleFinish(arbiter, 's1', [valve1, pump1], finishDeps());
+        expect(finish.commands).toEqual([valve1, pump1]);
+        expect(withoutArbitratedCoils([pump1], arbiter)).toEqual([pump1]);
     });
 
     test("two schedules sharing valve: finishing A keeps B's claim", async () => {
@@ -204,7 +281,9 @@ describe('schedule finish with the arbiter enforcing', () => {
             await start('A');
             await start('B');
 
-            expect(await prepareScheduleFinish(arbiter, 'A', [valve1])).toEqual([]);
+            const finishA = await beginScheduleFinish(arbiter, 'A', [valve1], finishDeps());
+            expect(finishA.commands).toEqual([]);
+            await finishA.complete(null);
             await arbiter.tick();
 
             expect(arbiter.owners().valve_1?.ownerId).toBe('schedule:B');

@@ -106,6 +106,17 @@ describe('viis-modbus-flex OFFLINE writes with the arbiter enforcing', () => {
 
         expect(client.writeCoil.mock.calls).toEqual([[1, true], [0, true]]);
     });
+
+    test('a managed key whose action targets another coil is written directly to that address', async () => {
+        const { arbiter, client, service } = ctx;
+        const explicit = { ...intentMsg('valve_1', true), payload: { fc: 5, unitid: 1, address: 7, value: true, boardId: 'board1' } };
+        await service.processRequest(explicit.payload, offlineWriteOrigin(explicit, 'intent', 'board1'));
+        const otherBoard = intentMsg('valve_1', true);
+        await service.processRequest(otherBoard.payload, offlineWriteOrigin(otherBoard, 'intent', 'board2'));
+
+        expect(client.writeCoil.mock.calls).toEqual([[7, true], [0, true]]);
+        expect(arbiter.owners().valve_1).toBeUndefined();
+    });
 });
 
 describe('offlineWriteOrigin', () => {

@@ -1140,14 +1140,19 @@ let ScheduleService = class ScheduleService {
                 continue;
             this.debugLog(`🔍 RECOVERY CHECK: Schedule ${schedule.name} is stuck in "running" status ${minutesPastEnd} minutes past end time`);
             // Get the commands that should have been reset
-            const activeCommands = this.getActiveCommands(schedule.name);
-            if (activeCommands.length === 0) {
+            const storedCommands = this.getActiveCommands(schedule.name);
+            if (storedCommands.length === 0) {
                 // A restart cleared the active commands, but the outputs may still be ON: write the
                 // schedule's OFF before finishing. A failed OFF stays active and is retried.
                 // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
-                const offCommands = await (0, schedule_arbiter_1.prepareScheduleFinish)((0, schedule_arbiter_1.enforcingArbiter)(), schedule.name, (0, schedule_finish_1.rebuildOffCommands)(this.mapScheduleToModbus(schedule)), (message) => { var _a; return (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn(message); });
-                if (offCommands.length > 0) {
+                const arbiterFinish = await this.beginScheduleFinish(schedule.name, (0, schedule_finish_1.rebuildOffCommands)(this.mapScheduleToModbus(schedule)));
+                const offCommands = arbiterFinish.commands;
+                if (offCommands.length === 0) {
+                    await arbiterFinish.complete(null);
+                }
+                else {
                     const reset = await this.resetModbusCommands(modbusClient, offCommands, schedule, true);
+                    await arbiterFinish.complete(reset.report);
                     const finish = (0, schedule_finish_1.decideFinish)(reset, offCommands);
                     if (!finish.done) {
                         this.storeActiveCommands(schedule.name, finish.retainCommands);
@@ -1164,6 +1169,10 @@ let ScheduleService = class ScheduleService {
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 continue;
             }
+            // ARBITER_MODE=enforce: the run's claims are released and its managed coils are the arbiter's:
+            // they are neither read for "all OFF" nor written here.
+            const arbiterFinish = await this.beginScheduleFinish(schedule.name, storedCommands);
+            const activeCommands = arbiterFinish.commands;
             // Verify if devices are actually OFF by reading Modbus
             let allDevicesOff = true;
             for (const cmd of activeCommands) {
@@ -1196,6 +1205,10 @@ let ScheduleService = class ScheduleService {
                 }
             }
             // If all devices are confirmed OFF, update status to finished
+            if (allDevicesOff || minutesPastEnd < 3) {
+                // No direct OFF this pass: the claims go now (after the delay a stopped managed pump needs).
+                await arbiterFinish.complete(null);
+            }
             if (allDevicesOff) {
                 if (this.node) {
                     this.node.warn(`✅ RECOVERY SUCCESS: Schedule ${schedule.name} devices confirmed OFF - updating to finished`);
@@ -1217,7 +1230,8 @@ let ScheduleService = class ScheduleService {
                     if (this.node) {
                         this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
                     }
-                    const { allSuccessful: resetSuccess } = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
+                    const { report: retryReport, allSuccessful: resetSuccess } = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
+                    await arbiterFinish.complete(retryReport);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
                         this.clearScheduleConfigValues(schedule.name);
@@ -1236,6 +1250,18 @@ let ScheduleService = class ScheduleService {
                 }
             }
         }
+    }
+    /**
+     * ARBITER_MODE=enforce: the run's OFF without its managed coils, with the claim release in water-hammer
+     * order (schedule-arbiter.ts beginScheduleFinish); call `complete()` after the direct OFF. Without an
+     * enforcing arbiter `commands` comes back unchanged and `complete()` does nothing.
+     */
+    async beginScheduleFinish(scheduleName, commands) {
+        return (0, schedule_arbiter_1.beginScheduleFinish)((0, schedule_arbiter_1.enforcingArbiter)(), scheduleName, commands, {
+            sleep: (ms) => this.delay(ms),
+            waterHammerMs: this.waterHammerDelayMs,
+            warn: (message) => { var _a; return (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn(message); },
+        });
     }
     /**
      * Reset lại các lệnh modbus

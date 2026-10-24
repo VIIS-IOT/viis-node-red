@@ -27,7 +27,7 @@ import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
 import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, rebuildOffCommands, retryNeedsImpliedPumps } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 import { unixMsNow } from "../../core/farm-time";
-import { enforcingArbiter, prepareScheduleFinish, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
+import { enforcingArbiter, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -439,15 +439,15 @@ module.exports = function (RED: NodeAPI) {
                         const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
                         const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
                         const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
-                        // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
-                        const allResetCommands = await prepareScheduleFinish(
-                            enforcingArbiter(),
+                        // ARBITER_MODE=enforce: managed coils are the arbiter's; the run's claims are released
+                        // around the direct OFF in water-hammer order.
+                        const arbiterFinish = await scheduleService.beginScheduleFinish(
                             schedule.name,
                             scheduleService.mergeValveProgramOffCommand(
                                 [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]
-                            ),
-                            (message) => node.warn(message)
+                            )
                         );
+                        const allResetCommands = arbiterFinish.commands;
 
                         const rpcRunId = uuidv4();
                         let rpcReport: ExecutionReport = {
@@ -464,6 +464,7 @@ module.exports = function (RED: NodeAPI) {
                             scheduleService.clearActiveCommands(schedule.name);
                             debugLog(`Cleared active commands for schedule ${schedule.name} via RPC`);
                         }
+                        await arbiterFinish.complete(rpcReport);
 
                         const statusChanged = hasStatusChanged(schedule.name, "finished");
                         schedule.status = "finished";
@@ -884,16 +885,15 @@ module.exports = function (RED: NodeAPI) {
                         const storedCommands = scheduleService.getActiveCommands(schedule.name);
                         // A restart cleared the active commands of a run that is still running: its OFF
                         // is rebuilt from the schedule, or the outputs it turned ON would stay ON.
-                        // ARBITER_MODE=enforce: the run's claims are released and the arbiter turns its
-                        // managed coils off; only the other commands are written here.
-                        const activeCommands = await prepareScheduleFinish(
-                            enforcingArbiter(),
+                        // ARBITER_MODE=enforce: the run's claims are released (water-hammer order) and the
+                        // arbiter turns its managed coils off; only the other commands are written here.
+                        const arbiterFinish = await scheduleService.beginScheduleFinish(
                             schedule.name,
                             storedCommands.length > 0
                                 ? storedCommands
-                                : rebuildOffCommands(scheduleService.mapScheduleToModbus(schedule)),
-                            (message) => node.warn(message)
+                                : rebuildOffCommands(scheduleService.mapScheduleToModbus(schedule))
                         );
+                        const activeCommands = arbiterFinish.commands;
                         const holdingRegisters: Record<string, number> = scheduleService.getAllModbusHoldingRegisters();
                         const extraResetKeys = Object.entries(holdingRegisters)
                             .filter(([key, _]) => key.startsWith('time_valve_') || key.startsWith('set_flow'))
@@ -935,6 +935,7 @@ module.exports = function (RED: NodeAPI) {
                             finishReport = resetResult.report;
                             resetSuccessful = resetResult.allSuccessful;
                         }
+                        await arbiterFinish.complete(finishReport);
 
                         const finish = decideFinish({ allSuccessful: resetSuccessful, report: finishReport }, writeCommands);
                         if (!finish.done) {
@@ -1030,8 +1031,9 @@ module.exports = function (RED: NodeAPI) {
                     activeCommands: () => activeModbusCommands,
                     resetCommands: async (scheduleId, commands) => {
                         // ARBITER_MODE=enforce: release the stopped run's claims; managed coils are the arbiter's.
-                        const writes = await prepareScheduleFinish(enforcingArbiter(), scheduleId, commands as any[], (message) => node.warn(message));
-                        const { allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, writes);
+                        const arbiterFinish = await scheduleService.beginScheduleFinish(scheduleId, commands as any[]);
+                        const { report, allSuccessful } = await scheduleService.resetModbusCommands(modbusClient, arbiterFinish.commands);
+                        await arbiterFinish.complete(report);
                         if (!allSuccessful) debugLog(`Failed to reset commands for ${scheduleId}, retaining in activeModbusCommands`);
                         return allSuccessful;
                     },

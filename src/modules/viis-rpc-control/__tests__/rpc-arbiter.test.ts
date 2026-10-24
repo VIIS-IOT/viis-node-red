@@ -13,6 +13,8 @@ const NOW = 1_800_000_000_000;
 function fakeArbiter(mode: 'observe' | 'enforce', result: Partial<ClaimResult> = {}) {
     const arbiter = {
         manages: jest.fn((key: string) => key === 'valve_1'),
+        keyMode: jest.fn((key: string) => (key === 'valve_1' ? 'managed' as const : 'unmanaged' as const)),
+        target: jest.fn((key: string) => (key === 'valve_1' ? { key, boardId: 'board1', address: 0 } : undefined)),
         mode: jest.fn(() => mode),
         leaseMs: jest.fn((source: string) => (source === 'manual' ? 1_800_000 : 600_000)),
         claim: jest.fn().mockResolvedValue({ applied: true, actual: true, mode, ...result }),
