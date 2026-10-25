@@ -99,6 +99,9 @@ const ENV_TO_GLOBAL_MAPPING = {
     'DH6400_ENABLED_CHANNELS': 'dh6400_enabled_channels',
     // Gateway event outbox flag (device1.json / common.json via env-loader)
     'EVENT_OUTBOX_ENABLED': 'event_outbox_enabled',
+    // Gateway rollout flags (device1.json featureFlags via env-loader; absent = off)
+    'SYNC_FULL_CONFIG_ENABLED': 'sync_full_config_enabled',
+    'SCHEDULE_OFF_RETRY': 'schedule_off_retry',
     // Actuator arbiter policy: device1.json `actuatorPolicy` as one JSON string (env-loader)
     'ACTUATOR_POLICY': 'actuator_policy',
     // Actuator arbiter flags (device1.json / common.json via env-loader)

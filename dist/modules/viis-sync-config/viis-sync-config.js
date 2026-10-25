@@ -5,6 +5,11 @@
  * and writes to device*.json file. env-loader's FileWatcher auto-detects the change
  * and reloads into global context.
  *
+ * Off unless the gateway sets `SYNC_FULL_CONFIG_ENABLED` (device1.json `featureFlags`, read per request): the
+ * cloud copy of many gateways is only a partial projection, so a sync would replace a working file. When it
+ * is on, a download for another device or without the boards the file has is refused, and the gateway-owned
+ * sections (`actuatorPolicy`, local `featureFlags`) are merged into it instead of replaced.
+ *
  * @author VIIS Team
  * @version 1.0.1
  */
@@ -52,6 +57,7 @@ const axios_1 = __importDefault(require("axios"));
 const viis_telemetry_constants_1 = require("../viis-telemetry/viis-telemetry-constants");
 const resolve_backend_url_1 = require("../../ultils/resolve-backend-url");
 const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
+const sync_config_merge_1 = require("./sync-config-merge");
 const RPC_METHOD = 'sync-full-config';
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
@@ -151,15 +157,40 @@ module.exports = function (RED) {
                     return;
                 log.info(node, `Received ${RPC_METHOD} RPC from topic: ${topic}`);
                 log.info(node, `RPC params: ${JSON.stringify(parsed.params || {})}`);
-                handleSync(parsed.params);
+                handleSync(parsed.params, (0, demeter_mqtt_topics_1.extractRpcCommandId)(parsed, topic));
             }
             catch (err) {
                 // Ignore non-JSON or unrelated messages
             }
         }
+        /** Answers the RPC on `rpc/response/<commandId>` so the caller does not wait for a timeout. */
+        async function answerRpcFailed(commandId, error) {
+            if (!commandId || !mqttClient)
+                return;
+            try {
+                await mqttClient.publish((0, demeter_mqtt_topics_1.buildDeviceRpcResponseTopic)(deviceId, commandId, globalHelper), JSON.stringify({ ts: Date.now(), success: false, status: 'FAILED', method: RPC_METHOD, error }));
+            }
+            catch (err) {
+                log.warn(node, `Failed to answer ${RPC_METHOD} RPC: ${err.message}`);
+            }
+        }
+        function readLocalConfig() {
+            try {
+                return (0, sync_config_merge_1.unwrapConfig)(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+            }
+            catch (_a) {
+                return null;
+            }
+        }
         // ── Core sync logic ───────────────────────────────────────────────────
-        async function handleSync(params) {
+        async function handleSync(params, commandId) {
             var _a, _b, _c, _d;
+            // Read per request: the flag is hot-reloaded with the rest of the config.
+            if (!globalHelper.getBooleanEnvVar('SYNC_FULL_CONFIG_ENABLED', false)) {
+                log.warn(node, `${RPC_METHOD} ignored (SYNC_FULL_CONFIG_ENABLED=false)`);
+                await answerRpcFailed(commandId, 'sync_full_config_disabled');
+                return;
+            }
             if (isSyncing) {
                 log.warn(node, 'Sync already in progress, skipping');
                 return;
@@ -183,36 +214,38 @@ module.exports = function (RED) {
                 log.info(node, `Response type: ${typeof fetchedConfig}`);
                 log.info(node, `Response keys: ${fetchedConfig ? Object.keys(fetchedConfig).join(', ') : 'null'}`);
                 // Unwrap { result: { ... } } wrapper if present (backend API response format)
-                const config = (fetchedConfig === null || fetchedConfig === void 0 ? void 0 : fetchedConfig.result) || fetchedConfig;
-                log.info(node, `Config deviceIdentity.DEVICE_ID: ${((_b = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _b === void 0 ? void 0 : _b.DEVICE_ID) || 'MISSING'}`);
+                const downloaded = (fetchedConfig === null || fetchedConfig === void 0 ? void 0 : fetchedConfig.result) || fetchedConfig;
+                log.info(node, `Config deviceIdentity.DEVICE_ID: ${((_b = downloaded === null || downloaded === void 0 ? void 0 : downloaded.deviceIdentity) === null || _b === void 0 ? void 0 : _b.DEVICE_ID) || 'MISSING'}`);
                 // Step 3: Validate
-                if (!((_c = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _c === void 0 ? void 0 : _c.DEVICE_ID)) {
+                if (!((_c = downloaded === null || downloaded === void 0 ? void 0 : downloaded.deviceIdentity) === null || _c === void 0 ? void 0 : _c.DEVICE_ID)) {
                     throw new Error('Invalid config: missing deviceIdentity.DEVICE_ID');
                 }
-                if (!((_d = config === null || config === void 0 ? void 0 : config.deviceIdentity) === null || _d === void 0 ? void 0 : _d.DEVICE_ACCESS_TOKEN)) {
+                if (!((_d = downloaded === null || downloaded === void 0 ? void 0 : downloaded.deviceIdentity) === null || _d === void 0 ? void 0 : _d.DEVICE_ACCESS_TOKEN)) {
                     throw new Error('Invalid config: missing deviceIdentity.DEVICE_ACCESS_TOKEN');
                 }
-                log.info(node, `Config fetched for device: ${config.deviceIdentity.DEVICE_ID}`);
+                log.info(node, `Config fetched for device: ${downloaded.deviceIdentity.DEVICE_ID}`);
+                // Step 3b: Refuse a download that would swap the identity or drop the boards, then keep
+                // the gateway-owned sections of the file that is running.
+                const currentConfig = readLocalConfig();
+                const refusal = (0, sync_config_merge_1.refuseDownloadedConfig)(downloaded, currentConfig, String(globalHelper.getEnvVar('DEVICE_ID', deviceId) || deviceId));
+                if (refusal) {
+                    log.error(node, `Config refused (${refusal}); ${configFile} left untouched`);
+                    node.status({ fill: 'red', shape: 'ring', text: refusal });
+                    node.send({ payload: { synced: false, error: refusal } });
+                    await answerRpcFailed(commandId, refusal);
+                    return;
+                }
+                const config = (0, sync_config_merge_1.mergeGatewayOwned)(downloaded, currentConfig);
                 // Step 4: Check if config actually changed
                 let configChanged = true;
-                if (fs.existsSync(configPath)) {
-                    try {
-                        const currentContent = fs.readFileSync(configPath, 'utf8');
-                        const currentConfig = JSON.parse(currentContent);
-                        if (JSON.stringify(currentConfig) === JSON.stringify(config)) {
-                            configChanged = false;
-                            log.info(node, 'Config unchanged, skipping write');
-                        }
-                    }
-                    catch (_e) {
-                        // If current file is invalid, we'll overwrite it
-                    }
+                if (currentConfig && JSON.stringify(currentConfig) === JSON.stringify(config)) {
+                    configChanged = false;
+                    log.info(node, 'Config unchanged, skipping write');
                 }
                 if (configChanged) {
-                    // Step 5: Backup current file
+                    // Step 5: Backup current file (timestamped, last 5 kept)
                     if (fs.existsSync(configPath)) {
-                        const backupPath = `${configPath}.bak`;
-                        fs.copyFileSync(configPath, backupPath);
+                        const backupPath = (0, sync_config_merge_1.backupConfig)(configPath);
                         log.info(node, `Backed up to ${backupPath}`);
                     }
                     // Step 6: Write new config
