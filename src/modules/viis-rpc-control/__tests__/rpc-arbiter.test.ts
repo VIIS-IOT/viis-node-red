@@ -10,11 +10,11 @@ import type { ActuatorArbiterApi, ClaimResult } from '../../viis-actuator-arbite
 const CMD = '11111111-2222-4333-8444-555555555555';
 const NOW = 1_800_000_000_000;
 
-function fakeArbiter(mode: 'observe' | 'enforce', result: Partial<ClaimResult> = {}) {
+function fakeArbiter(mode: 'observe' | 'enforce', result: Partial<ClaimResult> = {}, managed: string[] = ['valve_1']) {
     const arbiter = {
-        manages: jest.fn((key: string) => key === 'valve_1'),
-        keyMode: jest.fn((key: string) => (key === 'valve_1' ? 'managed' as const : 'unmanaged' as const)),
-        target: jest.fn((key: string) => (key === 'valve_1' ? { key, boardId: 'board1', address: 0 } : undefined)),
+        manages: jest.fn((key: string) => managed.includes(key)),
+        keyMode: jest.fn((key: string) => (managed.includes(key) ? 'managed' as const : 'unmanaged' as const)),
+        target: jest.fn((key: string) => (managed.includes(key) ? { key, boardId: 'board1', address: 0 } : undefined)),
         mode: jest.fn(() => mode),
         leaseMs: jest.fn((source: string) => (source === 'manual' ? 1_800_000 : source === 'alarm_action' ? null : 600_000)),
         claim: jest.fn().mockResolvedValue({ applied: true, actual: true, mode, ...result }),
@@ -34,9 +34,9 @@ function createHandler() {
     };
     const modbus = {
         getModbusHoldingRegisters: () => ({}),
-        getModbusCoils: () => ({ valve_1: 0, main_pump: 3 }),
+        getModbusCoils: () => ({ valve_1: 0, light_1: 1, light_2: 2, main_pump: 3 }),
         findModbusMapping: (key: string) =>
-            ({ valve_1: { address: 0, fc: 5, value: false, boardId: 'board1' }, main_pump: { address: 3, fc: 5, value: false, boardId: 'board1' } } as any)[key] ?? null,
+            ({ valve_1: { address: 0, fc: 5, value: false, boardId: 'board1' }, light_1: { address: 1, fc: 5, value: false, boardId: 'board1' }, light_2: { address: 2, fc: 5, value: false, boardId: 'board1' }, main_pump: { address: 3, fc: 5, value: false, boardId: 'board1' } } as any)[key] ?? null,
         writeToModbus: jest.fn().mockResolvedValue(undefined),
         readFromModbus: jest.fn().mockResolvedValue(true),
         updateGlobalContextCacheAfterVerification: jest.fn(),
@@ -242,5 +242,75 @@ describe('RPC through the actuator arbiter', () => {
         await handler.handleRpcRequest({ method: 'release_claims', command_id: '51111111-2222-4333-8444-555555555555', params: { source: 'safety' } });
         expect(arbiter.release).not.toHaveBeenCalled();
         expect(mqtt.publishRpcResponse).toHaveBeenLastCalledWith('51111111-2222-4333-8444-555555555555', expect.objectContaining({ success: false, status: 'FAILED' }));
+    });
+
+    describe('a failed command withdraws the claims that must not hold the coils (FIX-22)', () => {
+        const blockValve2 = (arbiter: ReturnType<typeof fakeArbiter>) =>
+            arbiter.claim.mockImplementation(async (c: { key: string }) =>
+                c.key === 'light_2'
+                    ? { applied: false, actual: false, blockedBy: 'manual', mode: 'enforce' }
+                    : { applied: true, actual: true, mode: 'enforce' });
+
+        test('a batch command that times out withdraws its claim (it could still win a tick later)', async () => {
+            const arbiter = use(fakeArbiter('enforce', {}, ['light_1']));
+            arbiter.claim.mockImplementation(() => new Promise(() => undefined)); // waiting for a tick that comes too late
+            const { handler } = createHandler();
+            jest.useFakeTimers();
+            try {
+                const done = handler.handleRpcRequest({
+                    method: 'set_state_batch',
+                    command_id: CMD,
+                    params: { commands: [{ key: 'light_1', value: true }], options: { timeout_per_cmd: 100, modbus_delay_ms: 0 } },
+                });
+                await jest.advanceTimersByTimeAsync(500);
+                await done;
+            } finally {
+                jest.useRealTimers();
+            }
+
+            expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'light_1');
+        });
+
+        test('a failed batch (sequential, aborts) withdraws the claims of the commands that had succeeded', async () => {
+            const arbiter = use(fakeArbiter('enforce', {}, ['light_1', 'light_2']));
+            blockValve2(arbiter);
+            const { handler } = createHandler();
+
+            await handler.handleRpcRequest({
+                method: 'set_state_batch',
+                command_id: CMD,
+                params: { commands: [{ key: 'light_1', value: true, order: 0 }, { key: 'light_2', value: true, order: 1 }], options: { modbus_delay_ms: 0 } },
+            });
+
+            expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'light_1');
+            expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'light_2');
+        });
+
+        test('continue_on_error keeps the commands that succeeded; only the failed one is withdrawn', async () => {
+            const arbiter = use(fakeArbiter('enforce', {}, ['light_1', 'light_2']));
+            blockValve2(arbiter);
+            const { handler } = createHandler();
+
+            await handler.handleRpcRequest({
+                method: 'set_state_batch',
+                command_id: CMD,
+                params: { commands: [{ key: 'light_1', value: true, order: 0 }, { key: 'light_2', value: true, order: 1 }], options: { continue_on_error: true, modbus_delay_ms: 0 } },
+            });
+
+            expect(arbiter.release).not.toHaveBeenCalledWith(`manual:${CMD}`, 'light_1');
+            expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'light_2');
+        });
+
+        test('a multi-key set_state that fails on one key withdraws the claims of its other keys', async () => {
+            const arbiter = use(fakeArbiter('enforce', {}, ['light_1', 'light_2']));
+            blockValve2(arbiter);
+            const { handler, mqtt } = createHandler();
+
+            await handler.handleRpcRequest({ method: 'set_state', command_id: CMD, params: { light_1: true, light_2: true } });
+
+            expect(mqtt.publishRpcResponse).toHaveBeenCalledWith(CMD, expect.objectContaining({ status: 'FAILED', error: 'blocked_by:manual' }));
+            expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'light_1');
+            expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'light_2');
+        });
     });
 });

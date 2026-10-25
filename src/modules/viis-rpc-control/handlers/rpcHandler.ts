@@ -460,8 +460,18 @@ export class RpcHandler implements IRpcHandler {
 
                 this.logger.error(`Batch command failed [${batchId}] ${key}: ${errorMessage}`);
 
+                // A timeout leaves the command running: its claim can still be waiting for a tick (up to 15 s,
+                // 7 s water-hammer sleeps included) and would win later and hold the coil.
+                await this.withdrawClaims([key], `batch command failed: ${errorMessage}`);
+                const abortsBatch = options.sequential && !options.continue_on_error;
+                let withdrawn = new Set<string>();
+                if ((options.rollback_on_fail || abortsBatch) && successfulCommands.length > 0) {
+                    // A failed batch leaves nothing of its arbitrated commands behind; the claim goes instead of an
+                    // opposite write (an OFF claim would linger as a block on the key).
+                    withdrawn = await this.withdrawClaims(successfulCommands.map(c => c.key), 'batch failed');
+                }
                 if (options.rollback_on_fail && successfulCommands.length > 0) {
-                    await this.rollbackBatch(successfulCommands, batchId);
+                    await this.rollbackBatch(successfulCommands.filter(c => !withdrawn.has(c.key)), batchId);
                 }
 
                 if (options.sequential && !options.continue_on_error) {
@@ -722,6 +732,8 @@ export class RpcHandler implements IRpcHandler {
             this.logger.log(`[SET-STATE] Completed successfully`);
         } catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${(error as Error).message}`);
+            // The caller is told this set_state failed: the claims of its other keys must not hold the coils either.
+            await this.withdrawClaims(Object.keys(params), 'set_state failed');
             throw error;
         }
     }
@@ -908,6 +920,36 @@ export class RpcHandler implements IRpcHandler {
         }
     }
 
+    /** Arbiter claim owner of the RPC being handled: one per source and command (a local input without command_id has one per source). */
+    private currentClaimOwner(): string {
+        const ctx = currentRpcDeadline();
+        return `${rpcClaimSource(ctx?.source)}:${ctx?.commandId || 'local'}`;
+    }
+
+    /**
+     * Withdraws the claims this RPC made on `keys` (only keys the arbiter manages): a command the caller was told
+     * failed must not take effect later (ADR-038 amendment 4), and that holds for the siblings of a failed
+     * multi-key set_state / batch as well as for a command that timed out while its claim still waited for a tick.
+     * Returns the keys the arbiter manages (whose claims are gone now).
+     */
+    private async withdrawClaims(keys: string[], why: string): Promise<Set<string>> {
+        const withdrawn = new Set<string>();
+        const arbiter = getArbiter();
+        if (arbiter === null) return withdrawn;
+        const owner = this.currentClaimOwner();
+        for (const key of keys) {
+            if (!key || !arbiter.manages(key)) continue;
+            try {
+                await arbiter.release(owner, key);
+                withdrawn.add(key);
+                this.logger.warn(`[ARBITER] Withdrew claim ${owner} on ${key}: ${why}`);
+            } catch (error) {
+                this.logger.warn(`[ARBITER] Could not withdraw claim ${owner} on ${key}: ${(error as Error).message}`);
+            }
+        }
+        return withdrawn;
+    }
+
     private buildArbiterClaim(arbiter: ActuatorArbiterApi, key: string, value: boolean): ClaimInput {
         const ctx = currentRpcDeadline();
         const source = rpcClaimSource(ctx?.source);
@@ -917,7 +959,7 @@ export class RpcHandler implements IRpcHandler {
             value,
             source,
             // A command without command_id (local flow input) has one owner per source: the newer replaces it.
-            ownerId: `${source}:${ctx?.commandId || 'local'}`,
+            ownerId: this.currentClaimOwner(),
             // null = never lapses (alarm_action): it ends on release_claims, not on a lease.
             expiresAt: lease === null ? null : Date.now() + lease,
         };
