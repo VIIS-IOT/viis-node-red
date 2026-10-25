@@ -611,7 +611,7 @@ module.exports = function (RED) {
                         const dueWindowEndMs = isDue && (0, schedule_arbiter_1.claimingArbiter)() !== null
                             ? (0, schedule_arbiter_1.scheduleWindowEndMs)(schedule, (_b = schedule.schedulePlan) !== null && _b !== void 0 ? _b : null, (0, farm_time_1.unixMsNow)())
                             : null;
-                        // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried and a restart rewrites the OFF.
+                        // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried every tick until the next window.
                         const offRetryOn = scheduleService.offRetryEnabled();
                         // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
                         // This happens after power outage when activeModbusCommands was cleared on startup
@@ -757,12 +757,12 @@ module.exports = function (RED) {
                                 delete lastCheckTimestamps[schedule.name];
                                 globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                                 const storedCommands = scheduleService.getActiveCommands(schedule.name);
-                                // SCHEDULE_OFF_RETRY on: a restart cleared the active commands of a run that is still
-                                // running, so its OFF is rebuilt from the schedule or the outputs it turned ON would
-                                // stay ON. Off: only the stored commands are written.
+                                // A restart cleared the active commands of a run that is still running: its OFF is
+                                // rebuilt from the schedule (fail-safe, not behind SCHEDULE_OFF_RETRY), or the outputs
+                                // it turned ON would stay ON until the next run.
                                 // ARBITER_MODE=enforce: the run's claims are released (water-hammer order) and the
                                 // arbiter turns its managed coils off; only the other commands are written here.
-                                const arbiterFinish = await scheduleService.beginScheduleFinish(schedule.name, storedCommands.length > 0 || !offRetryOn
+                                const arbiterFinish = await scheduleService.beginScheduleFinish(schedule.name, storedCommands.length > 0
                                     ? storedCommands
                                     : (0, schedule_finish_1.rebuildOffCommands)(scheduleService.mapScheduleToModbus(schedule)));
                                 const activeCommands = arbiterFinish.commands;

@@ -725,7 +725,7 @@ module.exports = function (RED: NodeAPI) {
                     const dueWindowEndMs = isDue && claimingArbiter() !== null
                         ? scheduleWindowEndMs(schedule, schedule.schedulePlan ?? null, unixMsNow())
                         : null;
-                    // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried and a restart rewrites the OFF.
+                    // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried every tick until the next window.
                     const offRetryOn = scheduleService.offRetryEnabled();
 
                     // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
@@ -913,14 +913,14 @@ module.exports = function (RED: NodeAPI) {
                         globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
 
                         const storedCommands = scheduleService.getActiveCommands(schedule.name);
-                        // SCHEDULE_OFF_RETRY on: a restart cleared the active commands of a run that is still
-                        // running, so its OFF is rebuilt from the schedule or the outputs it turned ON would
-                        // stay ON. Off: only the stored commands are written.
+                        // A restart cleared the active commands of a run that is still running: its OFF is
+                        // rebuilt from the schedule (fail-safe, not behind SCHEDULE_OFF_RETRY), or the outputs
+                        // it turned ON would stay ON until the next run.
                         // ARBITER_MODE=enforce: the run's claims are released (water-hammer order) and the
                         // arbiter turns its managed coils off; only the other commands are written here.
                         const arbiterFinish = await scheduleService.beginScheduleFinish(
                             schedule.name,
-                            storedCommands.length > 0 || !offRetryOn
+                            storedCommands.length > 0
                                 ? storedCommands
                                 : rebuildOffCommands(scheduleService.mapScheduleToModbus(schedule))
                         );

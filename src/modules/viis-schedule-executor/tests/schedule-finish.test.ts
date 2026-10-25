@@ -154,14 +154,16 @@ describe('OFF after a restart that spanned the window end', () => {
         expect(service.updateScheduleStatus).toHaveBeenCalledWith(stuck, 'finished');
     });
 
-    test('SCHEDULE_OFF_RETRY off: stuck recovery finishes the run without writing an OFF', async () => {
+    test('SCHEDULE_OFF_RETRY off: stuck recovery still writes the OFF once, and finishes the run even if it failed', async () => {
         const service = stuckRecoveryService(false);
-        const reset = jest.spyOn(service, 'resetModbusCommands');
+        const reset = jest.spyOn(service, 'resetModbusCommands')
+            .mockResolvedValue({ allSuccessful: false, report: report([outcome(valve1, 'fail'), outcome(timeValve1, 'pass')]) });
 
         await service.checkAndRecoverStuckSchedules({} as any, [stuck]);
 
-        expect(reset).not.toHaveBeenCalled();
+        expect(reset).toHaveBeenCalledWith({}, [{ ...valve1, value: false }, { ...timeValve1, value: 0 }], stuck, true);
         expect(service.updateScheduleStatus).toHaveBeenCalledWith(stuck, 'finished');
+        expect(service.getActiveCommands('s1')).toEqual([]);
     });
 
     test('stuck recovery whose OFF failed keeps the run running with the failed commands', async () => {
