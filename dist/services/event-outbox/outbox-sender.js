@@ -12,9 +12,12 @@ exports.redactDeviceToken = redactDeviceToken;
  *   401/403/404 = token rotated, device re-provisioned, route not deployed yet) stops the batch so nothing
  *   overtakes the failed row, and backs it off `min(maxBackoff, 5 s × 2^attempts)`. Such a pause never
  *   marks the queue dead and sets `failing`, so the snapshot runs once delivery recovers.
- * - A row that keeps failing is marked dead after `MAX_ATTEMPTS` (20) attempts or `MAX_ROW_AGE_MS` (24 h)
- *   since it was created, so one poison row cannot block every later event forever. The next flush
- *   schedules a snapshot, because the dropped event may have been a state-alarm raise/clear.
+ * - A row that keeps failing is marked dead after `MAX_ATTEMPTS` (20) failures the backend ANSWERED (5xx or a
+ *   retryable 4xx) or `MAX_ROW_AGE_MS` (24 h) since it was created, so one poison row cannot block every
+ *   later event forever. Network errors (refused, timeout, DNS) do not count towards the 20: an outage or
+ *   a deploy longer than ~17 min must not cost events; only the 24 h age limit applies to them. The count
+ *   is kept as a `[http=N]` prefix of `last_error` (no schema change; `attempts` still drives the backoff).
+ *   Dropping a row schedules a snapshot, because the event may have been a state-alarm raise/clear.
  * - Any other 4xx (payload refused) marks the row dead and moves on: one bad row must not block every
  *   later event.
  * - The first success after a failure schedules a `snapshot-by-token` with the gateway's Pending state
@@ -35,7 +38,7 @@ const DEAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /** The backend rejects a snapshot that lists more (`GATEWAY_ALARM_SNAPSHOT_MAX`). */
 exports.SNAPSHOT_MAX_ALARMS = 500;
 const RETRYABLE_4XX = new Set([401, 403, 404, 408, 409, 429]);
-/** A row is dead after this many failed attempts ... */
+/** A row is dead after this many failures the backend answered with an HTTP error status ... */
 exports.MAX_ATTEMPTS = 20;
 /** ... or once it is this old (since `created_at`) and still failing. */
 exports.MAX_ROW_AGE_MS = 24 * 60 * 60 * 1000;
@@ -47,6 +50,13 @@ const consoleLogger = {
 /** Masks `device_access_token=` values in any text that may quote a request URL. */
 function redactDeviceToken(text) {
     return String(text).replace(/(device_access_token=)[^&\s"']*/g, "$1***");
+}
+const HTTP_COUNT_PREFIX = /^\[http=(\d+)\] /;
+/** How many HTTP-answer failures the row has had, read back from the `last_error` prefix. */
+function httpFailures(row) {
+    var _a;
+    const match = HTTP_COUNT_PREFIX.exec((_a = row.last_error) !== null && _a !== void 0 ? _a : "");
+    return match ? Number(match[1]) : 0;
 }
 class OutboxSender {
     constructor(outbox, env, opts = {}) {
@@ -142,7 +152,8 @@ class OutboxSender {
             }
             if (outcome.retry) {
                 const ageMs = now.getTime() - new Date(row.created_at).getTime();
-                if (attempts >= exports.MAX_ATTEMPTS || ageMs >= exports.MAX_ROW_AGE_MS) {
+                const httpCount = httpFailures(row) + (outcome.http ? 1 : 0);
+                if (httpCount >= exports.MAX_ATTEMPTS || ageMs >= exports.MAX_ROW_AGE_MS) {
                     // Poison row (or a backend that never took it): drop it so the rows behind it flow, and
                     // let the snapshot repair the state alarm it may have carried.
                     await this.outbox.markDead(row.seq, attempts, outcome.error);
@@ -156,7 +167,7 @@ class OutboxSender {
                 // all retry in the same second when it is back.
                 const base = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** ((_c = row.attempts) !== null && _c !== void 0 ? _c : 0));
                 const delay = Math.round(base * (0.8 + 0.4 * this.random()));
-                await this.outbox.markRetry(row.seq, attempts, new Date(now.getTime() + delay), outcome.error);
+                await this.outbox.markRetry(row.seq, attempts, new Date(now.getTime() + delay), `[http=${httpCount}] ${outcome.error}`);
                 this.logger.warn(`[OUTBOX] ${describe(row)} failed (${outcome.error}), attempt ${attempts}, retry in ${delay} ms`);
                 this.failing = true;
                 result.failed++;
@@ -217,7 +228,7 @@ class OutboxSender {
             const message = redactDeviceToken((_b = error === null || error === void 0 ? void 0 : error.message) !== null && _b !== void 0 ? _b : error).split(token).join("***");
             const text = status ? `HTTP ${status}: ${message}` : message;
             const retry = status === undefined || status >= 500 || status < 400 || RETRYABLE_4XX.has(status);
-            return { ok: false, retry, error: text };
+            return { ok: false, retry, error: text, http: status !== undefined };
         }
     }
 }

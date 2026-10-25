@@ -122,6 +122,48 @@ describe("OutboxSender", () => {
         expect(logs.some(l => l.includes("dead after 20 attempt(s)") && l.includes("HTTP 500"))).toBe(true);
     });
 
+    it("network errors do not count towards the 20-attempt cap: alive after 25, dead only once 24 h old", async () => {
+        const { outbox, sender, rows } = setup();
+        await outbox.enqueue({ msg: "e1" });
+        await outbox.enqueue({ msg: "e2" });
+        post.mockImplementation(async (url: string, body: any) => {
+            if (url === EVENT_URL && body.msg === "e1") throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+            return { status: 200 };
+        });
+
+        let now = later();
+        for (let i = 1; i <= 25; i++) {
+            expect(await sender.flush(now)).toMatchObject({ failed: 1, dead: 0, sent: 0 });
+            expect(rows()[0]).toMatchObject({ attempts: i, dead: false });
+            now = new Date(rows()[0].next_attempt_at.getTime());
+        }
+        expect(rows()[0].last_error).toMatch(/^\[http=0\] /);
+
+        // HTTP answers add to the same row's count, network errors in between do not reset it
+        post.mockImplementation(async (url: string, body: any) => {
+            if (url === EVENT_URL && body.msg === "e1") throw httpError(502);
+            return { status: 200 };
+        });
+        for (let i = 1; i < 20; i++) {
+            expect(await sender.flush(now)).toMatchObject({ failed: 1, dead: 0 });
+            now = new Date(rows()[0].next_attempt_at.getTime());
+        }
+        expect(await sender.flush(now)).toMatchObject({ dead: 1, sent: 1 });
+        expect(rows()[0]).toMatchObject({ dead: true, attempts: 45 });
+
+        // a separate row that only ever sees network errors dies at 24 h
+        await outbox.enqueue({ msg: "e3" });
+        post.mockImplementation(async (url: string, body: any) => {
+            if (url === EVENT_URL && body.msg === "e3") throw Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" });
+            return { status: 200 };
+        });
+        const e3 = () => rows()[2];
+        expect(await sender.flush(now)).toMatchObject({ failed: 1, dead: 0 });
+        e3().created_at = new Date(now.getTime() - 25 * 3_600_000);
+        expect(await sender.flush(new Date(e3().next_attempt_at.getTime()))).toMatchObject({ dead: 1 });
+        expect(e3().dead).toBe(true);
+    });
+
     it("a row older than 24 h that fails again is dead, whatever its attempts", async () => {
         const { outbox, sender, rows } = setup();
         await outbox.enqueue({ msg: "old" });
