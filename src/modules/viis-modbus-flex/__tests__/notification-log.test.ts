@@ -31,7 +31,7 @@ const NODE_LOG_METHODS = ["log", "warn", "error", "debug"] as const;
 const flushAsyncWork = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /** Starts a viis-modbus-flex node against a fake Node-RED runtime, with every logging channel spied. */
-async function startFlexNode(globals: Record<string, unknown>) {
+async function startFlexNode(globals: Record<string, unknown>, boardId = "board1") {
   const modbusClient = new EventEmitter();
   (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(modbusClient);
 
@@ -63,7 +63,7 @@ async function startFlexNode(globals: Record<string, unknown>) {
   };
 
   registerFlexNode(RED);
-  new NodeType({ id: "flex-1", boardId: "board1", enableLogging: false });
+  new NodeType({ id: "flex-1", boardId, enableLogging: false });
   await flushAsyncWork();
   expect(modbusClient.listenerCount("modbus-status")).toBe(1);
 
@@ -92,8 +92,9 @@ describe("viis-modbus-flex alert notification logging", () => {
 
   const circuitBreakerOpen = { status: "circuit-breaker-open", error: "timeout", recoveryAt: Date.now() + 60000, failedCount: 5 };
 
-  const startWithToken = async (token: string) => {
-    flex = await startFlexNode({ device_access_token: token, device_id: "device-1", server_url: BACKEND_URL });
+  // One board per test: a raise that reached the backend is remembered per board for the process.
+  const startWithToken = async (token: string, boardId = "board1") => {
+    flex = await startFlexNode({ device_access_token: token, device_id: "device-1", server_url: BACKEND_URL }, boardId);
   };
 
   beforeEach(() => {
@@ -126,7 +127,7 @@ describe("viis-modbus-flex alert notification logging", () => {
     fetchSpy.mockImplementation(async (url: string) => {
       throw new TypeError(`Failed to parse URL from ${url}`);
     });
-    await startWithToken(TOKEN);
+    await startWithToken(TOKEN, "board2");
 
     await flex.emitStatus(circuitBreakerOpen);
 
@@ -140,7 +141,7 @@ describe("viis-modbus-flex alert notification logging", () => {
     fetchSpy.mockImplementation(async (url: string) => {
       throw new TypeError(`Failed to parse URL from ${url}`);
     });
-    await startWithToken(trickyToken);
+    await startWithToken(trickyToken, "board3");
 
     await flex.emitStatus(circuitBreakerOpen);
 

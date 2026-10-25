@@ -20,8 +20,21 @@ const BOARD_OFFLINE_STATUSES = new Set(['circuit-breaker-open', 'prolonged-disco
  * to see an event takes it), so the board is one alarm and one request per change.
  */
 const boardAlarmReporters = new Map();
-/** Without the outbox: boards whose Pending reached the backend; only those send a Clear on reconnect. */
+/**
+ * Without the outbox (direct POST, no retry, no stored state) the gateway only knows what it sent in this
+ * process. `boardsRaisedDirect`: boards whose Pending reached the backend (a Clear is owed when they come
+ * back). `boardsKnownClear`: boards whose Clear reached the backend since the process started. A board in
+ * neither set has an unknown backend state (the backend may hold a `board_offline:<id>` from before a
+ * restart), so its first healthy moment sends one Clear; backend state alarms notify only on transitions,
+ * so a Clear for an alarm that is not active changes nothing.
+ */
 const boardsRaisedDirect = new Set();
+const boardsKnownClear = new Set();
+/** Boards with a direct POST under way, so concurrent reads / events do not send the same alert twice. */
+const boardsDirectInFlight = new Set();
+/** Last startup-Clear attempt per board (a failed POST is retried at most once per `HEALTHY_CLEAR_RETRY_MS`). */
+const boardsClearAttemptAt = new Map();
+const HEALTHY_CLEAR_RETRY_MS = 60000;
 /**
  * Reports a board's connection state as the gateway state alarm `board_offline:<boardId>` (backend
  * `iot_alarm_state`, one raise and one clear per outage). With the event outbox on the alarm is raised or
@@ -60,7 +73,11 @@ async function reportBoardAlarm(logger, globalHelper, boardId, event, raise) {
                 logger.warn(`[NOTIFICATION] outbox failed for ${alarmKey}, sending directly: ${error.message}`);
             }
         }
-        if (!raise && !boardsRaisedDirect.has(boardId))
+        if (raise && boardsRaisedDirect.has(boardId))
+            return; // already reported for this down period
+        if (!raise && !boardsRaisedDirect.has(boardId) && boardsKnownClear.has(boardId))
+            return; // nothing owed
+        if (boardsDirectInFlight.has(boardId))
             return;
         const deviceAccessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', null);
         const backendUrl = globalHelper.getEnvVar('VIIS_BACKEND', null);
@@ -72,29 +89,59 @@ async function reportBoardAlarm(logger, globalHelper, boardId, event, raise) {
         payload.clear_by = raise ? '' : 'Value';
         const urlWithToken = `${backendUrl}/api/v2/alarm/notification-by-token?device_access_token=${encodeURIComponent(deviceAccessToken)}`;
         logger.log(`[NOTIFICATION] Sending alert to: ${(0, outbox_sender_1.redactDeviceToken)(urlWithToken)}`);
-        const response = await fetch(urlWithToken, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-        if (response.ok) {
-            if (raise)
-                boardsRaisedDirect.add(boardId);
-            else
-                boardsRaisedDirect.delete(boardId);
-            logger.log(`[NOTIFICATION] Alert sent successfully: ${event.status}`);
+        boardsDirectInFlight.add(boardId);
+        try {
+            const response = await fetch(urlWithToken, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                if (raise) {
+                    boardsRaisedDirect.add(boardId);
+                    boardsKnownClear.delete(boardId);
+                }
+                else {
+                    boardsRaisedDirect.delete(boardId);
+                    boardsKnownClear.add(boardId);
+                }
+                logger.log(`[NOTIFICATION] Alert sent successfully: ${event.status}`);
+            }
+            else {
+                const errorText = await response.text();
+                logger.error(`[NOTIFICATION] Failed to send alert: ${response.status} - ${errorText}`);
+            }
         }
-        else {
-            const errorText = await response.text();
-            logger.error(`[NOTIFICATION] Failed to send alert: ${response.status} - ${errorText}`);
+        finally {
+            boardsDirectInFlight.delete(boardId);
         }
     }
     catch (error) {
         // fetch quotes the whole request URL in some failures (e.g. "Failed to parse URL from <url>").
         logger.error(`[NOTIFICATION] Error sending alert: ${(0, outbox_sender_1.redactDeviceToken)(error.message)}`);
     }
+}
+/**
+ * A read or write of `boardId` just succeeded, so the board is healthy. Outbox off: if the backend state of
+ * `board_offline:<boardId>` is unknown (after a restart), send one Clear. A board this process raised is
+ * cleared by its `connected` event instead. Cheap after that: a set lookup.
+ */
+async function reportBoardHealthy(logger, globalHelper, boardId) {
+    var _a;
+    if ((0, registry_1.getEventOutbox)())
+        return; // the outbox keeps the alarm state and sends transitions only
+    if (boardsKnownClear.has(boardId) || boardsRaisedDirect.has(boardId))
+        return;
+    // Reads run every second: while the backend is unreachable (or unconfigured) try once a minute, quietly.
+    if (!globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', null) || !globalHelper.getEnvVar('VIIS_BACKEND', null))
+        return;
+    const now = Date.now();
+    if (now - ((_a = boardsClearAttemptAt.get(boardId)) !== null && _a !== void 0 ? _a : 0) < HEALTHY_CLEAR_RETRY_MS)
+        return;
+    boardsClearAttemptAt.set(boardId, now);
+    await reportBoardAlarm(logger, globalHelper, boardId, { status: 'connected' }, false);
 }
 /**
  * VIIS Modbus Flex Node
@@ -423,6 +470,11 @@ module.exports = function (RED) {
                             // Process the modbus request
                             // OFFLINE intent chain: a managed coil becomes an arbiter claim (ARBITER_MODE=enforce).
                             const response = await modbusGetterService.processRequest(msg.payload, (0, modbusGetterService_1.offlineWriteOrigin)(msg, config.writeSource, targetBoardId !== null && targetBoardId !== void 0 ? targetBoardId : null));
+                            // A read that returned data (or a write that succeeded) proves the board answers: after a
+                            // restart this sends the one Clear the backend may be waiting for (outbox off only).
+                            if (Array.isArray(response) || (response === null || response === void 0 ? void 0 : response.success) === true) {
+                                void reportBoardHealthy(logger, globalHelper, alarmBoardId);
+                            }
                             // Update message payload with response
                             msg.payload = response;
                             try {
