@@ -75,13 +75,13 @@ describe('viis-modbus-flex OFFLINE writes with the arbiter enforcing', () => {
         expect(first).toMatchObject({ success: true, address: 0, functionCode: 5, value: true });
         expect(client.writeCoil).not.toHaveBeenCalled();
         expect(coils.valve_1).toBe(true);
-        expect(arbiter.owners().valve_1).toEqual({ source: 'scenario', ownerId: 'offline:intent-7', expiresAt: T0 + 600_000, next: null });
+        expect(arbiter.owners().valve_1).toEqual({ source: 'scenario', ownerId: 'offline:intent-7', expiresAt: T0 + 600_000, value: true, next: null });
 
         advance(60_000);
         await service.processRequest(msg.payload, offlineWriteOrigin(msg, 'intent'));
 
         // Same owner: the claim is replaced with a new lease, not added.
-        expect(arbiter.owners().valve_1).toEqual({ source: 'scenario', ownerId: 'offline:intent-7', expiresAt: T0 + 60_000 + 600_000, next: null });
+        expect(arbiter.owners().valve_1).toEqual({ source: 'scenario', ownerId: 'offline:intent-7', expiresAt: T0 + 60_000 + 600_000, value: true, next: null });
         expect(client.writeCoil).not.toHaveBeenCalled();
     });
 
