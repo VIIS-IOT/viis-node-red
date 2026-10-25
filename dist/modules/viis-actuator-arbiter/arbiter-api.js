@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ActuatorArbiter = exports.WRITE_FAILED_ALARM_TICKS = exports.CLAIM_MAX_WAIT_MS = exports.CLAIM_DEBOUNCE_MS = exports.MIN_TICK_MS = exports.DEFAULT_TICK_MS = void 0;
+const alarm_key_1 = require("../../services/event-outbox/alarm-key");
 const arbiter_core_1 = require("./arbiter-core");
 const reconciler_1 = require("./reconciler");
 exports.DEFAULT_TICK_MS = 5000;
@@ -234,7 +235,7 @@ class ActuatorArbiter {
     async updateWriteAlarms(report) {
         var _a, _b;
         for (const { key } of this.opts.reconcilerDeps.targets) {
-            const alarmKey = `${WRITE_FAILED_PREFIX}${key}`;
+            const alarmKey = (0, alarm_key_1.capAlarmKey)(`${WRITE_FAILED_PREFIX}${key}`);
             const failures = this.reconciler.consecutiveFailures(key);
             const raise = failures >= exports.WRITE_FAILED_ALARM_TICKS && !this.alarmed.has(alarmKey);
             const clear = failures === 0 && this.alarmed.has(alarmKey);
@@ -359,7 +360,7 @@ class ActuatorArbiter {
         const expired = this.pendingExpired.splice(0);
         const now = this.now();
         for (const claim of expired) {
-            const alarmKey = `${RUNTIME_EXCEEDED_PREFIX}${claim.key}`;
+            const alarmKey = (0, alarm_key_1.capAlarmKey)(`${RUNTIME_EXCEEDED_PREFIX}${claim.key}`);
             if (this.opts.mode !== 'enforce' || this.ceilingAlarmed.has(alarmKey))
                 continue;
             if (report.actual[claim.key] !== true || report.desired[claim.key] !== false)

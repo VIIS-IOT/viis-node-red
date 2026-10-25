@@ -1,3 +1,4 @@
+import { capAlarmKey } from '../../services/event-outbox/alarm-key';
 import { isValveKey } from './schedule-coil-classify';
 import { ExecutionReport, ExecutionStep, KeyOutcome } from './schedule-execution-types';
 import { ModbusCmd } from './type';
@@ -67,7 +68,7 @@ export function rebuildOffCommands(mapped: { coilCommands: ModbusCmd[]; holdingC
 }
 
 export function offFailedAlarmKey(scheduleId: string): string {
-    return `schedule_off_failed:${scheduleId}`;
+    return capAlarmKey(`schedule_off_failed:${scheduleId}`);
 }
 
 /** Global-context key: schedule name → the run whose OFF failed, with that run's first full reset list. */

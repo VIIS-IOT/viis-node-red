@@ -10,6 +10,7 @@ const logger_1 = require("./utils/logger");
 const constants_1 = require("./constants");
 const scenarioTriggerTracker_1 = require("../viis-automation-node/services/scenarioTriggerTracker");
 const registry_1 = require("../../services/event-outbox/registry");
+const alarm_key_1 = require("../../services/event-outbox/alarm-key");
 const outbox_sender_1 = require("../../services/event-outbox/outbox-sender");
 /** Status events that raise `board_offline:<boardId>`; `connected` clears it. */
 const BOARD_OFFLINE_STATUSES = new Set(['circuit-breaker-open', 'prolonged-disconnect']);
@@ -30,7 +31,7 @@ const boardsRaisedDirect = new Set();
 async function reportBoardAlarm(logger, globalHelper, boardId, event, raise) {
     var _a;
     try {
-        const alarmKey = `board_offline:${boardId}`;
+        const alarmKey = (0, alarm_key_1.capAlarmKey)(`board_offline:${boardId}`);
         const deviceId = globalHelper.getEnvVar('DEVICE_ID', null) || 'unknown_device';
         const payload = {
             alarm_name: alarmKey,

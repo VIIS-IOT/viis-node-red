@@ -11,6 +11,7 @@ exports.noteOffFailure = noteOffFailure;
 exports.offReportForAudit = offReportForAudit;
 exports.supersedesOffRetry = supersedesOffRetry;
 exports.clearOffFailure = clearOffFailure;
+const alarm_key_1 = require("../../services/event-outbox/alarm-key");
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
 /** OFF writes bypass the protection gate, so `blocked` should not happen; if it does, the coil is not OFF. */
 function offFailures(report) {
@@ -52,7 +53,7 @@ function rebuildOffCommands(mapped) {
     ];
 }
 function offFailedAlarmKey(scheduleId) {
-    return `schedule_off_failed:${scheduleId}`;
+    return (0, alarm_key_1.capAlarmKey)(`schedule_off_failed:${scheduleId}`);
 }
 /** Global-context key: schedule name → the run whose OFF failed, with that run's first full reset list. */
 exports.SCHEDULE_OFF_FAILED_KEY = 'scheduleOffFailedRuns';

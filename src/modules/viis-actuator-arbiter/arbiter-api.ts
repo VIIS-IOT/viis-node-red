@@ -20,6 +20,7 @@
  *   `manual_runtime_exceeded:<key>`, cleared when the coil reads OFF or another claim takes the key.
  */
 import type { EventOutbox } from '../../services/event-outbox/event-outbox';
+import { capAlarmKey } from '../../services/event-outbox/alarm-key';
 import { ActuatorPolicy, KeyMode } from './actuator-policy';
 import { ActuatorClaim, ArbiterCore, ClaimSource } from './arbiter-core';
 import type { ClaimStore } from './arbiter-store';
@@ -349,7 +350,7 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
 
     private async updateWriteAlarms(report: TickReport): Promise<void> {
         for (const { key } of this.opts.reconcilerDeps.targets) {
-            const alarmKey = `${WRITE_FAILED_PREFIX}${key}`;
+            const alarmKey = capAlarmKey(`${WRITE_FAILED_PREFIX}${key}`);
             const failures = this.reconciler.consecutiveFailures(key);
             const raise = failures >= WRITE_FAILED_ALARM_TICKS && !this.alarmed.has(alarmKey);
             const clear = failures === 0 && this.alarmed.has(alarmKey);
@@ -465,7 +466,7 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         const expired = this.pendingExpired.splice(0);
         const now = this.now();
         for (const claim of expired) {
-            const alarmKey = `${RUNTIME_EXCEEDED_PREFIX}${claim.key}`;
+            const alarmKey = capAlarmKey(`${RUNTIME_EXCEEDED_PREFIX}${claim.key}`);
             if (this.opts.mode !== 'enforce' || this.ceilingAlarmed.has(alarmKey)) continue;
             if (report.actual[claim.key] !== true || report.desired[claim.key] !== false) continue;
             const outbox = this.outbox();

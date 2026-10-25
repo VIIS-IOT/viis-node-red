@@ -7,6 +7,7 @@ import { Logger } from "./utils/logger";
 import { DEFAULT_CONFIG, ENV_KEYS, STATUS_MESSAGES } from "./constants";
 import { reportScenarioWriteFromMsg } from "../viis-automation-node/services/scenarioTriggerTracker";
 import { getEventOutbox } from "../../services/event-outbox/registry";
+import { capAlarmKey } from "../../services/event-outbox/alarm-key";
 import { redactDeviceToken } from "../../services/event-outbox/outbox-sender";
 
 /** Status events that raise `board_offline:<boardId>`; `connected` clears it. */
@@ -36,7 +37,7 @@ async function reportBoardAlarm(
     raise: boolean
 ) {
     try {
-        const alarmKey = `board_offline:${boardId}`;
+        const alarmKey = capAlarmKey(`board_offline:${boardId}`);
         const deviceId = globalHelper.getEnvVar('DEVICE_ID', null) || 'unknown_device';
         const payload: Record<string, any> = {
             alarm_name: alarmKey,
