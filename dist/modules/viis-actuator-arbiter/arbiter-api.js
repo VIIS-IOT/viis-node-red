@@ -32,8 +32,6 @@ class ActuatorArbiter {
         this.alarmed = new Set();
         /** `manual_runtime_exceeded:<key>` alarms raised (or found Pending on start) -> owner of the key then (null = none). */
         this.ceilingAlarmed = new Map();
-        /** Manual ON claims (`ownerId NUL key`) seen ON on the coil: only these are released when the coil later reads OFF. */
-        this.confirmedOn = new Set();
         /** Manual ON claims whose lease ended and whose tick has not reported yet. */
         this.pendingExpired = [];
         this.core = new arbiter_core_1.ArbiterCore(opts.policy);
@@ -170,13 +168,12 @@ class ActuatorArbiter {
                 this.persist();
                 this.pendingExpired.push(...expired.filter(c => c.source === 'manual' && c.value));
             }
-            await this.releaseClosedByDevice();
             report = await this.reconciler.tick();
+            this.noteClosedByDevice(report);
             this.emitCoilWrites(report);
             (_b = (_a = this.opts).onTickReport) === null || _b === void 0 ? void 0 : _b.call(_a, report);
             await this.updateWriteAlarms(report);
             await this.updateCeilingAlarms(report);
-            this.rememberConfirmedOn(report);
         }
         catch (error) {
             this.warn(`[arbiter] tick failed: ${errorText(error)}`);
@@ -296,58 +293,13 @@ class ActuatorArbiter {
             entity: deviceId,
         };
     }
-    /**
-     * A manual ON claim that was seen ON on the coil and now reads OFF was closed by the device (the PLC
-     * ran its own program out): release it before the tick would write ON again. A claim never seen ON
-     * (its first write is still due), a failed read or a key with failed writes releases nothing.
-     */
-    async releaseClosedByDevice() {
-        if (this.confirmedOn.size === 0)
+    /** The reconciler released these manual ON claims (coil read OFF on two ticks after it was seen ON): save and log. */
+    noteClosedByDevice(report) {
+        if (report.closedByDevice.length === 0)
             return;
-        const now = this.now();
-        let released = false;
-        for (const id of Array.from(this.confirmedOn)) {
-            const [ownerId, key] = id.split('\u0000');
-            const { winner } = this.core.resolve(key, now);
-            if (!winner) {
-                this.confirmedOn.delete(id);
-                continue;
-            }
-            if (winner.ownerId !== ownerId || !winner.value)
-                continue;
-            const target = this.target(key);
-            if (!target || this.reconciler.consecutiveFailures(key) > 0)
-                continue;
-            let actual;
-            try {
-                actual = Boolean(await this.opts.reconcilerDeps.readCoil(target));
-            }
-            catch (_a) {
-                continue;
-            }
-            if (actual)
-                continue;
-            this.core.release(ownerId, key);
-            this.confirmedOn.delete(id);
-            released = true;
+        this.persist();
+        for (const key of report.closedByDevice) {
             this.log(`[arbiter] manual claim released: ${key} closed by device`);
-        }
-        if (released)
-            this.persist();
-    }
-    /** Remembers the manual ON claims this tick saw ON on the coil; forgets claims that are gone. */
-    rememberConfirmedOn(report) {
-        const now = this.now();
-        const present = new Set(this.core.snapshot().map(c => `${c.ownerId}\u0000${c.key}`));
-        for (const id of Array.from(this.confirmedOn)) {
-            if (!present.has(id))
-                this.confirmedOn.delete(id);
-        }
-        for (const key of Object.keys(report.actual)) {
-            const { winner } = this.core.resolve(key, now);
-            if (winner && winner.source === 'manual' && winner.value && report.desired[key] === true && report.actual[key] === true) {
-                this.confirmedOn.add(`${winner.ownerId}\u0000${key}`);
-            }
         }
     }
     /**

@@ -254,7 +254,7 @@ describe('ActuatorArbiter', () => {
             activeAlarms: jest.fn().mockResolvedValue(active),
         });
 
-        test('the coil read OFF after it was seen ON releases the manual claim: no alarm, no write back', async () => {
+        test('two OFF reads on two ticks after it was seen ON release the manual claim: no alarm, no write back', async () => {
             const outbox = outboxMock();
             const { arbiter, state, writes, advance } = setup({ outbox: () => outbox });
             await arbiter.start();
@@ -263,13 +263,51 @@ describe('ActuatorArbiter', () => {
             await arbiter.tick(); // reads ON: confirmed
 
             state.valve_1 = false; // the PLC closed it
-            await arbiter.tick();
+            await arbiter.tick(); // first OFF read: nothing yet
+            expect(arbiter.owners().valve_1?.ownerId).toBe('manual:c1');
+            await arbiter.tick(); // second OFF read: closed by device
 
             expect(arbiter.owners()).toEqual({});
             expect(writes).toEqual(['valve_1=true']);
             advance(60_000);
             await arbiter.tick();
             expect(outbox.raise).not.toHaveBeenCalled();
+            await arbiter.stop();
+        });
+
+        test('one stale OFF read releases nothing and writes nothing; the next ON read starts the count again', async () => {
+            const { arbiter, state, writes } = setup();
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:stale', expiresAt: T0 + 60_000 });
+            await arbiter.tick();
+
+            state.valve_1 = false; // a stale read: the coil is really still ON
+            await arbiter.tick();
+            expect(arbiter.owners().valve_1?.ownerId).toBe('manual:stale');
+            expect(writes).toEqual(['valve_1=true']);
+
+            state.valve_1 = true;
+            await arbiter.tick();
+            state.valve_1 = false;
+            await arbiter.tick(); // a single OFF read again, not two in a row
+            expect(arbiter.owners().valve_1?.ownerId).toBe('manual:stale');
+            expect(writes).toEqual(['valve_1=true']);
+            await arbiter.stop();
+        });
+
+        test('a manual ON the PLC closes within one tick is never read ON and still released, not written ON again', async () => {
+            const { arbiter, state, writes } = setup();
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:fast', expiresAt: T0 + 60_000 });
+            expect(writes).toEqual(['valve_1=true']);
+
+            state.valve_1 = false; // closed before any tick read it ON
+            await arbiter.tick();
+            expect(writes).toEqual(['valve_1=true']);
+            await arbiter.tick();
+
+            expect(arbiter.owners()).toEqual({});
+            expect(writes).toEqual(['valve_1=true']);
             await arbiter.stop();
         });
 
