@@ -81,8 +81,10 @@ function refuseDownloadedConfig(downloaded, local, runningDeviceId) {
  * `downloaded` with the gateway-owned sections of `local` put back:
  * - `actuatorPolicy` stays the local one (the cloud never generates it);
  * - `featureFlags` keeps every local key the download does not set, so rollout flags written on the
- *   gateway survive; `ARBITER_MANUAL_LEASE_S` is the one flag where the local value always wins
- *   (ADR-038 amendment 7: a device override beats the profile ceiling the download carries).
+ *   gateway survive; `ARBITER_MANUAL_LEASE_S` is the one flag that always follows the download: the
+ *   export already applied "device override beats profile ceiling" on the cloud copy (ADR-038
+ *   amendment 7), and the file's value is only the last synced one — a profile change must land and a
+ *   cleared ceiling must disappear (ADR-038 amendment 8).
  */
 function mergeGatewayOwned(downloaded, local) {
     if (!local)
@@ -92,9 +94,10 @@ function mergeGatewayOwned(downloaded, local) {
         merged.actuatorPolicy = local.actuatorPolicy;
     const localFlags = isPlainObject(local.featureFlags) ? local.featureFlags : null;
     if (localFlags) {
-        const flags = Object.assign(Object.assign({}, localFlags), (isPlainObject(downloaded === null || downloaded === void 0 ? void 0 : downloaded.featureFlags) ? downloaded.featureFlags : {}));
-        if (localFlags[exports.MANUAL_LEASE_FLAG] !== undefined)
-            flags[exports.MANUAL_LEASE_FLAG] = localFlags[exports.MANUAL_LEASE_FLAG];
+        const downloadedFlags = isPlainObject(downloaded === null || downloaded === void 0 ? void 0 : downloaded.featureFlags) ? downloaded.featureFlags : {};
+        const flags = Object.assign(Object.assign({}, localFlags), downloadedFlags);
+        if (downloadedFlags[exports.MANUAL_LEASE_FLAG] === undefined)
+            delete flags[exports.MANUAL_LEASE_FLAG];
         merged.featureFlags = flags;
     }
     return merged;

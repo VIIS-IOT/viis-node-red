@@ -36,21 +36,23 @@ describe('mergeGatewayOwned', () => {
         featureFlags: { ARBITER_MANUAL_LEASE_S: '1800', SOME_NEW_FLAG: 'x', ARBITER_MODE: 'off' },
     };
 
-    test('keeps the local actuatorPolicy and local flags; the download only adds what is missing, except the lease', () => {
+    test('keeps the local actuatorPolicy and local flags; the download adds what is missing and sets the lease', () => {
         const merged = mergeGatewayOwned(downloaded, local);
         expect(merged.actuatorPolicy).toEqual(local.actuatorPolicy);
         expect(merged.modbusBoards).toHaveLength(2);
         expect(merged.featureFlags).toEqual({
             ARBITER_MODE: 'off', // the download sets it
             EVENT_OUTBOX_ENABLED: 'true', // only local
-            ARBITER_MANUAL_LEASE_S: '60', // device override beats the profile ceiling
+            ARBITER_MANUAL_LEASE_S: '1800', // the lease follows the download (profile ceiling / cloud device override)
             SOME_NEW_FLAG: 'x',
         });
     });
 
-    test('the download lease applies when the local file has none', () => {
-        const noLease = { ...local, featureFlags: { ARBITER_MODE: 'enforce' } };
-        expect(mergeGatewayOwned(downloaded, noLease).featureFlags.ARBITER_MANUAL_LEASE_S).toBe('1800');
+    test('a download without a lease removes the local one (cleared profile ceiling); no local file → download as is', () => {
+        const noLease = { ...downloaded, featureFlags: { ARBITER_MODE: 'off' } };
+        const merged = mergeGatewayOwned(noLease, local);
+        expect(merged.featureFlags.ARBITER_MANUAL_LEASE_S).toBeUndefined();
+        expect(merged.featureFlags.EVENT_OUTBOX_ENABLED).toBe('true');
         expect(mergeGatewayOwned(downloaded, null)).toBe(downloaded);
     });
 });
