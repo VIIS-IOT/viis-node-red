@@ -143,7 +143,7 @@ class ActuatorArbiter {
             if (!winner)
                 continue;
             const runnerUp = this.core.rankedClaims(key, now)[1];
-            owners[key] = Object.assign(Object.assign({}, info(winner)), { next: runnerUp ? info(runnerUp) : null });
+            owners[key] = Object.assign(Object.assign({}, info(winner)), { value: winner.value, next: runnerUp ? info(runnerUp) : null });
         }
         return owners;
     }

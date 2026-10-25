@@ -90,7 +90,7 @@ describe('ActuatorArbiter', () => {
         expect(writes).toEqual(['valve_1=true']);
         expect(state.valve_1).toBe(true);
         expect(arbiter.owners()).toEqual({
-            valve_1: { source: 'manual', ownerId: 'manual:cmd-1', expiresAt: T0 + 60_000, next: null },
+            valve_1: { source: 'manual', ownerId: 'manual:cmd-1', expiresAt: T0 + 60_000, value: true, next: null },
         });
         await arbiter.stop();
     });
@@ -134,7 +134,7 @@ describe('ActuatorArbiter', () => {
         await second.arbiter.start();
 
         expect(second.arbiter.owners()).toEqual({
-            valve_1: { source: 'manual', ownerId: 'manual:long', expiresAt: T0 + 3_600_000, next: null },
+            valve_1: { source: 'manual', ownerId: 'manual:long', expiresAt: T0 + 3_600_000, value: true, next: null },
         });
         await second.arbiter.stop();
     });
@@ -149,7 +149,7 @@ describe('ActuatorArbiter', () => {
         await arbiter.tick();
         await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000 });
 
-        expect(ownerEvents).toEqual([{}, { valve_1: { source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000, next: null } }]);
+        expect(ownerEvents).toEqual([{}, { valve_1: { source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000, value: true, next: null } }]);
 
         await arbiter.release('manual:*');
         expect(ownerEvents).toHaveLength(3);
@@ -231,8 +231,19 @@ describe('ActuatorArbiter', () => {
             source: 'manual',
             ownerId: 'manual:m1',
             expiresAt: T0 + 60_000,
+            value: true,
             next: { source: 'schedule', ownerId: 'schedule:s1', expiresAt: T0 + 3_600_000 },
         });
+        await arbiter.stop();
+    });
+
+    test('owners: value is what the winning claim wants, so an OFF winner over an ON schedule reads false', async () => {
+        const { arbiter } = setup();
+        await arbiter.start();
+        await arbiter.claim({ key: 'valve_1', value: true, source: 'schedule', ownerId: 'schedule:s1', expiresAt: T0 + 3_600_000 });
+        await arbiter.claim({ key: 'valve_1', value: false, source: 'manual', ownerId: 'manual:off', expiresAt: T0 + 60_000 });
+
+        expect(arbiter.owners().valve_1).toMatchObject({ source: 'manual', value: false, next: { source: 'schedule' } });
         await arbiter.stop();
     });
 

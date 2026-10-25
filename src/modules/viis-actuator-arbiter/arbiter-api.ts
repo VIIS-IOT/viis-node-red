@@ -46,8 +46,12 @@ export interface OwnerInfo {
     expiresAt: number | null;
 }
 
-/** Winner per key; `next` is the live claim that takes over when the winner ends (null = none). */
-export type ArbiterOwners = Record<string, OwnerInfo & { next: OwnerInfo | null }>;
+/**
+ * Winner per key. `value` is the value the winning claim wants the coil to have (additive, so an app need
+ * not guess ON/OFF from the coil state); `next` is the live claim that takes over when the winner ends
+ * (null = none) and carries no value.
+ */
+export type ArbiterOwners = Record<string, OwnerInfo & { value: boolean; next: OwnerInfo | null }>;
 
 /** A coil value the reconciler wrote (the write did not throw); `ts` is the arbiter clock at the tick. */
 export interface CoilWrite {
@@ -253,7 +257,7 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         for (const { key, winner } of this.core.resolveAll(now)) {
             if (!winner) continue;
             const runnerUp = this.core.rankedClaims(key, now)[1];
-            owners[key] = { ...info(winner), next: runnerUp ? info(runnerUp) : null };
+            owners[key] = { ...info(winner), value: winner.value, next: runnerUp ? info(runnerUp) : null };
         }
         return owners;
     }

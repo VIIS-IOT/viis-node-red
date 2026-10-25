@@ -60,7 +60,7 @@
         <li>Actuator owners
             <dl class="message-properties">
                 <dt>topic <span class="property-type">string</span></dt><dd><code>actuator_owners</code></dd>
-                <dt>payload <span class="property-type">object</span></dt><dd><code>{ key: { source, ownerId, expiresAt } }</code>, sent when ownership changes.</dd>
+                <dt>payload <span class="property-type">object</span></dt><dd><code>{ key: { source, ownerId, expiresAt, value, next } }</code> (<code>value</code>: what the winning claim wants the coil to be; <code>next</code>: the claim that takes over), sent when ownership changes.</dd>
             </dl>
         </li>
         <li>Tick report (Debug only)
