@@ -49,6 +49,8 @@ export interface TickWrite {
 
 export interface TickReport {
     desired: Record<string, boolean | null>;
+    /** The winning claim per read key (null = no live claim: the policy default applies); names the owner in diffs. */
+    winners: Record<string, { source: string; ownerId: string } | null>;
     actual: Record<string, boolean | undefined>;
     diffs: string[];
     writes: TickWrite[];
@@ -78,13 +80,14 @@ export class Reconciler {
     async tick(): Promise<TickReport> {
         const { deps } = this;
         const now = deps.now();
-        const report: TickReport = { desired: {}, actual: {}, diffs: [], writes: [], readFailed: [] };
+        const report: TickReport = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [] };
         const pending: { target: CoilTarget; value: boolean }[] = [];
 
         for (const target of deps.targets) {
-            const { desired } = this.core.resolve(target.key, now);
+            const { desired, winner } = this.core.resolve(target.key, now);
             report.desired[target.key] = desired;
             if (desired === null) continue;
+            report.winners[target.key] = winner ? { source: winner.source, ownerId: winner.ownerId } : null;
 
             let actual: boolean;
             try {

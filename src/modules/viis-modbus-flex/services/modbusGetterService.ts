@@ -235,22 +235,27 @@ export class ModbusGetterService {
             const request = payload as ModbusWriteRequestPayload;
 
             // ARBITER_MODE=enforce: an OFFLINE scenario write to a managed coil is a claim, not a write.
+            // observe: the same claim is recorded and the coil is still written directly.
             const arbiter = request.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL && origin?.key ? getArbiter() : null;
             // Only `managed` keys: a `hold` key keeps its direct write, as the schedule executor does.
-            if (arbiter && arbiter.mode() === "enforce" && arbiter.keyMode(origin!.key!) === "managed") {
+            if (arbiter && arbiter.keyMode(origin!.key!) === "managed") {
                 // Only when the write goes to the coil the arbiter reconciles for that key: an explicit
                 // fc/address/boardId in the action may point elsewhere, and that address must still be written.
                 const target = arbiter.target(origin!.key!);
                 const sameCoil = target !== undefined
                     && Number(target.address) === Number(request.address)
                     && (!origin!.boardId || target.boardId === origin!.boardId);
-                if (sameCoil) {
+                if (sameCoil && arbiter.mode() === "enforce") {
                     return await this.claimThroughArbiter(arbiter, request, origin!);
                 }
-                this.logger.warn(
-                    `[ARBITER] ${origin!.key} is managed but this write targets ${origin!.boardId ?? "?"}:${request.address}`
-                    + ` (arbiter coil ${target ? `${target.boardId}:${target.address}` : "none"}); written directly`
-                );
+                if (sameCoil) {
+                    this.recordObserveClaim(arbiter, request, origin!);
+                } else {
+                    this.logger.warn(
+                        `[ARBITER] ${origin!.key} is managed but this write targets ${origin!.boardId ?? "?"}:${request.address}`
+                        + ` (arbiter coil ${target ? `${target.boardId}:${target.address}` : "none"}); written directly`
+                    );
+                }
             }
 
             // Check if modbus client is ready
@@ -282,6 +287,22 @@ export class ModbusGetterService {
             this.logger.logModbusError("WRITE", payload?.address || 0, errorMessage);
             return this.createErrorResponse(errorMessage);
         }
+    }
+
+    /** observe: the claim enforce would submit, without waiting for it; the direct write that follows is today's. */
+    private recordObserveClaim(arbiter: ActuatorArbiterApi, request: ModbusWriteRequestPayload, origin: OfflineWriteOrigin): void {
+        const key = origin.key!;
+        void arbiter
+            .claim({
+                key,
+                value: request.value as boolean,
+                source: "scenario",
+                ownerId: `offline:${origin.intentId || "local"}`,
+                expiresAt: Date.now() + arbiter.leaseMs("scenario", key),
+            })
+            .catch((error) => {
+                this.logger.warn(`[ARBITER] Observe claim for ${key} not recorded: ${(error as Error).message}`);
+            });
     }
 
     /**

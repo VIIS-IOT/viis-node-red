@@ -33,6 +33,7 @@ function fakeArbiter(
     claimAnswer: (c: ClaimInput) => ClaimResult = () => ({ applied: true, actual: true, mode: 'enforce' }),
     hold: string[] = [],
     log: string[] = [],
+    mode: 'observe' | 'enforce' = 'enforce',
 ) {
     const claims: ClaimInput[] = [];
     const releases: Array<[string, string | undefined]> = [];
@@ -40,7 +41,7 @@ function fakeArbiter(
         manages: key => managed.includes(key) || hold.includes(key),
         keyMode: key => (managed.includes(key) ? 'managed' : hold.includes(key) ? 'hold' : 'unmanaged'),
         target: () => undefined,
-        mode: () => 'enforce',
+        mode: () => mode,
         leaseMs: () => 600_000,
         claim: async c => {
             claims.push(c);
@@ -292,5 +293,47 @@ describe('schedule finish with the arbiter enforcing', () => {
         } finally {
             await arbiter.stop();
         }
+    });
+});
+
+describe('schedule with the arbiter observing (FIX-17)', () => {
+    test('START records the same claims as enforce and still writes every command directly', async () => {
+        const { arbiter, claims } = fakeArbiter(['valve_1'], undefined, [], [], 'observe');
+        const writer = directWriter();
+        const commands = { holdingCommands: [timeValve1], coilCommands: [valve1, pump1] };
+
+        const report = await startScheduleCommands(deps(arbiter, writer.execute), 's1', 'run-1', WINDOW_END, commands);
+
+        expect(claims).toEqual([{
+            key: 'valve_1', value: true, source: 'schedule', ownerId: 'schedule:s1',
+            expiresAt: WINDOW_END + SCHEDULE_CLAIM_GRACE_MS,
+        }]);
+        // Today's behaviour: one direct call with the untouched commands, no claim outcome in the report.
+        expect(writer.calls).toHaveLength(1);
+        expect(writer.calls[0]).toBe(commands);
+        expect(report.steps.flatMap(s => s.keys).map(k => k.key)).toEqual(['time_valve_1', 'valve_1', 'pump_1']);
+    });
+
+    test('a claim the arbiter would refuse does not fail the start in observe', async () => {
+        const { arbiter } = fakeArbiter(['valve_1'], () => ({ applied: false, actual: false, blockedBy: 'manual', mode: 'observe' }), [], [], 'observe');
+        const writer = directWriter();
+
+        const report = await startScheduleCommands(deps(arbiter, writer.execute), 's1', 'run-1', WINDOW_END, { holdingCommands: [], coilCommands: [valve1] });
+
+        expect(report.steps.flatMap(s => s.keys)).toEqual([expect.objectContaining({ key: 'valve_1', status: 'pass' })]);
+    });
+
+    test('finish drops the run claims before the direct OFF and leaves every command to be written', async () => {
+        const log: string[] = [];
+        const { arbiter, releases } = fakeArbiter(['valve_1'], undefined, [], log, 'observe');
+        const commands = [valve1, pump1, timeValve1];
+
+        const finish = await beginScheduleFinish(arbiter, 's1', commands, finishDeps(log));
+        log.push('direct OFF');
+        await finish.complete(null);
+
+        expect(finish.commands).toBe(commands);
+        expect(releases).toEqual([['schedule:s1', undefined]]);
+        expect(log).toEqual(['release *', 'direct OFF']);
     });
 });

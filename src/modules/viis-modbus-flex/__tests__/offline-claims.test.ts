@@ -11,7 +11,7 @@ import { ModbusGetterService, offlineWriteOrigin } from '../services/modbusGette
 
 const T0 = 1_800_000_000_000;
 
-function setup() {
+function setup(mode: 'observe' | 'enforce' = 'enforce') {
     let now = T0;
     // The writer stamps expiresAt with Date.now(), the arbiter resolves with its own clock: one clock for both.
     jest.spyOn(Date, 'now').mockImplementation(() => now);
@@ -22,7 +22,7 @@ function setup() {
     );
     const arbiter = new ActuatorArbiter({
         policy,
-        mode: 'enforce',
+        mode,
         scenarioLeaseS: 600,
         tickMs: 60_000,
         debounceMs: 5,
@@ -130,6 +130,31 @@ describe('viis-modbus-flex OFFLINE writes with the arbiter enforcing', () => {
 
         expect(client.writeCoil.mock.calls).toEqual([[7, true], [0, true]]);
         expect(arbiter.owners().valve_1).toBeUndefined();
+    });
+});
+
+describe('viis-modbus-flex OFFLINE writes with the arbiter observing (FIX-17)', () => {
+    test('the claim is recorded like in enforce and the coil is still written directly', async () => {
+        const ctx = setup('observe');
+        await ctx.arbiter.start();
+        registerArbiter(ctx.arbiter);
+        try {
+            const msg = intentMsg('valve_1', true);
+
+            const response: any = await ctx.service.processRequest(msg.payload, offlineWriteOrigin(msg, 'intent'));
+
+            expect(response).toMatchObject({ success: true, address: 0, value: true });
+            expect(ctx.client.writeCoil).toHaveBeenCalledWith(0, true);
+            expect(ctx.arbiter.owners().valve_1).toEqual({ source: 'scenario', ownerId: 'offline:intent-7', expiresAt: T0 + 600_000, value: true, next: null });
+            // A hold key is not claimed in observe either.
+            const hold = intentMsg('valve_3', true);
+            await ctx.service.processRequest(hold.payload, offlineWriteOrigin(hold, 'intent'));
+            expect(ctx.arbiter.owners().valve_3).toBeUndefined();
+        } finally {
+            unregisterArbiter(ctx.arbiter);
+            await ctx.arbiter.stop();
+            jest.restoreAllMocks();
+        }
     });
 });
 

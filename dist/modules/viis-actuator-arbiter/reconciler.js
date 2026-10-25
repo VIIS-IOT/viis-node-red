@@ -27,13 +27,14 @@ class Reconciler {
     async tick() {
         const { deps } = this;
         const now = deps.now();
-        const report = { desired: {}, actual: {}, diffs: [], writes: [], readFailed: [] };
+        const report = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [] };
         const pending = [];
         for (const target of deps.targets) {
-            const { desired } = this.core.resolve(target.key, now);
+            const { desired, winner } = this.core.resolve(target.key, now);
             report.desired[target.key] = desired;
             if (desired === null)
                 continue;
+            report.winners[target.key] = winner ? { source: winner.source, ownerId: winner.ownerId } : null;
             let actual;
             try {
                 actual = Boolean(await deps.readCoil(target));

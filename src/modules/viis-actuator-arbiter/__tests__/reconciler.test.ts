@@ -187,6 +187,20 @@ describe('Reconciler', () => {
         ]);
     });
 
+    test('the report names the winning claim per read key (observe diff owner)', async () => {
+        const core = new ArbiterCore(policy);
+        core.claim(claim('valve_1', true, 'schedule'));
+        const { deps } = fakeDeps({ valve_1: false, valve_2: false, main_pump: false, light_1: true }, { mode: 'observe' });
+
+        const report = await new Reconciler(core, deps).tick();
+
+        expect(report.winners).toMatchObject({
+            valve_1: { source: 'schedule', ownerId: 'schedule:valve_1' },
+            light_1: null,
+        });
+        expect(report.winners.valve_3).toBeUndefined();
+    });
+
     test('classifyActuatorKey follows the executor coil groups', () => {
         expect(classifyActuatorKey('main_pump')).toBe('pump');
         expect(classifyActuatorKey('fertigation_control_power_1')).toBe('pump');

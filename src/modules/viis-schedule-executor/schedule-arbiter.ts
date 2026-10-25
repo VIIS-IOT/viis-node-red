@@ -1,14 +1,15 @@
 /**
- * The schedule executor as a claim source of the actuator arbiter (plan Task 13). Applies only while the
- * arbiter enforces (`ARBITER_MODE=enforce`) and only to fc=5 keys whose `actuatorPolicy` mode is `managed`;
- * `hold` keys, unmanaged keys and holdings keep today's direct writes. With the arbiter off or observing,
- * every helper here hands back today's commands unchanged.
+ * The schedule executor as a claim source of the actuator arbiter (plan Task 13). Applies only to fc=5 keys
+ * whose `actuatorPolicy` mode is `managed`; `hold` keys, unmanaged keys and holdings keep today's direct
+ * writes. With the arbiter off, every helper here hands back today's commands unchanged.
  *
- * - START: each truthy managed coil becomes the claim `schedule:<name>` (source `schedule`) that expires at
- *   the window end + 5 min, instead of a write. A claim that lost is withdrawn and reported as a failed key
- *   (ADR-034: no `started` for a key that did not start).
- * - Finish (and every other OFF of a run): the managed coils leave the reset list and the run's claims are
- *   released in the executor's water-hammer order (see beginScheduleFinish).
+ * - `enforce`, START: each truthy managed coil becomes the claim `schedule:<name>` (source `schedule`) that
+ *   expires at the window end + 5 min, instead of a write. A claim that lost is withdrawn and reported as a
+ *   failed key (ADR-034: no `started` for a key that did not start).
+ * - `enforce`, finish (and every other OFF of a run): the managed coils leave the reset list and the run's
+ *   claims are released in the executor's water-hammer order (see beginScheduleFinish).
+ * - `observe` (FIX-17): the same claims are submitted and released, so the arbiter can compare them with
+ *   the coil, but nothing is answered from them and every command is still written directly, as today.
  */
 import { DEFAULT_FARM_TIMEZONE, plannedWindowUnixMs } from '../../core/farm-time';
 import { civilTimeOnly, evaluateScheduleRun, PlanDateRange, ScheduleRunFields } from '../../core/schedule-run-window';
@@ -28,6 +29,11 @@ export function scheduleOwnerId(scheduleName: string): string {
 /** The registered arbiter when it enforces; null when it is off, observing or not deployed. */
 export function enforcingArbiter(arbiter: ActuatorArbiterApi | null = getArbiter()): ActuatorArbiterApi | null {
     return arbiter !== null && arbiter.mode() === 'enforce' ? arbiter : null;
+}
+
+/** The registered arbiter when it observes or enforces (it takes the schedule's claims); null when off. */
+export function claimingArbiter(arbiter: ActuatorArbiterApi | null = getArbiter()): ActuatorArbiterApi | null {
+    return arbiter;
 }
 
 /**
@@ -62,7 +68,7 @@ export function scheduleWindowEndMs(
 type StartCommands = { holdingCommands: ModbusCmd[]; coilCommands: ModbusCmd[] };
 
 export interface ScheduleStartDeps {
-    /** The enforcing arbiter, or null (then START is exactly today's `execute`). */
+    /** The observing or enforcing arbiter, or null (then START is exactly today's `execute`). */
     arbiter: ActuatorArbiterApi | null;
     /** Today's direct writes (`ScheduleService.executeModbusCommands`). */
     execute(commands: StartCommands): Promise<ExecutionReport>;
@@ -134,6 +140,19 @@ export async function startScheduleCommands(
     if (arbiter === null || !commands.coilCommands.some(command => isArbitratedCoil(command, arbiter))) {
         return deps.execute(commands);
     }
+    if (arbiter.mode() === 'observe') {
+        // observe: the claims a run would hold in enforce, recorded beside today's direct writes.
+        for (const command of commands.coilCommands) {
+            if (!isArbitratedCoil(command, arbiter) || !command.value) continue;
+            const expiresAt = windowEndMs !== null
+                ? windowEndMs + SCHEDULE_CLAIM_GRACE_MS
+                : deps.now() + arbiter.leaseMs('schedule', command.key);
+            void arbiter
+                .claim({ key: command.key, value: true, source: 'schedule', ownerId: scheduleOwnerId(scheduleName), expiresAt })
+                .catch(() => undefined);
+        }
+        return deps.execute(commands);
+    }
 
     const direct = commands.coilCommands.filter(command => !isArbitratedCoil(command, arbiter));
     // A falsy coil is not a claim (and START does not write it today either).
@@ -194,8 +213,9 @@ function stoppedNonValve(report: ExecutionReport | null | undefined): boolean {
 }
 
 /**
- * Before a run's OFF. The executor's finish order is pumps and other coils off, water-hammer delay, valves
- * closed, power off; the arbiter follows it across the direct writes:
+ * Before a run's OFF (observe only drops the claims and leaves every command to the direct write). The
+ * executor's finish order is pumps and other coils off, water-hammer delay, valves closed, power off; the
+ * enforcing arbiter follows it across the direct writes:
  *
  * 1. now: release the run's managed pumps and other coils (the arbiter stops them within one tick);
  * 2. the caller writes `commands` directly (its own pumps → delay → valves order);
@@ -214,6 +234,16 @@ export async function beginScheduleFinish<T extends { key: string; fc: number }>
     }
     const warn = deps.warn ?? ((message: string) => console.warn(message));
     const ownerId = scheduleOwnerId(scheduleName);
+    if (arbiter.mode() === 'observe') {
+        // observe: every command is still written directly; the run's claims go first, so the arbiter does
+        // not report the OFF writes that follow as diffs against a claim that still says ON.
+        try {
+            await arbiter.release(ownerId);
+        } catch (error) {
+            warn(`[ARBITER] Claims of ${scheduleName} not released: ${errorText(error)}`);
+        }
+        return { commands, complete: async () => undefined };
+    }
     const managed = commands.filter(command => isArbitratedCoil(command, arbiter));
     const { pumpCoils, otherCoils, valveCoils } = classifyCoils(managed);
 

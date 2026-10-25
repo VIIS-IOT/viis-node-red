@@ -1329,10 +1329,11 @@ let ScheduleService = class ScheduleService {
     /**
      * ARBITER_MODE=enforce: the run's OFF without its managed coils, with the claim release in water-hammer
      * order (schedule-arbiter.ts beginScheduleFinish); call `complete()` after the direct OFF. Without an
-     * enforcing arbiter `commands` comes back unchanged and `complete()` does nothing.
+     * enforcing arbiter `commands` comes back unchanged and `complete()` does nothing. In observe the run's
+     * claims are only dropped (here, before the direct OFF) and every command is still written.
      */
     async beginScheduleFinish(scheduleName, commands) {
-        return (0, schedule_arbiter_1.beginScheduleFinish)((0, schedule_arbiter_1.enforcingArbiter)(), scheduleName, commands, {
+        return (0, schedule_arbiter_1.beginScheduleFinish)((0, schedule_arbiter_1.claimingArbiter)(), scheduleName, commands, {
             sleep: (ms) => this.delay(ms),
             waterHammerMs: this.waterHammerDelayMs,
             warn: (message) => { var _a; return (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn(message); },

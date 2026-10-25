@@ -27,7 +27,7 @@ import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
 import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, rebuildOffCommands, retryNeedsImpliedPumps, supersedesOffRetry } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 import { unixMsNow } from "../../core/farm-time";
-import { enforcingArbiter, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
+import { claimingArbiter, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -804,7 +804,8 @@ module.exports = function (RED: NodeAPI) {
                         if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                             await scheduleService.updateScheduleStatus(schedule, "running");
                             // ARBITER_MODE=enforce: managed coils are claimed (schedule:<name>), not written.
-                            const startArbiter = enforcingArbiter();
+                            // observe: the same claims are recorded and the coils are still written.
+                            const startArbiter = claimingArbiter();
                             const startReport = await startScheduleCommands(
                                 {
                                     arbiter: startArbiter,

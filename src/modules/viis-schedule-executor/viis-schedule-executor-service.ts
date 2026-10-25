@@ -34,7 +34,7 @@ import { ProtectionGateService, resolveProtectionGate } from "../viis-device-pro
 import { GLOBAL_CONTEXT_KEYS } from "../viis-telemetry/viis-telemetry-constants";
 import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classify";
 import { decideFinish, offFailedAlarmKey, rebuildOffCommands } from "./schedule-finish";
-import { beginScheduleFinish, enforcingArbiter, ScheduleFinish, withoutArbitratedCoils } from "./schedule-arbiter";
+import { beginScheduleFinish, claimingArbiter, ScheduleFinish, withoutArbitratedCoils } from "./schedule-arbiter";
 import { getEventOutbox, initEventOutbox, isEventOutboxEnabled } from "../../services/event-outbox/registry";
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
@@ -1486,10 +1486,11 @@ export class ScheduleService {
     /**
      * ARBITER_MODE=enforce: the run's OFF without its managed coils, with the claim release in water-hammer
      * order (schedule-arbiter.ts beginScheduleFinish); call `complete()` after the direct OFF. Without an
-     * enforcing arbiter `commands` comes back unchanged and `complete()` does nothing.
+     * enforcing arbiter `commands` comes back unchanged and `complete()` does nothing. In observe the run's
+     * claims are only dropped (here, before the direct OFF) and every command is still written.
      */
     async beginScheduleFinish<T extends { key: string; fc: number }>(scheduleName: string, commands: T[]): Promise<ScheduleFinish<T>> {
-        return beginScheduleFinish(enforcingArbiter(), scheduleName, commands, {
+        return beginScheduleFinish(claimingArbiter(), scheduleName, commands, {
             sleep: (ms) => this.delay(ms),
             waterHammerMs: this.waterHammerDelayMs,
             warn: (message) => this.node?.warn(message),

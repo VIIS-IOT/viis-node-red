@@ -680,7 +680,8 @@ module.exports = function (RED) {
                                 if (await scheduleService.canExecuteCommands(schedule.name, holdingCommands, coilCommands)) {
                                     await scheduleService.updateScheduleStatus(schedule, "running");
                                     // ARBITER_MODE=enforce: managed coils are claimed (schedule:<name>), not written.
-                                    const startArbiter = (0, schedule_arbiter_1.enforcingArbiter)();
+                                    // observe: the same claims are recorded and the coils are still written.
+                                    const startArbiter = (0, schedule_arbiter_1.claimingArbiter)();
                                     const startReport = await (0, schedule_arbiter_1.startScheduleCommands)({
                                         arbiter: startArbiter,
                                         execute: (commands) => scheduleService.executeModbusCommands(modbusClient, commands, schedule, { runId: startRunId }),
