@@ -228,6 +228,56 @@ describe("OutboxSender", () => {
         expect((await restarted.flush(new Date(now.getTime() + 5_000))).snapshotSent).toBe(true);
     });
 
+    it("the snapshot waits until no state-alarm row is left unsent, so a queued Clear is not overtaken", async () => {
+        const { outbox, ds, rows } = setup();
+        const quiet = { log() {}, warn() {}, error() {} };
+        const env = { getEnvVar: (n: string) => ({ VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN } as any)[n] };
+        const sender = new OutboxSender(outbox, env, { batch: 1, random: () => 0.5, logger: quiet });
+        await outbox.raise("board_offline:board1", { severity: "error", msg: "down" });
+        await outbox.clear("board_offline:board1", { severity: "error", msg: "up" });
+        post.mockRejectedValueOnce(httpError(503));
+        const now = later();
+        await sender.flush(now);
+        expect(rows().map(r => r.sent_at)).toEqual([null, null]);
+
+        post.mockResolvedValue({ status: 200 });
+        const retry = new Date(rows()[0].next_attempt_at.getTime());
+        // Pending goes out, the Clear is still queued: no snapshot yet
+        expect(await sender.flush(retry)).toMatchObject({ sent: 1, snapshotSent: false });
+        expect(post.mock.calls.filter(c => c[0] === SNAPSHOT_URL)).toHaveLength(0);
+        // Clear goes out, the queue is drained: the snapshot lists nothing active
+        expect(await sender.flush(retry)).toMatchObject({ sent: 1, snapshotSent: true });
+        expect(post.mock.calls.filter(c => c[0] === SNAPSHOT_URL).map(c => c[1])).toEqual([{ active: [] }]);
+        expect(await outbox.isSnapshotPending()).toBe(false);
+        expect(ds.dump()).not.toContain("__outbox_meta");
+    });
+
+    it("a snapshot owed survives a restart (persisted in MySQL, not memory) and is never listed as an alarm", async () => {
+        const { outbox } = setup();
+        await outbox.raise("board_offline:board1", { severity: "error", msg: "down" });
+        await outbox.setSnapshotPending(true);
+        expect(await outbox.activeAlarms()).toEqual([{ alarm_key: "board_offline:board1", severity: "error" }]);
+        post.mockResolvedValue({ status: 200 });
+
+        const restarted = new OutboxSender(outbox, { getEnvVar: (n: string) => ({ VIIS_BACKEND: BACKEND, DEVICE_ACCESS_TOKEN: TOKEN } as any)[n] }, {
+            logger: { log() {}, warn() {}, error() {} },
+        });
+        expect(await restarted.flush(later())).toMatchObject({ sent: 1, snapshotSent: true });
+        expect(post.mock.calls.filter(c => c[0] === SNAPSHOT_URL)[0][1]).toEqual({ active: [{ alarm_key: "board_offline:board1", severity: "error" }] });
+    });
+
+    it("more than 500 active alarms: no snapshot is sent (a partial list would clear live alarms) and the flag is dropped", async () => {
+        const { outbox, sender, logs } = setup();
+        for (let i = 0; i < 501; i++) await outbox.raise(`schedule_off_failed:s${i}`, { severity: "error" });
+        await outbox.setSnapshotPending(true);
+        post.mockResolvedValue({ status: 200 });
+        // 501 Pending rows are queued first: drain them over several flushes
+        for (let i = 0; i < 30; i++) await sender.flush(later());
+        expect(post.mock.calls.filter(c => c[0] === SNAPSHOT_URL)).toHaveLength(0);
+        expect(logs.some(l => l.includes("snapshot skipped: 501 active alarms"))).toBe(true);
+        expect(await outbox.isSnapshotPending()).toBe(false);
+    });
+
     it("a failed snapshot is retried on the next flush", async () => {
         const { outbox, sender } = setup();
         await outbox.enqueue({ msg: "e1" });

@@ -15,7 +15,7 @@ const typeorm_1 = require("typeorm");
  * Last state the gateway sent for one state alarm (`board_offline:board1`, `schedule_off_failed:<schedule>`).
  * `raise` only enqueues when the row is not already `Pending`, `clear` only when it is, so a condition that
  * repeats every poll sends one Pending and one Clear. The `Pending` rows are the snapshot the outbox sends
- * after a backend outage. Created at runtime by `EVENT_OUTBOX_DDL`; instants are naive UTC (ADR-016).
+ * after a backend outage. One `Meta` row (`__outbox_meta:snapshot_pending`) records that a snapshot is owed. Created at runtime by `EVENT_OUTBOX_DDL`; instants are naive UTC (ADR-016).
  */
 let TabiotGatewayAlarmState = class TabiotGatewayAlarmState {
 };
@@ -25,7 +25,9 @@ __decorate([
     __metadata("design:type", String)
 ], TabiotGatewayAlarmState.prototype, "alarm_key", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 16 }),
+    (0, typeorm_1.Column)({ type: 'varchar', length: 16 })
+    /** `Meta`: bookkeeping row (the snapshot-pending marker), never an alarm. */
+    ,
     __metadata("design:type", String)
 ], TabiotGatewayAlarmState.prototype, "status", void 0);
 __decorate([

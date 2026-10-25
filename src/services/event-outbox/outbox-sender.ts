@@ -10,8 +10,10 @@
  *   schedules a snapshot, because the dropped event may have been a state-alarm raise/clear.
  * - Any other 4xx (payload refused) marks the row dead and moves on: one bad row must not block every
  *   later event.
- * - The first success after a failure posts `snapshot-by-token` with the gateway's Pending state alarms,
- *   so the backend clears alarms whose Clear it missed.
+ * - The first success after a failure schedules a `snapshot-by-token` with the gateway's Pending state
+ *   alarms, so the backend clears alarms whose Clear it missed. The snapshot is sent only when no unsent
+ *   state-alarm row remains (a queued Clear must reach the backend before the snapshot), and the
+ *   "snapshot pending" flag lives in MySQL so a restart does not forget it.
  * - The device token is read from env at send time, sent only as the query parameter and never logged.
  */
 import axios from "axios";
@@ -52,6 +54,8 @@ const SENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
  * 401/403 (token rotated or revoked, re-provisioning), 404 (route not deployed yet). All are fixed on the
  * backend side, so the row waits (still subject to MAX_ATTEMPTS / MAX_ROW_AGE_MS) instead of being dropped.
  */
+/** The backend rejects a snapshot that lists more (`GATEWAY_ALARM_SNAPSHOT_MAX`). */
+export const SNAPSHOT_MAX_ALARMS = 500;
 const RETRYABLE_4XX = new Set([401, 403, 404, 408, 409, 429]);
 /** A row is dead after this many failed attempts ... */
 export const MAX_ATTEMPTS = 20;
@@ -83,8 +87,8 @@ export class OutboxSender {
     private flushing: Promise<FlushResult> | null = null;
     /** A send failed and no send has succeeded since. */
     private failing = false;
-    /** Delivery recovered after a failure and the snapshot has not reached the backend yet. */
-    private snapshotPending = false;
+    /** Memory mirror of the persisted "snapshot pending" flag; null = not loaded yet. */
+    private snapshotPending: boolean | null = null;
     private missingConfigWarned = false;
 
     constructor(private readonly outbox: EventOutbox, private readonly env: EnvReader, opts: OutboxSenderOptions = {}) {
@@ -142,7 +146,7 @@ export class OutboxSender {
                 await this.outbox.markSent(row.seq, now);
                 result.sent++;
                 // attempts > 0: the row failed before (possibly before a restart, which forgets `failing`).
-                if (this.failing || row.attempts > 0) this.snapshotPending = true;
+                if (this.failing || row.attempts > 0) await this.setSnapshotPending(true);
                 this.failing = false;
                 continue;
             }
@@ -156,7 +160,7 @@ export class OutboxSender {
                         `[OUTBOX] ${describe(row)} dead after ${attempts} attempt(s), ${Math.round(ageMs / 3_600_000)} h old: ${outcome.error}`
                     );
                     this.failing = true;
-                    this.snapshotPending = true;
+                    await this.setSnapshotPending(true);
                     result.dead++;
                     continue;
                 }
@@ -175,21 +179,39 @@ export class OutboxSender {
             result.dead++;
         }
 
-        if (this.snapshotPending && result.failed === 0) {
+        if (result.failed === 0 && (await this.isSnapshotPending()) && !(await this.outbox.hasUnsentStateAlarms())) {
             const active = await this.outbox.activeAlarms();
-            const outcome = await this.post(`${backendUrl}/api/v2/alarm/snapshot-by-token`, { active }, token);
-            if (outcome.ok) {
-                this.snapshotPending = false;
-                result.snapshotSent = true;
-                this.logger.log(`[OUTBOX] snapshot sent: ${active.length} active alarm(s)`);
+            if (active.length > SNAPSHOT_MAX_ALARMS) {
+                // The backend treats the list as complete and clears every alarm it does not name, so a
+                // truncated or chunked list would clear alarms that are still active: send nothing.
+                this.logger.error(`[OUTBOX] snapshot skipped: ${active.length} active alarms exceed the backend limit of ${SNAPSHOT_MAX_ALARMS}`);
+                await this.setSnapshotPending(false);
             } else {
-                this.logger.warn(`[OUTBOX] snapshot failed (${outcome.error}), retry on next flush`);
+                const outcome = await this.post(`${backendUrl}/api/v2/alarm/snapshot-by-token`, { active }, token);
+                if (outcome.ok) {
+                    await this.setSnapshotPending(false);
+                    result.snapshotSent = true;
+                    this.logger.log(`[OUTBOX] snapshot sent: ${active.length} active alarm(s)`);
+                } else {
+                    this.logger.warn(`[OUTBOX] snapshot failed (${outcome.error}), retry on next flush`);
+                }
             }
         }
         if (result.sent > 0 || result.dead > 0) {
             this.logger.log(`[OUTBOX] sent ${result.sent}, dead ${result.dead}, failed ${result.failed}`);
         }
         return result;
+    }
+
+    private async isSnapshotPending(): Promise<boolean> {
+        if (this.snapshotPending === null) this.snapshotPending = await this.outbox.isSnapshotPending();
+        return this.snapshotPending;
+    }
+
+    private async setSnapshotPending(pending: boolean): Promise<void> {
+        if (this.snapshotPending === pending) return;
+        await this.outbox.setSnapshotPending(pending);
+        this.snapshotPending = pending;
     }
 
     private async post(url: string, body: unknown, token: string): Promise<SendOutcome> {

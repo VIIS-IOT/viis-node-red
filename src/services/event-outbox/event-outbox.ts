@@ -6,7 +6,8 @@
  *
  * State alarms (`raise`/`clear`) also keep their last sent state in `tabiot_gateway_alarm_state`: a
  * condition seen on every poll sends one Pending and one Clear, and the Pending rows are the snapshot the
- * sender posts after an outage so the backend can clear what the gateway no longer has.
+ * sender posts after an outage so the backend can clear what the gateway no longer has. One more row in
+ * that table (`SNAPSHOT_PENDING_KEY`, status `Meta`) remembers across restarts that a snapshot is owed.
  *
  * Gateway MySQL runs with `synchronize: false` and no runtime migrations: the tables are created on first
  * use by `EVENT_OUTBOX_DDL`, which must match the two entities column for column.
@@ -44,6 +45,9 @@ export const EVENT_OUTBOX_DDL: string[] = [
 /** Same rules as the backend `AlarmValidator` (`isValidDeviceEventId`, `isValidGatewayAlarmKey`). */
 const EVENT_ID_PATTERN = /^[A-Za-z0-9:_-]{1,64}$/;
 const ALARM_KEY_PATTERN = /^[^\s\x00-\x1f\x7f]{1,140}$/;
+
+/** Meta row of `tabiot_gateway_alarm_state`: present = a snapshot is owed. Never reported as an active alarm. */
+export const SNAPSHOT_PENDING_KEY = "__outbox_meta:snapshot_pending";
 
 /** Payload keys that must never be persisted (the token is read from env at send time). */
 const SECRET_KEYS = ["device_access_token"];
@@ -88,6 +92,34 @@ export class EventOutbox {
     async activeAlarms(): Promise<{ alarm_key: string; severity: string }[]> {
         const rows = await this.ds.getRepository(TabiotGatewayAlarmState).find({ where: { status: "Pending" } });
         return rows.map(r => ({ alarm_key: r.alarm_key, severity: r.severity }));
+    }
+
+    /** A snapshot is owed to the backend (delivery recovered, or a row was dropped, and it has not been sent). */
+    async isSnapshotPending(): Promise<boolean> {
+        const row = await this.ds.getRepository(TabiotGatewayAlarmState).findOne({ where: { alarm_key: SNAPSHOT_PENDING_KEY } });
+        return !!row;
+    }
+
+    async setSnapshotPending(pending: boolean): Promise<void> {
+        const states = this.ds.getRepository(TabiotGatewayAlarmState);
+        if (pending) {
+            await states.save({ alarm_key: SNAPSHOT_PENDING_KEY, status: "Meta", severity: "info", payload: null, updated_at: new Date() });
+        } else {
+            await states.delete({ alarm_key: SNAPSHOT_PENDING_KEY });
+        }
+    }
+
+    /**
+     * True while a raise/clear of a state alarm is still waiting to be delivered (unsent, not dead). The
+     * snapshot must follow those rows, not overtake them, or a queued Clear arrives after the backend
+     * already cleared the alarm with `Resync`.
+     */
+    async hasUnsentStateAlarms(): Promise<boolean> {
+        const unsent = await this.ds.getRepository(TabiotEventOutbox).find({ where: { sent_at: IsNull(), dead: false } });
+        return unsent.some(row => {
+            const p = (row.payload ?? {}) as Record<string, unknown>;
+            return typeof p.alarm_key === "string" && (p.alarm_status === "Pending" || p.alarm_status === "Clear");
+        });
     }
 
     /**
