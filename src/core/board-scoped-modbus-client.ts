@@ -18,7 +18,7 @@ export type SharedModbusTransport = Pick<
   | "isConnectedCheck"
   | "disconnect"
 > &
-  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs" | "getConnectionState">>;
+  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs" | "getConnectionState" | "isCircuitBreakerOpen">>;
 
 export class BoardScopedModbusClient {
   /** Listeners added through this wrapper, so a retarget can move them to the new transport. */
@@ -122,6 +122,8 @@ export class BoardScopedModbusClient {
    * CIRCUIT_BREAKER_RECOVERY_MS, so a read or write would only wait out its timeout.
    */
   isCircuitBreakerOpen(): boolean {
+    // The transport's breaker flag is authoritative (its FSM state leaves circuit_breaker_open within ms).
+    if (typeof this.transport.isCircuitBreakerOpen === "function") return this.transport.isCircuitBreakerOpen();
     return this.transport.getConnectionState?.() === "circuit_breaker_open";
   }
 

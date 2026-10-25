@@ -121,4 +121,23 @@ describe("BoardScopedModbusClient", () => {
     expect(client.isCircuitBreakerOpen()).toBe(false);
     expect(new BoardScopedModbusClient(base, 1).isCircuitBreakerOpen()).toBe(false);
   });
+
+  it("trusts the transport's breaker flag over its FSM state, which leaves circuit_breaker_open within milliseconds", () => {
+    const base = {
+      readCoils: jest.fn(),
+      readInputRegisters: jest.fn(),
+      readHoldingRegisters: jest.fn(),
+      writeCoil: jest.fn(),
+      writeRegister: jest.fn(),
+      isConnectedCheck: jest.fn().mockReturnValue(false),
+      disconnect: jest.fn(),
+      getConnectionState: jest.fn().mockReturnValue("connecting"),
+    };
+    const open = jest.fn().mockReturnValue(true);
+    const client = new BoardScopedModbusClient({ ...base, isCircuitBreakerOpen: open } as any, 1);
+
+    expect(client.isCircuitBreakerOpen()).toBe(true);
+    open.mockReturnValue(false);
+    expect(client.isCircuitBreakerOpen()).toBe(false);
+  });
 });

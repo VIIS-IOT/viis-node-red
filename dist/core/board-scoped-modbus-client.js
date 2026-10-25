@@ -95,6 +95,9 @@ class BoardScopedModbusClient {
      */
     isCircuitBreakerOpen() {
         var _a, _b;
+        // The transport's breaker flag is authoritative (its FSM state leaves circuit_breaker_open within ms).
+        if (typeof this.transport.isCircuitBreakerOpen === "function")
+            return this.transport.isCircuitBreakerOpen();
         return ((_b = (_a = this.transport).getConnectionState) === null || _b === void 0 ? void 0 : _b.call(_a)) === "circuit_breaker_open";
     }
     disconnect() {
