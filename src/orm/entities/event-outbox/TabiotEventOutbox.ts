@@ -29,7 +29,7 @@ export class TabiotEventOutbox {
     @Column({ type: 'datetime', precision: 3, nullable: true })
     sent_at: Date | null;
 
-    /** Rejected by the backend for good (4xx other than 408/409/429): never retried, does not block later rows. */
+    /** Gave up on this row: the backend refused it for good (4xx other than 401/403/404/408/409/429), or it kept failing for 20 attempts / 24 h. Never retried again, does not block later rows. */
     @Column({ type: 'boolean', default: false })
     dead: boolean;
 

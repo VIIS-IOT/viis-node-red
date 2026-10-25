@@ -1,13 +1,15 @@
 /**
  * Delivers `EventOutbox` rows to `${VIIS_BACKEND}/api/v2/alarm/notification-by-token` in `seq` order.
  *
- * - A transient failure (network, 5xx, 408, 409 = backend inbox still processing the event, 429) stops the
- *   batch so nothing overtakes the failed row, and backs it off `min(maxBackoff, 5 s × 2^attempts)`.
+ * - A transient failure (network, 5xx, 408, 409 = backend inbox still processing the event, 429, and
+ *   401/403/404 = token rotated, device re-provisioned, route not deployed yet) stops the batch so nothing
+ *   overtakes the failed row, and backs it off `min(maxBackoff, 5 s × 2^attempts)`. Such a pause never
+ *   marks the queue dead and sets `failing`, so the snapshot runs once delivery recovers.
  * - A row that keeps failing is marked dead after `MAX_ATTEMPTS` (20) attempts or `MAX_ROW_AGE_MS` (24 h)
  *   since it was created, so one poison row cannot block every later event forever. The next flush
  *   schedules a snapshot, because the dropped event may have been a state-alarm raise/clear.
- * - Any other 4xx (token rejected, payload refused) marks the row dead and moves on: one bad row must not
- *   block every later event.
+ * - Any other 4xx (payload refused) marks the row dead and moves on: one bad row must not block every
+ *   later event.
  * - The first success after a failure posts `snapshot-by-token` with the gateway's Pending state alarms,
  *   so the backend clears alarms whose Clear it missed.
  * - The device token is read from env at send time, sent only as the query parameter and never logged.
@@ -45,7 +47,12 @@ export interface FlushResult {
 
 const BASE_BACKOFF_MS = 5000;
 const SENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const RETRYABLE_4XX = new Set([408, 409, 429]);
+/**
+ * Pause-and-retry statuses: 408/429 (slow / throttled), 409 (backend inbox still processing the event),
+ * 401/403 (token rotated or revoked, re-provisioning), 404 (route not deployed yet). All are fixed on the
+ * backend side, so the row waits (still subject to MAX_ATTEMPTS / MAX_ROW_AGE_MS) instead of being dropped.
+ */
+const RETRYABLE_4XX = new Set([401, 403, 404, 408, 409, 429]);
 /** A row is dead after this many failed attempts ... */
 export const MAX_ATTEMPTS = 20;
 /** ... or once it is this old (since `created_at`) and still failing. */

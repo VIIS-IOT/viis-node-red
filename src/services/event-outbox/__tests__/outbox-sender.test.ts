@@ -137,10 +137,10 @@ describe("OutboxSender", () => {
         expect(rows()[0]).toMatchObject({ dead: true, attempts: 1 });
     });
 
-    it("4xx other than 408/409/429 marks the row dead and moves on", async () => {
+    it("4xx other than 401/403/404/408/409/429 marks the row dead and moves on", async () => {
         const { outbox, sender, rows, eventPosts } = setup();
         for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
-        post.mockResolvedValueOnce({ status: 200 }).mockRejectedValueOnce(httpError(401)).mockResolvedValueOnce({ status: 200 });
+        post.mockResolvedValueOnce({ status: 200 }).mockRejectedValueOnce(httpError(400)).mockResolvedValueOnce({ status: 200 });
 
         expect(await sender.flush(later())).toEqual({ sent: 2, failed: 0, dead: 1, snapshotSent: false });
         expect(eventPosts().map(c => c[1].msg)).toEqual(["e1", "e2", "e3"]);
@@ -154,6 +154,44 @@ describe("OutboxSender", () => {
 
         expect(await sender.flush(later())).toMatchObject({ failed: 1, dead: 0 });
         expect(rows()[0]).toMatchObject({ dead: false, attempts: 1 });
+    });
+
+    it.each([401, 403, 404])("%i pauses the queue with backoff (never dead) and the rows go through once the backend accepts again", async status => {
+        const { outbox, sender, rows, eventPosts } = setup();
+        await outbox.raise("board_offline:board1", { severity: "error", msg: "down" });
+        for (const n of [2, 3]) await outbox.enqueue({ msg: `e${n}` });
+        post.mockRejectedValue(httpError(status));
+
+        // token rejected for a while: no row is dropped, the head backs off, later rows do not overtake it
+        let now = later();
+        for (let i = 1; i <= 3; i++) {
+            expect(await sender.flush(now)).toEqual({ sent: 0, failed: 1, dead: 0, snapshotSent: false });
+            expect(rows().map(r => r.dead)).toEqual([false, false, false]);
+            expect(rows()[0].attempts).toBe(i);
+            now = new Date(rows()[0].next_attempt_at.getTime());
+        }
+        expect(eventPosts()).toHaveLength(3);
+        expect(rows()[0].next_attempt_at.getTime() - Date.now()).toBeGreaterThan(0);
+
+        // token restored: everything is delivered in order, and `failing` made the snapshot run
+        post.mockReset();
+        post.mockResolvedValue({ status: 200 });
+        expect(await sender.flush(now)).toEqual({ sent: 3, failed: 0, dead: 0, snapshotSent: true });
+        expect(eventPosts().map(c => c[1].msg).slice(1)).toEqual(["e2", "e3"]);
+    });
+
+    it("401 backs off to the 60 s cap", async () => {
+        const { outbox, sender, rows } = setup();
+        await outbox.enqueue({ msg: "e1" });
+        post.mockRejectedValue(httpError(401));
+        let now = later();
+        let last = 0;
+        for (let i = 0; i < 8; i++) {
+            await sender.flush(now);
+            last = rows()[0].next_attempt_at.getTime() - now.getTime();
+            now = new Date(rows()[0].next_attempt_at.getTime());
+        }
+        expect(last).toBe(60_000);
     });
 
     it("first success after failure posts one snapshot", async () => {
