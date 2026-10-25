@@ -65,6 +65,20 @@ export function scheduleWindowEndMs(
     return plannedWindowUnixMs(decision.runDate, civilTimeOnly(schedule.start_time), civilTimeOnly(schedule.end_time), tz).endMs;
 }
 
+/**
+ * Window end for a run's claims: the one read when the schedule was judged due (`atDueCheck`), because
+ * the window can end between that check and the claim (a slow start, a long water-hammer wait) and a claim
+ * made then would find no window and fall back to the 600 s scenario lease; else the window `nowMs` is in.
+ */
+export function claimWindowEndMs(
+    atDueCheck: number | null,
+    schedule: ScheduleRunFields,
+    plan: PlanDateRange | null | undefined,
+    nowMs: number
+): number | null {
+    return atDueCheck ?? scheduleWindowEndMs(schedule, plan, nowMs);
+}
+
 type StartCommands = { holdingCommands: ModbusCmd[]; coilCommands: ModbusCmd[] };
 
 export interface ScheduleStartDeps {

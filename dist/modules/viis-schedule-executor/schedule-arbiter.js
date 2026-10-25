@@ -7,6 +7,7 @@ exports.claimingArbiter = claimingArbiter;
 exports.isArbitratedCoil = isArbitratedCoil;
 exports.withoutArbitratedCoils = withoutArbitratedCoils;
 exports.scheduleWindowEndMs = scheduleWindowEndMs;
+exports.claimWindowEndMs = claimWindowEndMs;
 exports.startScheduleCommands = startScheduleCommands;
 exports.beginScheduleFinish = beginScheduleFinish;
 /**
@@ -58,6 +59,14 @@ function scheduleWindowEndMs(schedule, plan, nowMs, tz = farm_time_1.DEFAULT_FAR
     if (!decision.due)
         return null;
     return (0, farm_time_1.plannedWindowUnixMs)(decision.runDate, (0, schedule_run_window_1.civilTimeOnly)(schedule.start_time), (0, schedule_run_window_1.civilTimeOnly)(schedule.end_time), tz).endMs;
+}
+/**
+ * Window end for a run's claims: the one read when the schedule was judged due (`atDueCheck`), because
+ * the window can end between that check and the claim (a slow start, a long water-hammer wait) and a claim
+ * made then would find no window and fall back to the 600 s scenario lease; else the window `nowMs` is in.
+ */
+function claimWindowEndMs(atDueCheck, schedule, plan, nowMs) {
+    return atDueCheck !== null && atDueCheck !== void 0 ? atDueCheck : scheduleWindowEndMs(schedule, plan, nowMs);
 }
 function errorText(error) {
     return error instanceof Error ? error.message : String(error);

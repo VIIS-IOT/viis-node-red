@@ -27,7 +27,7 @@ import { stopRunsNoLongerEnabled } from "./schedule-stop-cleanup";
 import { clearOffFailure, decideFinish, noteOffFailure, offFailures, offReportForAudit, pendingOffRetry, rebuildOffCommands, retryNeedsImpliedPumps, supersedesOffRetry } from "./schedule-finish";
 import { resolveThingsboardMqttBroker } from "../../core/demeter-mqtt-topics";
 import { unixMsNow } from "../../core/farm-time";
-import { claimingArbiter, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
+import { claimingArbiter, claimWindowEndMs, scheduleWindowEndMs, startScheduleCommands } from "./schedule-arbiter";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -720,6 +720,11 @@ module.exports = function (RED: NodeAPI) {
                     }
 
                     const isDue = scheduleService.isScheduleDue(schedule);
+                    // The window this run belongs to, read with the due check: the claims of its start expire at its
+                    // end + 5 min even when the window has ended by the time they are made.
+                    const dueWindowEndMs = isDue && claimingArbiter() !== null
+                        ? scheduleWindowEndMs(schedule, schedule.schedulePlan ?? null, unixMsNow())
+                        : null;
                     // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried and a restart rewrites the OFF.
                     const offRetryOn = scheduleService.offRetryEnabled();
 
@@ -821,7 +826,7 @@ module.exports = function (RED: NodeAPI) {
                                 },
                                 schedule.name,
                                 startRunId,
-                                startArbiter ? scheduleWindowEndMs(schedule, schedule.schedulePlan ?? null, unixMsNow()) : null,
+                                startArbiter ? claimWindowEndMs(dueWindowEndMs, schedule, schedule.schedulePlan ?? null, unixMsNow()) : null,
                                 { holdingCommands, coilCommands }
                             );
                             if (publishedConfigParams.length > 0) {

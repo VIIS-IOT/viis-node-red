@@ -307,7 +307,7 @@ module.exports = function (RED) {
         const sideEffect = (label, work) => (0, schedule_tick_guard_1.runBoundedSideEffect)(label, work, SIDE_EFFECT_TIMEOUT_MS, (message) => node.warn(`⚠️ SIDE EFFECT ${message}`));
         node.on("input", function (msg, send, done) {
             enqueueInput(async () => {
-                var _a, _b, _c;
+                var _a, _b, _c, _d;
                 globalContext.set(SCHEDULE_EXECUTOR_HEARTBEAT_KEY, { lastTickAt: Date.now() });
                 try {
                     // Ensure Modbus client is ready before processing
@@ -606,6 +606,11 @@ module.exports = function (RED) {
                             continue;
                         }
                         const isDue = scheduleService.isScheduleDue(schedule);
+                        // The window this run belongs to, read with the due check: the claims of its start expire at its
+                        // end + 5 min even when the window has ended by the time they are made.
+                        const dueWindowEndMs = isDue && (0, schedule_arbiter_1.claimingArbiter)() !== null
+                            ? (0, schedule_arbiter_1.scheduleWindowEndMs)(schedule, (_b = schedule.schedulePlan) !== null && _b !== void 0 ? _b : null, (0, farm_time_1.unixMsNow)())
+                            : null;
                         // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried and a restart rewrites the OFF.
                         const offRetryOn = scheduleService.offRetryEnabled();
                         // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
@@ -688,7 +693,7 @@ module.exports = function (RED) {
                                         sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
                                         waterHammerMs: waterHammerDelayMs,
                                         now: farm_time_1.unixMsNow,
-                                    }, schedule.name, startRunId, startArbiter ? (0, schedule_arbiter_1.scheduleWindowEndMs)(schedule, (_b = schedule.schedulePlan) !== null && _b !== void 0 ? _b : null, (0, farm_time_1.unixMsNow)()) : null, { holdingCommands, coilCommands });
+                                    }, schedule.name, startRunId, startArbiter ? (0, schedule_arbiter_1.claimWindowEndMs)(dueWindowEndMs, schedule, (_c = schedule.schedulePlan) !== null && _c !== void 0 ? _c : null, (0, farm_time_1.unixMsNow)()) : null, { holdingCommands, coilCommands });
                                     if (publishedConfigParams.length > 0) {
                                         startReport.steps = [(0, schedule_side_effects_1.configParamsToStep)(publishedConfigParams), ...startReport.steps];
                                     }
@@ -781,7 +786,7 @@ module.exports = function (RED) {
                                 const offRetry = offRetryOn && storedCommands.length > 0
                                     ? (0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, eventRunId)
                                     : null;
-                                const allResetCommands = (_c = offRetry === null || offRetry === void 0 ? void 0 : offRetry.commands) !== null && _c !== void 0 ? _c : scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
+                                const allResetCommands = (_d = offRetry === null || offRetry === void 0 ? void 0 : offRetry.commands) !== null && _d !== void 0 ? _d : scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
                                 const writeCommands = offRetry ? activeCommands : allResetCommands;
                                 const finishRunId = (0, uuid_1.v4)();
                                 let finishReport = {

@@ -14,6 +14,7 @@ import {
     beginScheduleFinish,
     withoutArbitratedCoils,
     scheduleWindowEndMs,
+    claimWindowEndMs,
     startScheduleCommands,
 } from '../schedule-arbiter';
 import { ModbusCmd } from '../type';
@@ -169,6 +170,20 @@ describe('schedule START with the arbiter enforcing', () => {
 
         expect(writer.calls).toHaveLength(1);
         expect(writer.calls[0]).toBe(commands);
+    });
+
+    test('the claim uses the window end read at the due check, even when the window ended before the claim was made', () => {
+        const schedule = { start_time: '06:00:00', end_time: '06:30:00' };
+        const dueCheck = Date.UTC(2026, 9, 23, 23, 29, 50); // 06:29:50 farm time
+        const atDue = scheduleWindowEndMs(schedule, null, dueCheck);
+        expect(atDue).toBe(Date.UTC(2026, 9, 23, 23, 30));
+
+        // Ten seconds later the window is over: looking again finds none (that was the 600 s fallback).
+        const claimTime = Date.UTC(2026, 9, 23, 23, 30, 5);
+        expect(scheduleWindowEndMs(schedule, null, claimTime)).toBeNull();
+        expect(claimWindowEndMs(atDue, schedule, null, claimTime)).toBe(atDue);
+        // No due-time answer: the window of the claim time, as before.
+        expect(claimWindowEndMs(null, schedule, null, dueCheck)).toBe(atDue);
     });
 
     test('window end is the end of the window the schedule runs in (farm time)', () => {
