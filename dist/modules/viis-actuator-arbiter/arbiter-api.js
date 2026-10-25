@@ -25,7 +25,8 @@ class ActuatorArbiter {
         this.debounceTimer = null;
         this.interval = null;
         this.stopped = false;
-        this.lastOwners = '{}';
+        /** Last owners published; null until the first computed state, which is always published (even `{}`). */
+        this.lastOwners = null;
         /** `actuator_write_failed:<key>` alarms raised (or found Pending in the outbox on start). */
         this.alarmed = new Set();
         /** `manual_runtime_exceeded:<key>` alarms raised (or found Pending on start) -> owner of the key then (null = none). */

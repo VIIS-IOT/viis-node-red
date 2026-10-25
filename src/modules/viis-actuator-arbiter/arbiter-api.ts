@@ -132,7 +132,8 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
     private interval: ReturnType<typeof setInterval> | null = null;
     private stopped = false;
-    private lastOwners = '{}';
+    /** Last owners published; null until the first computed state, which is always published (even `{}`). */
+    private lastOwners: string | null = null;
     /** `actuator_write_failed:<key>` alarms raised (or found Pending in the outbox on start). */
     private readonly alarmed = new Set<string>();
     /** `manual_runtime_exceeded:<key>` alarms raised (or found Pending on start) -> owner of the key then (null = none). */

@@ -139,20 +139,21 @@ describe('ActuatorArbiter', () => {
         await second.arbiter.stop();
     });
 
-    test('owners change emits one message', async () => {
+    test('the first state is published after start even when empty; then one message per change', async () => {
         const { arbiter, ownerEvents } = setup();
         await arbiter.start();
-        expect(ownerEvents).toHaveLength(0);
+        // A restarted gateway with no claims must still overwrite the stale owners the cloud holds.
+        expect(ownerEvents).toEqual([{}]);
 
         await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000 });
         await arbiter.tick();
         await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000 });
 
-        expect(ownerEvents).toEqual([{ valve_1: { source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000, next: null } }]);
+        expect(ownerEvents).toEqual([{}, { valve_1: { source: 'manual', ownerId: 'manual:x', expiresAt: T0 + 60_000, next: null } }]);
 
         await arbiter.release('manual:*');
-        expect(ownerEvents).toHaveLength(2);
-        expect(ownerEvents[1]).toEqual({});
+        expect(ownerEvents).toHaveLength(3);
+        expect(ownerEvents[2]).toEqual({});
         await arbiter.stop();
     });
 

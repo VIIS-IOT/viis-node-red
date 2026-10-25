@@ -134,6 +134,7 @@ describe('viis-actuator-arbiter node', () => {
 
         const sent = (node.send as jest.Mock).mock.calls.map((call: any[]) => call[0]?.[0]).filter(Boolean);
         expect(sent).toEqual([
+            { topic: 'actuator_owners', payload: {} }, // the first state after start, even when empty
             { topic: 'actuator_owners', payload: expect.objectContaining({ valve_1: expect.objectContaining({ ownerId: 'manual:r1' }) }) },
             { topic: 'actuator_write', payload: { key: 'valve_1', value: true, ts: expect.any(Number) } },
         ]);
