@@ -18,7 +18,7 @@ export type SharedModbusTransport = Pick<
   | "isConnectedCheck"
   | "disconnect"
 > &
-  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs">>;
+  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs" | "getConnectionState">>;
 
 export class BoardScopedModbusClient {
   /** Listeners added through this wrapper, so a retarget can move them to the new transport. */
@@ -115,6 +115,14 @@ export class BoardScopedModbusClient {
 
   isConnectedCheck(): boolean {
     return this.transport.isConnectedCheck();
+  }
+
+  /**
+   * True while the shared transport's circuit breaker is open: it is not being reconnected for the next
+   * CIRCUIT_BREAKER_RECOVERY_MS, so a read or write would only wait out its timeout.
+   */
+  isCircuitBreakerOpen(): boolean {
+    return this.transport.getConnectionState?.() === "circuit_breaker_open";
   }
 
   disconnect(): void {

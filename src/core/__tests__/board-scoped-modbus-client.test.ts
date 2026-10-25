@@ -102,4 +102,23 @@ describe("BoardScopedModbusClient", () => {
 
     expect(transport.reconnect).toHaveBeenCalledTimes(1);
   });
+
+  it("reports the shared transport's open circuit breaker (and never claims it when the transport cannot tell)", () => {
+    const base = {
+      readCoils: jest.fn(),
+      readInputRegisters: jest.fn(),
+      readHoldingRegisters: jest.fn(),
+      writeCoil: jest.fn(),
+      writeRegister: jest.fn(),
+      isConnectedCheck: jest.fn().mockReturnValue(false),
+      disconnect: jest.fn(),
+    };
+    const state = jest.fn().mockReturnValue("circuit_breaker_open");
+    const client = new BoardScopedModbusClient({ ...base, getConnectionState: state } as any, 1);
+
+    expect(client.isCircuitBreakerOpen()).toBe(true);
+    state.mockReturnValue("connected");
+    expect(client.isCircuitBreakerOpen()).toBe(false);
+    expect(new BoardScopedModbusClient(base, 1).isCircuitBreakerOpen()).toBe(false);
+  });
 });

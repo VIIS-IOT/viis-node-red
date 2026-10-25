@@ -16,6 +16,7 @@ function setup(mode: 'observe' | 'enforce' = 'enforce') {
     // The writer stamps expiresAt with Date.now(), the arbiter resolves with its own clock: one clock for both.
     jest.spyOn(Date, 'now').mockImplementation(() => now);
     const coils: Record<string, boolean> = {};
+    const offlineBoards = new Set<string>();
     const policy = loadActuatorPolicy(
         { valve_1: 'managed', valve_3: 'hold' },
         { manualLeaseS: 1800, coilKeys: coilKeysFromMappings({ board1: { coils: { valve_1: 0, valve_2: 1, valve_3: 2 } } }), warn: () => undefined },
@@ -34,6 +35,7 @@ function setup(mode: 'observe' | 'enforce' = 'enforce') {
             readCoil: async t => coils[t.key] ?? false,
             writeCoil: async (t, value) => { coils[t.key] = value; },
             classify: classifyActuatorKey,
+            boardOffline: id => offlineBoards.has(id),
             waterHammerMs: 0,
             sleep: async () => undefined,
         },
@@ -42,7 +44,7 @@ function setup(mode: 'observe' | 'enforce' = 'enforce') {
     const node = { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const client = { isConnectedCheck: jest.fn(() => true), writeCoil: jest.fn(async () => undefined) };
     const service = new ModbusGetterService({ node: node as any, nodeId: 'n1', enableLogging: false }, client as any);
-    return { arbiter, coils, client, service, advance: (ms: number) => { now += ms; } };
+    return { arbiter, coils, offlineBoards, client, service, advance: (ms: number) => { now += ms; } };
 }
 
 const intentMsg = (key: string, value: boolean, intentId = 'intent-7') => ({
@@ -98,6 +100,17 @@ describe('viis-modbus-flex OFFLINE writes with the arbiter enforcing', () => {
         await arbiter.release('manual:c1');
         expect(arbiter.owners().valve_1).toBeUndefined();
         expect(client.writeCoil).not.toHaveBeenCalled();
+    });
+
+    test('a write to a board with its circuit breaker open answers board_offline at once and the claim stays', async () => {
+        const { arbiter, service, offlineBoards } = ctx;
+        offlineBoards.add('board1');
+        const msg = intentMsg('valve_1', true);
+
+        const response: any = await service.processRequest(msg.payload, offlineWriteOrigin(msg, 'intent'));
+
+        expect(response.error).toContain('board_offline:board1');
+        expect(arbiter.owners().valve_1?.ownerId).toBe('offline:intent-7');
     });
 
     test('unmanaged key and writes from outside the intent chain are written as today', async () => {

@@ -77,18 +77,31 @@ module.exports = function (RED) {
             const targets = allTargets.filter(t => policy.mode(t.key) !== 'unmanaged');
             // One board client per board for the node's lifetime (each getModbusClientV2 call takes a reference).
             const clients = new Map();
+            /** Board clients that resolved: boardOffline needs them without awaiting. */
+            const readyClients = new Map();
             const acquiredBoards = new Set();
             const boardClient = (boardId) => {
                 let client = clients.get(boardId);
                 if (!client) {
                     client = client_registry_1.default.getModbusClientV2(boardId, node).then(c => {
                         acquiredBoards.add(boardId);
+                        readyClients.set(boardId, c);
                         return c;
                     });
                     client.catch(() => clients.delete(boardId));
                     clients.set(boardId, client);
                 }
                 return client;
+            };
+            /** The board's circuit breaker is open: it is not retried for a while, so reads/writes would only time out. */
+            const boardOffline = (boardId) => {
+                const client = readyClients.get(boardId);
+                try {
+                    return Boolean(client && typeof client.isCircuitBreakerOpen === 'function' && client.isCircuitBreakerOpen());
+                }
+                catch (_a) {
+                    return false;
+                }
             };
             const readCoil = async (t) => {
                 var _a;
@@ -141,6 +154,7 @@ module.exports = function (RED) {
                 }
                 acquiredBoards.clear();
                 clients.clear();
+                readyClients.clear();
                 if (dataSourceAcquired) {
                     dataSourceAcquired = false;
                     await dataSource_1.DataSourceManager.release().catch(() => undefined);
@@ -166,6 +180,7 @@ module.exports = function (RED) {
                         writeCoil,
                         classify: reconciler_1.classifyActuatorKey,
                         allowOn,
+                        boardOffline,
                         waterHammerMs: fertigation_start_sequence_1.WATER_HAMMER_DELAY_MS,
                         sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
                     },

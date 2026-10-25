@@ -5,7 +5,8 @@
  * - `claim()` records the claim, asks for a tick (debounced 200 ms) and answers once that tick has
  *   reconciled the key (at most 15 s): `applied` says whether this claim is the winner, `actual` what the
  *   coil reads (the written value when the tick wrote it). A losing claim stays in the core: the caller
- *   decides whether to keep or withdraw it.
+ *   decides whether to keep or withdraw it. A key on a board whose circuit breaker is open is answered at
+ *   once with `boardOffline` (no wait for a tick that cannot reach it).
  * - Every `ARBITER_TICK_MS` the arbiter expires leases and reconciles every managed/hold key.
  * - Claims are saved on every change and on stop, and loaded on start (expired / future claims dropped).
  * - A key whose write failed on 3 consecutive ticks raises the gateway state alarm
@@ -46,6 +47,12 @@ export interface ClaimResult {
     blockedBy?: ClaimSource;
     /** Device protection held the ON write back on this key (the reason); the claim won but the coil is not ON. */
     gateBlocked?: string;
+    /**
+     * The key's board has its circuit breaker open: nothing can be read or written until it recovers, so the
+     * answer comes at once (not after the 15 s wait) and `actual` is unknown. The claim stays in the arbiter;
+     * a caller that told its sender FAILED withdraws it.
+     */
+    boardOffline?: string;
     mode: 'observe' | 'enforce';
 }
 
@@ -257,6 +264,10 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         this.core.claim({ ...input, createdAt: this.now() });
         this.persist();
         this.emitOwnersIfChanged();
+        const boardId = this.target(input.key)?.boardId;
+        if (boardId !== undefined && this.opts.reconcilerDeps.boardOffline?.(boardId)) {
+            return { ...this.resultFor(input, null), boardOffline: boardId };
+        }
         const report = await this.waitForTick();
         return this.resultFor(input, report);
     }
@@ -352,6 +363,8 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         if (!applied && winner) result.blockedBy = winner.source;
         const gate = report?.gateBlocked.find(g => g.key === input.key);
         if (gate) result.gateBlocked = gate.reason;
+        const boardId = this.target(input.key)?.boardId;
+        if (report && boardId !== undefined && report.offlineBoards.includes(boardId)) result.boardOffline = boardId;
         return result;
     }
 

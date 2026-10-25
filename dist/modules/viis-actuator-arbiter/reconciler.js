@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Reconciler = exports.OFF_READS_TO_RELEASE = void 0;
+exports.Reconciler = exports.BOARD_SILENT_READS_TO_SKIP = exports.OFF_READS_TO_RELEASE = void 0;
 exports.classifyActuatorKey = classifyActuatorKey;
 /**
  * One reconcile pass of the actuator arbiter: read each arbitrated coil, compare it with the winning
@@ -14,6 +14,10 @@ exports.classifyActuatorKey = classifyActuatorKey;
  * stop before valves close, valves open before pumps start, and an ON never directly follows an OFF.
  *
  * - A key whose read failed is not written (the coil state is unknown); it is listed in `readFailed`.
+ * - Reads run per board in parallel (a board's own keys one after another, they share its Modbus queue), so
+ *   a hung board cannot hold up the others: after two timeout / not-connected errors in a row the rest of
+ *   that board's keys are skipped for the tick (one such error alone may be a glitch). A board whose circuit breaker is open (`boardOffline`) is not read at
+ *   all; its keys are in `readFailed` and the board in `offlineBoards`.
  * - Never fight an outside OFF. Once the coil was seen ON under the winning claim of a manual, scenario,
  *   schedule or automation source (read ON, or the arbiter's ON write succeeded) and then reads OFF, the
  *   PLC, an HMI or an interlock switched it. One OFF read proves nothing (a stale or glitched read, a tick
@@ -45,6 +49,12 @@ function classifyActuatorKey(key) {
         return 'valve';
     return 'other';
 }
+/** Reads of one board in a row that got no answer before its remaining keys are skipped for the tick. */
+exports.BOARD_SILENT_READS_TO_SKIP = 2;
+/** A read error that says the whole board is not answering: its other keys would only wait out the same timeout. */
+function boardNotAnswering(error) {
+    return /timed? ?out|not connected|port not open|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EHOSTUNREACH/i.test(errorText(error));
+}
 function errorText(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -60,23 +70,60 @@ class Reconciler {
         return (_a = this.failures.get(key)) !== null && _a !== void 0 ? _a : 0;
     }
     async tick() {
-        var _a;
+        var _a, _b;
         const { deps } = this;
         const now = deps.now();
-        const report = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [], externalOff: [], gateBlocked: [] };
+        const report = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [], offlineBoards: [], externalOff: [], gateBlocked: [] };
         const pending = [];
+        // Phase 1: what each key should be, and one read per key. Boards are read in parallel.
+        const jobs = [];
         for (const target of deps.targets) {
-            let resolution = this.core.resolve(target.key, now);
+            const resolution = this.core.resolve(target.key, now);
             if (resolution.desired === null) {
                 report.desired[target.key] = null;
                 this.watch.delete(target.key);
                 continue;
             }
-            let actual;
-            try {
-                actual = Boolean(await deps.readCoil(target));
+            jobs.push({ target, resolution });
+        }
+        const reads = new Map(); // key -> coil value, null = not read
+        const byBoard = new Map();
+        for (const job of jobs) {
+            const list = (_a = byBoard.get(job.target.boardId)) !== null && _a !== void 0 ? _a : [];
+            list.push(job);
+            byBoard.set(job.target.boardId, list);
+        }
+        await Promise.all(Array.from(byBoard, async ([boardId, list]) => {
+            var _a;
+            if ((_a = deps.boardOffline) === null || _a === void 0 ? void 0 : _a.call(deps, boardId)) {
+                report.offlineBoards.push(boardId);
+                for (const { target } of list)
+                    reads.set(target.key, null);
+                return;
             }
-            catch (_b) {
+            let silent = 0; // consecutive reads of this board that got no answer
+            for (let i = 0; i < list.length; i++) {
+                const { target } = list[i];
+                try {
+                    reads.set(target.key, Boolean(await deps.readCoil(target)));
+                    silent = 0;
+                }
+                catch (error) {
+                    reads.set(target.key, null);
+                    silent = boardNotAnswering(error) ? silent + 1 : 0;
+                    if (silent >= exports.BOARD_SILENT_READS_TO_SKIP) {
+                        for (const { target: skipped } of list.slice(i + 1))
+                            reads.set(skipped.key, null);
+                        return;
+                    }
+                }
+            }
+        }));
+        // Phase 2: judge every key against its read, in target order.
+        for (const { target, resolution: first } of jobs) {
+            let resolution = first;
+            const read = reads.get(target.key);
+            if (read === null || read === undefined) {
                 report.desired[target.key] = resolution.desired;
                 report.winners[target.key] = resolution.winner
                     ? { source: resolution.winner.source, ownerId: resolution.winner.ownerId }
@@ -85,6 +132,7 @@ class Reconciler {
                 report.readFailed.push(target.key);
                 continue;
             }
+            const actual = read;
             report.actual[target.key] = actual;
             const verdict = this.judgeRead(target.key, resolution, actual, now);
             if (typeof verdict === 'object') {
@@ -114,7 +162,7 @@ class Reconciler {
                 const gate = deps.allowOn(target.key);
                 if (gate.allowed)
                     continue;
-                report.gateBlocked.push({ key: target.key, reason: (_a = gate.reason) !== null && _a !== void 0 ? _a : 'protection' });
+                report.gateBlocked.push({ key: target.key, reason: (_b = gate.reason) !== null && _b !== void 0 ? _b : 'protection' });
                 pending.splice(i, 1);
             }
             report.gateBlocked.reverse();

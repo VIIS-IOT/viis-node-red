@@ -10,6 +10,10 @@
  * stop before valves close, valves open before pumps start, and an ON never directly follows an OFF.
  *
  * - A key whose read failed is not written (the coil state is unknown); it is listed in `readFailed`.
+ * - Reads run per board in parallel (a board's own keys one after another, they share its Modbus queue), so
+ *   a hung board cannot hold up the others: after two timeout / not-connected errors in a row the rest of
+ *   that board's keys are skipped for the tick (one such error alone may be a glitch). A board whose circuit breaker is open (`boardOffline`) is not read at
+ *   all; its keys are in `readFailed` and the board in `offlineBoards`.
  * - Never fight an outside OFF. Once the coil was seen ON under the winning claim of a manual, scenario,
  *   schedule or automation source (read ON, or the arbiter's ON write succeeded) and then reads OFF, the
  *   PLC, an HMI or an interlock switched it. One OFF read proves nothing (a stale or glitched read, a tick
@@ -45,6 +49,8 @@ export interface ReconcilerDeps {
     classify(key: string): CoilClass;
     /** Device protection for an ON write (checked on every tick); absent = always allowed. */
     allowOn?(key: string): { allowed: boolean; reason?: string };
+    /** True while the board's circuit breaker is open (reads/writes would only queue and time out); absent = never. */
+    boardOffline?(boardId: string): boolean;
     mode: 'observe' | 'enforce';
     waterHammerMs: number;
     sleep(ms: number): Promise<void>;
@@ -66,6 +72,8 @@ export interface TickReport {
     diffs: string[];
     writes: TickWrite[];
     readFailed: string[];
+    /** Boards that were not read this tick because their circuit breaker is open. */
+    offlineBoards: string[];
     /** Keys whose coil an outside party switched OFF (two OFF reads after it was seen ON), with what was dropped. */
     externalOff: ExternalOff[];
     /** ON writes held back this tick by device protection. */
@@ -109,6 +117,14 @@ export function classifyActuatorKey(key: string): CoilClass {
     return 'other';
 }
 
+/** Reads of one board in a row that got no answer before its remaining keys are skipped for the tick. */
+export const BOARD_SILENT_READS_TO_SKIP = 2;
+
+/** A read error that says the whole board is not answering: its other keys would only wait out the same timeout. */
+function boardNotAnswering(error: unknown): boolean {
+    return /timed? ?out|not connected|port not open|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EHOSTUNREACH/i.test(errorText(error));
+}
+
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
@@ -126,21 +142,57 @@ export class Reconciler {
     async tick(): Promise<TickReport> {
         const { deps } = this;
         const now = deps.now();
-        const report: TickReport = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [], externalOff: [], gateBlocked: [] };
+        const report: TickReport = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [], offlineBoards: [], externalOff: [], gateBlocked: [] };
         const pending: { target: CoilTarget; value: boolean }[] = [];
 
+        // Phase 1: what each key should be, and one read per key. Boards are read in parallel.
+        const jobs: { target: CoilTarget; resolution: Resolution }[] = [];
         for (const target of deps.targets) {
-            let resolution = this.core.resolve(target.key, now);
+            const resolution = this.core.resolve(target.key, now);
             if (resolution.desired === null) {
                 report.desired[target.key] = null;
                 this.watch.delete(target.key);
                 continue;
             }
+            jobs.push({ target, resolution });
+        }
+        const reads = new Map<string, boolean | null>(); // key -> coil value, null = not read
+        const byBoard = new Map<string, typeof jobs>();
+        for (const job of jobs) {
+            const list = byBoard.get(job.target.boardId) ?? [];
+            list.push(job);
+            byBoard.set(job.target.boardId, list);
+        }
+        await Promise.all(
+            Array.from(byBoard, async ([boardId, list]) => {
+                if (deps.boardOffline?.(boardId)) {
+                    report.offlineBoards.push(boardId);
+                    for (const { target } of list) reads.set(target.key, null);
+                    return;
+                }
+                let silent = 0; // consecutive reads of this board that got no answer
+                for (let i = 0; i < list.length; i++) {
+                    const { target } = list[i];
+                    try {
+                        reads.set(target.key, Boolean(await deps.readCoil(target)));
+                        silent = 0;
+                    } catch (error) {
+                        reads.set(target.key, null);
+                        silent = boardNotAnswering(error) ? silent + 1 : 0;
+                        if (silent >= BOARD_SILENT_READS_TO_SKIP) {
+                            for (const { target: skipped } of list.slice(i + 1)) reads.set(skipped.key, null);
+                            return;
+                        }
+                    }
+                }
+            })
+        );
 
-            let actual: boolean;
-            try {
-                actual = Boolean(await deps.readCoil(target));
-            } catch {
+        // Phase 2: judge every key against its read, in target order.
+        for (const { target, resolution: first } of jobs) {
+            let resolution = first;
+            const read = reads.get(target.key);
+            if (read === null || read === undefined) {
                 report.desired[target.key] = resolution.desired;
                 report.winners[target.key] = resolution.winner
                     ? { source: resolution.winner.source, ownerId: resolution.winner.ownerId }
@@ -149,6 +201,7 @@ export class Reconciler {
                 report.readFailed.push(target.key);
                 continue;
             }
+            const actual = read;
             report.actual[target.key] = actual;
 
             const verdict = this.judgeRead(target.key, resolution, actual, now);

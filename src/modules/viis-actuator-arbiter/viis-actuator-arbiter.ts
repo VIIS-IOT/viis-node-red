@@ -112,18 +112,30 @@ module.exports = function (RED: NodeAPI) {
 
             // One board client per board for the node's lifetime (each getModbusClientV2 call takes a reference).
             const clients = new Map<string, Promise<any>>();
+            /** Board clients that resolved: boardOffline needs them without awaiting. */
+            const readyClients = new Map<string, any>();
             const acquiredBoards = new Set<string>();
             const boardClient = (boardId: string): Promise<any> => {
                 let client = clients.get(boardId);
                 if (!client) {
                     client = ClientRegistry.getModbusClientV2(boardId, node).then(c => {
                         acquiredBoards.add(boardId);
+                        readyClients.set(boardId, c);
                         return c;
                     });
                     client.catch(() => clients.delete(boardId));
                     clients.set(boardId, client);
                 }
                 return client;
+            };
+            /** The board's circuit breaker is open: it is not retried for a while, so reads/writes would only time out. */
+            const boardOffline = (boardId: string): boolean => {
+                const client = readyClients.get(boardId);
+                try {
+                    return Boolean(client && typeof client.isCircuitBreakerOpen === 'function' && client.isCircuitBreakerOpen());
+                } catch {
+                    return false;
+                }
             };
             const readCoil = async (t: CoilTarget): Promise<boolean> => {
                 const client = await boardClient(t.boardId);
@@ -174,6 +186,7 @@ module.exports = function (RED: NodeAPI) {
                 }
                 acquiredBoards.clear();
                 clients.clear();
+                readyClients.clear();
                 if (dataSourceAcquired) {
                     dataSourceAcquired = false;
                     await DataSourceManager.release().catch(() => undefined);
@@ -200,6 +213,7 @@ module.exports = function (RED: NodeAPI) {
                         writeCoil,
                         classify: classifyActuatorKey,
                         allowOn,
+                        boardOffline,
                         waterHammerMs: WATER_HAMMER_DELAY_MS,
                         sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
                     },

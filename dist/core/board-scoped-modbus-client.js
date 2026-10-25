@@ -89,6 +89,14 @@ class BoardScopedModbusClient {
     isConnectedCheck() {
         return this.transport.isConnectedCheck();
     }
+    /**
+     * True while the shared transport's circuit breaker is open: it is not being reconnected for the next
+     * CIRCUIT_BREAKER_RECOVERY_MS, so a read or write would only wait out its timeout.
+     */
+    isCircuitBreakerOpen() {
+        var _a, _b;
+        return ((_b = (_a = this.transport).getConnectionState) === null || _b === void 0 ? void 0 : _b.call(_a)) === "circuit_breaker_open";
+    }
     disconnect() {
         this.transport.disconnect();
     }

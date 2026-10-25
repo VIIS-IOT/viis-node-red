@@ -130,9 +130,14 @@ class ActuatorArbiter {
             waiter(null);
     }
     async claim(input) {
+        var _a, _b, _c;
         this.core.claim(Object.assign(Object.assign({}, input), { createdAt: this.now() }));
         this.persist();
         this.emitOwnersIfChanged();
+        const boardId = (_a = this.target(input.key)) === null || _a === void 0 ? void 0 : _a.boardId;
+        if (boardId !== undefined && ((_c = (_b = this.opts.reconcilerDeps).boardOffline) === null || _c === void 0 ? void 0 : _c.call(_b, boardId))) {
+            return Object.assign(Object.assign({}, this.resultFor(input, null)), { boardOffline: boardId });
+        }
         const report = await this.waitForTick();
         return this.resultFor(input, report);
     }
@@ -217,6 +222,7 @@ class ActuatorArbiter {
         });
     }
     resultFor(input, report) {
+        var _a;
         const { winner } = this.core.resolve(input.key, this.now());
         const applied = winner !== null && winner.ownerId === input.ownerId;
         let actual;
@@ -230,6 +236,9 @@ class ActuatorArbiter {
         const gate = report === null || report === void 0 ? void 0 : report.gateBlocked.find(g => g.key === input.key);
         if (gate)
             result.gateBlocked = gate.reason;
+        const boardId = (_a = this.target(input.key)) === null || _a === void 0 ? void 0 : _a.boardId;
+        if (report && boardId !== undefined && report.offlineBoards.includes(boardId))
+            result.boardOffline = boardId;
         return result;
     }
     outbox() {

@@ -266,6 +266,9 @@ class ModbusGetterService {
             }
             return this.createErrorResponse(`blocked_by:${(_a = result.blockedBy) !== null && _a !== void 0 ? _a : "expired"}`);
         }
+        if (result.boardOffline) {
+            return this.createErrorResponse(`board_offline:${result.boardOffline}; the arbiter keeps the claim and retries`);
+        }
         if (result.actual !== value) {
             return this.createErrorResponse(`not_confirmed:${key} reads ${String(result.actual)}; the arbiter keeps the claim and retries`);
         }

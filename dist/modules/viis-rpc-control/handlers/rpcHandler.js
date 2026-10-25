@@ -853,6 +853,12 @@ class RpcHandler {
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} blocked by ${(_b = result.blockedBy) !== null && _b !== void 0 ? _b : 'expired'}` });
             throw new Error(`blocked_by:${(_c = result.blockedBy) !== null && _c !== void 0 ? _c : 'expired'}`);
         }
+        if (result.boardOffline) {
+            // The board is down (circuit breaker open): answered at once, and the command must not apply when it returns.
+            await withdraw(`board offline: ${result.boardOffline}`);
+            this.node.status({ fill: "red", shape: "ring", text: `${key} board offline` });
+            throw new Error(`board_offline:${result.boardOffline}`);
+        }
         if (result.gateBlocked) {
             // Device protection holds this ON back at the tick (it is checked again on every tick).
             await withdraw(`protection: ${result.gateBlocked}`);

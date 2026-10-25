@@ -75,6 +75,10 @@ async function claimOn(arbiter, command, ownerId, expiresAt, phase) {
             await arbiter.release(ownerId, command.key).catch(() => undefined);
             outcome.error = `blocked_by:${(_a = result.blockedBy) !== null && _a !== void 0 ? _a : 'expired'}`;
         }
+        else if (result.boardOffline) {
+            // Won, but the board's circuit breaker is open: no wait for a tick, the arbiter keeps the claim.
+            outcome.error = `board_offline:${result.boardOffline}`;
+        }
         else if (result.actual !== true) {
             // Won but not on the coil yet (Modbus down): the arbiter keeps the claim and retries.
             outcome.error = `not_confirmed:${command.key} reads ${String(result.actual)}`;

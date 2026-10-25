@@ -41,6 +41,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
     const writes: string[] = [];
     const failWrite = new Set<string>();
     const blockOn = new Set<string>();
+    const offlineBoards = new Set<string>();
     const ownerEvents: Record<string, unknown>[] = [];
     const arbiter = new ActuatorArbiter({
         policy,
@@ -58,6 +59,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
                 state[t.key] = value;
             },
             classify: classifyActuatorKey,
+            boardOffline: id => offlineBoards.has(id),
             allowOn: key => (blockOn.has(key) ? { allowed: false, reason: 'Force OFF active' } : { allowed: true }),
             waterHammerMs: 0,
             sleep: async () => undefined,
@@ -73,6 +75,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
         writes,
         failWrite,
         blockOn,
+        offlineBoards,
         ownerEvents,
         advance: (ms: number) => {
             now += ms;
@@ -569,6 +572,35 @@ describe('ActuatorArbiter', () => {
             await arbiter.release('manual:*');
             await arbiter.tick();
             expect(state.valve_1).toBe(false);
+            await arbiter.stop();
+        });
+    });
+
+    describe('a board with its circuit breaker open (FIX-23)', () => {
+        test('a claim on it is answered at once with boardOffline, not after the 15 s wait; the claim stays', async () => {
+            const { arbiter, offlineBoards, writes } = setup({ claimWaitMs: 60_000 });
+            await arbiter.start();
+            offlineBoards.add('board1');
+
+            const result = await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:o1', expiresAt: T0 + 60_000 });
+
+            expect(result).toEqual({ applied: true, actual: undefined, boardOffline: 'board1', mode: 'enforce' });
+            expect(writes).toEqual([]);
+            expect(arbiter.owners().valve_1?.ownerId).toBe('manual:o1');
+            await arbiter.stop();
+        });
+
+        test('a claim that waited for a tick which found the board down gets boardOffline too; once it is back the claim is written', async () => {
+            const { arbiter, offlineBoards, state, advance } = setup();
+            await arbiter.start();
+            const waiting = arbiter.claim({ key: 'valve_2', value: true, source: 'schedule', ownerId: 'schedule:o2', expiresAt: T0 + 3_600_000 });
+            offlineBoards.add('board1'); // the breaker opened before the debounced tick ran
+            expect(await waiting).toMatchObject({ applied: true, actual: undefined, boardOffline: 'board1' });
+
+            offlineBoards.delete('board1');
+            advance(60_000);
+            await arbiter.tick();
+            expect(state.valve_2).toBe(true);
             await arbiter.stop();
         });
     });

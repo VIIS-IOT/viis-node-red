@@ -121,6 +121,19 @@ describe('schedule START with the arbiter enforcing', () => {
         expect(writer.calls).toEqual([]);
     });
 
+    test('a key on a board that is offline fails the start for that key at once and keeps its claim', async () => {
+        const { arbiter, releases } = fakeArbiter(['valve_1'], () => ({ applied: true, actual: undefined, boardOffline: 'board1', mode: 'enforce' }));
+        const writer = directWriter();
+
+        const report = await startScheduleCommands(deps(arbiter, writer.execute), 's1', 'run-1', WINDOW_END, { holdingCommands: [], coilCommands: [valve1] });
+
+        expect(report.steps.flatMap(s => s.keys)).toEqual([
+            expect.objectContaining({ key: 'valve_1', status: 'fail', error: 'board_offline:board1' }),
+        ]);
+        // Like a claim that has not reached the coil yet: the arbiter keeps it and writes it when the board is back.
+        expect(releases).toEqual([]);
+    });
+
     test('falsy managed key is not claimed', async () => {
         const { arbiter, claims } = fakeArbiter(['valve_1']);
         const writer = directWriter();
