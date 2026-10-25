@@ -26,6 +26,7 @@ exports.redactDeviceToken = redactDeviceToken;
 const axios_1 = __importDefault(require("axios"));
 const BASE_BACKOFF_MS = 5000;
 const SENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Pause-and-retry statuses: 408/429 (slow / throttled), 409 (backend inbox still processing the event),
  * 401/403 (token rotated or revoked, re-provisioning), 404 (route not deployed yet). All are fixed on the
@@ -59,6 +60,8 @@ class OutboxSender {
         /** Memory mirror of the persisted "snapshot pending" flag; null = not loaded yet. */
         this.snapshotPending = null;
         this.missingConfigWarned = false;
+        this.flushErrorLogged = false;
+        this.purgeErrorLogged = false;
         this.intervalMs = (_a = opts.intervalMs) !== null && _a !== void 0 ? _a : 5000;
         this.batch = (_b = opts.batch) !== null && _b !== void 0 ? _b : 20;
         // 60 s cap: after an outage the next attempt is never minutes away (a 5 min cap made delivery
@@ -73,7 +76,16 @@ class OutboxSender {
         if (this.timer)
             return;
         this.timer = setInterval(() => {
-            this.flush().catch(error => { var _a; return this.logger.error(`[OUTBOX] flush failed: ${redactDeviceToken((_a = error === null || error === void 0 ? void 0 : error.message) !== null && _a !== void 0 ? _a : error)}`); });
+            this.flush().then(() => {
+                this.flushErrorLogged = false;
+            }, error => {
+                var _a;
+                // One line per outage (MySQL down), not one every interval.
+                if (this.flushErrorLogged)
+                    return;
+                this.flushErrorLogged = true;
+                this.logger.error(`[OUTBOX] flush failed: ${redactDeviceToken((_a = error === null || error === void 0 ? void 0 : error.message) !== null && _a !== void 0 ? _a : error)}`);
+            });
         }, this.intervalMs);
         (_b = (_a = this.timer).unref) === null || _b === void 0 ? void 0 : _b.call(_a);
     }
@@ -92,9 +104,20 @@ class OutboxSender {
         return this.flushing;
     }
     async doFlush(now) {
-        var _a, _b;
+        var _a, _b, _c;
         const result = { sent: 0, failed: 0, dead: 0, snapshotSent: false };
-        await this.outbox.purgeSent(new Date(now.getTime() - SENT_RETENTION_MS));
+        try {
+            await this.outbox.purgeSent(new Date(now.getTime() - SENT_RETENTION_MS));
+            await this.outbox.purgeDead(new Date(now.getTime() - DEAD_RETENTION_MS));
+            this.purgeErrorLogged = false;
+        }
+        catch (error) {
+            // MySQL outage: say so once; the next outbox call fails (and is reported) the same way.
+            if (!this.purgeErrorLogged) {
+                this.logger.error(`[OUTBOX] purge failed: ${redactDeviceToken((_a = error === null || error === void 0 ? void 0 : error.message) !== null && _a !== void 0 ? _a : error)}`);
+            }
+            this.purgeErrorLogged = true;
+        }
         const backendUrl = this.env.getEnvVar("VIIS_BACKEND", "");
         const token = this.env.getEnvVar("DEVICE_ACCESS_TOKEN", "");
         if (!backendUrl || !token) {
@@ -107,7 +130,7 @@ class OutboxSender {
         const rows = await this.outbox.nextBatch(this.batch, now);
         for (const row of rows) {
             const outcome = await this.post(`${backendUrl}/api/v2/alarm/notification-by-token`, row.payload, token);
-            const attempts = ((_a = row.attempts) !== null && _a !== void 0 ? _a : 0) + 1;
+            const attempts = ((_b = row.attempts) !== null && _b !== void 0 ? _b : 0) + 1;
             if (outcome.ok) {
                 await this.outbox.markSent(row.seq, now);
                 result.sent++;
@@ -131,7 +154,7 @@ class OutboxSender {
                 }
                 // Exponential backoff with ±20 % jitter, so gateways that lost the backend together do not
                 // all retry in the same second when it is back.
-                const base = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** ((_b = row.attempts) !== null && _b !== void 0 ? _b : 0));
+                const base = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** ((_c = row.attempts) !== null && _c !== void 0 ? _c : 0));
                 const delay = Math.round(base * (0.8 + 0.4 * this.random()));
                 await this.outbox.markRetry(row.seq, attempts, new Date(now.getTime() + delay), outcome.error);
                 this.logger.warn(`[OUTBOX] ${describe(row)} failed (${outcome.error}), attempt ${attempts}, retry in ${delay} ms`);

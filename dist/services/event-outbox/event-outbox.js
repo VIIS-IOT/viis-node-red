@@ -141,7 +141,13 @@ class EventOutbox {
     async markDead(seq, attempts, error) {
         await this.ds.getRepository(TabiotEventOutbox_1.TabiotEventOutbox).update({ seq }, { attempts, dead: true, last_error: error.slice(0, 255) });
     }
-    /** Deletes rows sent before `before`. Dead rows stay for diagnosis. */
+    /** Deletes dead rows created before `before` (they stay a while for diagnosis). */
+    async purgeDead(before) {
+        var _a;
+        const result = await this.ds.getRepository(TabiotEventOutbox_1.TabiotEventOutbox).delete({ dead: true, created_at: (0, typeorm_1.LessThan)(before) });
+        return (_a = result.affected) !== null && _a !== void 0 ? _a : 0;
+    }
+    /** Deletes rows sent before `before`. */
     async purgeSent(before) {
         var _a;
         const result = await this.ds.getRepository(TabiotEventOutbox_1.TabiotEventOutbox).delete({ sent_at: (0, typeorm_1.LessThan)(before) });

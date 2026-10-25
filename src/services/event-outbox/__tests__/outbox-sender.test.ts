@@ -304,14 +304,16 @@ describe("OutboxSender", () => {
         expect(rows()[0].attempts).toBe(0);
     });
 
-    it("deletes sent rows older than 7 days", async () => {
+    it("deletes sent rows older than 7 days and dead rows older than 30 days", async () => {
         const { outbox, sender, rows } = setup();
-        for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
+        for (const n of [1, 2, 3, 4]) await outbox.enqueue({ msg: `e${n}` });
         const now = later();
         rows()[0].sent_at = new Date(now.getTime() - 8 * 86_400_000);
         rows()[1].sent_at = new Date(now.getTime() - 1 * 86_400_000);
         rows()[2].dead = true;
-        rows()[2].created_at = new Date(now.getTime() - 30 * 86_400_000);
+        rows()[2].created_at = new Date(now.getTime() - 29 * 86_400_000);
+        rows()[3].dead = true;
+        rows()[3].created_at = new Date(now.getTime() - 31 * 86_400_000);
 
         await sender.flush(now);
         expect(rows().map(r => r.payload.msg)).toEqual(["e2", "e3"]);

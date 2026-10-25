@@ -49,6 +49,7 @@ export interface FlushResult {
 
 const BASE_BACKOFF_MS = 5000;
 const SENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Pause-and-retry statuses: 408/429 (slow / throttled), 409 (backend inbox still processing the event),
  * 401/403 (token rotated or revoked, re-provisioning), 404 (route not deployed yet). All are fixed on the
@@ -90,6 +91,8 @@ export class OutboxSender {
     /** Memory mirror of the persisted "snapshot pending" flag; null = not loaded yet. */
     private snapshotPending: boolean | null = null;
     private missingConfigWarned = false;
+    private flushErrorLogged = false;
+    private purgeErrorLogged = false;
 
     constructor(private readonly outbox: EventOutbox, private readonly env: EnvReader, opts: OutboxSenderOptions = {}) {
         this.intervalMs = opts.intervalMs ?? 5000;
@@ -105,7 +108,17 @@ export class OutboxSender {
     start(): void {
         if (this.timer) return;
         this.timer = setInterval(() => {
-            this.flush().catch(error => this.logger.error(`[OUTBOX] flush failed: ${redactDeviceToken(error?.message ?? error)}`));
+            this.flush().then(
+                () => {
+                    this.flushErrorLogged = false;
+                },
+                error => {
+                    // One line per outage (MySQL down), not one every interval.
+                    if (this.flushErrorLogged) return;
+                    this.flushErrorLogged = true;
+                    this.logger.error(`[OUTBOX] flush failed: ${redactDeviceToken(error?.message ?? error)}`);
+                }
+            );
         }, this.intervalMs);
         this.timer.unref?.();
     }
@@ -127,7 +140,17 @@ export class OutboxSender {
 
     private async doFlush(now: Date): Promise<FlushResult> {
         const result: FlushResult = { sent: 0, failed: 0, dead: 0, snapshotSent: false };
-        await this.outbox.purgeSent(new Date(now.getTime() - SENT_RETENTION_MS));
+        try {
+            await this.outbox.purgeSent(new Date(now.getTime() - SENT_RETENTION_MS));
+            await this.outbox.purgeDead(new Date(now.getTime() - DEAD_RETENTION_MS));
+            this.purgeErrorLogged = false;
+        } catch (error) {
+            // MySQL outage: say so once; the next outbox call fails (and is reported) the same way.
+            if (!this.purgeErrorLogged) {
+                this.logger.error(`[OUTBOX] purge failed: ${redactDeviceToken((error as Error)?.message ?? error)}`);
+            }
+            this.purgeErrorLogged = true;
+        }
 
         const backendUrl = this.env.getEnvVar("VIIS_BACKEND", "");
         const token = this.env.getEnvVar("DEVICE_ACCESS_TOKEN", "");

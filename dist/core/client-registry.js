@@ -246,6 +246,16 @@ class ClientRegistry {
         }
         let transport = this.transportPool.get(newKey);
         if (!transport) {
+            // Same cap as a first connect: an ESP32 board accepts 4 clients, so never open a socket past the limit.
+            if (next.type === 'TCP' && next.host && next.tcpPort) {
+                const hostKey = `${next.host}:${next.tcpPort}`;
+                const currentCount = this.hostConnectionCount.get(hostKey) || 0;
+                if (currentCount >= this.MAX_CONNECTIONS_PER_HOST) {
+                    node.warn(`[MODBUS-CONNECTION-LIMIT] Board ${boardId} config changed but ${hostKey} already has ${currentCount} connections ` +
+                        `(max ${this.MAX_CONNECTIONS_PER_HOST}); keeping the old connection (${oldKey !== null && oldKey !== void 0 ? oldKey : 'none'})`);
+                    return;
+                }
+            }
             transport = new modbus_client_1.ModbusClientCore(next, node);
             this.transportPool.set(newKey, transport);
             this.transportRefCount.set(newKey, 0);

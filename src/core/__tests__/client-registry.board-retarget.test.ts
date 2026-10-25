@@ -98,6 +98,20 @@ describe("ClientRegistry board config change", () => {
     expect(constructed[0].disconnect).not.toHaveBeenCalled();
   });
 
+  it("does not open a socket past MAX_CONNECTIONS_PER_HOST when a board moves to a host that is full", async () => {
+    ClientRegistry.initializeMultiBoardConfig(tcpBoard("modbus-server-test", 503), early);
+    const holder = await ClientRegistry.getModbusClientV2("board1", early);
+    (ClientRegistry as any).hostConnectionCount.set("full-host:502", 2);
+
+    ClientRegistry.initializeMultiBoardConfig(tcpBoard("full-host", 502), late);
+
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0].disconnect).not.toHaveBeenCalled();
+    await holder.writeCoil(0, true);
+    expect(constructed[0].writeCoil).toHaveBeenCalledTimes(1); // still on the old board
+    expect((late.warn as jest.Mock).mock.calls.join(" ")).toContain("MODBUS-CONNECTION-LIMIT");
+  });
+
   it("a unit id change on the same socket keeps the socket and uses the new unit id", async () => {
     ClientRegistry.initializeMultiBoardConfig(tcpBoard("modbus-server-test", 503, 1), early);
     const holder = await ClientRegistry.getModbusClientV2("board1", early);
