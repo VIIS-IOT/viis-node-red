@@ -952,6 +952,12 @@ export class RpcHandler implements IRpcHandler {
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} blocked by ${result.blockedBy ?? 'expired'}` });
             throw new Error(`blocked_by:${result.blockedBy ?? 'expired'}`);
         }
+        if (result.gateBlocked) {
+            // Device protection holds this ON back at the tick (it is checked again on every tick).
+            await withdraw(`protection: ${result.gateBlocked}`);
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} protection blocked` });
+            throw new Error(`Protection blocked: ${result.gateBlocked}`);
+        }
         if (result.actual !== value) {
             await withdraw(`coil reads ${String(result.actual)}`);
             this.node.status({ fill: "yellow", shape: "ring", text: `${key} not confirmed` });

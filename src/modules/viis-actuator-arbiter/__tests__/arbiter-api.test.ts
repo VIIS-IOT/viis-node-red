@@ -40,6 +40,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
     let now = T0;
     const writes: string[] = [];
     const failWrite = new Set<string>();
+    const blockOn = new Set<string>();
     const ownerEvents: Record<string, unknown>[] = [];
     const arbiter = new ActuatorArbiter({
         policy,
@@ -57,6 +58,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
                 state[t.key] = value;
             },
             classify: classifyActuatorKey,
+            allowOn: key => (blockOn.has(key) ? { allowed: false, reason: 'Force OFF active' } : { allowed: true }),
             waterHammerMs: 0,
             sleep: async () => undefined,
         },
@@ -70,6 +72,7 @@ function setup(over: Partial<ArbiterOptions> = {}, state: Record<string, boolean
         state,
         writes,
         failWrite,
+        blockOn,
         ownerEvents,
         advance: (ms: number) => {
             now += ms;
@@ -387,6 +390,185 @@ describe('ActuatorArbiter', () => {
             advance(60_000);
             await arbiter.tick();
             expect(state.valve_2).toBe(false);
+            await arbiter.stop();
+        });
+    });
+
+    describe('never fight an outside OFF (FIX-19)', () => {
+        const outboxMock = (active: { alarm_key: string }[] = []) => ({
+            raise: jest.fn().mockResolvedValue(true),
+            clear: jest.fn().mockResolvedValue(true),
+            activeAlarms: jest.fn().mockResolvedValue(active),
+        });
+        const scheduleClaim = { key: 'valve_1', value: true, source: 'schedule' as const, ownerId: 'schedule:s1', expiresAt: T0 + 3_600_000 };
+
+        test('two OFF reads under a schedule claim suspend it: ON is not written again, the alarm is raised once and clears when the key reads ON', async () => {
+            const outbox = outboxMock();
+            const logs: string[] = [];
+            const { arbiter, state, writes } = setup({ outbox: () => outbox, deviceId: () => 'device-1', log: m => logs.push(m) });
+            await arbiter.start();
+            await arbiter.claim(scheduleClaim);
+            expect(writes).toEqual(['valve_1=true']);
+            await arbiter.tick(); // reads ON
+
+            state.valve_1 = false; // the PLC / an HMI / an interlock switched it OFF
+            await arbiter.tick();
+            expect(outbox.raise).not.toHaveBeenCalled();
+            expect(arbiter.owners().valve_1?.ownerId).toBe('schedule:s1');
+            await arbiter.tick();
+
+            expect(writes).toEqual(['valve_1=true']);
+            expect(arbiter.owners()).toEqual({});
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+            expect(outbox.raise).toHaveBeenCalledWith('actuator_external_off:valve_1', expect.objectContaining({
+                alarm_key: 'actuator_external_off:valve_1',
+                msg: 'valve_1 bị tắt từ bên ngoài',
+                message_key: 'iot.notification.device.actuator_external_off',
+                message_params: { key: 'valve_1' },
+                severity: 'notification',
+                id: 'device-1',
+            }));
+            expect(logs.some(m => m.includes('external OFF on valve_1') && m.includes('suspended schedule:s1'))).toBe(true);
+
+            await arbiter.tick();
+            await arbiter.tick();
+            expect(writes).toEqual(['valve_1=true']);
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+            expect(outbox.clear).not.toHaveBeenCalled();
+
+            state.valve_1 = true; // switched back on outside
+            await arbiter.tick();
+            expect(outbox.clear).toHaveBeenCalledTimes(1);
+            expect(outbox.clear).toHaveBeenCalledWith('actuator_external_off:valve_1', expect.objectContaining({
+                msg: 'valve_1 điều khiển lại bình thường',
+            }));
+            await arbiter.stop();
+        });
+
+        test('a new claim for the key is applied; once it is confirmed ON the alarm clears, the suspended claim stays out', async () => {
+            const outbox = outboxMock();
+            const { arbiter, state, writes } = setup({ outbox: () => outbox });
+            await arbiter.start();
+            await arbiter.claim(scheduleClaim);
+            await arbiter.tick();
+            state.valve_1 = false;
+            await arbiter.tick();
+            await arbiter.tick();
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+
+            const result = await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:again', expiresAt: T0 + 60_000 });
+            expect(result).toEqual({ applied: true, actual: true, mode: 'enforce' });
+            await arbiter.tick();
+            expect(writes).toEqual(['valve_1=true', 'valve_1=true']);
+            expect(outbox.clear).toHaveBeenCalledTimes(1);
+
+            // The manual run ends: the schedule claim is still suspended, so the key goes back to OFF.
+            await arbiter.release('manual:*');
+            await arbiter.tick();
+            expect(state.valve_1).toBe(false);
+            expect(arbiter.owners()).toEqual({});
+            await arbiter.stop();
+        });
+
+        test('a manual ON over a schedule claim: the device closing it releases the manual claim and suspends the schedule one', async () => {
+            const outbox = outboxMock();
+            const { arbiter, state, writes } = setup({ outbox: () => outbox });
+            await arbiter.start();
+            await arbiter.claim(scheduleClaim);
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:m1', expiresAt: T0 + 60_000 });
+            await arbiter.tick();
+
+            state.valve_1 = false;
+            await arbiter.tick();
+            await arbiter.tick();
+
+            expect(arbiter.owners()).toEqual({});
+            expect(writes).toEqual(['valve_1=true']);
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+            await arbiter.stop();
+        });
+
+        test('the alarm clears when the suspended claim ends while the coil stays OFF', async () => {
+            const outbox = outboxMock();
+            const { arbiter, state } = setup({ outbox: () => outbox });
+            await arbiter.start();
+            await arbiter.claim(scheduleClaim);
+            await arbiter.tick();
+            state.valve_1 = false;
+            await arbiter.tick();
+            await arbiter.tick();
+            expect(outbox.raise).toHaveBeenCalledTimes(1);
+
+            await arbiter.release('schedule:s1'); // the schedule finished
+            await arbiter.tick();
+
+            expect(outbox.clear).toHaveBeenCalledTimes(1);
+            await arbiter.stop();
+        });
+
+        test('observe suspends the shadow claim too, but raises nothing', async () => {
+            const outbox = outboxMock();
+            const { arbiter, state } = setup({ mode: 'observe', outbox: () => outbox });
+            await arbiter.start();
+            state.valve_1 = true; // the direct writer switched it ON
+            await arbiter.claim({ ...scheduleClaim });
+            await arbiter.tick();
+            state.valve_1 = false;
+            await arbiter.tick();
+            await arbiter.tick();
+
+            expect(arbiter.owners()).toEqual({});
+            expect(outbox.raise).not.toHaveBeenCalled();
+            await arbiter.stop();
+        });
+
+        test('a safety claim keeps enforcing: it is written ON again after an outside OFF', async () => {
+            const { arbiter, state, writes } = setup();
+            await arbiter.start();
+            await arbiter.claim({ key: 'valve_1', value: true, source: 'safety', ownerId: 'safety:fire', expiresAt: null });
+            await arbiter.tick();
+            state.valve_1 = false;
+            await arbiter.tick();
+
+            expect(writes).toEqual(['valve_1=true', 'valve_1=true']);
+            expect(arbiter.owners().valve_1?.ownerId).toBe('safety:fire');
+            await arbiter.stop();
+        });
+
+        test('an alarm found Pending on start clears when the key reads ON', async () => {
+            const outbox = outboxMock([{ alarm_key: 'actuator_external_off:valve_1' }]);
+            const { arbiter, state } = setup({ outbox: () => outbox });
+            await arbiter.start();
+            await arbiter.claim(scheduleClaim);
+
+            await arbiter.tick();
+            expect(state.valve_1).toBe(true);
+            expect(outbox.clear).toHaveBeenCalledWith('actuator_external_off:valve_1', expect.anything());
+            await arbiter.stop();
+        });
+
+        test('device protection is checked on every tick: a blocked ON is not written, the claimer is told, and it goes through once allowed', async () => {
+            const logs: string[] = [];
+            const { arbiter, state, writes, blockOn } = setup({ log: m => logs.push(m) });
+            await arbiter.start();
+            blockOn.add('valve_1');
+
+            const blocked = await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:p1', expiresAt: T0 + 600_000 });
+            expect(blocked).toEqual({ applied: true, actual: false, gateBlocked: 'Force OFF active', mode: 'enforce' });
+            await arbiter.tick();
+            expect(writes).toEqual([]);
+            expect(logs.filter(m => m.includes('held back by device protection'))).toHaveLength(1);
+
+            blockOn.delete('valve_1');
+            await arbiter.tick();
+            expect(writes).toEqual(['valve_1=true']);
+            expect(state.valve_1).toBe(true);
+
+            // OFF is never held back by the check.
+            blockOn.add('valve_1');
+            await arbiter.release('manual:*');
+            await arbiter.tick();
+            expect(state.valve_1).toBe(false);
             await arbiter.stop();
         });
     });

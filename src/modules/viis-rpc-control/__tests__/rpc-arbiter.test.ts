@@ -150,6 +150,18 @@ describe('RPC through the actuator arbiter', () => {
         expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'valve_1');
     });
 
+    test('device protection held the ON back at the tick → FAILED Protection blocked and the claim is withdrawn', async () => {
+        const arbiter = use(fakeArbiter('enforce', { applied: true, actual: false, gateBlocked: 'Force OFF active' }));
+        const { handler, mqtt } = createHandler();
+
+        await handler.handleRpcRequest({ method: 'set_state', command_id: CMD, params: { valve_1: true } });
+
+        expect(mqtt.publishRpcResponse).toHaveBeenCalledWith(CMD, expect.objectContaining({
+            status: 'FAILED', error: 'Protection blocked: Force OFF active',
+        }));
+        expect(arbiter.release).toHaveBeenCalledWith(`manual:${CMD}`, 'valve_1');
+    });
+
     test('deadline passed while the claim was waiting → the claim is withdrawn even if it won', async () => {
         const arbiter = use(fakeArbiter('enforce', { applied: true, actual: true }));
         arbiter.claim.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve({ applied: true, actual: true, mode: 'enforce' }), 4000)));

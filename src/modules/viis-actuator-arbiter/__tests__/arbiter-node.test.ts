@@ -8,6 +8,7 @@ import ClientRegistry from '../../../core/client-registry';
 import { DataSourceManager } from '../../../orm/dataSource';
 import { getArbiter } from '../arbiter-registry';
 import { buildCoilTargets } from '../arbiter-targets';
+import { ProtectionGateService, setSharedProtectionGate } from '../../viis-device-protection/services/protection-gate-service';
 
 jest.mock('../../../core/client-registry', () => ({
     __esModule: true,
@@ -139,6 +140,42 @@ describe('viis-actuator-arbiter node', () => {
             { topic: 'actuator_write', payload: { key: 'valve_1', value: true, ts: expect.any(Number) } },
         ]);
         await close();
+    });
+
+    test('device protection is checked on every tick before an ON write, and the gate learns what the arbiter wrote', async () => {
+        const client = {
+            isConnected: true,
+            readCoils: jest.fn().mockResolvedValue({ data: [false] }),
+            writeCoil: jest.fn().mockResolvedValue(undefined),
+        };
+        (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(client);
+        const gate = new ProtectionGateService({ valve_1_protect_force_off: true });
+        setSharedProtectionGate(gate);
+        const { close } = startNode({
+            arbiter_mode: 'enforce',
+            modbus_boards: BOARDS,
+            modbus_board1_coils: { valve_1: 0 },
+            actuator_policy: '{"valve_1":"managed"}',
+        });
+        try {
+            await flush();
+            await flush();
+            const arbiter = getArbiter()!;
+
+            const blocked = await arbiter.claim({ key: 'valve_1', value: true, source: 'manual', ownerId: 'manual:g1', expiresAt: Date.now() + 60_000 });
+
+            expect(blocked.gateBlocked).toContain('Force OFF');
+            expect(client.writeCoil).not.toHaveBeenCalled();
+
+            // The protection is lifted: the next tick writes it, and the gate is told.
+            gate.refreshConfig({});
+            await (arbiter as any).tick();
+            expect(client.writeCoil).toHaveBeenCalledWith(0, true);
+            expect(gate.getCoilState('valve_1')?.on).toBe(true);
+        } finally {
+            setSharedProtectionGate(null);
+            await close();
+        }
     });
 
     test('a new env_loader_loaded_at reloads the manual lease on the next tick; a changed key list only warns', async () => {

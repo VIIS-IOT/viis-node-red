@@ -22,6 +22,7 @@ import ClientRegistry, { MultiModbusConfig } from '../../core/client-registry';
 import { GlobalContextHelper } from '../../ultils/global-context-helper';
 import { DataSourceManager } from '../../orm/dataSource';
 import { getEventOutbox } from '../../services/event-outbox/registry';
+import { resolveProtectionGate } from '../viis-device-protection/services/protection-gate-service';
 import { WATER_HAMMER_DELAY_MS } from '../shared/fertigation-start-sequence';
 import { ActuatorPolicy, loadActuatorPolicy } from './actuator-policy';
 import { ActuatorArbiter, DEFAULT_TICK_MS } from './arbiter-api';
@@ -136,6 +137,20 @@ module.exports = function (RED: NodeAPI) {
                 await client.writeCoil(t.address, value);
             };
 
+            // Device protection (viis-device-protection) is checked before every ON write, on every tick.
+            const protectionGate = () => resolveProtectionGate(node.context().global.get('protectionGateService'));
+            const allowOn = (key: string): { allowed: boolean; reason?: string } => {
+                try {
+                    const gate = protectionGate();
+                    if (!gate) return { allowed: true };
+                    const result = gate.checkGate(key, true, 'arbiter');
+                    return { allowed: result.allowed, reason: result.reason };
+                } catch (error) {
+                    node.warn(`[arbiter] protection check of ${key} failed, ON allowed: ${(error as Error).message}`);
+                    return { allowed: true };
+                }
+            };
+
             let arbiter: ActuatorArbiter | null = null;
             let dataSourceAcquired = false;
 
@@ -184,6 +199,7 @@ module.exports = function (RED: NodeAPI) {
                         readCoil,
                         writeCoil,
                         classify: classifyActuatorKey,
+                        allowOn,
                         waterHammerMs: WATER_HAMMER_DELAY_MS,
                         sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
                     },
@@ -196,7 +212,15 @@ module.exports = function (RED: NodeAPI) {
                     outbox: getEventOutbox,
                     deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
                     onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
-                    onCoilWrite: write => node.send([{ topic: 'actuator_write', payload: write }, null]),
+                    onCoilWrite: write => {
+                        // The gate tracks on/off times for its min-off / max-on rules: tell it what the arbiter wrote.
+                        try {
+                            protectionGate()?.updateState(write.key, write.value);
+                        } catch {
+                            /* the gate is best effort */
+                        }
+                        node.send([{ topic: 'actuator_write', payload: write }, null]);
+                    },
                     onTickReport: report => {
                         reloadLeasePolicy(next);
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;

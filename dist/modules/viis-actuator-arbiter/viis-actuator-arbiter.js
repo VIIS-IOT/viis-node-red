@@ -7,6 +7,7 @@ const client_registry_1 = __importDefault(require("../../core/client-registry"))
 const global_context_helper_1 = require("../../ultils/global-context-helper");
 const dataSource_1 = require("../../orm/dataSource");
 const registry_1 = require("../../services/event-outbox/registry");
+const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const fertigation_start_sequence_1 = require("../shared/fertigation-start-sequence");
 const actuator_policy_1 = require("./actuator-policy");
 const arbiter_api_1 = require("./arbiter-api");
@@ -103,6 +104,21 @@ module.exports = function (RED) {
                     throw new Error(`Modbus client not connected (${t.boardId})`);
                 await client.writeCoil(t.address, value);
             };
+            // Device protection (viis-device-protection) is checked before every ON write, on every tick.
+            const protectionGate = () => (0, protection_gate_service_1.resolveProtectionGate)(node.context().global.get('protectionGateService'));
+            const allowOn = (key) => {
+                try {
+                    const gate = protectionGate();
+                    if (!gate)
+                        return { allowed: true };
+                    const result = gate.checkGate(key, true, 'arbiter');
+                    return { allowed: result.allowed, reason: result.reason };
+                }
+                catch (error) {
+                    node.warn(`[arbiter] protection check of ${key} failed, ON allowed: ${error.message}`);
+                    return { allowed: true };
+                }
+            };
             let arbiter = null;
             let dataSourceAcquired = false;
             /** Takes new manual leases when env-loader stamped another load since the policy was read. */
@@ -149,6 +165,7 @@ module.exports = function (RED) {
                         readCoil,
                         writeCoil,
                         classify: reconciler_1.classifyActuatorKey,
+                        allowOn,
                         waterHammerMs: fertigation_start_sequence_1.WATER_HAMMER_DELAY_MS,
                         sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
                     },
@@ -158,7 +175,17 @@ module.exports = function (RED) {
                     outbox: registry_1.getEventOutbox,
                     deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
                     onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
-                    onCoilWrite: write => node.send([{ topic: 'actuator_write', payload: write }, null]),
+                    onCoilWrite: write => {
+                        var _a;
+                        // The gate tracks on/off times for its min-off / max-on rules: tell it what the arbiter wrote.
+                        try {
+                            (_a = protectionGate()) === null || _a === void 0 ? void 0 : _a.updateState(write.key, write.value);
+                        }
+                        catch (_b) {
+                            /* the gate is best effort */
+                        }
+                        node.send([{ topic: 'actuator_write', payload: write }, null]);
+                    },
                     onTickReport: report => {
                         reloadLeasePolicy(next);
                         const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;

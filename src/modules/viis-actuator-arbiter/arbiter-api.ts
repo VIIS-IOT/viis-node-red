@@ -19,6 +19,11 @@
  *   not enough, see the Reconciler), the claim is released instead of being written back. When the
  *   ceiling ends with the coil still ON the arbiter drives it OFF and raises
  *   `manual_runtime_exceeded:<key>`, cleared when the coil reads OFF or another claim takes the key.
+ * - Never fight an outside OFF: the same two OFF reads under a schedule/scenario/automation claim suspend
+ *   that claim (and every other such claim on the key) until it expires, so the arbiter does not write ON
+ *   again, and raise `actuator_external_off:<key>` (enforce only; a manual claim closed by its device is
+ *   normal and raises nothing). The alarm clears when the key reads ON again (a new claim confirmed ON, or
+ *   the outside party switching it back) or when no claim wants the key ON any more.
  */
 import type { EventOutbox } from '../../services/event-outbox/event-outbox';
 import { capAlarmKey } from '../../services/event-outbox/alarm-key';
@@ -39,6 +44,8 @@ export interface ClaimResult {
     applied: boolean;
     actual: boolean | undefined;
     blockedBy?: ClaimSource;
+    /** Device protection held the ON write back on this key (the reason); the claim won but the coil is not ON. */
+    gateBlocked?: string;
     mode: 'observe' | 'enforce';
 }
 
@@ -116,6 +123,7 @@ export const CLAIM_MAX_WAIT_MS = 15_000;
 export const WRITE_FAILED_ALARM_TICKS = 3;
 const WRITE_FAILED_PREFIX = 'actuator_write_failed:';
 const RUNTIME_EXCEEDED_PREFIX = 'manual_runtime_exceeded:';
+const EXTERNAL_OFF_PREFIX = 'actuator_external_off:';
 
 type TickWaiter = (report: TickReport | null) => void;
 
@@ -146,6 +154,10 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
     private lastOwners: string | null = null;
     /** `actuator_write_failed:<key>` alarms raised (or found Pending in the outbox on start). */
     private readonly alarmed = new Set<string>();
+    /** `actuator_external_off:<key>` alarms raised (or found Pending in the outbox on start). */
+    private readonly externalOffAlarmed = new Set<string>();
+    /** Keys whose ON write device protection is holding back (logged once per block). */
+    private readonly gateBlocked = new Set<string>();
     /** `manual_runtime_exceeded:<key>` alarms raised (or found Pending on start) -> owner of the key then (null = none). */
     private readonly ceilingAlarmed = new Map<string, string | null>();
     /** Manual ON claims whose lease ended and whose tick has not reported yet. */
@@ -210,6 +222,7 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
                 const now = this.now();
                 for (const { alarm_key } of await outbox.activeAlarms()) {
                     if (alarm_key.startsWith(WRITE_FAILED_PREFIX)) this.alarmed.add(alarm_key);
+                    if (alarm_key.startsWith(EXTERNAL_OFF_PREFIX)) this.externalOffAlarmed.add(alarm_key);
                     if (alarm_key.startsWith(RUNTIME_EXCEEDED_PREFIX)) {
                         const key = alarm_key.slice(RUNTIME_EXCEEDED_PREFIX.length);
                         this.ceilingAlarmed.set(alarm_key, this.core.resolve(key, now).winner?.ownerId ?? null);
@@ -288,11 +301,13 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
                 this.pendingExpired.push(...expired.filter(c => c.source === 'manual' && c.value));
             }
             report = await this.reconciler.tick();
-            this.noteClosedByDevice(report);
+            this.noteExternalOff(report);
+            this.noteGateBlocked(report);
             this.emitCoilWrites(report);
             this.opts.onTickReport?.(report);
             await this.updateWriteAlarms(report);
             await this.updateCeilingAlarms(report);
+            await this.updateExternalOffAlarms(report);
         } catch (error) {
             this.warn(`[arbiter] tick failed: ${errorText(error)}`);
         }
@@ -335,6 +350,8 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         }
         const result: ClaimResult = { applied, actual, mode: this.opts.mode };
         if (!applied && winner) result.blockedBy = winner.source;
+        const gate = report?.gateBlocked.find(g => g.key === input.key);
+        if (gate) result.gateBlocked = gate.reason;
         return result;
     }
 
@@ -406,12 +423,92 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         };
     }
 
-    /** The reconciler released these manual ON claims (coil read OFF on two ticks after it was seen ON): save and log. */
-    private noteClosedByDevice(report: TickReport): void {
-        if (report.closedByDevice.length === 0) return;
+    /**
+     * The reconciler gave up the claims of keys whose coil an outside party switched OFF (two OFF reads after
+     * it was seen ON): save the claim set and log what was dropped.
+     */
+    private noteExternalOff(report: TickReport): void {
+        if (report.externalOff.length === 0) return;
         this.persist();
-        for (const key of report.closedByDevice) {
-            this.log(`[arbiter] manual claim released: ${key} closed by device`);
+        for (const event of report.externalOff) {
+            const dropped = [
+                ...event.released.map(id => `released ${id}`),
+                ...event.suspended.map(id => `suspended ${id}`),
+            ].join(', ');
+            if (event.winner.source === 'manual' && event.suspended.length === 0) {
+                this.log(`[arbiter] manual claim released: ${event.key} closed by device`);
+            } else {
+                this.log(`[arbiter] external OFF on ${event.key} (winner ${event.winner.ownerId}): ${dropped}; not written ON again`);
+            }
+        }
+    }
+
+    /** Logs ON writes that device protection holds back, once per block, and when they are allowed again. */
+    private noteGateBlocked(report: TickReport): void {
+        const now = new Set(report.gateBlocked.map(g => g.key));
+        for (const { key, reason } of report.gateBlocked) {
+            if (this.gateBlocked.has(key)) continue;
+            this.gateBlocked.add(key);
+            this.log(`[arbiter] ON write of ${key} held back by device protection: ${reason}`);
+        }
+        for (const key of Array.from(this.gateBlocked)) {
+            if (!now.has(key)) this.gateBlocked.delete(key);
+        }
+    }
+
+    private externalOffPayload(key: string, alarmKey: string, raise: boolean): Record<string, unknown> {
+        const deviceId = this.opts.deviceId?.() || 'unknown_device';
+        return {
+            alarm_name: `Bị tắt từ bên ngoài ${key}`,
+            alarm_key: alarmKey,
+            id: deviceId,
+            msg: raise ? `${key} bị tắt từ bên ngoài` : `${key} điều khiển lại bình thường`,
+            message_key: 'iot.notification.device.actuator_external_off',
+            message_params: { key },
+            message_locale: 'vi-VN',
+            severity: 'notification',
+            trigger_time: new Date(this.now()).toISOString(),
+            tb_alarm_id: alarmKey,
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+    }
+
+    /**
+     * `actuator_external_off:<key>`: something outside the gateway switched a coil OFF that a schedule/scenario
+     * claim wanted ON, and the arbiter stopped writing it ON (enforce only; nothing when the outbox is off).
+     * Cleared when the coil reads ON again or no claim wants the key ON any more.
+     */
+    private async updateExternalOffAlarms(report: TickReport): Promise<void> {
+        const now = this.now();
+        if (this.opts.mode === 'enforce') {
+            for (const event of report.externalOff) {
+                if (event.suspended.length === 0) continue;
+                const alarmKey = capAlarmKey(`${EXTERNAL_OFF_PREFIX}${event.key}`);
+                if (this.externalOffAlarmed.has(alarmKey)) continue;
+                const outbox = this.outbox();
+                if (!outbox) continue;
+                try {
+                    await outbox.raise(alarmKey, this.externalOffPayload(event.key, alarmKey, true));
+                    this.externalOffAlarmed.add(alarmKey);
+                } catch (error) {
+                    this.warn(`[arbiter] ${alarmKey} not raised: ${errorText(error)}`);
+                }
+            }
+        }
+        for (const alarmKey of Array.from(this.externalOffAlarmed)) {
+            const key = alarmKey.slice(EXTERNAL_OFF_PREFIX.length);
+            const readsOn = report.actual[key] === true;
+            const wanted = this.core.suspendedClaims(key, now).length > 0 || this.core.rankedClaims(key, now).some(c => c.value);
+            if (!readsOn && wanted) continue;
+            const outbox = this.outbox();
+            if (!outbox) continue;
+            try {
+                await outbox.clear(alarmKey, this.externalOffPayload(key, alarmKey, false));
+                this.externalOffAlarmed.delete(alarmKey);
+            } catch (error) {
+                this.warn(`[arbiter] ${alarmKey} not cleared: ${errorText(error)}`);
+            }
         }
     }
 

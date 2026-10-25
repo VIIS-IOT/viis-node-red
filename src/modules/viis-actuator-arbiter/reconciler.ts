@@ -10,17 +10,21 @@
  * stop before valves close, valves open before pumps start, and an ON never directly follows an OFF.
  *
  * - A key whose read failed is not written (the coil state is unknown); it is listed in `readFailed`.
- * - A manual ON claim is a ceiling, not a run: once the coil was seen ON under that claim (read ON, or the
- *   arbiter's ON write succeeded) and then reads OFF, the PLC closed it. One OFF read proves nothing (a
- *   stale or glitched read, a tick racing the write), so the first OFF read writes nothing and keeps the
- *   claim; the second OFF read on the next tick, with no write of that key in between, releases the claim
- *   (`closedByDevice`).
+ * - Never fight an outside OFF. Once the coil was seen ON under the winning claim of a manual, scenario,
+ *   schedule or automation source (read ON, or the arbiter's ON write succeeded) and then reads OFF, the
+ *   PLC, an HMI or an interlock switched it. One OFF read proves nothing (a stale or glitched read, a tick
+ *   racing the write), so the first OFF read writes nothing and keeps the claims; the second OFF read on the
+ *   next tick, with no write of that key in between, ends it (`externalOff`): the key's manual ON claims are
+ *   released and its scenario/schedule/automation ON claims are suspended until they expire, so nothing
+ *   writes ON again. A new claim for the key (a new command) is written normally. `safety` and
+ *   `alarm_action` claims are never given up.
+ * - An ON write is checked against `allowOn` (device protection) on every tick, not only when the claim was made.
  * - A `hold` key with no live claim resolves to `null` and is neither read nor written.
  * - `observe` reads and reports diffs but never writes.
  *
  * The reconciler does not change the claims; expiring and persisting them is the node's job.
  */
-import { ActuatorClaim, ArbiterCore, Resolution } from './arbiter-core';
+import { ActuatorClaim, ArbiterCore, Resolution, SUSPENDABLE_SOURCES } from './arbiter-core';
 import { isPumpKey, isSystemPowerKey, isChannelPowerKey, isValveKey } from '../viis-schedule-executor/schedule-coil-classify';
 
 export interface CoilTarget {
@@ -39,6 +43,8 @@ export interface ReconcilerDeps {
     readCoil(t: CoilTarget): Promise<boolean>;
     writeCoil(t: CoilTarget, value: boolean): Promise<void>;
     classify(key: string): CoilClass;
+    /** Device protection for an ON write (checked on every tick); absent = always allowed. */
+    allowOn?(key: string): { allowed: boolean; reason?: string };
     mode: 'observe' | 'enforce';
     waterHammerMs: number;
     sleep(ms: number): Promise<void>;
@@ -60,12 +66,27 @@ export interface TickReport {
     diffs: string[];
     writes: TickWrite[];
     readFailed: string[];
-    /** Keys whose manual ON claim was released this tick: the coil read OFF on two ticks after it was seen ON. */
-    closedByDevice: string[];
+    /** Keys whose coil an outside party switched OFF (two OFF reads after it was seen ON), with what was dropped. */
+    externalOff: ExternalOff[];
+    /** ON writes held back this tick by device protection. */
+    gateBlocked: { key: string; reason: string }[];
 }
 
-/** Consecutive OFF reads (on different ticks) after an ON before the device is taken to have closed the coil. */
+export interface ExternalOff {
+    key: string;
+    /** The claim that held the key when the second OFF read came. */
+    winner: { source: string; ownerId: string };
+    /** Owner ids of the manual ON claims released. */
+    released: string[];
+    /** Owner ids of the scenario/schedule/automation ON claims suspended until they expire. */
+    suspended: string[];
+}
+
+/** Consecutive OFF reads (on different ticks) after an ON before an outside party is taken to have switched the coil. */
 export const OFF_READS_TO_RELEASE = 2;
+
+/** Sources whose ON claims are judged against OFF reads; safety and alarm_action keep enforcing. */
+const WATCHED_SOURCES: ReadonlySet<string> = new Set(['manual', ...SUSPENDABLE_SOURCES]);
 
 /** What the reconciler remembers about the claim that currently wins a key. */
 interface KeyWatch {
@@ -105,7 +126,7 @@ export class Reconciler {
     async tick(): Promise<TickReport> {
         const { deps } = this;
         const now = deps.now();
-        const report: TickReport = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [], closedByDevice: [] };
+        const report: TickReport = { desired: {}, winners: {}, actual: {}, diffs: [], writes: [], readFailed: [], externalOff: [], gateBlocked: [] };
         const pending: { target: CoilTarget; value: boolean }[] = [];
 
         for (const target of deps.targets) {
@@ -130,9 +151,9 @@ export class Reconciler {
             }
             report.actual[target.key] = actual;
 
-            const verdict = this.judgeRead(target.key, resolution, actual);
-            if (verdict === 'released') {
-                report.closedByDevice.push(target.key);
+            const verdict = this.judgeRead(target.key, resolution, actual, now);
+            if (typeof verdict === 'object') {
+                report.externalOff.push(verdict);
                 resolution = this.core.resolve(target.key, now);
             }
             const { desired, winner } = resolution;
@@ -147,6 +168,18 @@ export class Reconciler {
             report.diffs.push(target.key);
             if (verdict === 'hold') continue;
             pending.push({ target, value: desired });
+        }
+
+        if (deps.mode === 'enforce' && deps.allowOn) {
+            for (let i = pending.length - 1; i >= 0; i--) {
+                const { target, value } = pending[i];
+                if (!value) continue;
+                const gate = deps.allowOn(target.key);
+                if (gate.allowed) continue;
+                report.gateBlocked.push({ key: target.key, reason: gate.reason ?? 'protection' });
+                pending.splice(i, 1);
+            }
+            report.gateBlocked.reverse();
         }
 
         if (deps.mode !== 'enforce' || pending.length === 0) {
@@ -197,13 +230,13 @@ export class Reconciler {
     }
 
     /**
-     * Applies the manual-ON ceiling rule to one successful read of `key`: `write` = reconcile as usual,
-     * `hold` = the coil read OFF once after it was seen ON, so write nothing this tick and keep the claim,
-     * `released` = the second OFF read, the manual claim is gone (the caller resolves again).
+     * Judges one successful read of `key` against the claim that wins it: `write` = reconcile as usual,
+     * `hold` = the coil read OFF once after it was seen ON, so write nothing this tick and keep the claims,
+     * an `ExternalOff` = the second OFF read: the claims were released/suspended (the caller resolves again).
      */
-    private judgeRead(key: string, resolution: Resolution, actual: boolean): 'write' | 'hold' | 'released' {
+    private judgeRead(key: string, resolution: Resolution, actual: boolean, now: number): 'write' | 'hold' | ExternalOff {
         const winner = resolution.winner;
-        if (!winner || !winner.value || winner.source !== 'manual' || this.consecutiveFailures(key) > 0) {
+        if (!winner || !winner.value || !WATCHED_SOURCES.has(winner.source) || this.consecutiveFailures(key) > 0) {
             this.watch.delete(key);
             return 'write';
         }
@@ -221,9 +254,19 @@ export class Reconciler {
         if (!state.seenOn) return 'write';
         state.offReads++;
         if (state.offReads < OFF_READS_TO_RELEASE) return 'hold';
-        this.core.release(winner.ownerId, key);
+
+        const event: ExternalOff = { key, winner: { source: winner.source, ownerId: winner.ownerId }, released: [], suspended: [] };
+        for (const claim of this.core.rankedClaims(key, now)) {
+            if (!claim.value) continue;
+            if (claim.source === 'manual') {
+                this.core.release(claim.ownerId, key);
+                event.released.push(claim.ownerId);
+            } else if (SUSPENDABLE_SOURCES.has(claim.source) && this.core.suspend(claim.ownerId, key)) {
+                event.suspended.push(claim.ownerId);
+            }
+        }
         this.watch.delete(key);
-        return 'released';
+        return event;
     }
 
     private async write(target: CoilTarget, value: boolean): Promise<TickWrite> {

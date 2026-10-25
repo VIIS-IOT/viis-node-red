@@ -150,6 +150,35 @@ describe('ArbiterCore', () => {
         expect(core.snapshot().map(c => c.ownerId)).toEqual(['manual:ok']);
     });
 
+    test('a suspended claim keeps its place but takes no part in resolution; a new claim of the owner, release or expiry ends it', () => {
+        const core = new ArbiterCore(policy);
+        core.claim(claim({ source: 'schedule', ownerId: 'schedule:s1', value: true, expiresAt: NOW + 5_000 }));
+        core.claim(claim({ source: 'scenario', ownerId: 'scenario:c1', value: true }));
+
+        expect(core.suspend('schedule:s1', 'valve_1')).toBe(true);
+        expect(core.suspend('schedule:nope', 'valve_1')).toBe(false);
+        expect(core.resolve('valve_1', NOW).winner?.ownerId).toBe('scenario:c1');
+        expect(core.rankedClaims('valve_1', NOW).map(c => c.ownerId)).toEqual(['scenario:c1']);
+        expect(core.suspendedClaims('valve_1', NOW).map(c => c.ownerId)).toEqual(['schedule:s1']);
+        // Still in the saved set: a restart reloads it active.
+        expect(core.snapshot().map(c => c.ownerId).sort()).toEqual(['scenario:c1', 'schedule:s1']);
+
+        core.suspend('scenario:c1', 'valve_1');
+        expect(core.resolve('valve_1', NOW)).toEqual({ key: 'valve_1', desired: false, winner: null });
+
+        // The same owner commands again: that claim is active again.
+        core.claim(claim({ source: 'schedule', ownerId: 'schedule:s1', value: true, expiresAt: NOW + 5_000 }));
+        expect(core.resolve('valve_1', NOW).winner?.ownerId).toBe('schedule:s1');
+
+        core.suspend('schedule:s1', 'valve_1');
+        // The lapsed schedule claim is no longer listed; the scenario one is still suspended.
+        expect(core.suspendedClaims('valve_1', NOW + 5_000).map(c => c.ownerId)).toEqual(['scenario:c1']);
+        expect(core.expire(NOW + 5_000).map(c => c.ownerId)).toEqual(['schedule:s1']);
+        core.release('scenario:c1', 'valve_1');
+        core.claim(claim({ source: 'scenario', ownerId: 'scenario:c1', value: true }));
+        expect(core.resolve('valve_1', NOW).winner?.ownerId).toBe('scenario:c1');
+    });
+
     test('snapshot returns copies', () => {
         const core = new ArbiterCore(policy);
         core.claim(claim({ source: 'manual' }));

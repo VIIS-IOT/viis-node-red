@@ -9,6 +9,11 @@
  * the next live claim takes over, and only with no live claim does the policy decide (`managed` → OFF,
  * `hold` → write nothing). Keys the policy leaves `unmanaged` are never arbitrated.
  *
+ * A live claim can also be *suspended* (`suspend`): it stays in the set but no longer takes part in
+ * resolution, until it is replaced by a new claim of the same owner, released or expired. The arbiter
+ * suspends the schedule/scenario claims of a key whose coil something outside the gateway switched OFF, so
+ * it does not fight that OFF. Suspension is in memory only (a restart reloads the claims active).
+ *
  * Times are epoch milliseconds; `expiresAt: null` never expires (safety holds).
  */
 import { ActuatorPolicy } from './actuator-policy';
@@ -54,9 +59,14 @@ function isLive(claim: ActuatorClaim, now: number): boolean {
     return claim.expiresAt === null || claim.expiresAt > now;
 }
 
+/** Sources whose ON claims the arbiter lets go of when an outside party switches the coil OFF. */
+export const SUSPENDABLE_SOURCES: ReadonlySet<ClaimSource> = new Set<ClaimSource>(['scenario', 'schedule', 'automation']);
+
 export class ArbiterCore {
     /** `ownerId \u0000 key` → claim. Map order = submission order, used as the last tie-break. */
     private readonly claims = new Map<string, ActuatorClaim>();
+    /** ids (`ownerId \u0000 key`) of the claims that are suspended. */
+    private readonly suspended = new Set<string>();
 
     constructor(private readonly policy: ActuatorPolicy) {}
 
@@ -81,7 +91,31 @@ export class ArbiterCore {
         }
         const id = ArbiterCore.id(c.ownerId, c.key);
         this.claims.delete(id);
+        // A new claim of the same owner is a new command: it is not held back by an earlier suspension.
+        this.suspended.delete(id);
         this.claims.set(id, { ...c });
+    }
+
+    /** Live, not suspended: the claims that take part in resolution. */
+    private isActive(id: string, claim: ActuatorClaim, now: number): boolean {
+        return isLive(claim, now) && !this.suspended.has(id);
+    }
+
+    /** Suspends the owner's claim on `key` (it keeps its expiry). False when there is no such claim. */
+    suspend(ownerId: string, key: string): boolean {
+        const id = ArbiterCore.id(ownerId, key);
+        if (!this.claims.has(id)) return false;
+        this.suspended.add(id);
+        return true;
+    }
+
+    /** The live claims on `key` that are suspended. */
+    suspendedClaims(key: string, now: number): ActuatorClaim[] {
+        const result: ActuatorClaim[] = [];
+        for (const [id, c] of this.claims) {
+            if (c.key === key && this.suspended.has(id) && isLive(c, now)) result.push({ ...c });
+        }
+        return result;
     }
 
     /**
@@ -95,6 +129,7 @@ export class ArbiterCore {
             const ownerMatches = prefix !== null ? c.ownerId.startsWith(prefix) : c.ownerId === ownerId;
             if (ownerMatches && (key === undefined || c.key === key)) {
                 this.claims.delete(id);
+                this.suspended.delete(id);
                 affected.add(c.key);
             }
         }
@@ -107,6 +142,7 @@ export class ArbiterCore {
         for (const [id, c] of this.claims) {
             if (!isLive(c, now)) {
                 this.claims.delete(id);
+                this.suspended.delete(id);
                 expired.push({ ...c });
             }
         }
@@ -119,8 +155,8 @@ export class ArbiterCore {
             return { key, desired: null, winner: null };
         }
         let winner: ActuatorClaim | null = null;
-        for (const c of this.claims.values()) {
-            if (c.key !== key || !isLive(c, now)) continue;
+        for (const [id, c] of this.claims) {
+            if (c.key !== key || !this.isActive(id, c, now)) continue;
             // `>=` on equal priority and createdAt: the claim submitted later wins.
             if (
                 winner === null ||
@@ -137,15 +173,15 @@ export class ArbiterCore {
     }
 
     /**
-     * Live claims for `key`, best first: the order `resolve` picks its winner by (priority, then
-     * createdAt, then the claim submitted later). `[0]` is the winner, `[1]` the claim that takes over
+     * Active (live, not suspended) claims for `key`, best first: the order `resolve` picks its winner by
+     * (priority, then createdAt, then the claim submitted later). `[0]` is the winner, `[1]` the claim that takes over
      * when it ends.
      */
     rankedClaims(key: string, now: number): ActuatorClaim[] {
         const live: { claim: ActuatorClaim; position: number }[] = [];
         let position = 0;
-        for (const c of this.claims.values()) {
-            if (c.key === key && isLive(c, now)) live.push({ claim: c, position });
+        for (const [id, c] of this.claims) {
+            if (c.key === key && this.isActive(id, c, now)) live.push({ claim: c, position });
             position++;
         }
         live.sort(
@@ -173,6 +209,7 @@ export class ArbiterCore {
      */
     load(claims: ActuatorClaim[], now: number): void {
         this.claims.clear();
+        this.suspended.clear();
         const ordered = [...claims].sort((a, b) => a.createdAt - b.createdAt);
         for (const c of ordered) {
             if (!isLive(c, now) || c.createdAt > now + MAX_FUTURE_SKEW_MS) continue;

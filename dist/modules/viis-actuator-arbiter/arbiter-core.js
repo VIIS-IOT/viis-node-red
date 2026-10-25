@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ArbiterCore = exports.MAX_FUTURE_SKEW_MS = exports.SOURCE_PRIORITY = void 0;
+exports.ArbiterCore = exports.SUSPENDABLE_SOURCES = exports.MAX_FUTURE_SKEW_MS = exports.SOURCE_PRIORITY = void 0;
 exports.SOURCE_PRIORITY = {
     safety: 100,
     alarm_action: 90,
@@ -20,11 +20,15 @@ function isClaimSource(value) {
 function isLive(claim, now) {
     return claim.expiresAt === null || claim.expiresAt > now;
 }
+/** Sources whose ON claims the arbiter lets go of when an outside party switches the coil OFF. */
+exports.SUSPENDABLE_SOURCES = new Set(['scenario', 'schedule', 'automation']);
 class ArbiterCore {
     constructor(policy) {
         this.policy = policy;
         /** `ownerId \u0000 key` → claim. Map order = submission order, used as the last tie-break. */
         this.claims = new Map();
+        /** ids (`ownerId \u0000 key`) of the claims that are suspended. */
+        this.suspended = new Set();
     }
     static id(ownerId, key) {
         return `${ownerId}\u0000${key}`;
@@ -45,7 +49,30 @@ class ArbiterCore {
         }
         const id = ArbiterCore.id(c.ownerId, c.key);
         this.claims.delete(id);
+        // A new claim of the same owner is a new command: it is not held back by an earlier suspension.
+        this.suspended.delete(id);
         this.claims.set(id, Object.assign({}, c));
+    }
+    /** Live, not suspended: the claims that take part in resolution. */
+    isActive(id, claim, now) {
+        return isLive(claim, now) && !this.suspended.has(id);
+    }
+    /** Suspends the owner's claim on `key` (it keeps its expiry). False when there is no such claim. */
+    suspend(ownerId, key) {
+        const id = ArbiterCore.id(ownerId, key);
+        if (!this.claims.has(id))
+            return false;
+        this.suspended.add(id);
+        return true;
+    }
+    /** The live claims on `key` that are suspended. */
+    suspendedClaims(key, now) {
+        const result = [];
+        for (const [id, c] of this.claims) {
+            if (c.key === key && this.suspended.has(id) && isLive(c, now))
+                result.push(Object.assign({}, c));
+        }
+        return result;
     }
     /**
      * Drops the owner's claims (one key, or all its keys). An `ownerId` ending in `*` matches by prefix
@@ -58,6 +85,7 @@ class ArbiterCore {
             const ownerMatches = prefix !== null ? c.ownerId.startsWith(prefix) : c.ownerId === ownerId;
             if (ownerMatches && (key === undefined || c.key === key)) {
                 this.claims.delete(id);
+                this.suspended.delete(id);
                 affected.add(c.key);
             }
         }
@@ -69,6 +97,7 @@ class ArbiterCore {
         for (const [id, c] of this.claims) {
             if (!isLive(c, now)) {
                 this.claims.delete(id);
+                this.suspended.delete(id);
                 expired.push(Object.assign({}, c));
             }
         }
@@ -80,8 +109,8 @@ class ArbiterCore {
             return { key, desired: null, winner: null };
         }
         let winner = null;
-        for (const c of this.claims.values()) {
-            if (c.key !== key || !isLive(c, now))
+        for (const [id, c] of this.claims) {
+            if (c.key !== key || !this.isActive(id, c, now))
                 continue;
             // `>=` on equal priority and createdAt: the claim submitted later wins.
             if (winner === null ||
@@ -96,15 +125,15 @@ class ArbiterCore {
         return { key, desired: mode === 'managed' ? false : null, winner: null };
     }
     /**
-     * Live claims for `key`, best first: the order `resolve` picks its winner by (priority, then
-     * createdAt, then the claim submitted later). `[0]` is the winner, `[1]` the claim that takes over
+     * Active (live, not suspended) claims for `key`, best first: the order `resolve` picks its winner by
+     * (priority, then createdAt, then the claim submitted later). `[0]` is the winner, `[1]` the claim that takes over
      * when it ends.
      */
     rankedClaims(key, now) {
         const live = [];
         let position = 0;
-        for (const c of this.claims.values()) {
-            if (c.key === key && isLive(c, now))
+        for (const [id, c] of this.claims) {
+            if (c.key === key && this.isActive(id, c, now))
                 live.push({ claim: c, position });
             position++;
         }
@@ -127,6 +156,7 @@ class ArbiterCore {
      */
     load(claims, now) {
         this.claims.clear();
+        this.suspended.clear();
         const ordered = [...claims].sort((a, b) => a.createdAt - b.createdAt);
         for (const c of ordered) {
             if (!isLive(c, now) || c.createdAt > now + exports.MAX_FUTURE_SKEW_MS)
