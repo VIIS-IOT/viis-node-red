@@ -58,6 +58,8 @@ class ActuatorArbiter {
         return this.opts.mode;
     }
     leaseMs(source, key) {
+        if (source === 'alarm_action')
+            return null;
         const seconds = source === 'manual' ? this.leasePolicy.manualLeaseS(key) : this.opts.scenarioLeaseS;
         return seconds * 1000;
     }

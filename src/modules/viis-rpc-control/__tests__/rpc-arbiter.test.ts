@@ -16,7 +16,7 @@ function fakeArbiter(mode: 'observe' | 'enforce', result: Partial<ClaimResult> =
         keyMode: jest.fn((key: string) => (key === 'valve_1' ? 'managed' as const : 'unmanaged' as const)),
         target: jest.fn((key: string) => (key === 'valve_1' ? { key, boardId: 'board1', address: 0 } : undefined)),
         mode: jest.fn(() => mode),
-        leaseMs: jest.fn((source: string) => (source === 'manual' ? 1_800_000 : 600_000)),
+        leaseMs: jest.fn((source: string) => (source === 'manual' ? 1_800_000 : source === 'alarm_action' ? null : 600_000)),
         claim: jest.fn().mockResolvedValue({ applied: true, actual: true, mode, ...result }),
         release: jest.fn().mockResolvedValue(undefined),
         owners: jest.fn(() => ({})),
@@ -111,6 +111,17 @@ describe('RPC through the actuator arbiter', () => {
         });
     });
 
+    test('an alarm_action claim never lapses: expiresAt null', async () => {
+        const arbiter = use(fakeArbiter('enforce'));
+        const { handler } = createHandler();
+
+        await handler.handleRpcRequest({ method: 'set_state', command_id: CMD, source: 'alarm_action', params: { valve_1: false } });
+
+        expect(arbiter.claim).toHaveBeenCalledWith({
+            key: 'valve_1', value: false, source: 'alarm_action', ownerId: `alarm_action:${CMD}`, expiresAt: null,
+        });
+    });
+
     test('earlier caller gets FAILED blocked_by (manual claim exists, scenario claim loses)', async () => {
         const arbiter = use(fakeArbiter('enforce', { applied: false, actual: false, blockedBy: 'manual' }));
         const { handler, mqtt, modbus } = createHandler();
@@ -200,5 +211,24 @@ describe('RPC through the actuator arbiter', () => {
         arbiter.release.mockClear();
         await handler.handleRpcRequest({ method: 'release_claims', command_id: '31111111-2222-4333-8444-555555555555' });
         expect(arbiter.release).toHaveBeenCalledWith('manual:*');
+    });
+
+    test('release_claims with source alarm_action drops only alarm_action claims; another source is refused', async () => {
+        const arbiter = use(fakeArbiter('enforce'));
+        const { handler, mqtt } = createHandler();
+
+        await handler.handleRpcRequest({ method: 'release_claims', command_id: CMD, params: { source: 'alarm_action', keys: ['valve_1'] } });
+        expect(arbiter.release).toHaveBeenCalledWith('alarm_action:*', 'valve_1');
+        expect(arbiter.release).not.toHaveBeenCalledWith('manual:*', expect.anything());
+        expect(mqtt.publishRpcResponse).toHaveBeenCalledWith(CMD, expect.objectContaining({ success: true, status: 'ACKED' }));
+
+        arbiter.release.mockClear();
+        await handler.handleRpcRequest({ method: 'release_claims', command_id: '41111111-2222-4333-8444-555555555555', params: { source: 'alarm_action' } });
+        expect(arbiter.release).toHaveBeenCalledWith('alarm_action:*');
+
+        arbiter.release.mockClear();
+        await handler.handleRpcRequest({ method: 'release_claims', command_id: '51111111-2222-4333-8444-555555555555', params: { source: 'safety' } });
+        expect(arbiter.release).not.toHaveBeenCalled();
+        expect(mqtt.publishRpcResponse).toHaveBeenLastCalledWith('51111111-2222-4333-8444-555555555555', expect.objectContaining({ success: false, status: 'FAILED' }));
     });
 });

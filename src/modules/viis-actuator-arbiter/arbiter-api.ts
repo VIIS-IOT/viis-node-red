@@ -68,8 +68,12 @@ export interface ActuatorArbiterApi {
     /** The coil the arbiter writes for `key` (board + address); undefined when it does not arbitrate the key. */
     target(key: string): CoilTarget | undefined;
     mode(): 'observe' | 'enforce';
-    /** Lease of a new claim from `source` on `key`, in ms (manual: key policy, others: scenario lease). */
-    leaseMs(source: ClaimSource, key: string): number;
+    /**
+     * Lease of a new claim from `source` on `key`, in ms (manual: key policy, scenario: scenario lease).
+     * null = the claim never lapses: an `alarm_action` OFF lives until the alarm clears (backend `release_claims`
+     * with `source: alarm_action`), not for a lease that a live schedule or manual claim could outlast.
+     */
+    leaseMs(source: ClaimSource, key: string): number | null;
     /** Resolves after the next tick reconciled this key (debounced tick), at most `claimWaitMs`. */
     claim(input: ClaimInput): Promise<ClaimResult>;
     release(ownerId: string, key?: string): Promise<void>;
@@ -83,7 +87,7 @@ export interface ArbiterOptions {
     policy: ActuatorPolicy;
     mode: 'observe' | 'enforce';
     reconcilerDeps: Omit<ReconcilerDeps, 'mode' | 'now'>;
-    /** ARBITER_SCENARIO_LEASE_S: lease of scenario and alarm_action claims. */
+    /** ARBITER_SCENARIO_LEASE_S: lease of scenario claims (alarm_action claims have none). */
     scenarioLeaseS: number;
     store?: ClaimStoreLike | null;
     now?: () => number;
@@ -175,7 +179,8 @@ export class ActuatorArbiter implements ActuatorArbiterApi {
         return this.opts.mode;
     }
 
-    leaseMs(source: ClaimSource, key: string): number {
+    leaseMs(source: ClaimSource, key: string): number | null {
+        if (source === 'alarm_action') return null;
         const seconds = source === 'manual' ? this.leasePolicy.manualLeaseS(key) : this.opts.scenarioLeaseS;
         return seconds * 1000;
     }

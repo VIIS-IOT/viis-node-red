@@ -15,7 +15,11 @@ const schedule_coil_classify_1 = require("../../viis-schedule-executor/schedule-
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
 const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
 const arbiter_registry_1 = require("../../viis-actuator-arbiter/arbiter-registry");
-/** RPC method that drops manual arbiter claims (`params.keys?: string[]`). Handled only while an arbiter runs. */
+/**
+ * RPC method that drops arbiter claims: `params: { keys?: string[], source?: 'manual' | 'alarm_action' }`.
+ * `source` defaults to `manual`; `alarm_action` is how the backend ends the OFF a cleared alarm held.
+ * Handled only while an arbiter runs.
+ */
 exports.RELEASE_CLAIMS_METHOD = "release_claims";
 /**
  * RPC envelope `source` → arbiter claim source. Portal/mobile/MCP send none (a person: `manual`);
@@ -765,13 +769,15 @@ class RpcHandler {
     buildArbiterClaim(arbiter, key, value) {
         const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
         const source = rpcClaimSource(ctx === null || ctx === void 0 ? void 0 : ctx.source);
+        const lease = arbiter.leaseMs(source, key);
         return {
             key,
             value,
             source,
             // A command without command_id (local flow input) has one owner per source: the newer replaces it.
             ownerId: `${source}:${(ctx === null || ctx === void 0 ? void 0 : ctx.commandId) || 'local'}`,
-            expiresAt: Date.now() + arbiter.leaseMs(source, key),
+            // null = never lapses (alarm_action): it ends on release_claims, not on a lease.
+            expiresAt: lease === null ? null : Date.now() + lease,
         };
     }
     /**
@@ -816,18 +822,27 @@ class RpcHandler {
         await this.publishResultWithRetry(key, result.actual);
         this.node.status({ fill: "green", shape: "dot", text: `${key}=${result.actual} (arbiter)` });
     }
-    /** `release_claims`: drops manual claims on `params.keys`, or every manual claim. */
+    /**
+     * `release_claims`: drops the claims of `params.source` (default `manual`; `alarm_action` is the other one a
+     * remote caller may release) on `params.keys`, or on every key when none are given.
+     */
     async handleReleaseClaims(arbiter, params) {
+        var _a;
+        const source = (_a = params === null || params === void 0 ? void 0 : params.source) !== null && _a !== void 0 ? _a : "manual";
+        if (source !== "manual" && source !== "alarm_action") {
+            throw new Error(`release_claims: unsupported source ${JSON.stringify(source)}`);
+        }
+        const owner = `${source}:*`;
         const keys = Array.isArray(params === null || params === void 0 ? void 0 : params.keys) ? params.keys.map((k) => String(k)) : null;
         if (keys && keys.length > 0) {
             for (const key of keys) {
-                await arbiter.release('manual:*', key);
+                await arbiter.release(owner, key);
             }
         }
         else {
-            await arbiter.release('manual:*');
+            await arbiter.release(owner);
         }
-        this.logger.log(`[ARBITER] Released manual claims${keys && keys.length > 0 ? ` on ${keys.join(', ')}` : ''}`);
+        this.logger.log(`[ARBITER] Released ${source} claims${keys && keys.length > 0 ? ` on ${keys.join(', ')}` : ''}`);
     }
     /**
      * Handle parameter that only updates configuration (no Modbus mapping)

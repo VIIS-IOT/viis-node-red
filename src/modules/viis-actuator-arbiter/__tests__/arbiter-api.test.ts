@@ -213,12 +213,12 @@ describe('ActuatorArbiter', () => {
         expect(store.rows.map(r => r.ownerId)).toEqual(['manual:s']);
     });
 
-    test('leaseMs: manual from the key policy, scenario and alarm_action from ARBITER_SCENARIO_LEASE_S', () => {
+    test('leaseMs: manual from the key policy, scenario from ARBITER_SCENARIO_LEASE_S, alarm_action never lapses', () => {
         const { arbiter } = setup();
         expect(arbiter.leaseMs('manual', 'valve_1')).toBe(1_800_000);
         expect(arbiter.leaseMs('manual', 'valve_2')).toBe(60_000);
         expect(arbiter.leaseMs('scenario', 'valve_1')).toBe(600_000);
-        expect(arbiter.leaseMs('alarm_action', 'valve_1')).toBe(600_000);
+        expect(arbiter.leaseMs('alarm_action', 'valve_1')).toBeNull();
     });
 
     test('owners: a manual claim over a schedule claim names the schedule as next', async () => {

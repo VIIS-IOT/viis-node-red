@@ -41,7 +41,11 @@ import { getArbiter } from "../../viis-actuator-arbiter/arbiter-registry";
 import type { ActuatorArbiterApi, ClaimInput } from "../../viis-actuator-arbiter/arbiter-api";
 import type { ClaimSource } from "../../viis-actuator-arbiter/arbiter-core";
 
-/** RPC method that drops manual arbiter claims (`params.keys?: string[]`). Handled only while an arbiter runs. */
+/**
+ * RPC method that drops arbiter claims: `params: { keys?: string[], source?: 'manual' | 'alarm_action' }`.
+ * `source` defaults to `manual`; `alarm_action` is how the backend ends the OFF a cleared alarm held.
+ * Handled only while an arbiter runs.
+ */
 export const RELEASE_CLAIMS_METHOD = "release_claims";
 
 /**
@@ -907,13 +911,15 @@ export class RpcHandler implements IRpcHandler {
     private buildArbiterClaim(arbiter: ActuatorArbiterApi, key: string, value: boolean): ClaimInput {
         const ctx = currentRpcDeadline();
         const source = rpcClaimSource(ctx?.source);
+        const lease = arbiter.leaseMs(source, key);
         return {
             key,
             value,
             source,
             // A command without command_id (local flow input) has one owner per source: the newer replaces it.
             ownerId: `${source}:${ctx?.commandId || 'local'}`,
-            expiresAt: Date.now() + arbiter.leaseMs(source, key),
+            // null = never lapses (alarm_action): it ends on release_claims, not on a lease.
+            expiresAt: lease === null ? null : Date.now() + lease,
         };
     }
 
@@ -960,17 +966,25 @@ export class RpcHandler implements IRpcHandler {
         this.node.status({ fill: "green", shape: "dot", text: `${key}=${result.actual} (arbiter)` });
     }
 
-    /** `release_claims`: drops manual claims on `params.keys`, or every manual claim. */
+    /**
+     * `release_claims`: drops the claims of `params.source` (default `manual`; `alarm_action` is the other one a
+     * remote caller may release) on `params.keys`, or on every key when none are given.
+     */
     private async handleReleaseClaims(arbiter: ActuatorArbiterApi, params?: Record<string, any>): Promise<void> {
+        const source = params?.source ?? "manual";
+        if (source !== "manual" && source !== "alarm_action") {
+            throw new Error(`release_claims: unsupported source ${JSON.stringify(source)}`);
+        }
+        const owner = `${source}:*`;
         const keys = Array.isArray(params?.keys) ? params!.keys.map((k: unknown) => String(k)) : null;
         if (keys && keys.length > 0) {
             for (const key of keys) {
-                await arbiter.release('manual:*', key);
+                await arbiter.release(owner, key);
             }
         } else {
-            await arbiter.release('manual:*');
+            await arbiter.release(owner);
         }
-        this.logger.log(`[ARBITER] Released manual claims${keys && keys.length > 0 ? ` on ${keys.join(', ')}` : ''}`);
+        this.logger.log(`[ARBITER] Released ${source} claims${keys && keys.length > 0 ? ` on ${keys.join(', ')}` : ''}`);
     }
 
     /**

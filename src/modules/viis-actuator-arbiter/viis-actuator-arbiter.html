@@ -52,7 +52,7 @@
     <ul>
         <li><code>actuatorPolicy</code>: <code>{ "valve_1": "managed", "valve_2": { "mode": "hold", "manualLeaseS": 60 } }</code> (fc=5 coils only)</li>
         <li><code>ARBITER_MANUAL_LEASE_S</code> (1800), <code>ARBITER_SCENARIO_LEASE_S</code> (600), <code>ARBITER_TICK_MS</code> (5000, min 2000)</li>
-        <li>RPC method <code>release_claims</code> with optional <code>params.keys</code> drops manual claims.</li>
+        <li>RPC method <code>release_claims</code> with optional <code>params.keys</code> and <code>params.source</code> (<code>manual</code> by default, or <code>alarm_action</code>) drops that source's claims.</li>
     </ul>
 
     <h3>Outputs</h3>
