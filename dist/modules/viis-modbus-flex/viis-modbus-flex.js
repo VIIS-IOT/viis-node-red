@@ -16,7 +16,8 @@ const outbox_sender_1 = require("../../services/event-outbox/outbox-sender");
 const BOARD_OFFLINE_STATUSES = new Set(['circuit-breaker-open', 'prolonged-disconnect']);
 /**
  * Every flex node on a board gets the board's status events; the first node that handles one reports the
- * board until it closes, so the board is one alarm and one request per change.
+ * board until it closes or moves to another board (it then drops the role and the next node on that board
+ * to see an event takes it), so the board is one alarm and one request per change.
  */
 const boardAlarmReporters = new Map();
 /** Without the outbox: boards whose Pending reached the backend; only those send a Clear on reconnect. */
@@ -110,8 +111,17 @@ module.exports = function (RED) {
         let currentBoardId = config.boardId;
         let isMultiBoardMode = false;
         let detachModbusStatus = () => undefined;
-        /** The board this node's status events describe (`board_offline:<id>`). */
-        const alarmBoardId = config.boardId || 'default';
+        /**
+         * The board of the client this node is attached to (`board_offline:<id>`). A node can switch boards
+         * through `msg.payload.boardId`, so this follows the client, not the configured `config.boardId`.
+         */
+        let alarmBoardId = config.boardId || 'default';
+        /** The board whose client a node reads, from the board it is on or the default of the board set. */
+        const boardOf = (multi, defaultBoard) => multi ? (currentBoardId || defaultBoard || 'default') : (config.boardId || 'default');
+        const releaseReporterRole = () => {
+            if (boardAlarmReporters.get(alarmBoardId) === node.id)
+                boardAlarmReporters.delete(alarmBoardId);
+        };
         try {
             // Initialize logger with enableLogging flag from config
             logger = new logger_1.Logger(node, node.id, config.enableLogging);
@@ -120,22 +130,28 @@ module.exports = function (RED) {
             node.status({ fill: "yellow", shape: "ring", text: constants_1.STATUS_MESSAGES.INITIALIZING });
             // Initialize GlobalContextHelper for environment variables
             const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
-            const attachModbusStatus = (client) => {
+            const attachModbusStatus = (client, boardId) => {
                 detachModbusStatus();
                 detachModbusStatus = () => undefined;
+                // Moved to another board: hand the reporter role of the old board back.
+                if (boardId !== alarmBoardId) {
+                    releaseReporterRole();
+                    alarmBoardId = boardId;
+                }
+                const eventBoardId = boardId;
                 if (!client || typeof client.on !== "function") {
                     logger.warn("[MODBUS-GETTER] Client has no modbus-status events; polling continues");
                     return;
                 }
                 const handler = async (event) => {
-                    logger.log(`[EVENT] Board ${config.boardId}: ${event.status} - ${event.error || ''}`);
+                    logger.log(`[EVENT] Board ${eventBoardId}: ${event.status} - ${event.error || ''}`);
                     const raise = BOARD_OFFLINE_STATUSES.has(event.status);
                     if (raise || event.status === 'connected') {
-                        const reporter = boardAlarmReporters.get(alarmBoardId);
+                        const reporter = boardAlarmReporters.get(eventBoardId);
                         if (!reporter)
-                            boardAlarmReporters.set(alarmBoardId, node.id);
+                            boardAlarmReporters.set(eventBoardId, node.id);
                         if (!reporter || reporter === node.id) {
-                            await reportBoardAlarm(logger, globalHelper, alarmBoardId, event, raise);
+                            await reportBoardAlarm(logger, globalHelper, eventBoardId, event, raise);
                         }
                     }
                     switch (event.status) {
@@ -286,7 +302,7 @@ module.exports = function (RED) {
                     // Set ready status
                     node.status({ fill: "green", shape: "dot", text: constants_1.STATUS_MESSAGES.READY });
                     // Status events are optional. A missing .on() must not abort polling.
-                    attachModbusStatus(modbusClient);
+                    attachModbusStatus(modbusClient, boardOf(isMultiBoardMode, configData.defaultBoard));
                     logger.log("Modbus status event listener registered");
                     // Auto-detect config changes every 30 seconds
                     configCheckInterval = setInterval(async () => {
@@ -346,7 +362,7 @@ module.exports = function (RED) {
                                 // onto that client. Each flex instance keeps its own listener.
                                 if (modbusGetterService && modbusClient) {
                                     modbusGetterService.modbusClient = modbusClient;
-                                    attachModbusStatus(modbusClient);
+                                    attachModbusStatus(modbusClient, boardOf(newConfig.mode === 'multi', newConfig.defaultBoard));
                                 }
                                 currentModbusConfig = Object.assign({}, newConfig);
                                 isMultiBoardMode = newConfig.mode === 'multi';
@@ -377,6 +393,8 @@ module.exports = function (RED) {
                                 logger.log(`Switching to board: ${requestedBoardId}`);
                                 detachModbusStatus();
                                 detachModbusStatus = () => undefined;
+                                // This node no longer listens to the old board: another node on it takes over reporting.
+                                releaseReporterRole();
                                 // Release current board connection
                                 if (currentBoardId) {
                                     client_registry_1.default.releaseClientV2("modbus-board", node, currentBoardId);
@@ -388,7 +406,7 @@ module.exports = function (RED) {
                                     // Update service with new client
                                     if (modbusGetterService) {
                                         modbusGetterService.modbusClient = modbusClient;
-                                        attachModbusStatus(modbusClient);
+                                        attachModbusStatus(modbusClient, requestedBoardId);
                                     }
                                     logger.log(`Switched to board: ${requestedBoardId}`);
                                 }
@@ -476,8 +494,7 @@ module.exports = function (RED) {
                 logger.log("Closing VIIS Modbus Flex Node...");
                 detachModbusStatus();
                 detachModbusStatus = () => undefined;
-                if (boardAlarmReporters.get(alarmBoardId) === node.id)
-                    boardAlarmReporters.delete(alarmBoardId);
+                releaseReporterRole();
                 // Stop config check interval
                 if (configCheckInterval) {
                     clearInterval(configCheckInterval);

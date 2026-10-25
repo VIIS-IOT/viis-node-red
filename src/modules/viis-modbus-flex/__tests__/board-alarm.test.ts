@@ -19,14 +19,15 @@ jest.mock("../../../core/client-registry", () => ({
     reloadModbusConfig: jest.fn(),
   },
 }));
-jest.mock("../services/modbusGetterService", () => ({ ModbusGetterService: jest.fn() }));
+jest.mock("../services/modbusGetterService", () => ({ ModbusGetterService: jest.fn(), offlineWriteOrigin: jest.fn(() => null) }));
+import { ModbusGetterService } from "../services/modbusGetterService";
 jest.mock("../../../ultils/device-config-file", () => ({ getDeviceConfigFileValue: jest.fn(() => undefined) }));
 
 const registerFlexNode = require("../viis-modbus-flex") as (RED: any) => void;
 
 const TOKEN = "secret-token";
 const BACKEND = "http://backend.test";
-const GLOBALS = { device_access_token: TOKEN, device_id: "device-1", server_url: BACKEND };
+const GLOBALS: Record<string, unknown> = { device_access_token: TOKEN, device_id: "device-1", server_url: BACKEND };
 
 const flushAsyncWork = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -70,12 +71,59 @@ async function startFlexNodes(count: number) {
   };
 }
 
+/** Multi-board mode: `ids` are the nodes (all configured on board1); each board has its own fake client. */
+async function startMultiBoardNodes(ids: string[], boards = ["board1", "board2"]) {
+  GLOBALS.modbus_boards = boards.map((id) => ({ id }));
+  GLOBALS.modbus_default_board = boards[0];
+  const clients: Record<string, EventEmitter> = {};
+  for (const b of boards) clients[b] = new EventEmitter();
+  (ClientRegistry.getModbusClientV2 as jest.Mock).mockImplementation(async (board: string) => clients[board]);
+  (ModbusGetterService as unknown as jest.Mock).mockImplementation(() => ({ processRequest: jest.fn().mockResolvedValue([1]) }));
+  const closers: (() => void)[] = [];
+  const inputs: Record<string, (msg: any) => Promise<void>> = {};
+  let NodeType: any;
+  const RED = {
+    nodes: {
+      createNode(node: any, config: any) {
+        const events = new EventEmitter();
+        node.id = config.id;
+        node.on = events.on.bind(events);
+        node.status = jest.fn();
+        node.send = jest.fn();
+        for (const method of ["log", "warn", "error", "debug"]) node[method] = jest.fn();
+        node.context = () => ({ global: { get: (key: string) => GLOBALS[key], set: jest.fn() }, get: jest.fn(), set: jest.fn() });
+        closers.push(() => events.emit("close", () => undefined));
+        inputs[config.id] = (msg) => new Promise<void>((resolve) => events.emit("input", msg, jest.fn(), () => resolve()));
+      },
+      registerType(_name: string, constructor: unknown) {
+        NodeType = constructor;
+      },
+    },
+  };
+  registerFlexNode(RED);
+  for (const id of ids) new NodeType({ id, boardId: "board1", enableLogging: false });
+  await flushAsyncWork();
+  return {
+    input: inputs,
+    async emitStatus(board: string, event: Record<string, unknown>) {
+      clients[board].emit("modbus-status", event);
+      await flushAsyncWork();
+      await flushAsyncWork();
+    },
+    close: () => {
+      closers.forEach((close) => close());
+      delete GLOBALS.modbus_boards;
+      delete GLOBALS.modbus_default_board;
+    },
+  };
+}
+
 const breakerOpen = { status: "circuit-breaker-open", error: "timeout", failedCount: 5 };
 const connected = { status: "connected" };
 
 describe("viis-modbus-flex board_offline state alarm", () => {
   let fetchSpy: jest.SpyInstance;
-  let flex: Awaited<ReturnType<typeof startFlexNodes>>;
+  let flex: { close: () => void } & Record<string, any>;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -136,6 +184,22 @@ describe("viis-modbus-flex board_offline state alarm", () => {
       entity: "device-1",
     });
     expect(cleared).toMatchObject({ alarm_key: "board_offline:board1", alarm_status: "Clear", clear_by: "Value" });
+  });
+
+  it("a node that switches boards reports the board of its client, and hands the reporter role to the next node", async () => {
+    flex = await startMultiBoardNodes(["flex-1", "flex-2"]);
+    const alarmKeys = () => fetchSpy.mock.calls.map(([, init]) => JSON.parse(init.body).alarm_key);
+
+    // flex-1 moves to board2 through msg.payload.boardId
+    await flex.input["flex-1"]({ payload: { boardId: "board2", fc: 3, address: 0, quantity: 1 } });
+
+    // board1 goes down: flex-1 is gone from it, so flex-2 must be the one that reports it
+    await flex.emitStatus("board1", breakerOpen);
+    expect(alarmKeys()).toEqual(["board_offline:board1"]);
+
+    // board2 goes down: flex-1 reports it under board2, not under its configured board1
+    await flex.emitStatus("board2", breakerOpen);
+    expect(alarmKeys()).toEqual(["board_offline:board1", "board_offline:board2"]);
   });
 
   it("only one node per board reports the board", async () => {
