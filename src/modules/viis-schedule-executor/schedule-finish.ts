@@ -3,8 +3,9 @@ import { ExecutionReport, ExecutionStep, KeyOutcome } from './schedule-execution
 import { ModbusCmd } from './type';
 
 /**
- * A run is `completed` only after its OFF writes passed. A failed OFF keeps the run `running`
- * with only the failed commands active; the next tick re-enters the finish branch and retries them.
+ * With `SCHEDULE_OFF_RETRY` on, a run is `completed` only after its OFF writes passed. A failed OFF keeps
+ * the run `running` with only the failed commands active; the next tick re-enters the finish branch and
+ * retries them. With the flag off (default) a failed OFF finishes the run and sends `verify_failed`.
  */
 
 type ContextStore = {
@@ -119,6 +120,20 @@ export function noteOffFailure(
 export function offReportForAudit(retry: OffRetryState | null, finalReport: ExecutionReport): ExecutionReport {
     if (!retry) return finalReport;
     return { ...finalReport, steps: [...(retry.passedSteps ?? []), ...finalReport.steps] };
+}
+
+/**
+ * Flag `SCHEDULE_OFF_RETRY` (device1.json `featureFlags`, default off): the next window of a recurring
+ * schedule came while the last OFF still fails. The pending retry is dropped and the window starts, so a coil
+ * the PLC holds ON cannot stop every later irrigation. Off: no retry exists, nothing is superseded.
+ */
+export function supersedesOffRetry(
+    retryEnabled: boolean,
+    status: string | null | undefined,
+    isDue: boolean,
+    pending: OffRetryState | null
+): boolean {
+    return retryEnabled && status === 'running' && isDue && pending !== null;
 }
 
 /** Forget the OFF failure once the OFF passed; true when an earlier attempt had failed. */

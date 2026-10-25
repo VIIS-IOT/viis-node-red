@@ -606,6 +606,8 @@ module.exports = function (RED) {
                             continue;
                         }
                         const isDue = scheduleService.isScheduleDue(schedule);
+                        // SCHEDULE_OFF_RETRY (default off): a failed OFF is retried and a restart rewrites the OFF.
+                        const offRetryOn = scheduleService.offRetryEnabled();
                         // POWER OUTAGE RECOVERY: Check if schedule is marked "running" but has no active commands
                         // This happens after power outage when activeModbusCommands was cleared on startup
                         const existingActiveCommands = scheduleService.getActiveCommands(schedule.name);
@@ -615,12 +617,21 @@ module.exports = function (RED) {
                         if (isStaleRunningStatus && isDue) {
                             node.warn(`🔄 POWER RECOVERY: Schedule ${schedule.name} marked as "running" but no active commands - restarting`);
                         }
-                        if (isDue && (schedule.status !== "running" || isStaleRunningStatus)) {
+                        // The next window came while the last OFF still fails: drop the retry, start the window.
+                        const supersedesRetry = (0, schedule_finish_1.supersedesOffRetry)(offRetryOn, schedule.status, isDue, (0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
+                        if (isDue && (schedule.status !== "running" || isStaleRunningStatus || supersedesRetry)) {
                             if (!(0, schedule_tick_guard_1.tryBeginScheduleTransition)(globalContext, schedule.name, "start")) {
                                 debugLog(`Skip start for ${schedule.name}: transition already in flight`);
                                 continue;
                             }
                             try {
+                                const supersededCommands = supersedesRetry ? scheduleService.getActiveCommands(schedule.name) : [];
+                                const supersededRunId = supersedesRetry ? (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name) : null;
+                                if (supersedesRetry) {
+                                    node.warn(`⚠️ OFF retry of ${schedule.name} superseded: its next window is due`);
+                                    // The new window reports "started" like any other.
+                                    clearStatusHistory(schedule.name);
+                                }
                                 const statusChanged = hasStatusChanged(schedule.name, "running");
                                 const holdingRegisters = scheduleService.getAllModbusHoldingRegisters();
                                 let actionObj = {};
@@ -686,7 +697,12 @@ module.exports = function (RED) {
                                     scheduleService.applyStartCommandStore(schedule.name, [...holdingCommands, ...coilCommands]);
                                     (0, schedule_run_identity_1.rememberRunId)(globalContext, schedule.name, startRunId);
                                     // A new run: an OFF retry an earlier run left behind is over.
-                                    (0, schedule_finish_1.clearOffFailure)(globalContext, schedule.name);
+                                    if ((0, schedule_finish_1.clearOffFailure)(globalContext, schedule.name) && supersedesRetry) {
+                                        await sideEffect(`off retry superseded audit ${schedule.name}`, () => scheduleService.publishAuditLog(thingsboardClient, emqxClient, schedule, 'end', {
+                                            holdingCommands: supersededCommands.filter(cmd => cmd.fc === 6),
+                                            coilCommands: supersededCommands.filter(cmd => cmd.fc === 5),
+                                        }, false, 'off_retry_superseded', { runId: supersededRunId !== null && supersededRunId !== void 0 ? supersededRunId : undefined, steps: [] }));
+                                    }
                                     if (statusChanged) {
                                         // ADR-033: "started" only after the start verify passed; a miss is reported by
                                         // the verify-fail notifications that emitStartSideEffects sends below.
@@ -724,11 +740,6 @@ module.exports = function (RED) {
                         }
                         else if (schedule.status === "running" && isDue) {
                             // Schedule still running and still due — no action needed
-                            if ((0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name))) {
-                                // The next window of a recurring schedule came while the last OFF still failed:
-                                // that window is not started and the OFF retry waits until it ends.
-                                debugLog(`Schedule ${schedule.name} is due again while its OFF retry is pending; window not started`);
-                            }
                         }
                         else if (schedule.status === "running" && !isDue) {
                             if (!(0, schedule_tick_guard_1.tryBeginScheduleTransition)(globalContext, schedule.name, "finish")) {
@@ -740,11 +751,12 @@ module.exports = function (RED) {
                                 delete lastCheckTimestamps[schedule.name];
                                 globalContext.set("scheduleLastCheckTimestamps", lastCheckTimestamps);
                                 const storedCommands = scheduleService.getActiveCommands(schedule.name);
-                                // A restart cleared the active commands of a run that is still running: its OFF
-                                // is rebuilt from the schedule, or the outputs it turned ON would stay ON.
+                                // SCHEDULE_OFF_RETRY on: a restart cleared the active commands of a run that is still
+                                // running, so its OFF is rebuilt from the schedule or the outputs it turned ON would
+                                // stay ON. Off: only the stored commands are written.
                                 // ARBITER_MODE=enforce: the run's claims are released (water-hammer order) and the
                                 // arbiter turns its managed coils off; only the other commands are written here.
-                                const arbiterFinish = await scheduleService.beginScheduleFinish(schedule.name, storedCommands.length > 0
+                                const arbiterFinish = await scheduleService.beginScheduleFinish(schedule.name, storedCommands.length > 0 || !offRetryOn
                                     ? storedCommands
                                     : (0, schedule_finish_1.rebuildOffCommands)(scheduleService.mapScheduleToModbus(schedule)));
                                 const activeCommands = arbiterFinish.commands;
@@ -765,7 +777,7 @@ module.exports = function (RED) {
                                 // An earlier OFF of this run failed: write only the commands still active, but
                                 // report the first attempt's full list once the OFF passed.
                                 const eventRunId = (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name);
-                                const offRetry = storedCommands.length > 0
+                                const offRetry = offRetryOn && storedCommands.length > 0
                                     ? (0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, eventRunId)
                                     : null;
                                 const allResetCommands = (_c = offRetry === null || offRetry === void 0 ? void 0 : offRetry.commands) !== null && _c !== void 0 ? _c : scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
@@ -785,7 +797,11 @@ module.exports = function (RED) {
                                 }
                                 await arbiterFinish.complete(finishReport);
                                 const finish = (0, schedule_finish_1.decideFinish)({ allSuccessful: resetSuccessful, report: finishReport }, writeCommands);
-                                if (!finish.done) {
+                                if (!finish.done && !offRetryOn) {
+                                    // Flag off: the run finishes below and the verify-fail notifications report the miss.
+                                    node.warn(`❌ OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), SCHEDULE_OFF_RETRY is off: run finished`);
+                                }
+                                if (!finish.done && offRetryOn) {
                                     // Not completed: the run stays running and the next tick retries only these.
                                     scheduleService.storeActiveCommands(schedule.name, finish.retainCommands);
                                     node.warn(`❌ OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), retrying next tick`);
@@ -800,7 +816,9 @@ module.exports = function (RED) {
                                 }
                                 (0, schedule_finish_1.clearOffFailure)(globalContext, schedule.name);
                                 // Outbox only; a no-op unless this schedule's OFF-failed alarm is raised (also after a restart).
-                                await sideEffect(`off-failed alarm clear ${schedule.name}`, () => scheduleService.clearOffFailedAlarm(schedule, eventRunId));
+                                if (finish.done) {
+                                    await sideEffect(`off-failed alarm clear ${schedule.name}`, () => scheduleService.clearOffFailedAlarm(schedule, eventRunId));
+                                }
                                 // After retries the end audit also lists the keys that passed on the failed attempts.
                                 finishReport = (0, schedule_finish_1.offReportForAudit)(offRetry, finishReport);
                                 scheduleService.clearActiveCommands(schedule.name);
@@ -845,8 +863,9 @@ module.exports = function (RED) {
                     // This runs on every input trigger and handles cases where reset failed but devices were manually turned off
                     try {
                         // A run whose OFF failed is retried by its finish branch, not finished here on a read.
+                        const offRetryOn = scheduleService.offRetryEnabled();
                         const recoverableSchedules = schedules.filter((schedule) => !(0, schedule_tick_guard_1.isScheduleTransitionInFlight)(globalContext, schedule.name)
-                            && !(0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name)));
+                            && !(offRetryOn && (0, schedule_finish_1.pendingOffRetry)(globalContext, schedule.name, (0, schedule_run_identity_1.activeRunId)(globalContext, schedule.name))));
                         await scheduleService.checkAndRecoverStuckSchedules(modbusClient, recoverableSchedules);
                     }
                     catch (error) {

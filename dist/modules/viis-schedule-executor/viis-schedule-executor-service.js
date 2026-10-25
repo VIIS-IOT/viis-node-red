@@ -1205,10 +1205,12 @@ let ScheduleService = class ScheduleService {
             // Get the commands that should have been reset
             const storedCommands = this.getActiveCommands(schedule.name);
             if (storedCommands.length === 0) {
-                // A restart cleared the active commands, but the outputs may still be ON: write the
-                // schedule's OFF before finishing. A failed OFF stays active and is retried.
+                // SCHEDULE_OFF_RETRY on: a restart cleared the active commands, but the outputs may still
+                // be ON, so write the schedule's OFF before finishing; a failed OFF stays active and is
+                // retried. Off: the run is finished without a write.
                 // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
-                const arbiterFinish = await this.beginScheduleFinish(schedule.name, (0, schedule_finish_1.rebuildOffCommands)(this.mapScheduleToModbus(schedule)));
+                const rebuildOff = this.offRetryEnabled();
+                const arbiterFinish = await this.beginScheduleFinish(schedule.name, rebuildOff ? (0, schedule_finish_1.rebuildOffCommands)(this.mapScheduleToModbus(schedule)) : []);
                 const offCommands = arbiterFinish.commands;
                 if (offCommands.length === 0) {
                     await arbiterFinish.complete(null);
@@ -1226,7 +1228,8 @@ let ScheduleService = class ScheduleService {
                     }
                 }
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
-                this.clearScheduleConfigValues(schedule.name);
+                if (rebuildOff)
+                    this.clearScheduleConfigValues(schedule.name);
                 this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
@@ -1313,6 +1316,15 @@ let ScheduleService = class ScheduleService {
                 }
             }
         }
+    }
+    /**
+     * Flag `SCHEDULE_OFF_RETRY` (device1.json `featureFlags`, default off), read on every call so a config
+     * reload applies at the next tick. On: a failed schedule OFF is retried every tick and a restart that
+     * spans a window end writes the schedule's OFF again. Off: the pre-retry behaviour (a failed OFF finishes
+     * the run with a `verify_failed` notification, no OFF after a restart).
+     */
+    offRetryEnabled() {
+        return this.globalHelper ? this.globalHelper.getBooleanEnvVar('SCHEDULE_OFF_RETRY', false) : false;
     }
     /**
      * ARBITER_MODE=enforce: the run's OFF without its managed coils, with the claim release in water-hammer

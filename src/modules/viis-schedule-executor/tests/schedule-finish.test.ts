@@ -11,6 +11,7 @@ import {
     pendingOffRetry,
     rebuildOffCommands,
     retryNeedsImpliedPumps,
+    supersedesOffRetry,
 } from '../schedule-finish';
 import { ExecutionReport, KeyOutcome } from '../schedule-execution-types';
 import { ModbusCmd } from '../type';
@@ -127,8 +128,10 @@ describe('OFF after a restart that spanned the window end', () => {
         expect(rebuildOffCommands({ coilCommands: [], holdingCommands: [] })).toEqual([]);
     });
 
-    function stuckRecoveryService() {
+    // SCHEDULE_OFF_RETRY is off by default; `retry: true` is the flag in global context.
+    function stuckRecoveryService(retry = true) {
         const store = memoryStore();
+        if (retry) store.set('schedule_off_retry', 'true');
         const node = { context: () => ({ global: store }), warn: jest.fn() } as any;
         const service = new ScheduleService(node);
         jest.spyOn(service, 'mapScheduleToModbus').mockReturnValue({ coilCommands: [valve1], holdingCommands: [timeValve1], configParameters: [] });
@@ -151,6 +154,16 @@ describe('OFF after a restart that spanned the window end', () => {
         expect(service.updateScheduleStatus).toHaveBeenCalledWith(stuck, 'finished');
     });
 
+    test('SCHEDULE_OFF_RETRY off: stuck recovery finishes the run without writing an OFF', async () => {
+        const service = stuckRecoveryService(false);
+        const reset = jest.spyOn(service, 'resetModbusCommands');
+
+        await service.checkAndRecoverStuckSchedules({} as any, [stuck]);
+
+        expect(reset).not.toHaveBeenCalled();
+        expect(service.updateScheduleStatus).toHaveBeenCalledWith(stuck, 'finished');
+    });
+
     test('stuck recovery whose OFF failed keeps the run running with the failed commands', async () => {
         const service = stuckRecoveryService();
         jest.spyOn(service, 'resetModbusCommands')
@@ -161,5 +174,20 @@ describe('OFF after a restart that spanned the window end', () => {
         expect(service.updateScheduleStatus).not.toHaveBeenCalled();
         expect(service.sendNotificationToBackend).not.toHaveBeenCalled();
         expect(service.getActiveCommands('s1')).toEqual([{ ...valve1, value: false }]);
+    });
+});
+
+describe('a due window supersedes a pending OFF retry', () => {
+    const pending = { runId: 'r1', commands: [], passedSteps: [] };
+
+    test('flag on: a running schedule that is due again with a pending retry starts its window', () => {
+        expect(supersedesOffRetry(true, 'running', true, pending)).toBe(true);
+    });
+
+    test('flag off, no pending retry, not due or not running: nothing is superseded', () => {
+        expect(supersedesOffRetry(false, 'running', true, pending)).toBe(false);
+        expect(supersedesOffRetry(true, 'running', true, null)).toBe(false);
+        expect(supersedesOffRetry(true, 'running', false, pending)).toBe(false);
+        expect(supersedesOffRetry(true, 'finished', true, pending)).toBe(false);
     });
 });

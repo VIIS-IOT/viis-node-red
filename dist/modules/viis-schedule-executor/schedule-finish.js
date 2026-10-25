@@ -9,6 +9,7 @@ exports.offFailedAlarmKey = offFailedAlarmKey;
 exports.pendingOffRetry = pendingOffRetry;
 exports.noteOffFailure = noteOffFailure;
 exports.offReportForAudit = offReportForAudit;
+exports.supersedesOffRetry = supersedesOffRetry;
 exports.clearOffFailure = clearOffFailure;
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
 /** OFF writes bypass the protection gate, so `blocked` should not happen; if it does, the coil is not OFF. */
@@ -86,6 +87,14 @@ function offReportForAudit(retry, finalReport) {
     if (!retry)
         return finalReport;
     return Object.assign(Object.assign({}, finalReport), { steps: [...((_a = retry.passedSteps) !== null && _a !== void 0 ? _a : []), ...finalReport.steps] });
+}
+/**
+ * Flag `SCHEDULE_OFF_RETRY` (device1.json `featureFlags`, default off): the next window of a recurring
+ * schedule came while the last OFF still fails. The pending retry is dropped and the window starts, so a coil
+ * the PLC holds ON cannot stop every later irrigation. Off: no retry exists, nothing is superseded.
+ */
+function supersedesOffRetry(retryEnabled, status, isDue, pending) {
+    return retryEnabled && status === 'running' && isDue && pending !== null;
 }
 /** Forget the OFF failure once the OFF passed; true when an earlier attempt had failed. */
 function clearOffFailure(store, scheduleName) {
