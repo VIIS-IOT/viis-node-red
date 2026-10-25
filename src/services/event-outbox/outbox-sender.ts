@@ -3,6 +3,9 @@
  *
  * - A transient failure (network, 5xx, 408, 409 = backend inbox still processing the event, 429) stops the
  *   batch so nothing overtakes the failed row, and backs it off `min(maxBackoff, 5 s × 2^attempts)`.
+ * - A row that keeps failing is marked dead after `MAX_ATTEMPTS` (20) attempts or `MAX_ROW_AGE_MS` (24 h)
+ *   since it was created, so one poison row cannot block every later event forever. The next flush
+ *   schedules a snapshot, because the dropped event may have been a state-alarm raise/clear.
  * - Any other 4xx (token rejected, payload refused) marks the row dead and moves on: one bad row must not
  *   block every later event.
  * - The first success after a failure posts `snapshot-by-token` with the gateway's Pending state alarms,
@@ -43,6 +46,10 @@ export interface FlushResult {
 const BASE_BACKOFF_MS = 5000;
 const SENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const RETRYABLE_4XX = new Set([408, 409, 429]);
+/** A row is dead after this many failed attempts ... */
+export const MAX_ATTEMPTS = 20;
+/** ... or once it is this old (since `created_at`) and still failing. */
+export const MAX_ROW_AGE_MS = 24 * 60 * 60 * 1000;
 
 const consoleLogger: OutboxLogger = {
     log: m => console.log(m),
@@ -133,6 +140,19 @@ export class OutboxSender {
                 continue;
             }
             if (outcome.retry) {
+                const ageMs = now.getTime() - new Date(row.created_at).getTime();
+                if (attempts >= MAX_ATTEMPTS || ageMs >= MAX_ROW_AGE_MS) {
+                    // Poison row (or a backend that never took it): drop it so the rows behind it flow, and
+                    // let the snapshot repair the state alarm it may have carried.
+                    await this.outbox.markDead(row.seq, attempts, outcome.error);
+                    this.logger.error(
+                        `[OUTBOX] ${describe(row)} dead after ${attempts} attempt(s), ${Math.round(ageMs / 3_600_000)} h old: ${outcome.error}`
+                    );
+                    this.failing = true;
+                    this.snapshotPending = true;
+                    result.dead++;
+                    continue;
+                }
                 // Exponential backoff with ±20 % jitter, so gateways that lost the backend together do not
                 // all retry in the same second when it is back.
                 const base = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** (row.attempts ?? 0));

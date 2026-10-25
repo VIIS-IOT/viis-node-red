@@ -99,6 +99,44 @@ describe("OutboxSender", () => {
         expect((new OutboxSender(setup().outbox, env, { logger: quiet }) as any).maxBackoffMs).toBe(60_000);
     });
 
+    it("a row answered 5xx forever is dead after 20 attempts and the next row is delivered", async () => {
+        const { outbox, sender, rows, logs } = setup();
+        await outbox.enqueue({ msg: "poison" });
+        await outbox.enqueue({ msg: "e2" });
+        post.mockImplementation(async (url: string, body: any) => {
+            if (url === EVENT_URL && body.msg === "poison") throw httpError(500);
+            return { status: 200 };
+        });
+
+        let now = later();
+        for (let i = 1; i < 20; i++) {
+            expect(await sender.flush(now)).toMatchObject({ failed: 1, dead: 0, sent: 0 });
+            expect(rows()[0]).toMatchObject({ attempts: i, dead: false });
+            now = new Date(rows()[0].next_attempt_at.getTime());
+        }
+        // the 20th failed attempt kills the row; e2 goes out in the same pass and the snapshot repairs state
+        expect(await sender.flush(now)).toEqual({ sent: 1, failed: 0, dead: 1, snapshotSent: true });
+        expect(rows()[0]).toMatchObject({ dead: true, attempts: 20, sent_at: null });
+        expect(rows()[0].last_error).toContain("500");
+        expect(rows()[1].sent_at).not.toBeNull();
+        expect(logs.some(l => l.includes("dead after 20 attempt(s)") && l.includes("HTTP 500"))).toBe(true);
+    });
+
+    it("a row older than 24 h that fails again is dead, whatever its attempts", async () => {
+        const { outbox, sender, rows } = setup();
+        await outbox.enqueue({ msg: "old" });
+        await outbox.enqueue({ msg: "e2" });
+        const now = later();
+        rows()[0].created_at = new Date(now.getTime() - 25 * 3_600_000);
+        post.mockImplementation(async (url: string, body: any) => {
+            if (url === EVENT_URL && body.msg === "old") throw httpError(503);
+            return { status: 200 };
+        });
+
+        expect(await sender.flush(now)).toMatchObject({ sent: 1, failed: 0, dead: 1 });
+        expect(rows()[0]).toMatchObject({ dead: true, attempts: 1 });
+    });
+
     it("4xx other than 408/409/429 marks the row dead and moves on", async () => {
         const { outbox, sender, rows, eventPosts } = setup();
         for (const n of [1, 2, 3]) await outbox.enqueue({ msg: `e${n}` });
