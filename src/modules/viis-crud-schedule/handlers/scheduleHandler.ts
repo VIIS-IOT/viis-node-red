@@ -342,6 +342,12 @@ export class ScheduleHandler {
                 
                 if (!modbusClient) {
                     this.node.warn(`⚠️ No Modbus client available, skipping finish sequence for ${name}`);
+                    // The run's claims still go: with the arbiter enforcing, its managed coils are not this node's to write.
+                    const finishNoClient = await scheduleService.beginScheduleFinish(
+                        name,
+                        scheduleService.mapScheduleToModbus({ ...existingSchedule, status: 'finished' as const }).coilCommands
+                    );
+                    await finishNoClient.complete(null);
                 } else {
                     // Create a finish schedule object with status = 'finished'
                     const finishSchedule = { ...existingSchedule, status: 'finished' as const };
@@ -349,8 +355,22 @@ export class ScheduleHandler {
                     // Get commands to reset all coils/registers
                     const commands = scheduleService.mapScheduleToModbus(finishSchedule);
                     
-                    // Execute finish sequence (pumps/power off first, then valves)
-                    await scheduleService.executeModbusCommands(modbusClient, commands, finishSchedule);
+                    // ARBITER_MODE=enforce: the schedule's claims on managed coils are released through the arbiter
+                    // (the same path as a run that ends by itself, water-hammer order included) and only the
+                    // unmanaged coils are written here. Writing a managed coil OFF directly would keep the claim
+                    // alive and the arbiter would switch it back ON (OFF -> ON -> OFF). Off/observe: unchanged.
+                    const arbiterFinish = await scheduleService.beginScheduleFinish(name, commands.coilCommands);
+                    let finishReport = null;
+                    try {
+                        // Execute finish sequence (pumps/power off first, then valves)
+                        finishReport = await scheduleService.executeModbusCommands(
+                            modbusClient,
+                            { ...commands, coilCommands: arbiterFinish.commands },
+                            finishSchedule
+                        );
+                    } finally {
+                        await arbiterFinish.complete(finishReport);
+                    }
                     
                     this.node.warn(`✅ FINISH SEQUENCE COMPLETE: ${existingSchedule.label || name} | All Modbus commands reset`);
                     
