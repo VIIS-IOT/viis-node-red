@@ -64,4 +64,25 @@ describe('ScheduleSyncHandler deleted plans', () => {
             ['run-1003', 1],
         ]);
     });
+
+    // The server sends the key as `id` and the label as `name`; keying on `name` deleted every schedule each sync.
+    it('keeps a schedule the server still lists under its id', async () => {
+        const serverSchedule = {
+            id: 'sched-kept', name: 'Ca sáng', status: 'running', enable: true, is_deleted: 0, is_from_local: 0,
+            action: '{}', start_time: '08:00:00', end_time: '09:00:00', interval: '0,1,2,3,4,5,6',
+        };
+        getAllSchedulePlans.mockResolvedValue({
+            result: { data: [{ name: 'plan-kept', label: 'Kept', is_deleted: 0, enable: 1, schedules: [serverSchedule] }] },
+        });
+        planRepo.find.mockResolvedValue([{ ...kept }]);
+        scheduleRepo.find.mockResolvedValue([{ name: 'sched-kept', schedule_plan_id: 'plan-kept', is_deleted: 0 }]);
+        scheduleRepo.findOneBy.mockResolvedValue({ name: 'sched-kept', schedule_plan_id: 'plan-kept', is_deleted: 0, is_from_local: 0 });
+        const dbService = { getSchedulePlanRepository: () => planRepo, getScheduleRepository: () => scheduleRepo };
+        const handler = new ScheduleSyncHandler(dbService as any, { context: () => ({}) } as any, 'token');
+
+        await handler.syncAll();
+
+        const deletions = scheduleRepo.save.mock.calls.filter(([s]: any[]) => s.is_deleted === 1);
+        expect(deletions).toEqual([]);
+    });
 });

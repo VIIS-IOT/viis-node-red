@@ -488,10 +488,11 @@ export class ScheduleSyncHandler {
                 return;
             }
 
-            // Create a map of server schedule names for fast lookup
+            // The server sends the schedule key as `id` (its `name` is the label). Keying on `name` marked every local
+            // schedule deleted on each sync until syncSchedule restored it, so a running one looked deleted mid-run.
             const serverScheduleMap = new Map<string, boolean>();
             serverSchedules.forEach(schedule => {
-                serverScheduleMap.set(schedule.name, true);
+                serverScheduleMap.set(schedule.id ?? schedule.name, true);
             });
 
             // Find schedules that exist locally but not on server
