@@ -60,6 +60,8 @@ export = function(RED: NodeAPI) {
         // Load credentials from JSON config via global context (recommended approach)
         const globalHelper = new GlobalContextHelper(node.context());
         let accessToken: string;
+        // Device the token belongs to; unknown when a token is configured on the node (legacy mode).
+        let syncDeviceId = '';
 
         if (config.useAutoLoadedCredentials) {
             // Auto-load from JSON config (loaded by env-loader node)
@@ -72,12 +74,14 @@ export = function(RED: NodeAPI) {
             }
             
             const deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            syncDeviceId = deviceId;
             logger.info(node, 'Credentials auto-loaded from JSON config');
             logger.info(node, `Device ID: ${deviceId.substring(0, 8)}...`);
             logger.info(node, `Access Token: ${accessToken.substring(0, 8)}...`);
         } else {
             // Legacy mode: Use config or fallback to environment
             accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!config.accessToken) syncDeviceId = globalHelper.getEnvVar('DEVICE_ID', '');
             if (!accessToken) {
                 node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found');
                 node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
@@ -103,7 +107,7 @@ export = function(RED: NodeAPI) {
                 logger.info(node, 'Database initialized successfully');
 
                 // Initialize the sync handler
-                scheduleSyncHandler = new ScheduleSyncHandler(dbService, node, accessToken);
+                scheduleSyncHandler = new ScheduleSyncHandler(dbService, node, accessToken, syncDeviceId);
                 
                 // Update node status with initial state
                 updateNodeStatus('ready');

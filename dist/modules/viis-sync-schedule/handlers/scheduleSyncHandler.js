@@ -20,8 +20,10 @@ class ScheduleSyncHandler {
      * @param dbService - Database service for repository access
      * @param node - Node-RED node instance
      * @param accessToken - Device access token for authentication
+     * @param deviceId - DEVICE_ID of the device the token belongs to, '' when unknown
      */
-    constructor(dbService, node, accessToken) {
+    constructor(dbService, node, accessToken, deviceId = '') {
+        this.deviceId = deviceId;
         this.planRepo = dbService.getSchedulePlanRepository();
         this.scheduleRepo = dbService.getScheduleRepository();
         this.node = node;
@@ -348,13 +350,27 @@ class ScheduleSyncHandler {
      * device that is not deleted, so a missing plan was deleted there; without this its schedules kept running here.
      * Plans created on the gateway and not yet uploaded (`is_from_local = 1`) are left alone.
      *
+     * Only this device's plans are checked: one gateway DB can hold several devices (gateway 115 runs nodered1 and
+     * nodered2 on one MySQL), and another device's plans are never in this device's server list. The device comes from
+     * the server's answer, else from the node's DEVICE_ID; when neither is known nothing is marked.
+     *
      * @param serverPlans - Every plan the server returned for this device
      * @returns Promise that resolves when missing plans are processed
      */
     async detectDeletedPlans(serverPlans) {
         try {
+            const serverDeviceIds = new Set(serverPlans.map(plan => plan.device_id).filter(Boolean));
+            if (serverDeviceIds.size > 1) {
+                logger_1.logger.warn(this.node, `Server returned plans of ${serverDeviceIds.size} devices; skipping deleted-plan check`);
+                return;
+            }
+            const deviceId = [...serverDeviceIds][0] || this.deviceId;
+            if (!deviceId) {
+                logger_1.logger.warn(this.node, 'Device id unknown; skipping deleted-plan check');
+                return;
+            }
             const serverPlanNames = new Set(serverPlans.map(plan => plan.name));
-            const localPlans = await this.planRepo.find();
+            const localPlans = await this.planRepo.find({ where: { device_id: deviceId } });
             // Plans deleted earlier by RPC only had the plan row marked, so their schedules are swept here too.
             const deletedPlans = localPlans.filter(plan => plan.is_deleted === 1
                 || (plan.is_from_local !== 1 && !serverPlanNames.has(plan.name)));
