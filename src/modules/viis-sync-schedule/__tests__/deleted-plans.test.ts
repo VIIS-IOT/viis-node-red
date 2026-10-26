@@ -20,6 +20,8 @@ describe('ScheduleSyncHandler deleted plans', () => {
     const kept = { name: 'plan-kept', label: 'Kept', is_deleted: 0, is_from_local: 0, enable: 1 };
     const gone = { name: 'plan-gone', label: 'Gone', is_deleted: 0, is_from_local: 0, enable: 1 };
     const localOnly = { name: 'plan-local', label: 'Local', is_deleted: 0, is_from_local: 1, enable: 1 };
+    // Deleted by the delete-schedulePlan RPC, which marks only the plan row.
+    const deletedByRpc = { name: 'plan-rpc', label: 'Rpc', is_deleted: 1, is_from_local: 0, enable: 1 };
 
     const planRepo = {
         findOneBy: jest.fn(),
@@ -38,12 +40,15 @@ describe('ScheduleSyncHandler deleted plans', () => {
             result: { data: [{ name: 'plan-kept', label: 'Kept', is_deleted: 0, enable: 1, schedules: [] }] },
         });
         planRepo.findOneBy.mockResolvedValue({ ...kept });
-        planRepo.find.mockResolvedValue([{ ...kept }, { ...gone }, { ...localOnly }]);
-        scheduleRepo.find.mockImplementation(async ({ where }: any) =>
-            where.schedule_plan_id === 'plan-gone' ? [{ name: 'run-1205', schedule_plan_id: 'plan-gone', is_deleted: 0 }] : []);
+        planRepo.find.mockResolvedValue([{ ...kept }, { ...gone }, { ...localOnly }, { ...deletedByRpc }]);
+        scheduleRepo.find.mockImplementation(async ({ where }: any) => {
+            if (where.schedule_plan_id === 'plan-gone') return [{ name: 'run-1205', schedule_plan_id: 'plan-gone', is_deleted: 0 }];
+            if (where.schedule_plan_id === 'plan-rpc') return [{ name: 'run-1003', schedule_plan_id: 'plan-rpc', is_deleted: 0 }];
+            return [];
+        });
     });
 
-    it('marks a plan missing on the server, and its schedules, as deleted', async () => {
+    it('marks a plan missing on the server as deleted and sweeps the schedules of every deleted plan', async () => {
         const dbService = { getSchedulePlanRepository: () => planRepo, getScheduleRepository: () => scheduleRepo };
         const handler = new ScheduleSyncHandler(dbService as any, { context: () => ({}) } as any, 'token');
 
@@ -54,6 +59,9 @@ describe('ScheduleSyncHandler deleted plans', () => {
         expect(savedPlans).toContainEqual(['plan-gone', 1]);
         expect(savedPlans).not.toContainEqual(['plan-local', 1]);
         expect(savedPlans).not.toContainEqual(['plan-kept', 1]);
-        expect(scheduleRepo.save.mock.calls.map(([s]: any[]) => [s.name, s.is_deleted])).toEqual([['run-1205', 1]]);
+        expect(scheduleRepo.save.mock.calls.map(([s]: any[]) => [s.name, s.is_deleted])).toEqual([
+            ['run-1205', 1],
+            ['run-1003', 1],
+        ]);
     });
 });

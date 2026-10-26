@@ -354,14 +354,18 @@ class ScheduleSyncHandler {
     async detectDeletedPlans(serverPlans) {
         try {
             const serverPlanNames = new Set(serverPlans.map(plan => plan.name));
-            const localPlans = await this.planRepo.find({ where: { is_deleted: 0 } });
-            const deletedPlans = localPlans.filter(plan => plan.is_from_local !== 1 && !serverPlanNames.has(plan.name));
+            const localPlans = await this.planRepo.find();
+            // Plans deleted earlier by RPC only had the plan row marked, so their schedules are swept here too.
+            const deletedPlans = localPlans.filter(plan => plan.is_deleted === 1
+                || (plan.is_from_local !== 1 && !serverPlanNames.has(plan.name)));
             for (const plan of deletedPlans) {
-                logger_1.logger.info(this.node, `Marking schedule plan ${plan.name} (${plan.label}) as deleted: not on the server`);
-                plan.is_deleted = 1;
-                plan.modified = (0, helper_1.adjustToUTC7)(new Date());
-                await this.planRepo.save(plan);
-                this.syncStats.plansUpdated++;
+                if (plan.is_deleted !== 1) {
+                    logger_1.logger.info(this.node, `Marking schedule plan ${plan.name} (${plan.label}) as deleted: not on the server`);
+                    plan.is_deleted = 1;
+                    plan.modified = (0, helper_1.adjustToUTC7)(new Date());
+                    await this.planRepo.save(plan);
+                    this.syncStats.plansUpdated++;
+                }
                 const schedules = await this.scheduleRepo.find({ where: { schedule_plan_id: plan.name, is_deleted: 0 } });
                 for (const schedule of schedules) {
                     schedule.is_deleted = 1;
