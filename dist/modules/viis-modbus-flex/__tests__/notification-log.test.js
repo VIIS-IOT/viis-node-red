@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 /**
  * When a Modbus board trips its circuit breaker, viis-modbus-flex posts an alert to
- * `/api/v2/notification-by-token?device_access_token=<token>`. The token is the device's MQTT
+ * `/api/v2/alarm/notification-by-token?device_access_token=<token>`. The token is the device's MQTT
  * credential: the request needs it in the query, but no log line may contain it.
  */
 const events_1 = require("events");
@@ -84,7 +84,7 @@ describe("viis-modbus-flex alert notification logging", () => {
         .join("\n");
     const circuitBreakerOpen = { status: "circuit-breaker-open", error: "timeout", recoveryAt: Date.now() + 60000, failedCount: 5 };
     const startWithToken = async (token) => {
-        flex = await startFlexNode({ device_access_token: token, device_id: "device-1", backend_url: BACKEND_URL });
+        flex = await startFlexNode({ device_access_token: token, device_id: "device-1", server_url: BACKEND_URL });
     };
     beforeEach(() => {
         jest.clearAllMocks();
@@ -100,9 +100,9 @@ describe("viis-modbus-flex alert notification logging", () => {
         await startWithToken(TOKEN);
         await flex.emitStatus(circuitBreakerOpen);
         expect(fetchSpy).toHaveBeenCalledTimes(1);
-        expect(fetchSpy.mock.calls[0][0]).toBe(`${BACKEND_URL}/api/v2/notification-by-token?device_access_token=${TOKEN}`);
+        expect(fetchSpy.mock.calls[0][0]).toBe(`${BACKEND_URL}/api/v2/alarm/notification-by-token?device_access_token=${TOKEN}`);
         expect(fetchSpy.mock.calls[0][1]).toMatchObject({ method: "POST", headers: { "Content-Type": "application/json" } });
-        expect(loggedText()).toContain(`[NOTIFICATION] Sending alert to: ${BACKEND_URL}/api/v2/notification-by-token?device_access_token=***`);
+        expect(loggedText()).toContain(`[NOTIFICATION] Sending alert to: ${BACKEND_URL}/api/v2/alarm/notification-by-token?device_access_token=***`);
         expect(loggedText()).toContain("[NOTIFICATION] Alert sent successfully");
         expect(loggedText()).not.toContain(TOKEN);
     });

@@ -4,6 +4,11 @@
  * and writes to device*.json file. env-loader's FileWatcher auto-detects the change
  * and reloads into global context.
  *
+ * Off unless the gateway sets `SYNC_FULL_CONFIG_ENABLED` (device1.json `featureFlags`, read per request): the
+ * cloud copy of many gateways is only a partial projection, so a sync would replace a working file. When it
+ * is on, a download for another device or without the boards the file has is refused, and the gateway-owned
+ * sections (`actuatorPolicy`, local `featureFlags`) are merged into it instead of replaced.
+ *
  * @author VIIS Team
  * @version 1.0.1
  */
@@ -20,7 +25,10 @@ import { resolveViisBackendUrl } from '../../ultils/resolve-backend-url';
 import {
     resolveThingsboardMqttBroker,
     buildDeviceRpcSubscribeTopic,
+    buildDeviceRpcResponseTopic,
+    extractRpcCommandId,
 } from '../../core/demeter-mqtt-topics';
+import { backupConfig, mergeGatewayOwned, refuseDownloadedConfig, unwrapConfig } from './sync-config-merge';
 
 interface ViisSyncConfigNodeDef extends NodeDef {
     configFile: string;
@@ -131,7 +139,9 @@ export = function (RED: NodeAPI) {
         function handleMqttMessage(event: any) {
             try {
                 const { topic, message } = event.message || event;
-                if (!topic || !topic.includes('rpc/request/')) return;
+                // Demeter publishes RPCs on v1/device/<id>/rpc/<commandId> (answers on rpc/response/…);
+                // the ThingsBoard-style rpc/request/<id> form is kept for older brokers.
+                if (!topic || !/\/rpc\/(request\/)?[^/]+$/.test(topic) || topic.includes('/rpc/response/')) return;
 
                 const rawMsg = typeof message === 'string' ? message : message.toString();
                 const parsed = JSON.parse(rawMsg);
@@ -139,14 +149,42 @@ export = function (RED: NodeAPI) {
 
                 log.info(node, `Received ${RPC_METHOD} RPC from topic: ${topic}`);
                 log.info(node, `RPC params: ${JSON.stringify(parsed.params || {})}`);
-                handleSync(parsed.params);
+                handleSync(parsed.params, extractRpcCommandId(parsed, topic));
             } catch (err) {
                 // Ignore non-JSON or unrelated messages
             }
         }
 
+        /** Answers the RPC on `rpc/response/<commandId>` so the caller does not wait for a timeout. */
+        async function answerRpcFailed(commandId: string | null | undefined, error: string) {
+            if (!commandId || !mqttClient) return;
+            try {
+                await mqttClient.publish(
+                    buildDeviceRpcResponseTopic(deviceId, commandId, globalHelper),
+                    JSON.stringify({ ts: Date.now(), success: false, status: 'FAILED', method: RPC_METHOD, error }),
+                );
+            } catch (err) {
+                log.warn(node, `Failed to answer ${RPC_METHOD} RPC: ${(err as Error).message}`);
+            }
+        }
+
+        function readLocalConfig(): any | null {
+            try {
+                return unwrapConfig(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+            } catch {
+                return null;
+            }
+        }
+
         // ── Core sync logic ───────────────────────────────────────────────────
-        async function handleSync(params?: any) {
+        async function handleSync(params?: any, commandId?: string | null) {
+            // Read per request: the flag is hot-reloaded with the rest of the config.
+            if (!globalHelper.getBooleanEnvVar('SYNC_FULL_CONFIG_ENABLED', false)) {
+                log.warn(node, `${RPC_METHOD} ignored (SYNC_FULL_CONFIG_ENABLED=false)`);
+                await answerRpcFailed(commandId, 'sync_full_config_disabled');
+                return;
+            }
+
             if (isSyncing) {
                 log.warn(node, 'Sync already in progress, skipping');
                 return;
@@ -159,7 +197,12 @@ export = function (RED: NodeAPI) {
                 // Step 1: Build config URL
                 // Prefer editor override, then common.json via env-loader (lazy — after node construct)
                 const backendUrl = resolveBackendUrl();
-                const configUrl = `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
+                // The backend's sync-full-config RPC carries a signed export URL (tenantId, exp, sig);
+                // the export route refuses an unsigned GET. Keep its path + query but reach the
+                // backend by the gateway's own origin: the backend signs with its public host, which
+                // is not always how this gateway reaches it (local stacks, private networks).
+                const configUrl = signedConfigUrl(backendUrl, params?.configUrl)
+                    ?? `${backendUrl}/api/v2/device/env-config/${deviceId}/export-nodered`;
 
                 log.info(node, `Config URL: ${configUrl}`);
                 log.info(node, `Device ID in URL: ${deviceId}`);
@@ -172,40 +215,48 @@ export = function (RED: NodeAPI) {
                 log.info(node, `Response keys: ${fetchedConfig ? Object.keys(fetchedConfig).join(', ') : 'null'}`);
 
                 // Unwrap { result: { ... } } wrapper if present (backend API response format)
-                const config = fetchedConfig?.result || fetchedConfig;
+                const downloaded = fetchedConfig?.result || fetchedConfig;
 
-                log.info(node, `Config deviceIdentity.DEVICE_ID: ${config?.deviceIdentity?.DEVICE_ID || 'MISSING'}`);
+                log.info(node, `Config deviceIdentity.DEVICE_ID: ${downloaded?.deviceIdentity?.DEVICE_ID || 'MISSING'}`);
 
                 // Step 3: Validate
-                if (!config?.deviceIdentity?.DEVICE_ID) {
+                if (!downloaded?.deviceIdentity?.DEVICE_ID) {
                     throw new Error('Invalid config: missing deviceIdentity.DEVICE_ID');
                 }
-                if (!config?.deviceIdentity?.DEVICE_ACCESS_TOKEN) {
+                if (!downloaded?.deviceIdentity?.DEVICE_ACCESS_TOKEN) {
                     throw new Error('Invalid config: missing deviceIdentity.DEVICE_ACCESS_TOKEN');
                 }
 
-                log.info(node, `Config fetched for device: ${config.deviceIdentity.DEVICE_ID}`);
+                log.info(node, `Config fetched for device: ${downloaded.deviceIdentity.DEVICE_ID}`);
+
+                // Step 3b: Refuse a download that would swap the identity or drop the boards, then keep
+                // the gateway-owned sections of the file that is running.
+                const currentConfig = readLocalConfig();
+                const refusal = refuseDownloadedConfig(
+                    downloaded,
+                    currentConfig,
+                    String(globalHelper.getEnvVar('DEVICE_ID', deviceId) || deviceId),
+                );
+                if (refusal) {
+                    log.error(node, `Config refused (${refusal}); ${configFile} left untouched`);
+                    node.status({ fill: 'red', shape: 'ring', text: refusal });
+                    node.send({ payload: { synced: false, error: refusal } });
+                    await answerRpcFailed(commandId, refusal);
+                    return;
+                }
+                const config = mergeGatewayOwned(downloaded, currentConfig);
 
                 // Step 4: Check if config actually changed
                 let configChanged = true;
-                if (fs.existsSync(configPath)) {
-                    try {
-                        const currentContent = fs.readFileSync(configPath, 'utf8');
-                        const currentConfig = JSON.parse(currentContent);
-                        if (JSON.stringify(currentConfig) === JSON.stringify(config)) {
-                            configChanged = false;
-                            log.info(node, 'Config unchanged, skipping write');
-                        }
-                    } catch {
-                        // If current file is invalid, we'll overwrite it
-                    }
+                if (currentConfig && JSON.stringify(currentConfig) === JSON.stringify(config)) {
+                    configChanged = false;
+                    log.info(node, 'Config unchanged, skipping write');
                 }
 
                 if (configChanged) {
-                    // Step 5: Backup current file
+                    // Step 5: Backup current file (timestamped, last 5 kept)
                     if (fs.existsSync(configPath)) {
-                        const backupPath = `${configPath}.bak`;
-                        fs.copyFileSync(configPath, backupPath);
+                        const backupPath = backupConfig(configPath);
                         log.info(node, `Backed up to ${backupPath}`);
                     }
 
@@ -242,6 +293,18 @@ export = function (RED: NodeAPI) {
         }
 
         // ── Fetch with retry + detailed error logging ────────────────────────
+        /** `${origin}${path}${query}` of the RPC's signed export URL, or null when it is absent/invalid. */
+        function signedConfigUrl(origin: string, raw: unknown): string | null {
+            if (typeof raw !== 'string' || !raw.trim()) return null;
+            try {
+                const url = new URL(raw);
+                if (!url.pathname.endsWith('/export-nodered')) return null;
+                return `${origin}${url.pathname}${url.search}`;
+            } catch {
+                return null;
+            }
+        }
+
         async function fetchWithRetry(url: string): Promise<any> {
             let lastError: Error | null = null;
             for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

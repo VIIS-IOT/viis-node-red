@@ -11,6 +11,8 @@ const mockSyncScheduleService = {
 // Mock repository
 const mockRepository = {
     findOne: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
+    query: jest.fn().mockResolvedValue(undefined),
     save: jest.fn().mockResolvedValue({}),
     createQueryBuilder: jest.fn(() => ({
         leftJoin: jest.fn().mockReturnThis(),
@@ -202,6 +204,56 @@ describe('Schedule Server Sync Status Tests', () => {
             const calls = mockSyncScheduleService.syncScheduleFromLocalToServer.mock.calls;
             expect(calls[0][0][0].status).toBe('running');
             expect(calls[1][0][0].status).toBe('finished');
+        });
+    });
+    // A status POST that fails (backend down at a window end, e.g. right after a reboot) used to be
+    // dropped, leaving the server row "running" for good (friction log 2026-10-24, E2E-E1).
+    describe('Status sync retry - unsynced rows', () => {
+        it('saves the row unsynced and acknowledges it only after the server took the status', async () => {
+            const ok = createTestSchedule('sync-ok', 'running');
+            // save() gets the live entity, which the acknowledge step later flips to 1: snapshot it.
+            const savedAs = [];
+            mockRepository.save.mockImplementation(async (row) => { savedAs.push(Number(row.is_synced)); return {}; });
+            mockSyncScheduleService.syncScheduleFromLocalToServer.mockResolvedValue(undefined);
+            await scheduleService.updateScheduleStatus(ok, 'finished');
+            expect(savedAs).toEqual([0]);
+            expect(ok.is_synced).toBe(1);
+            expect(mockRepository.query).toHaveBeenCalledWith(expect.stringMatching(/is_synced = 1/), ['sync-ok']);
+            jest.clearAllMocks();
+            savedAs.length = 0;
+            const bad = createTestSchedule('sync-bad', 'running');
+            mockSyncScheduleService.syncScheduleFromLocalToServer.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+            await scheduleService.updateScheduleStatus(bad, 'finished');
+            expect(savedAs).toEqual([0]);
+            expect(bad.is_synced).toBe(0);
+            expect(mockRepository.query).not.toHaveBeenCalled();
+        });
+        it('retryUnsyncedStatuses re-posts unsynced rows, throttled, and acknowledges the ones the server took', async () => {
+            const stale = Object.assign(Object.assign({}, createTestSchedule('stale-1', 'finished')), { is_synced: 0, is_from_local: 0 });
+            mockRepository.find.mockResolvedValue([stale]);
+            mockSyncScheduleService.syncScheduleFromLocalToServer.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+            await scheduleService.retryUnsyncedStatuses(1000);
+            expect(mockSyncScheduleService.syncScheduleFromLocalToServer).toHaveBeenCalledWith([stale]);
+            expect(mockRepository.query).not.toHaveBeenCalled();
+            // Inside the retry interval nothing is sent again.
+            await scheduleService.retryUnsyncedStatuses(1000 + 10000);
+            expect(mockSyncScheduleService.syncScheduleFromLocalToServer).toHaveBeenCalledTimes(1);
+            mockSyncScheduleService.syncScheduleFromLocalToServer.mockResolvedValueOnce(undefined);
+            await scheduleService.retryUnsyncedStatuses(1000 + 60000);
+            expect(mockSyncScheduleService.syncScheduleFromLocalToServer).toHaveBeenCalledTimes(2);
+            expect(mockRepository.query).toHaveBeenCalledWith(expect.stringMatching(/is_synced = 1/), ['stale-1']);
+        });
+        it('retryUnsyncedStatuses stops retrying a row the server rejected as older (409)', async () => {
+            const stale = Object.assign(Object.assign({}, createTestSchedule('stale-409', 'finished')), { is_synced: 0, is_from_local: 0 });
+            mockRepository.find.mockResolvedValue([stale]);
+            const conflict = Object.assign(new Error('Request failed with status code 409'), {
+                isAxiosError: true,
+                response: { status: 409 },
+            });
+            mockSyncScheduleService.syncScheduleFromLocalToServer.mockRejectedValueOnce(conflict);
+            await scheduleService.retryUnsyncedStatuses(5000);
+            expect(mockRepository.query).toHaveBeenCalledWith(expect.stringMatching(/is_synced = 1/), ['stale-409']);
+            expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('stale-409'));
         });
     });
     describe('Server Sync - Error Recovery', () => {

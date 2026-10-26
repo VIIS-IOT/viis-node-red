@@ -18,6 +18,8 @@ export interface RpcDeadlineContext {
     expired: boolean;
     /** Set once a terminal response (ACK/FAILED) was published for this request. */
     responded: boolean;
+    /** RPC envelope `source` (`manual` | `scenario` | `alarm_action`; missing = manual), for arbiter claims. */
+    source?: string;
 }
 
 const storage = new AsyncLocalStorage<RpcDeadlineContext>();

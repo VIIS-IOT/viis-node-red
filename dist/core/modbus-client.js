@@ -1299,6 +1299,15 @@ class ModbusClientCore extends events_1.EventEmitter {
     isConnectedCheck() {
         return this.isConnected;
     }
+    /**
+     * The circuit breaker tripped and the board is still not connected. The FSM state cannot tell: it leaves
+     * `circuit_breaker_open` within milliseconds, when a reconnect attempt already in flight moves it to
+     * `connecting`, so the breaker flag is the source of truth. The flag stays set for the 60 s recovery
+     * window even if a late attempt connects, hence the connection check.
+     */
+    isCircuitBreakerOpen() {
+        return this.circuitBreakerOpen && !this.isConnected;
+    }
     // Public method to manually trigger reconnection
     async reconnect() {
         this.node.warn("[MODBUS-RECONNECT] Manual reconnection requested");

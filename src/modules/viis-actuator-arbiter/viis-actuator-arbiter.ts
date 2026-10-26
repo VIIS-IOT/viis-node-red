@@ -1,0 +1,286 @@
+/**
+ * viis-actuator-arbiter: the one writer of the actuator coils that device1.json `actuatorPolicy` lists as
+ * `managed` or `hold` (plan Task 12). One node per gateway.
+ *
+ * ARBITER_MODE (default `off`):
+ * - `off`: the node does nothing (no Modbus client, no table, no timer); getArbiter() stays null and every
+ *   writer keeps today's direct writes.
+ * - `observe`: claims are recorded and coils read, diffs reported, nothing is written by the arbiter.
+ * - `enforce`: sources submit claims instead of writing; the arbiter writes the winning value.
+ *
+ * The manual lease (ARBITER_MANUAL_LEASE_S, `actuatorPolicy.<key>.manualLeaseS`) is read again whenever
+ * env-loader stamps a new `env_loader_loaded_at` (a gateway config sync rewrote device1.json), so a changed
+ * ceiling needs no restart. Which keys are managed, and their mode, still need a redeploy.
+ *
+ * Outputs: 1 = `{ topic: 'actuator_owners', payload: owners }` when ownership changes, and
+ *              `{ topic: 'actuator_write', payload: { key, value, ts } }` for every coil the arbiter wrote
+ *              (the flow maps both to telemetry: the poller alone would leave an arbiter OFF stale);
+ *          2 = the tick report when `debugEnable` is on.
+ */
+import { NodeAPI, Node, NodeDef } from 'node-red';
+import ClientRegistry, { MultiModbusConfig } from '../../core/client-registry';
+import { GlobalContextHelper } from '../../ultils/global-context-helper';
+import { DataSourceManager } from '../../orm/dataSource';
+import { getEventOutbox } from '../../services/event-outbox/registry';
+import { resolveProtectionGate } from '../viis-device-protection/services/protection-gate-service';
+import { WATER_HAMMER_DELAY_MS } from '../shared/fertigation-start-sequence';
+import { ActuatorPolicy, loadActuatorPolicy } from './actuator-policy';
+import { ActuatorArbiter, DEFAULT_TICK_MS } from './arbiter-api';
+import { parseArbiterMode, registerArbiter, unregisterArbiter } from './arbiter-registry';
+import { ClaimStore } from './arbiter-store';
+import { buildCoilTargets, parseBoards } from './arbiter-targets';
+import { waitForEnvLoad } from './env-load-wait';
+import { createObserveDiffLog } from './observe-diff';
+import { classifyActuatorKey, CoilTarget } from './reconciler';
+
+interface ViisActuatorArbiterNodeDef extends NodeDef {
+    debugEnable?: boolean;
+}
+
+const DEFAULT_MANUAL_LEASE_S = 1800;
+const DEFAULT_SCENARIO_LEASE_S = 600;
+
+function positive(value: number, fallback: number): number {
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+module.exports = function (RED: NodeAPI) {
+    function ViisActuatorArbiterNode(this: Node, config: ViisActuatorArbiterNodeDef) {
+        RED.nodes.createNode(this, config);
+        const node = this;
+        const helper = new GlobalContextHelper(node.context());
+
+        // ARBITER_MODE, MODBUS_BOARDS and the policy come from env-loader, which fills the persistent global
+        // context only after the flows start: read them once this run's load is stamped.
+        const startedAt = Date.now();
+        let closing = false;
+        let stopRun: (() => Promise<void>) | null = null;
+
+        node.status({ fill: 'grey', shape: 'ring', text: 'waiting for config' });
+        waitForEnvLoad(() => node.context().global.get('env_loader_loaded_at'), startedAt, { isCancelled: () => closing })
+            .then(loaded => {
+                if (closing) return;
+                if (!loaded) node.warn('[arbiter] env-loader did not finish within 60 s; using the config already in global context');
+                stopRun = start();
+            })
+            .catch(error => node.error(`[arbiter] start failed: ${(error as Error).message}`));
+
+        node.on('close', async (done: () => void) => {
+            closing = true;
+            if (stopRun) await stopRun();
+            done();
+        });
+
+        /** Starts this run from the loaded config; returns its stop function, or null when there is nothing to run. */
+        function start(): (() => Promise<void>) | null {
+            const mode = parseArbiterMode(helper.getEnvVar('ARBITER_MODE', 'off'));
+            if (mode === 'off') {
+                node.status({ fill: 'grey', shape: 'ring', text: 'off (ARBITER_MODE)' });
+                return null;
+            }
+
+            const boards = parseBoards(helper.getEnvVar('MODBUS_BOARDS', null));
+            if (boards.length === 0) {
+                node.error('[arbiter] MODBUS_BOARDS is missing: the arbiter needs multi-board Modbus config; writers keep direct writes');
+                node.status({ fill: 'red', shape: 'ring', text: 'no MODBUS_BOARDS' });
+                return null;
+            }
+            const defaultBoard = String(helper.getEnvVar('MODBUS_DEFAULT_BOARD', boards[0].id) || boards[0].id);
+            ClientRegistry.initializeMultiBoardConfig(
+                { mode: 'multi', defaultBoard, boards: boards as unknown as MultiModbusConfig['boards'] },
+                node
+            );
+
+            const allTargets = buildCoilTargets(
+                boards,
+                boardId => helper.getJsonEnvVar(`MODBUS_${boardId.toUpperCase()}_COILS`, {}),
+                helper.getJsonEnvVar('MODBUS_COILS', {}),
+                defaultBoard
+            );
+            const coilKeys = allTargets.map(t => t.key);
+            const readPolicy = () =>
+                loadActuatorPolicy(helper.getEnvVar('ACTUATOR_POLICY', null), {
+                    manualLeaseS: positive(helper.getNumericEnvVar('ARBITER_MANUAL_LEASE_S', DEFAULT_MANUAL_LEASE_S), DEFAULT_MANUAL_LEASE_S),
+                    coilKeys,
+                    warn: message => node.warn(message),
+                });
+            const policy = readPolicy();
+            const modeSignature = (p: ActuatorPolicy) => p.managedKeys().map(key => `${key}:${p.mode(key)}`).join(',');
+            let loadedAt = node.context().global.get('env_loader_loaded_at');
+            let warnedModeChange = false;
+            const targets = allTargets.filter(t => policy.mode(t.key) !== 'unmanaged');
+
+            // One board client per board for the node's lifetime (each getModbusClientV2 call takes a reference).
+            const clients = new Map<string, Promise<any>>();
+            /** Board clients that resolved: boardOffline needs them without awaiting. */
+            const readyClients = new Map<string, any>();
+            const acquiredBoards = new Set<string>();
+            const boardClient = (boardId: string): Promise<any> => {
+                let client = clients.get(boardId);
+                if (!client) {
+                    client = ClientRegistry.getModbusClientV2(boardId, node).then(c => {
+                        acquiredBoards.add(boardId);
+                        readyClients.set(boardId, c);
+                        return c;
+                    });
+                    client.catch(() => clients.delete(boardId));
+                    clients.set(boardId, client);
+                }
+                return client;
+            };
+            /** The board's circuit breaker is open: it is not retried for a while, so reads/writes would only time out. */
+            const boardOffline = (boardId: string): boolean => {
+                const client = readyClients.get(boardId);
+                try {
+                    return Boolean(client && typeof client.isCircuitBreakerOpen === 'function' && client.isCircuitBreakerOpen());
+                } catch {
+                    return false;
+                }
+            };
+            const readCoil = async (t: CoilTarget): Promise<boolean> => {
+                const client = await boardClient(t.boardId);
+                if (client.isConnected === false) throw new Error(`Modbus client not connected (${t.boardId})`);
+                const result = await client.readCoils(t.address, 1);
+                return Boolean(result?.data?.[0]);
+            };
+            const writeCoil = async (t: CoilTarget, value: boolean): Promise<void> => {
+                const client = await boardClient(t.boardId);
+                if (client.isConnected === false) throw new Error(`Modbus client not connected (${t.boardId})`);
+                await client.writeCoil(t.address, value);
+            };
+
+            // Device protection (viis-device-protection) is checked before every ON write, on every tick.
+            const protectionGate = () => resolveProtectionGate(node.context().global.get('protectionGateService'));
+            const allowOn = (key: string): { allowed: boolean; reason?: string } => {
+                try {
+                    const gate = protectionGate();
+                    if (!gate) return { allowed: true };
+                    const result = gate.checkGate(key, true, 'arbiter');
+                    return { allowed: result.allowed, reason: result.reason };
+                } catch (error) {
+                    node.warn(`[arbiter] protection check of ${key} failed, ON allowed: ${(error as Error).message}`);
+                    return { allowed: true };
+                }
+            };
+
+            let arbiter: ActuatorArbiter | null = null;
+            let dataSourceAcquired = false;
+
+            /** Takes new manual leases when env-loader stamped another load since the policy was read. */
+            const reloadLeasePolicy = (target: ActuatorArbiter) => {
+                const stamp = node.context().global.get('env_loader_loaded_at');
+                if (stamp === loadedAt) return;
+                loadedAt = stamp;
+                const reloaded = readPolicy();
+                target.setPolicy(reloaded);
+                if (modeSignature(reloaded) !== modeSignature(policy) && !warnedModeChange) {
+                    warnedModeChange = true;
+                    node.warn('[arbiter] actuatorPolicy keys or modes changed: redeploy to apply them (manual leases were reloaded)');
+                }
+            };
+
+            /** Gives back the board clients and the DataSource reference (close, or a start that lost to close). */
+            const releaseResources = async () => {
+                for (const boardId of acquiredBoards) {
+                    ClientRegistry.releaseClientV2('modbus-board', node, boardId);
+                }
+                acquiredBoards.clear();
+                clients.clear();
+                readyClients.clear();
+                if (dataSourceAcquired) {
+                    dataSourceAcquired = false;
+                    await DataSourceManager.release().catch(() => undefined);
+                }
+            };
+
+            const init = async () => {
+                let store: ClaimStore | null = null;
+                try {
+                    const ds = await DataSourceManager.acquire(node.context());
+                    dataSourceAcquired = true;
+                    store = new ClaimStore(ds);
+                } catch (error) {
+                    node.warn(`[arbiter] gateway MySQL unavailable, claims are not persisted: ${(error as Error).message}`);
+                }
+
+                const observeDiffLog = createObserveDiffLog();
+                const next = new ActuatorArbiter({
+                    policy,
+                    mode,
+                    reconcilerDeps: {
+                        targets,
+                        readCoil,
+                        writeCoil,
+                        classify: classifyActuatorKey,
+                        allowOn,
+                        boardOffline,
+                        waterHammerMs: WATER_HAMMER_DELAY_MS,
+                        sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+                    },
+                    scenarioLeaseS: positive(
+                        helper.getNumericEnvVar('ARBITER_SCENARIO_LEASE_S', DEFAULT_SCENARIO_LEASE_S),
+                        DEFAULT_SCENARIO_LEASE_S
+                    ),
+                    store,
+                    tickMs: helper.getNumericEnvVar('ARBITER_TICK_MS', DEFAULT_TICK_MS),
+                    outbox: getEventOutbox,
+                    deviceId: () => String(helper.getEnvVar('DEVICE_ID', '') || ''),
+                    onOwnersChange: owners => node.send([{ topic: 'actuator_owners', payload: owners }, null]),
+                    onCoilWrite: write => {
+                        // The gate tracks on/off times for its min-off / max-on rules: tell it what the arbiter wrote.
+                        try {
+                            protectionGate()?.updateState(write.key, write.value);
+                        } catch {
+                            /* the gate is best effort */
+                        }
+                        node.send([{ topic: 'actuator_write', payload: write }, null]);
+                    },
+                    onTickReport: report => {
+                        reloadLeasePolicy(next);
+                        const text = `${mode}: ${targets.length} keys, ${report.diffs.length} diff, ${report.readFailed.length} read failed`;
+                        node.status({ fill: report.readFailed.length > 0 ? 'yellow' : 'green', shape: 'dot', text });
+                        if (mode === 'observe') {
+                            const line = observeDiffLog.next(report);
+                            if (line) node.warn(line);
+                        }
+                        if (config.debugEnable) node.send([null, { topic: 'arbiter_tick', payload: report }]);
+                    },
+                    warn: message => node.warn(message),
+                    log: message => node.log(message),
+                });
+                await next.start();
+                if (closing) {
+                    // The node closed while starting: close() found nothing to stop.
+                    await next.stop();
+                    await releaseResources();
+                    return;
+                }
+                arbiter = next;
+                registerArbiter(next);
+                node.status({ fill: 'green', shape: 'dot', text: `${mode}: ${targets.length} keys` });
+                node.log(`[arbiter] ${mode}: ${targets.map(t => t.key).join(', ') || 'no managed keys'}`);
+            };
+
+            init().catch(error => {
+                node.error(`[arbiter] start failed: ${(error as Error).message}`);
+                node.status({ fill: 'red', shape: 'ring', text: 'start failed' });
+            });
+
+            // Stops this run (node close): unregisters the arbiter and gives back its resources.
+            return async () => {
+                try {
+                    if (arbiter) {
+                        unregisterArbiter(arbiter);
+                        await arbiter.stop();
+                        arbiter = null;
+                    }
+                } catch (error) {
+                    node.warn(`[arbiter] stop failed: ${(error as Error).message}`);
+                }
+                await releaseResources();
+            };
+        }
+    }
+
+    RED.nodes.registerType('viis-actuator-arbiter', ViisActuatorArbiterNode);
+};

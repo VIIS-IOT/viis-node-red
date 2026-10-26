@@ -4,7 +4,8 @@
  * Handles RPC request processing and coordination between services
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RpcHandler = void 0;
+exports.RpcHandler = exports.RELEASE_CLAIMS_METHOD = void 0;
+exports.rpcClaimSource = rpcClaimSource;
 const constants_1 = require("../constants");
 const rpc_deadline_1 = require("../utils/rpc-deadline");
 const logger_1 = require("../utils/logger");
@@ -13,6 +14,20 @@ const fertigation_start_sequence_1 = require("../../shared/fertigation-start-seq
 const schedule_coil_classify_1 = require("../../viis-schedule-executor/schedule-coil-classify");
 const schedule_valve_program_1 = require("../../viis-schedule-executor/schedule-valve-program");
 const demeter_mqtt_topics_1 = require("../../../core/demeter-mqtt-topics");
+const arbiter_registry_1 = require("../../viis-actuator-arbiter/arbiter-registry");
+/**
+ * RPC method that drops arbiter claims: `params: { keys?: string[], source?: 'manual' | 'alarm_action' }`.
+ * `source` defaults to `manual`; `alarm_action` is how the backend ends the OFF a cleared alarm held.
+ * Handled only while an arbiter runs.
+ */
+exports.RELEASE_CLAIMS_METHOD = "release_claims";
+/**
+ * RPC envelope `source` → arbiter claim source. Portal/mobile/MCP send none (a person: `manual`);
+ * the backend tags ONLINE scenarios and alarm actions. A remote caller never claims as `safety`.
+ */
+function rpcClaimSource(raw) {
+    return raw === "scenario" || raw === "alarm_action" ? raw : "manual";
+}
 class RpcHandler {
     static getCommandPriority(key) {
         const lower = key.toLowerCase();
@@ -69,6 +84,9 @@ class RpcHandler {
      * Handle incoming RPC request with retry logic
      */
     async handleRpcRequest(rpcBody, maxRetries = 3) {
+        // Mobile `set` / `control` become `set_state` before anything answers: the deadline watchdog and the
+        // queue-drop path reply with this body, and publishRpcAck only answers set_state / set_state_batch.
+        rpcBody = this.normalizeRpcBody(rpcBody);
         // The deadline starts when the command is received, not when it is dequeued:
         // time spent waiting behind other requests counts against it.
         const ctx = (0, rpc_deadline_1.createRpcDeadline)((0, demeter_mqtt_topics_1.extractRpcCommandId)(rpcBody), this.resolveRequestTtl(rpcBody));
@@ -135,7 +153,7 @@ class RpcHandler {
      * Internal request processor executed in serialized queue
      */
     async publishRpcAck(rpcBody, result, ctx = (0, rpc_deadline_1.currentRpcDeadline)()) {
-        if (!(0, demeter_mqtt_topics_1.isHandledRpcControlMethod)(rpcBody.method)) {
+        if (!(0, demeter_mqtt_topics_1.isHandledRpcControlMethod)(rpcBody.method) && !this.isArbiterReleaseRequest(rpcBody)) {
             return;
         }
         if (ctx) {
@@ -208,11 +226,17 @@ class RpcHandler {
         }
         return rpcBody;
     }
+    isArbiterReleaseRequest(rpcBody) {
+        return rpcBody.method === exports.RELEASE_CLAIMS_METHOD && (0, arbiter_registry_1.getArbiter)() !== null;
+    }
     async handleRpcRequestInternal(rpcBody, maxRetries = 3) {
         let lastError = null;
         const startTime = Date.now();
         rpcBody = this.normalizeRpcBody(rpcBody);
         const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
+        if (ctx && typeof rpcBody.source === "string") {
+            ctx.source = rpcBody.source;
+        }
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             if (attempt > 1 && (0, rpc_deadline_1.isRpcExpired)(ctx)) {
                 this.logger.warn(`[RPC-EXPIRED] Not retrying (attempt ${attempt}/${maxRetries}): request deadline passed`);
@@ -230,6 +254,11 @@ class RpcHandler {
                     this.logger.log(`Processing batch RPC request (attempt ${attempt}/${maxRetries})`);
                     await this.handleSetStateBatchRequest(rpcBody.params);
                     this.logger.log(`[RPC-DONE] Batch request completed in ${Date.now() - startTime}ms`);
+                    await this.publishRpcAck(rpcBody, { success: true });
+                    return;
+                }
+                else if (this.isArbiterReleaseRequest(rpcBody)) {
+                    await this.handleReleaseClaims((0, arbiter_registry_1.getArbiter)(), rpcBody.params);
                     await this.publishRpcAck(rpcBody, { success: true });
                     return;
                 }
@@ -335,8 +364,18 @@ class RpcHandler {
                     timestamp: new Date().toISOString(),
                 });
                 this.logger.error(`Batch command failed [${batchId}] ${key}: ${errorMessage}`);
+                // A timeout leaves the command running: its claim can still be waiting for a tick (up to 15 s,
+                // 7 s water-hammer sleeps included) and would win later and hold the coil.
+                await this.withdrawClaims([key], `batch command failed: ${errorMessage}`);
+                const abortsBatch = options.sequential && !options.continue_on_error;
+                let withdrawn = new Set();
+                if ((options.rollback_on_fail || abortsBatch) && successfulCommands.length > 0) {
+                    // A failed batch leaves nothing of its arbitrated commands behind; the claim goes instead of an
+                    // opposite write (an OFF claim would linger as a block on the key).
+                    withdrawn = await this.withdrawClaims(successfulCommands.map(c => c.key), 'batch failed');
+                }
                 if (options.rollback_on_fail && successfulCommands.length > 0) {
-                    await this.rollbackBatch(successfulCommands, batchId);
+                    await this.rollbackBatch(successfulCommands.filter(c => !withdrawn.has(c.key)), batchId);
                 }
                 if (options.sequential && !options.continue_on_error) {
                     break;
@@ -574,6 +613,8 @@ class RpcHandler {
         }
         catch (error) {
             this.logger.error(`Error in handleSetStateRequest: ${error.message}`);
+            // The caller is told this set_state failed: the claims of its other keys must not hold the coils either.
+            await this.withdrawClaims(Object.keys(params), 'set_state failed');
             throw error;
         }
     }
@@ -682,6 +723,13 @@ class RpcHandler {
                 throw new Error(`Protection blocked: ${gate.reason}`);
             }
         }
+        // Actuator arbiter (ARBITER_MODE observe|enforce, fc=5 keys listed managed/hold): null when off.
+        const arbiter = mapping.fc === 5 ? (0, arbiter_registry_1.getArbiter)() : null;
+        const arbitrated = arbiter !== null && arbiter.manages(key);
+        if (arbitrated && arbiter.mode() === 'enforce') {
+            await this.claimThroughArbiter(arbiter, key, Boolean(value), mapping);
+            return;
+        }
         (0, rpc_deadline_1.assertRpcNotExpired)(`Modbus write ${key}=${value}`);
         this.logger.log(`[MODBUS-WRITE] Writing ${key}=${value} (fc=${mapping.fc}, address=${mapping.address})`);
         // Write to Modbus with connection error handling.
@@ -722,6 +770,134 @@ class RpcHandler {
                 this.resolveGate().updateState(key, Boolean(value));
             }
         }
+        if (arbitrated) {
+            // observe: the write above is today's; the claim only records who owns the coil.
+            const claim = this.buildArbiterClaim(arbiter, key, Boolean(value));
+            void arbiter.claim(claim).catch((error) => {
+                this.logger.warn(`[ARBITER] Observe claim for ${key} not recorded: ${error.message}`);
+            });
+        }
+    }
+    /** Arbiter claim owner of the RPC being handled: one per source and command (a local input without command_id has one per source). */
+    currentClaimOwner() {
+        const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
+        return `${rpcClaimSource(ctx === null || ctx === void 0 ? void 0 : ctx.source)}:${(ctx === null || ctx === void 0 ? void 0 : ctx.commandId) || 'local'}`;
+    }
+    /**
+     * Withdraws the claims this RPC made on `keys` (only keys the arbiter manages): a command the caller was told
+     * failed must not take effect later (ADR-038 amendment 4), and that holds for the siblings of a failed
+     * multi-key set_state / batch as well as for a command that timed out while its claim still waited for a tick.
+     * Returns the keys the arbiter manages (whose claims are gone now).
+     */
+    async withdrawClaims(keys, why) {
+        const withdrawn = new Set();
+        const arbiter = (0, arbiter_registry_1.getArbiter)();
+        if (arbiter === null)
+            return withdrawn;
+        const owner = this.currentClaimOwner();
+        for (const key of keys) {
+            if (!key || !arbiter.manages(key))
+                continue;
+            try {
+                await arbiter.release(owner, key);
+                withdrawn.add(key);
+                this.logger.warn(`[ARBITER] Withdrew claim ${owner} on ${key}: ${why}`);
+            }
+            catch (error) {
+                this.logger.warn(`[ARBITER] Could not withdraw claim ${owner} on ${key}: ${error.message}`);
+            }
+        }
+        return withdrawn;
+    }
+    buildArbiterClaim(arbiter, key, value) {
+        const ctx = (0, rpc_deadline_1.currentRpcDeadline)();
+        const source = rpcClaimSource(ctx === null || ctx === void 0 ? void 0 : ctx.source);
+        const lease = arbiter.leaseMs(source, key);
+        return {
+            key,
+            value,
+            source,
+            // A command without command_id (local flow input) has one owner per source: the newer replaces it.
+            ownerId: this.currentClaimOwner(),
+            // null = never lapses (alarm_action): it ends on release_claims, not on a lease.
+            expiresAt: lease === null ? null : Date.now() + lease,
+        };
+    }
+    /**
+     * enforce: the RPC does not write a managed coil; it claims it and the arbiter writes the winner.
+     * ACKED only when this claim won, the coil reads the requested value and the request deadline has not
+     * passed. Every other outcome answers FAILED and withdraws the claim, so a command the caller was told
+     * failed never takes effect later (same rule as the RPC deadline: a stale command is not applied late).
+     */
+    async claimThroughArbiter(arbiter, key, value, mapping) {
+        var _a, _b, _c;
+        (0, rpc_deadline_1.assertRpcNotExpired)(`Arbiter claim ${key}=${value}`);
+        const claim = this.buildArbiterClaim(arbiter, key, value);
+        this.logger.log(`[ARBITER] Claim ${key}=${value} (${claim.ownerId})`);
+        const result = await arbiter.claim(claim);
+        const withdraw = async (why) => {
+            try {
+                await arbiter.release(claim.ownerId, key);
+                this.logger.warn(`[ARBITER] Withdrew claim ${claim.ownerId} on ${key}: ${why}`);
+            }
+            catch (error) {
+                this.logger.warn(`[ARBITER] Could not withdraw claim ${claim.ownerId}: ${error.message}`);
+            }
+        };
+        if ((0, rpc_deadline_1.isRpcExpired)((0, rpc_deadline_1.currentRpcDeadline)())) {
+            await withdraw('request deadline passed');
+            throw new rpc_deadline_1.RpcExpiredError(`Arbiter claim ${key}=${value}`);
+        }
+        if (!result.applied) {
+            await withdraw(`blocked by ${(_a = result.blockedBy) !== null && _a !== void 0 ? _a : 'expired'}`);
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} blocked by ${(_b = result.blockedBy) !== null && _b !== void 0 ? _b : 'expired'}` });
+            throw new Error(`blocked_by:${(_c = result.blockedBy) !== null && _c !== void 0 ? _c : 'expired'}`);
+        }
+        if (result.boardOffline) {
+            // The board is down (circuit breaker open): answered at once, and the command must not apply when it returns.
+            await withdraw(`board offline: ${result.boardOffline}`);
+            this.node.status({ fill: "red", shape: "ring", text: `${key} board offline` });
+            throw new Error(`board_offline:${result.boardOffline}`);
+        }
+        if (result.gateBlocked) {
+            // Device protection holds this ON back at the tick (it is checked again on every tick).
+            await withdraw(`protection: ${result.gateBlocked}`);
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} protection blocked` });
+            throw new Error(`Protection blocked: ${result.gateBlocked}`);
+        }
+        if (result.actual !== value) {
+            await withdraw(`coil reads ${String(result.actual)}`);
+            this.node.status({ fill: "yellow", shape: "ring", text: `${key} not confirmed` });
+            throw new Error(`not_confirmed:${key} reads ${String(result.actual)}`);
+        }
+        this.modbusService.updateGlobalContextCacheAfterVerification(key, result.actual, mapping.fc);
+        if (this.resolveGate()) {
+            this.resolveGate().updateState(key, result.actual);
+        }
+        await this.publishResultWithRetry(key, result.actual);
+        this.node.status({ fill: "green", shape: "dot", text: `${key}=${result.actual} (arbiter)` });
+    }
+    /**
+     * `release_claims`: drops the claims of `params.source` (default `manual`; `alarm_action` is the other one a
+     * remote caller may release) on `params.keys`, or on every key when none are given.
+     */
+    async handleReleaseClaims(arbiter, params) {
+        var _a;
+        const source = (_a = params === null || params === void 0 ? void 0 : params.source) !== null && _a !== void 0 ? _a : "manual";
+        if (source !== "manual" && source !== "alarm_action") {
+            throw new Error(`release_claims: unsupported source ${JSON.stringify(source)}`);
+        }
+        const owner = `${source}:*`;
+        const keys = Array.isArray(params === null || params === void 0 ? void 0 : params.keys) ? params.keys.map((k) => String(k)) : null;
+        if (keys && keys.length > 0) {
+            for (const key of keys) {
+                await arbiter.release(owner, key);
+            }
+        }
+        else {
+            await arbiter.release(owner);
+        }
+        this.logger.log(`[ARBITER] Released ${source} claims${keys && keys.length > 0 ? ` on ${keys.join(', ')}` : ''}`);
     }
     /**
      * Handle parameter that only updates configuration (no Modbus mapping)

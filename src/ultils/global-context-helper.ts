@@ -93,7 +93,19 @@ const ENV_TO_GLOBAL_MAPPING: Record<string, string> = {
   'DH6400_SERIAL_PORT': 'dh6400_serial_port',
   'DH6400_BAUD_RATE': 'dh6400_baud_rate',
   'DH6400_POLLING_INTERVAL': 'dh6400_polling_interval',
-  'DH6400_ENABLED_CHANNELS': 'dh6400_enabled_channels'
+  'DH6400_ENABLED_CHANNELS': 'dh6400_enabled_channels',
+  // Gateway event outbox flag (device1.json / common.json via env-loader)
+  'EVENT_OUTBOX_ENABLED': 'event_outbox_enabled',
+  // Gateway rollout flags (device1.json featureFlags via env-loader; absent = off)
+  'SYNC_FULL_CONFIG_ENABLED': 'sync_full_config_enabled',
+  'SCHEDULE_OFF_RETRY': 'schedule_off_retry',
+  // Actuator arbiter policy: device1.json `actuatorPolicy` as one JSON string (env-loader)
+  'ACTUATOR_POLICY': 'actuator_policy',
+  // Actuator arbiter flags (device1.json / common.json via env-loader)
+  'ARBITER_MODE': 'arbiter_mode',
+  'ARBITER_MANUAL_LEASE_S': 'arbiter_manual_lease_s',
+  'ARBITER_SCENARIO_LEASE_S': 'arbiter_scenario_lease_s',
+  'ARBITER_TICK_MS': 'arbiter_tick_ms'
 };
 
 /**

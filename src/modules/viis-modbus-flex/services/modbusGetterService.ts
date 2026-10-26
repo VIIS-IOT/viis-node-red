@@ -15,6 +15,39 @@ import {
     VALIDATION_LIMITS
 } from "../constants";
 import { Logger } from "../utils/logger";
+import { getArbiter } from "../../viis-actuator-arbiter/arbiter-registry";
+import type { ActuatorArbiterApi } from "../../viis-actuator-arbiter/arbiter-api";
+
+/**
+ * Where a write came from. Only the OFFLINE intent chain ("Intent actions -> Modbus commands") is a claim
+ * source of the actuator arbiter: `key` is the action key (`msg.offlineKey`), `intentId` the intent,
+ * `boardId` the board the node writes to (payload.boardId, else the node's board; null when unknown).
+ */
+export interface OfflineWriteOrigin {
+    key: string | null;
+    intentId: string | null;
+    boardId?: string | null;
+}
+
+/**
+ * The origin of a write that comes from the OFFLINE intent chain (`msg.source === 'intent'`, or the node's
+ * `writeSource` config is `intent`); null for every other write.
+ */
+export function offlineWriteOrigin(msg: any, writeSource: string | undefined, boardId?: string | null): OfflineWriteOrigin | null {
+    if (!msg || (msg.source !== "intent" && writeSource !== "intent")) {
+        return null;
+    }
+    const key = msg.offlineKey;
+    const intentId = msg.offlineIntentId ?? msg.intentId;
+    const origin: OfflineWriteOrigin = {
+        key: typeof key === "string" && key !== "" ? key : null,
+        intentId: intentId === undefined || intentId === null || intentId === "" ? null : String(intentId),
+    };
+    if (boardId !== undefined) {
+        origin.boardId = typeof boardId === "string" && boardId !== "" ? boardId : null;
+    }
+    return origin;
+}
 
 /**
  * Service for handling Modbus flex operations (read and write)
@@ -123,7 +156,7 @@ export class ModbusGetterService {
      * Process modbus request and return response
      * Supports both READ and WRITE operations
      */
-    async processRequest(payload: any): Promise<SuccessResponse | ErrorResponse> {
+    async processRequest(payload: any, origin: OfflineWriteOrigin | null = null): Promise<SuccessResponse | ErrorResponse> {
         try {
             // Log incoming request if logging is enabled
             this.logger.logRequest(payload);
@@ -133,7 +166,7 @@ export class ModbusGetterService {
 
             if (fc && [5, 6, 15, 16].includes(fc)) {
                 // WRITE operation
-                return await this.processWriteRequest(payload);
+                return await this.processWriteRequest(payload, origin);
             } else {
                 // READ operation (default)
                 return await this.processReadRequest(payload);
@@ -190,7 +223,7 @@ export class ModbusGetterService {
     /**
      * Process modbus WRITE request
      */
-    private async processWriteRequest(payload: any): Promise<SuccessResponse | ErrorResponse> {
+    private async processWriteRequest(payload: any, origin: OfflineWriteOrigin | null = null): Promise<SuccessResponse | ErrorResponse> {
         try {
             // Validate write payload
             const validationResult = this.validateWritePayload(payload);
@@ -200,6 +233,30 @@ export class ModbusGetterService {
             }
 
             const request = payload as ModbusWriteRequestPayload;
+
+            // ARBITER_MODE=enforce: an OFFLINE scenario write to a managed coil is a claim, not a write.
+            // observe: the same claim is recorded and the coil is still written directly.
+            const arbiter = request.fc === MODBUS_FUNCTION_CODES.WRITE_SINGLE_COIL && origin?.key ? getArbiter() : null;
+            // Only `managed` keys: a `hold` key keeps its direct write, as the schedule executor does.
+            if (arbiter && arbiter.keyMode(origin!.key!) === "managed") {
+                // Only when the write goes to the coil the arbiter reconciles for that key: an explicit
+                // fc/address/boardId in the action may point elsewhere, and that address must still be written.
+                const target = arbiter.target(origin!.key!);
+                const sameCoil = target !== undefined
+                    && Number(target.address) === Number(request.address)
+                    && (!origin!.boardId || target.boardId === origin!.boardId);
+                if (sameCoil && arbiter.mode() === "enforce") {
+                    return await this.claimThroughArbiter(arbiter, request, origin!);
+                }
+                if (sameCoil) {
+                    this.recordObserveClaim(arbiter, request, origin!);
+                } else {
+                    this.logger.warn(
+                        `[ARBITER] ${origin!.key} is managed but this write targets ${origin!.boardId ?? "?"}:${request.address}`
+                        + ` (arbiter coil ${target ? `${target.boardId}:${target.address}` : "none"}); written directly`
+                    );
+                }
+            }
 
             // Check if modbus client is ready
             if (!this.isModbusReady()) {
@@ -230,6 +287,71 @@ export class ModbusGetterService {
             this.logger.logModbusError("WRITE", payload?.address || 0, errorMessage);
             return this.createErrorResponse(errorMessage);
         }
+    }
+
+    /** observe: the claim enforce would submit, without waiting for it; the direct write that follows is today's. */
+    private recordObserveClaim(arbiter: ActuatorArbiterApi, request: ModbusWriteRequestPayload, origin: OfflineWriteOrigin): void {
+        const key = origin.key!;
+        void arbiter
+            .claim({
+                key,
+                value: request.value as boolean,
+                source: "scenario",
+                ownerId: `offline:${origin.intentId || "local"}`,
+                expiresAt: Date.now() + arbiter.leaseMs("scenario", key),
+            })
+            .catch((error) => {
+                this.logger.warn(`[ARBITER] Observe claim for ${key} not recorded: ${(error as Error).message}`);
+            });
+    }
+
+    /**
+     * enforce: the claim `offline:<intentId>` (source `scenario`, lease ARBITER_SCENARIO_LEASE_S) replaces the
+     * write; a repeat of the same intent refreshes it. Success only when this claim won and the coil reads the
+     * value. A claim that lost is withdrawn (the trigger reports the action failed, so it must not take effect
+     * later); a won claim not on the coil yet stays and the arbiter keeps reconciling it.
+     */
+    private async claimThroughArbiter(
+        arbiter: ActuatorArbiterApi,
+        request: ModbusWriteRequestPayload,
+        origin: OfflineWriteOrigin
+    ): Promise<SuccessResponse | ErrorResponse> {
+        const key = origin.key!;
+        const value = request.value as boolean;
+        const ownerId = `offline:${origin.intentId || "local"}`;
+        this.logger.log(`[ARBITER] Claim ${key}=${value} (${ownerId})`);
+        const result = await arbiter.claim({
+            key,
+            value,
+            source: "scenario",
+            ownerId,
+            expiresAt: Date.now() + arbiter.leaseMs("scenario", key),
+        });
+
+        if (!result.applied) {
+            try {
+                await arbiter.release(ownerId, key);
+            } catch (error) {
+                this.logger.warn(`[ARBITER] Could not withdraw blocked claim ${ownerId}: ${(error as Error).message}`);
+            }
+            return this.createErrorResponse(`blocked_by:${result.blockedBy ?? "expired"}`);
+        }
+        if (result.boardOffline) {
+            return this.createErrorResponse(`board_offline:${result.boardOffline}; the arbiter keeps the claim and retries`);
+        }
+        if (result.actual !== value) {
+            return this.createErrorResponse(`not_confirmed:${key} reads ${String(result.actual)}; the arbiter keeps the claim and retries`);
+        }
+
+        const successResponse: SuccessResponse = {
+            success: true,
+            address: request.address,
+            functionCode: request.fc,
+            value: request.value,
+            timestamp: Date.now()
+        };
+        this.logger.logResponse(successResponse);
+        return successResponse;
     }
 
     /**

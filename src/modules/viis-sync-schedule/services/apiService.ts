@@ -11,6 +11,7 @@ import { withRetry } from '../utils/retry';
 import { NodeContext } from 'node-red';
 import { resolveViisBackendUrl } from '../../../ultils/resolve-backend-url';
 import { fromDeviceSchedulePlan, unwrapDevicePlanList } from '../../../core/demeter-schedule-protocol';
+import { redactDeviceToken } from '../../../services/event-outbox/outbox-sender';
 
 /**
  * Service for making API requests to the server
@@ -47,6 +48,12 @@ export class ApiService {
         return resolveViisBackendUrl(this.nodeContext);
     }
 
+    /** The device token is in the request path (and may be in a query): mask it before logging a URL. */
+    private redact(text: unknown): string {
+        const masked = redactDeviceToken(text);
+        return this.accessToken ? masked.split(this.accessToken).join('***') : masked;
+    }
+
     /**
      * Fetches all schedule plans and their schedules for the device
      * @returns Promise that resolves to the server response
@@ -58,7 +65,7 @@ export class ApiService {
         return withRetry(async () => {
             try {
                 this.instance.defaults.baseURL = this.resolveBaseUrl();
-                logger.debug(null, `Making GET request to: ${this.instance.defaults.baseURL}${url}`);
+                logger.debug(null, `Making GET request to: ${this.redact(`${this.instance.defaults.baseURL}${url}`)}`);
                 const response = await this.instance.get(url);
                 const plans = unwrapDevicePlanList(response.data).map((plan) => {
                     const local = fromDeviceSchedulePlan(plan);
@@ -100,7 +107,7 @@ export class ApiService {
             ? error.message 
             : 'Unknown error';
             
-        logger.error(null, `Failed to ${operation}: ${errorMessage}`);
+        logger.error(null, `Failed to ${operation}: ${this.redact(errorMessage)}`);
         
         if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError;
@@ -108,11 +115,11 @@ export class ApiService {
             if (axiosError.response) {
                 logger.error(null, `Server responded with status ${axiosError.response.status}: ${JSON.stringify(axiosError.response.data)}`);
             } else if (axiosError.request) {
-                logger.error(null, `No response received from server: ${axiosError.message}`);
+                logger.error(null, `No response received from server: ${this.redact(axiosError.message)}`);
             }
             
             if (axiosError.config) {
-                logger.debug(null, `Request was made to: ${axiosError.config.url}`);
+                logger.debug(null, `Request was made to: ${this.redact(axiosError.config.url)}`);
             }
         }
     }

@@ -8,6 +8,8 @@ export interface ViisModbusGetterNodeDef extends NodeDef {
     enableLogging: boolean; // Add logging enable/disable option
     boardMode?: 'auto' | 'single' | 'multi'; // Board selection mode
     boardId?: string; // Board ID for multi-board mode
+    /** `intent`: this node writes OFFLINE intent actions (arbiter claim source `scenario`). */
+    writeSource?: string;
 }
 
 /**

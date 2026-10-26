@@ -55,6 +55,19 @@ describe('RPC deadline (frozen device)', () => {
     }));
   });
 
+  it('answers FAILED by the deadline for a mobile `set` write too (the watchdog must not see the raw method)', async () => {
+    const { handler, publishRpcResponse } = createHandler();
+    jest.spyOn(handler as any, 'handleSetStateRequest').mockImplementation(never);
+
+    handler.handleRpcRequest({ method: 'set', command_id: ID_A, params: { key: 'valve_2', value: true }, timeout: 5000 });
+    await jest.advanceTimersByTimeAsync(5000);
+
+    expect(publishRpcResponse).toHaveBeenCalledTimes(1);
+    expect(publishRpcResponse).toHaveBeenCalledWith(ID_A, expect.objectContaining({
+      success: false, status: 'FAILED', method: 'set_state', error: expect.stringContaining('expired'),
+    }));
+  });
+
   it('never retries a Modbus write after the deadline (stale command is not applied late)', async () => {
     // First write attempt hangs until the device "unfreezes" well after the deadline
     const writeToModbus = jest.fn(() => new Promise<void>((_, reject) =>

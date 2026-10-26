@@ -45,7 +45,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ScheduleService = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
+exports.ScheduleService = exports.UNSYNCED_STATUS_RETRY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
 exports.resolveWaterHammerDelayMs = resolveWaterHammerDelayMs;
 const TabiotSchedule_1 = require("../../orm/entities/schedule/TabiotSchedule");
 const schedule_run_identity_1 = require("./schedule-run-identity");
@@ -62,6 +62,9 @@ const axios_1 = __importStar(require("axios"));
 const uuid_1 = require("uuid");
 const protection_gate_service_1 = require("../viis-device-protection/services/protection-gate-service");
 const schedule_coil_classify_1 = require("./schedule-coil-classify");
+const schedule_finish_1 = require("./schedule-finish");
+const schedule_arbiter_1 = require("./schedule-arbiter");
+const registry_1 = require("../../services/event-outbox/registry");
 const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
 const schedule_execution_types_1 = require("./schedule-execution-types");
@@ -75,6 +78,8 @@ const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
 /** Default water-hammer delay between valves and pump/power (start), or power and valves (finish). */
 exports.DEFAULT_WATER_HAMMER_DELAY_SEC = 7;
 exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC * 1000;
+/** Least time between two re-posts of unsynced status rows (retryUnsyncedStatuses). */
+exports.UNSYNCED_STATUS_RETRY_MS = 30000;
 function resolveWaterHammerDelayMs(seconds) {
     if (seconds === undefined || seconds === null || seconds === '') {
         return exports.DEFAULT_WATER_HAMMER_DELAY_MS;
@@ -136,6 +141,7 @@ let ScheduleService = class ScheduleService {
         this.protectionGate = null;
         /** Count of getDueSchedules calls that failed (read by getDueSchedulesOrNull). */
         this.dueQueryFailures = 0;
+        this.lastUnsyncedStatusRetryMs = null;
         this.node = node;
         this.verifyAfterWrite = verifyAfterWrite; // Store verifyAfterWrite setting
         this.debugEnable = debugEnable; // Store debugEnable setting from node config
@@ -878,7 +884,10 @@ let ScheduleService = class ScheduleService {
         var _a, _b;
         try {
             const changedValues = {};
-            for (const cmd of [...commands.holdingCommands, ...commands.coilCommands]) {
+            // ARBITER_MODE=enforce: a managed coil is written by the arbiter, which publishes what it actually
+            // wrote. Publishing the schedule's wish here would report ON for a coil the arbiter kept OFF (a
+            // manual claim winning), and an ONLINE scenario would then skip its action as "already applied".
+            for (const cmd of [...commands.holdingCommands, ...(0, schedule_arbiter_1.withoutArbitratedCoils)(commands.coilCommands)]) {
                 const cacheKey = `telemetry:${cmd.key}`;
                 if (this.hasPublishedValueChanged(cacheKey, cmd.value)) {
                     changedValues[cmd.key] = cmd.value;
@@ -1084,6 +1093,9 @@ let ScheduleService = class ScheduleService {
                 this.node.warn(`${statusIcon} STATUS CHANGE: ${schedule.name} | ${previousStatus || 'none'} → ${status} | Label: ${schedule.label}`);
             }
             schedule.modified = new Date();
+            // Unsynced until the backend took this status; retryUnsyncedStatuses re-posts it otherwise
+            // (a POST lost while the backend was down left the server row "running" for good).
+            schedule.is_synced = 0;
             // Lưu entity với giá trị modified đã chỉnh sửa
             await repository.save(schedule);
             this.debugLog(`Updated status of ${schedule.name} to ${status} with modified time ${schedule.modified}`);
@@ -1091,6 +1103,7 @@ let ScheduleService = class ScheduleService {
             if (this.syncScheduleService) {
                 try {
                     await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                    await this.acknowledgeStatusSynced(repository, schedule);
                     if (this.node) {
                         this.node.warn(`✅ SERVER SYNC SUCCESS: ${schedule.name} | Status: ${status}`);
                     }
@@ -1116,6 +1129,59 @@ let ScheduleService = class ScheduleService {
             console.error(`Error updating status for ${schedule.name}: ${error.message}`);
         }
     }
+    /** `is_synced = 1` without touching the LWW clock (same rule as viis-crud-schedule's outboxAck). */
+    async acknowledgeStatusSynced(repository, schedule) {
+        await repository.query(`UPDATE tabiot_schedule SET is_synced = 1, modified = modified WHERE name = ?`, [schedule.name]);
+        schedule.is_synced = 1;
+    }
+    /**
+     * Re-posts executor status changes the backend never acknowledged (`is_from_local = 0 AND is_synced = 0`,
+     * flagged by updateScheduleStatus when its POST failed, e.g. the backend was down at a window end
+     * right after a reboot). Called every tick, sends at most once per UNSYNCED_STATUS_RETRY_MS.
+     * The backend upsert keeps the newer row, so a 409 ("server data is newer") ends the retry.
+     * @returns number of rows posted in this call
+     */
+    async retryUnsyncedStatuses(nowMs = Date.now()) {
+        var _a;
+        if (!this.syncScheduleService)
+            return 0;
+        if (this.lastUnsyncedStatusRetryMs !== null && nowMs - this.lastUnsyncedStatusRetryMs < exports.UNSYNCED_STATUS_RETRY_MS)
+            return 0;
+        this.lastUnsyncedStatusRetryMs = nowMs;
+        if (!dataSource_1.AppDataSource.isInitialized)
+            await dataSource_1.AppDataSource.initialize();
+        const repository = dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule);
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar("DEVICE_ID", "") : "";
+        const rows = await repository.find({
+            where: Object.assign({ is_from_local: 0, is_synced: 0, is_deleted: 0 }, (deviceId ? { device_id: deviceId } : {})),
+        });
+        let posted = 0;
+        for (const schedule of rows) {
+            try {
+                await this.syncScheduleService.syncScheduleFromLocalToServer([schedule]);
+                await this.acknowledgeStatusSynced(repository, schedule);
+                posted++;
+                if (this.node) {
+                    this.node.warn(`✅ SERVER SYNC RETRY OK: ${schedule.name} | Status: ${schedule.status}`);
+                }
+            }
+            catch (error) {
+                const httpStatus = axios_1.default.isAxiosError(error) ? (_a = error.response) === null || _a === void 0 ? void 0 : _a.status : undefined;
+                if (httpStatus === 409) {
+                    // The server holds a newer copy of this schedule: nothing of ours to deliver.
+                    await this.acknowledgeStatusSynced(repository, schedule);
+                    if (this.node) {
+                        this.node.warn(`⚠️ SERVER SYNC RETRY DROPPED (server newer): ${schedule.name} | Status: ${schedule.status}`);
+                    }
+                    continue;
+                }
+                if (this.node) {
+                    this.node.warn(`❌ SERVER SYNC RETRY FAILED: ${schedule.name} | ${error.message}`);
+                }
+            }
+        }
+        return posted;
+    }
     /**
      * Auto-detect and recover stuck 'running' schedules
      * Checks if devices are actually OFF and updates status to 'finished' if so
@@ -1137,14 +1203,45 @@ let ScheduleService = class ScheduleService {
                 continue;
             this.debugLog(`🔍 RECOVERY CHECK: Schedule ${schedule.name} is stuck in "running" status ${minutesPastEnd} minutes past end time`);
             // Get the commands that should have been reset
-            const activeCommands = this.getActiveCommands(schedule.name);
-            if (activeCommands.length === 0) {
+            const storedCommands = this.getActiveCommands(schedule.name);
+            if (storedCommands.length === 0) {
+                // A restart cleared the active commands, but the outputs may still be ON: the run's OFF is
+                // rebuilt from the schedule and written once before the run is finished (fail-safe on
+                // restart, not behind a flag). SCHEDULE_OFF_RETRY on: a failed OFF stays active and is
+                // retried every tick. Off: the run finishes anyway and the log names the keys that missed.
+                // ARBITER_MODE=enforce: release the run's claims; managed coils are the arbiter's.
+                const retryOn = this.offRetryEnabled();
+                const arbiterFinish = await this.beginScheduleFinish(schedule.name, (0, schedule_finish_1.rebuildOffCommands)(this.mapScheduleToModbus(schedule)));
+                const offCommands = arbiterFinish.commands;
+                if (offCommands.length === 0) {
+                    await arbiterFinish.complete(null);
+                }
+                else {
+                    const reset = await this.resetModbusCommands(modbusClient, offCommands, schedule, true);
+                    await arbiterFinish.complete(reset.report);
+                    const finish = (0, schedule_finish_1.decideFinish)(reset, offCommands);
+                    if (!finish.done && retryOn) {
+                        this.storeActiveCommands(schedule.name, finish.retainCommands);
+                        if (this.node) {
+                            this.node.warn(`❌ RECOVERY: OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), retrying`);
+                        }
+                        continue;
+                    }
+                    if (!finish.done && this.node) {
+                        this.node.warn(`❌ RECOVERY: OFF failed for ${schedule.name} (${finish.failedKeys.join(', ')}), SCHEDULE_OFF_RETRY is off: run finished`);
+                    }
+                }
                 this.debugLog(`No active commands found for ${schedule.name}, setting to finished`);
+                this.clearScheduleConfigValues(schedule.name);
                 this.clearScheduleStatusHistory(schedule.name); // Clear status history for next run
                 await this.updateScheduleStatus(schedule, 'finished');
                 await this.sendNotificationToBackend(schedule, 'end', true);
                 continue;
             }
+            // ARBITER_MODE=enforce: the run's claims are released and its managed coils are the arbiter's:
+            // they are neither read for "all OFF" nor written here.
+            const arbiterFinish = await this.beginScheduleFinish(schedule.name, storedCommands);
+            const activeCommands = arbiterFinish.commands;
             // Verify if devices are actually OFF by reading Modbus
             let allDevicesOff = true;
             for (const cmd of activeCommands) {
@@ -1177,6 +1274,10 @@ let ScheduleService = class ScheduleService {
                 }
             }
             // If all devices are confirmed OFF, update status to finished
+            if (allDevicesOff || minutesPastEnd < 3) {
+                // No direct OFF this pass: the claims go now (after the delay a stopped managed pump needs).
+                await arbiterFinish.complete(null);
+            }
             if (allDevicesOff) {
                 if (this.node) {
                     this.node.warn(`✅ RECOVERY SUCCESS: Schedule ${schedule.name} devices confirmed OFF - updating to finished`);
@@ -1198,7 +1299,8 @@ let ScheduleService = class ScheduleService {
                     if (this.node) {
                         this.node.warn(`🔄 RECOVERY RETRY: Attempting to reset ${schedule.name} again (${minutesPastEnd} min past end)`);
                     }
-                    const { allSuccessful: resetSuccess } = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
+                    const { report: retryReport, allSuccessful: resetSuccess } = await this.resetModbusCommands(modbusClient, activeCommands, schedule, true);
+                    await arbiterFinish.complete(retryReport);
                     if (resetSuccess) {
                         this.clearActiveCommands(schedule.name);
                         this.clearScheduleConfigValues(schedule.name);
@@ -1219,15 +1321,40 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
+     * Flag `SCHEDULE_OFF_RETRY` (device1.json `featureFlags`, default off), read on every call so a config
+     * reload applies at the next tick. On: a failed schedule OFF is retried every tick until it passes or the
+     * next window supersedes it. Off: a failed OFF finishes the run with a `verify_failed` notification.
+     * Either way a restart that spans a window end writes the run's OFF once (fail-safe, not flagged).
+     */
+    offRetryEnabled() {
+        return this.globalHelper ? this.globalHelper.getBooleanEnvVar('SCHEDULE_OFF_RETRY', false) : false;
+    }
+    /**
+     * ARBITER_MODE=enforce: the run's OFF without its managed coils, with the claim release in water-hammer
+     * order (schedule-arbiter.ts beginScheduleFinish); call `complete()` after the direct OFF. Without an
+     * enforcing arbiter `commands` comes back unchanged and `complete()` does nothing. In observe the run's
+     * claims are only dropped (here, before the direct OFF) and every command is still written.
+     */
+    async beginScheduleFinish(scheduleName, commands) {
+        return (0, schedule_arbiter_1.beginScheduleFinish)((0, schedule_arbiter_1.claimingArbiter)(), scheduleName, commands, {
+            sleep: (ms) => this.delay(ms),
+            waterHammerMs: this.waterHammerDelayMs,
+            warn: (message) => { var _a; return (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn(message); },
+        });
+    }
+    /**
      * Reset lại các lệnh modbus
      */
-    async resetModbusCommands(modbusClient, commands, schedule, isFinishing = false, options) {
+    async resetModbusCommands(modbusClient, commands, schedule, isFinishing = false, 
+    /** impliedPumps=false: a finish retry that has no valve to close stops only the listed pumps. */
+    options) {
         var _a, _b;
         const buffer = new schedule_execution_buffer_1.ExecutionStepBuffer((_a = options === null || options === void 0 ? void 0 : options.runId) !== null && _a !== void 0 ? _a : (0, uuid_1.v4)(), isFinishing || (options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? ((options === null || options === void 0 ? void 0 : options.unusedHoldingReset) ? 'start' : 'end') : 'end', (_b = schedule === null || schedule === void 0 ? void 0 : schedule.name) !== null && _b !== void 0 ? _b : 'unknown');
         const deps = this.makeKeyWriterDeps(modbusClient);
         const coilCommands = [
             ...commands.filter(cmd => cmd.fc === 5),
-            ...(isFinishing ? (0, schedule_coil_classify_1.impliedFinishPumpCommands)(commands, this.getAllModbusCoils()) : []),
+            // ARBITER_MODE=enforce: a managed pump is the arbiter's; only unmanaged pumps are implied off.
+            ...(isFinishing && (options === null || options === void 0 ? void 0 : options.impliedPumps) !== false ? (0, schedule_arbiter_1.withoutArbitratedCoils)((0, schedule_coil_classify_1.impliedFinishPumpCommands)(commands, this.getAllModbusCoils())) : []),
         ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = (0, schedule_coil_classify_1.classifyCoils)(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
@@ -1965,6 +2092,46 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
+     * Starts the process's event outbox on this executor's MySQL DataSource once the flag
+     * `EVENT_OUTBOX_ENABLED` is on; other nodes reach it through `getEventOutbox()`. Called every tick after
+     * the schedules were read (env-loader may set the flag after this node started); a no-op once started
+     * and while the flag is off.
+     */
+    async ensureEventOutbox() {
+        if (!this.globalHelper || !(0, registry_1.isEventOutboxEnabled)(this.globalHelper) || !dataSource_1.AppDataSource.isInitialized)
+            return;
+        try {
+            await (0, registry_1.initEventOutbox)(dataSource_1.AppDataSource, this.globalHelper);
+        }
+        catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EVENT OUTBOX not started: ${error.message}`);
+            }
+        }
+    }
+    /**
+     * With the event outbox on, stores `payload` for ordered, retried delivery instead of POSTing it.
+     * null = the outbox is off or could not store the event: the caller POSTs it as before.
+     */
+    async enqueueEvent(payload, label) {
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (!outbox)
+            return null;
+        try {
+            await outbox.enqueue(payload);
+            if (this.node) {
+                this.node.warn(`📥 EVENT QUEUED: ${label}`);
+            }
+            return true;
+        }
+        catch (error) {
+            if (this.node) {
+                this.node.warn(`⚠️ EVENT OUTBOX FAILED, sending directly: ${label} | ${error.message}`);
+            }
+            return null;
+        }
+    }
+    /**
      * Send notification to backend via HTTP API
      * This bypasses MQTT ThingsBoard and sends directly to backend
      * Note: Failure notifications (success=false, severity 'error') are always sent;
@@ -2039,6 +2206,9 @@ let ScheduleService = class ScheduleService {
             clear_by_user_id: '',
             entity: deviceId
         };
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | Action: ${action} | Status: ${alarmStatus}`);
+        if (queued !== null)
+            return queued;
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
             await this.executeWithResilience(async () => {
@@ -2080,7 +2250,7 @@ let ScheduleService = class ScheduleService {
         }
     }
     async sendKeyVerifyFailNotification(schedule, action, outcome, runId = null) {
-        var _a, _b, _c, _d;
+        var _a;
         const backendUrl = this.globalHelper
             ? this.globalHelper.getEnvVar('VIIS_BACKEND', '')
             : '';
@@ -2096,21 +2266,10 @@ let ScheduleService = class ScheduleService {
             }
             return false;
         }
-        const payload = {
-            alarm_name: schedule.label || schedule.name,
-            id: deviceId,
-            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${(_a = outcome.read) !== null && _a !== void 0 ? _a : 'n/a'} attempts=${outcome.attempts}`,
-            message_key: 'iot.notification.schedule.verify_failed',
-            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { key: outcome.key, expected: outcome.expected, read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null, attempts: outcome.attempts, action, error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null }),
-            message_locale: 'vi-VN',
-            severity: 'error',
-            trigger_time: new Date().toISOString(),
-            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
-            alarm_status: 'Pending',
-            clear_by: '',
-            clear_by_user_id: '',
-            entity: deviceId,
-        };
+        const payload = this.keyVerifyFailPayload(schedule, action, outcome, runId, deviceId);
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | verify fail ${outcome.key} | ${action}`);
+        if (queued !== null)
+            return queued;
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
             await this.executeWithResilience(async () => {
@@ -2143,13 +2302,69 @@ let ScheduleService = class ScheduleService {
         }
         catch (error) {
             const errorMessage = error instanceof axios_1.AxiosError
-                ? `${error.message} (${((_d = error.response) === null || _d === void 0 ? void 0 : _d.status) || 'N/A'})`
+                ? `${error.message} (${((_a = error.response) === null || _a === void 0 ? void 0 : _a.status) || 'N/A'})`
                 : error.message;
             if (this.node) {
                 this.node.warn(`❌ HTTP VERIFY FAIL NOTIFICATION: ${schedule.name} | ${errorMessage}`);
             }
             return false;
         }
+    }
+    keyVerifyFailPayload(schedule, action, outcome, runId, deviceId) {
+        var _a, _b, _c;
+        return {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" verify fail: ${outcome.key} expected=${outcome.expected} read=${(_a = outcome.read) !== null && _a !== void 0 ? _a : 'n/a'} attempts=${outcome.attempts}`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { key: outcome.key, expected: outcome.expected, read: (_b = outcome.read) !== null && _b !== void 0 ? _b : null, attempts: outcome.attempts, action, error: (_c = outcome.error) !== null && _c !== void 0 ? _c : null }),
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: `${schedule.name}:verify:${action}:${outcome.key}`,
+            alarm_status: 'Pending',
+            clear_by: '',
+            clear_by_user_id: '',
+            entity: deviceId,
+        };
+    }
+    /**
+     * Outbox only: raises the state alarm `schedule_off_failed:<schedule>` for a run whose OFF failed (the
+     * per-key `verify_failed` events stay the run history). false = outbox off or already raised.
+     */
+    async raiseOffFailedAlarm(schedule, failed, runId) {
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (!outbox || failed.length === 0)
+            return false;
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        const alarmKey = (0, schedule_finish_1.offFailedAlarmKey)(schedule.name);
+        const keys = failed.map(outcome => outcome.key);
+        const payload = this.keyVerifyFailPayload(schedule, 'end', failed[0], runId, deviceId);
+        payload.msg = `Lịch trình "${schedule.label || schedule.name}" không tắt được thiết bị: ${keys.join(', ')}`;
+        payload.message_params = Object.assign(Object.assign({}, payload.message_params), { keys });
+        payload.tb_alarm_id = alarmKey;
+        return outbox.raise(alarmKey, payload);
+    }
+    /** Outbox only: clears `schedule_off_failed:<schedule>` once the OFF passed. false = outbox off or not raised. */
+    async clearOffFailedAlarm(schedule, runId) {
+        const outbox = (0, registry_1.getEventOutbox)();
+        if (!outbox)
+            return false;
+        const deviceId = this.globalHelper ? this.globalHelper.getEnvVar('DEVICE_ID', 'unknown') : 'unknown';
+        const alarmKey = (0, schedule_finish_1.offFailedAlarmKey)(schedule.name);
+        return outbox.clear(alarmKey, {
+            alarm_name: schedule.label || schedule.name,
+            id: deviceId,
+            msg: `Lịch trình "${schedule.label || schedule.name}" đã tắt được thiết bị`,
+            message_key: 'iot.notification.schedule.verify_failed',
+            message_params: Object.assign(Object.assign({}, (0, schedule_run_identity_1.scheduleEventParams)(schedule, runId)), { action: 'end' }),
+            message_locale: 'vi-VN',
+            severity: 'error',
+            trigger_time: new Date().toISOString(),
+            tb_alarm_id: alarmKey,
+            clear_by_user_id: '',
+            entity: deviceId,
+        });
     }
     /**
      * ADR-033 D2: report a run that ended before its window, with why. Severity `notification`
@@ -2188,6 +2403,9 @@ let ScheduleService = class ScheduleService {
             clear_by_user_id: '',
             entity: deviceId,
         };
+        const queued = await this.enqueueEvent(payload, `${schedule.name} | Action: stopped (${reason})`);
+        if (queued !== null)
+            return queued;
         const url = `${backendUrl}/api/v2/alarm/notification-by-token`;
         try {
             await this.executeWithResilience(async () => {

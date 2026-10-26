@@ -18,13 +18,29 @@ export type SharedModbusTransport = Pick<
   | "isConnectedCheck"
   | "disconnect"
 > &
-  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs">>;
+  Partial<Pick<ModbusClientCore, "reconnect" | "readDiscreteInputs" | "getConnectionState" | "isCircuitBreakerOpen">>;
 
 export class BoardScopedModbusClient {
+  /** Listeners added through this wrapper, so a retarget can move them to the new transport. */
+  private readonly listeners: Array<{ event: string; listener: ModbusStatusListener }> = [];
+
   constructor(
-    private readonly transport: SharedModbusTransport,
-    private readonly unitId: number,
+    private transport: SharedModbusTransport,
+    private unitId: number,
   ) {}
+
+  /**
+   * Points every holder of this board client at another transport / unit id (the board's config changed
+   * after the client was handed out). Status listeners move with it.
+   */
+  retarget(transport: SharedModbusTransport, unitId: number): void {
+    if (transport !== this.transport) {
+      for (const { event, listener } of this.listeners) this.detach(event, listener);
+      this.transport = transport;
+      for (const { event, listener } of this.listeners) this.statusEmitter.on?.(event, listener);
+    }
+    this.unitId = unitId;
+  }
 
   /**
    * Multi-board clients share one transport per socket. Forward status events
@@ -33,16 +49,23 @@ export class BoardScopedModbusClient {
    */
   on(event: string, listener: ModbusStatusListener): this {
     this.statusEmitter.on?.(event, listener);
+    this.listeners.push({ event, listener });
     return this;
   }
 
   removeListener(event: string, listener: ModbusStatusListener): this {
+    this.detach(event, listener);
+    const index = this.listeners.findIndex(l => l.event === event && l.listener === listener);
+    if (index >= 0) this.listeners.splice(index, 1);
+    return this;
+  }
+
+  private detach(event: string, listener: ModbusStatusListener): void {
     if (typeof this.statusEmitter.removeListener === "function") {
       this.statusEmitter.removeListener(event, listener);
     } else {
       this.statusEmitter.off?.(event, listener);
     }
-    return this;
   }
 
   off(event: string, listener: ModbusStatusListener): this {
@@ -92,6 +115,16 @@ export class BoardScopedModbusClient {
 
   isConnectedCheck(): boolean {
     return this.transport.isConnectedCheck();
+  }
+
+  /**
+   * True while the shared transport's circuit breaker is open: it is not being reconnected for the next
+   * CIRCUIT_BREAKER_RECOVERY_MS, so a read or write would only wait out its timeout.
+   */
+  isCircuitBreakerOpen(): boolean {
+    // The transport's breaker flag is authoritative (its FSM state leaves circuit_breaker_open within ms).
+    if (typeof this.transport.isCircuitBreakerOpen === "function") return this.transport.isCircuitBreakerOpen();
+    return this.transport.getConnectionState?.() === "circuit_breaker_open";
   }
 
   disconnect(): void {
