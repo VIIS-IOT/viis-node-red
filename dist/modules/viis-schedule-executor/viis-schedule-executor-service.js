@@ -61,6 +61,7 @@ const schedule_coil_classify_1 = require("./schedule-coil-classify");
 const schedule_key_writer_1 = require("./schedule-key-writer");
 const schedule_execution_buffer_1 = require("./schedule-execution-buffer");
 const schedule_log_ict_time_1 = require("../../ultils/schedule-log-ict-time");
+const schedule_eligibility_1 = require("./schedule-eligibility");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_valve_program_1 = require("./schedule-valve-program");
 // require('dotenv').config();
@@ -452,11 +453,9 @@ let ScheduleService = class ScheduleService {
             const schedules = await repository
                 .createQueryBuilder("schedule")
                 .leftJoin("tabiot_device", "device", "schedule.device_id = device.name")
-                .leftJoin("schedule.schedulePlan", "schedulePlan")
+                .leftJoinAndSelect("schedule.schedulePlan", "schedulePlan")
                 .addSelect("device.label", "device_label")
-                .where("schedule.enable = :enable", { enable: 1 })
-                .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
-                .andWhere("schedule.is_deleted = :isDeleted", { isDeleted: 0 })
+                .where(schedule_eligibility_1.DUE_SCHEDULE_CONDITION)
                 .andWhere("schedule.device_id = :deviceId", { deviceId: deviceId })
                 .printSql()
                 .getMany();
@@ -478,8 +477,8 @@ let ScheduleService = class ScheduleService {
                 console.warn(`Schedule ${schedule.name} missing start_time or end_time`);
                 return false;
             }
-            if (schedule.enable !== 1) {
-                this.debugLog(`Schedule ${schedule.name} is not enabled`);
+            if (!(0, schedule_eligibility_1.isScheduleRunnable)(schedule)) {
+                this.debugLog(`Schedule ${schedule.name} is disabled or deleted, or so is its plan`);
                 return false;
             }
             // Lấy giờ hiện tại theo múi giờ UTC+7
@@ -1125,6 +1124,16 @@ let ScheduleService = class ScheduleService {
             }
             console.error(`Error syncing log for ${schedule.name}: ${error.message}`);
         }
+    }
+    /**
+     * Marks an orphaned running schedule finished in the local DB only: no Modbus writes, no server sync or notification.
+     */
+    async markScheduleFinishedLocally(schedule) {
+        if (!dataSource_1.AppDataSource.isInitialized)
+            await dataSource_1.AppDataSource.initialize();
+        schedule.status = "finished";
+        await dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule).update({ name: schedule.name }, { status: "finished", modified: (0, moment_1.default)().utc().add(7, 'hours').toDate() } // VN wall clock, ADR-033
+        );
     }
     /**
      * Cập nhật trạng thái của schedule

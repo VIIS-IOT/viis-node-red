@@ -29,6 +29,8 @@ export class ScheduleSyncHandler {
     private readonly apiService: ApiService;
     /** Service for tracking sync state */
     private readonly syncStateService: SyncStateService;
+    /** DEVICE_ID of the syncing node, or '' when unknown */
+    private readonly deviceId: string;
     /** Statistics for current sync operation */
     private syncStats: {
         plansCreated: number;
@@ -44,8 +46,10 @@ export class ScheduleSyncHandler {
      * @param dbService - Database service for repository access
      * @param node - Node-RED node instance
      * @param accessToken - Device access token for authentication
+     * @param deviceId - DEVICE_ID of the device the token belongs to, '' when unknown
      */
-    constructor(dbService: DatabaseService, node: Node, accessToken: string) {
+    constructor(dbService: DatabaseService, node: Node, accessToken: string, deviceId = '') {
+        this.deviceId = deviceId;
         this.planRepo = dbService.getSchedulePlanRepository();
         this.scheduleRepo = dbService.getScheduleRepository();
         this.node = node;
@@ -97,6 +101,8 @@ export class ScheduleSyncHandler {
             for (const serverPlan of serverPlans) {
                 await this.syncSchedulePlan(serverPlan);
             }
+
+            await this.detectDeletedPlans(serverPlans);
 
             // Create sync result
             const result: SyncResult = {
@@ -422,6 +428,61 @@ export class ScheduleSyncHandler {
     }
 
     /**
+     * Marks plans the server no longer returns as deleted, with their schedules. The server lists every plan of the
+     * device that is not deleted, so a missing plan was deleted there; without this its schedules kept running here.
+     * Plans created on the gateway and not yet uploaded (`is_from_local = 1`) are left alone.
+     *
+     * Only this device's plans are checked: one gateway DB can hold several devices (gateway 115 runs nodered1 and
+     * nodered2 on one MySQL), and another device's plans are never in this device's server list. The device comes from
+     * the server's answer, else from the node's DEVICE_ID; when neither is known nothing is marked.
+     *
+     * @param serverPlans - Every plan the server returned for this device
+     * @returns Promise that resolves when missing plans are processed
+     */
+    private async detectDeletedPlans(serverPlans: ServerSchedulePlan[]): Promise<void> {
+        try {
+            const serverDeviceIds = new Set(serverPlans.map(plan => plan.device_id).filter(Boolean));
+            if (serverDeviceIds.size > 1) {
+                logger.warn(this.node, `Server returned plans of ${serverDeviceIds.size} devices; skipping deleted-plan check`);
+                return;
+            }
+            const deviceId = [...serverDeviceIds][0] || this.deviceId;
+            if (!deviceId) {
+                logger.warn(this.node, 'Device id unknown; skipping deleted-plan check');
+                return;
+            }
+
+            const serverPlanNames = new Set(serverPlans.map(plan => plan.name));
+            const localPlans = await this.planRepo.find({ where: { device_id: deviceId } });
+            // Plans deleted earlier by RPC only had the plan row marked, so their schedules are swept here too.
+            const deletedPlans = localPlans.filter(plan => plan.is_deleted === 1
+                || (plan.is_from_local !== 1 && !serverPlanNames.has(plan.name)));
+
+            for (const plan of deletedPlans) {
+                if (plan.is_deleted !== 1) {
+                    logger.info(this.node, `Marking schedule plan ${plan.name} (${plan.label}) as deleted: not on the server`);
+                    plan.is_deleted = 1;
+                    plan.modified = adjustToUTC7(new Date());
+                    await this.planRepo.save(plan);
+                    this.syncStats.plansUpdated++;
+                }
+
+                const schedules = await this.scheduleRepo.find({ where: { schedule_plan_id: plan.name, is_deleted: 0 } });
+                for (const schedule of schedules) {
+                    schedule.is_deleted = 1;
+                    schedule.modified = adjustToUTC7(new Date());
+                    await this.scheduleRepo.save(schedule);
+                    this.syncStats.schedulesUpdated++;
+                }
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            logger.error(this.node, `Failed to detect deleted schedule plans: ${errorMessage}`);
+            throw error;
+        }
+    }
+
+    /**
      * Detects schedules that exist locally but are not present in server data
      * Marks these schedules as deleted in the local database
      *
@@ -446,10 +507,11 @@ export class ScheduleSyncHandler {
                 return;
             }
 
-            // Create a map of server schedule names for fast lookup
+            // The server sends the schedule key as `id` (its `name` is the label). Keying on `name` marked every local
+            // schedule deleted on each sync until syncSchedule restored it, so a running one looked deleted mid-run.
             const serverScheduleMap = new Map<string, boolean>();
             serverSchedules.forEach(schedule => {
-                serverScheduleMap.set(schedule.name, true);
+                serverScheduleMap.set(schedule.id ?? schedule.name, true);
             });
 
             // Find schedules that exist locally but not on server

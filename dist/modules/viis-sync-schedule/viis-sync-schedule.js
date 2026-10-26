@@ -34,6 +34,8 @@ module.exports = function (RED) {
         // Load credentials from JSON config via global context (recommended approach)
         const globalHelper = new global_context_helper_1.GlobalContextHelper(node.context());
         let accessToken;
+        // Device the token belongs to; unknown when a token is configured on the node (legacy mode).
+        let syncDeviceId = '';
         if (config.useAutoLoadedCredentials) {
             // Auto-load from JSON config (loaded by env-loader node)
             accessToken = globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
@@ -43,6 +45,7 @@ module.exports = function (RED) {
                 return;
             }
             const deviceId = globalHelper.getEnvVar('DEVICE_ID', '');
+            syncDeviceId = deviceId;
             logger_1.logger.info(node, 'Credentials auto-loaded from JSON config');
             logger_1.logger.info(node, `Device ID: ${deviceId.substring(0, 8)}...`);
             logger_1.logger.info(node, `Access Token: ${accessToken.substring(0, 8)}...`);
@@ -50,6 +53,8 @@ module.exports = function (RED) {
         else {
             // Legacy mode: Use config or fallback to environment
             accessToken = config.accessToken || globalHelper.getEnvVar('DEVICE_ACCESS_TOKEN', '');
+            if (!config.accessToken)
+                syncDeviceId = globalHelper.getEnvVar('DEVICE_ID', '');
             if (!accessToken) {
                 node.error('Access Token not configured and DEVICE_ACCESS_TOKEN not found');
                 node.status({ fill: 'red', shape: 'ring', text: 'Missing Access Token' });
@@ -71,7 +76,7 @@ module.exports = function (RED) {
                 await dbService.initialize();
                 logger_1.logger.info(node, 'Database initialized successfully');
                 // Initialize the sync handler
-                scheduleSyncHandler = new scheduleSyncHandler_1.ScheduleSyncHandler(dbService, node, accessToken);
+                scheduleSyncHandler = new scheduleSyncHandler_1.ScheduleSyncHandler(dbService, node, accessToken, syncDeviceId);
                 // Update node status with initial state
                 updateNodeStatus('ready');
                 // Set up sync interval if configured

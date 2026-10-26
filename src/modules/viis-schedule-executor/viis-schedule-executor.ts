@@ -22,6 +22,7 @@ import {
     tryBeginScheduleTransition,
 } from "./schedule-tick-guard";
 import { executeWithTimeout } from "./resilience-utils";
+import { isOrphanRunningSchedule } from "./schedule-eligibility";
 import { v4 as uuidv4 } from "uuid";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -806,6 +807,16 @@ module.exports = function (RED: NodeAPI) {
                         }
                     } else if (schedule.status === "running" && isDue) {
                         // Schedule still running and still due — no action needed
+                    } else if (schedule.status === "running" && isOrphanRunningSchedule(
+                        schedule,
+                        existingActiveCommands.length,
+                        () => scheduleService.hasWritableModbusCommands(schedule)
+                    )) {
+                        // Left "running" while it was disabled or deleted (e.g. deleted mid-run on an older release).
+                        // This process never started it, so do not write OFF to outputs another schedule may own now.
+                        node.warn(`🧹 ORPHAN RUNNING: ${schedule.name} is disabled or deleted and not started by this run; marking finished without touching outputs`);
+                        await scheduleService.markScheduleFinishedLocally(schedule);
+                        clearStatusHistory(schedule.name);
                     } else if (schedule.status === "running" && !isDue) {
                         if (!tryBeginScheduleTransition(globalContext, schedule.name, "finish")) {
                             debugLog(`Skip finish for ${schedule.name}: transition already in flight`);
