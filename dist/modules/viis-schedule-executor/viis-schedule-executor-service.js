@@ -1126,6 +1126,16 @@ let ScheduleService = class ScheduleService {
         }
     }
     /**
+     * Marks an orphaned running schedule finished in the local DB only: no Modbus writes, no server sync or notification.
+     */
+    async markScheduleFinishedLocally(schedule) {
+        if (!dataSource_1.AppDataSource.isInitialized)
+            await dataSource_1.AppDataSource.initialize();
+        schedule.status = "finished";
+        await dataSource_1.AppDataSource.getRepository(TabiotSchedule_1.TabiotSchedule).update({ name: schedule.name }, { status: "finished", modified: (0, moment_1.default)().utc().add(7, 'hours').toDate() } // VN wall clock, ADR-033
+        );
+    }
+    /**
      * Cập nhật trạng thái của schedule
      */
     async updateScheduleStatus(schedule, status) {

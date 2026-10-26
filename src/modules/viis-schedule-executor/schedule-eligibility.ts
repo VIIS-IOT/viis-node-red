@@ -14,6 +14,20 @@ export function isScheduleRunnable(schedule: TabiotSchedule): boolean {
 }
 
 /**
+ * A schedule still marked running that is no longer runnable and that this process never started (no active commands,
+ * though it has outputs to write). Finishing it would write OFF to outputs another schedule or the farmer may be using,
+ * so the executor only marks it finished. Config-only schedules never store commands and take the normal finish path.
+ */
+export function isOrphanRunningSchedule(
+    schedule: TabiotSchedule,
+    activeCommandCount: number,
+    hasWritableCommands: () => boolean,
+): boolean {
+    if (schedule.status !== 'running' || isScheduleRunnable(schedule)) return false;
+    return activeCommandCount === 0 && hasWritableCommands();
+}
+
+/**
  * SQL for `getDueSchedules`: runnable schedules, plus running ones so a schedule whose plan was deleted or disabled
  * mid-run still gets its OFF.
  */

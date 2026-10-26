@@ -10,6 +10,7 @@ const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_side_effects_1 = require("./schedule-side-effects");
 const schedule_tick_guard_1 = require("./schedule-tick-guard");
 const resilience_utils_1 = require("./resilience-utils");
+const schedule_eligibility_1 = require("./schedule-eligibility");
 const uuid_1 = require("uuid");
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -668,6 +669,13 @@ module.exports = function (RED) {
                         }
                         else if (schedule.status === "running" && isDue) {
                             // Schedule still running and still due — no action needed
+                        }
+                        else if (schedule.status === "running" && (0, schedule_eligibility_1.isOrphanRunningSchedule)(schedule, existingActiveCommands.length, () => scheduleService.hasWritableModbusCommands(schedule))) {
+                            // Left "running" while it was disabled or deleted (e.g. deleted mid-run on an older release).
+                            // This process never started it, so do not write OFF to outputs another schedule may own now.
+                            node.warn(`🧹 ORPHAN RUNNING: ${schedule.name} is disabled or deleted and not started by this run; marking finished without touching outputs`);
+                            await scheduleService.markScheduleFinishedLocally(schedule);
+                            clearStatusHistory(schedule.name);
                         }
                         else if (schedule.status === "running" && !isDue) {
                             if (!(0, schedule_tick_guard_1.tryBeginScheduleTransition)(globalContext, schedule.name, "finish")) {
