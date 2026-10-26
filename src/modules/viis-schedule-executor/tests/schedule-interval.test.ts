@@ -446,4 +446,26 @@ describe('ScheduleService - Interval (Day of Week) Validation', () => {
             expect(scheduleService.isScheduleDue(schedule)).toBe(true);
         });
     });
+
+    // E2E 2026-10-26: a program of a deleted plan still started on time and switched outputs on.
+    describe('Plan state', () => {
+        const inWindow = (plan: Partial<NonNullable<TabiotSchedule['schedulePlan']>> | null, status: TabiotSchedule['status'] = '') =>
+            createTestSchedule({ interval: '3', status, schedulePlan: plan as TabiotSchedule['schedulePlan'] });
+
+        beforeEach(() => setSystemTime('2025-01-08T03:00:00.000Z')); // Wednesday 10:00 UTC+7
+
+        test('runs while its plan is enabled and not deleted', () => {
+            expect(scheduleService.isScheduleDue(inWindow({ enable: 1, is_deleted: 0 }))).toBe(true);
+        });
+
+        test('is not due once its plan is deleted, so a running one gets its OFF', () => {
+            expect(scheduleService.isScheduleDue(inWindow({ enable: 1, is_deleted: 1 }))).toBe(false);
+            expect(scheduleService.isScheduleDue(inWindow({ enable: 1, is_deleted: 1 }, 'running'))).toBe(false);
+        });
+
+        test('is not due when its plan is disabled or gone', () => {
+            expect(scheduleService.isScheduleDue(inWindow({ enable: 0, is_deleted: 0 }))).toBe(false);
+            expect(scheduleService.isScheduleDue(inWindow(null))).toBe(false);
+        });
+    });
 });

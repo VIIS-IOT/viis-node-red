@@ -64,6 +64,7 @@ class ScheduleSyncHandler {
             for (const serverPlan of serverPlans) {
                 await this.syncSchedulePlan(serverPlan);
             }
+            await this.detectDeletedPlans(serverPlans);
             // Create sync result
             const result = Object.assign(Object.assign({ success: true }, this.syncStats), { timestamp: Date.now() });
             // Record successful sync
@@ -339,6 +340,40 @@ class ScheduleSyncHandler {
         catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             logger_1.logger.error(this.node, `Failed to update schedule ${serverSchedule.name}: ${errorMessage}`);
+            throw error;
+        }
+    }
+    /**
+     * Marks plans the server no longer returns as deleted, with their schedules. The server lists every plan of the
+     * device that is not deleted, so a missing plan was deleted there; without this its schedules kept running here.
+     * Plans created on the gateway and not yet uploaded (`is_from_local = 1`) are left alone.
+     *
+     * @param serverPlans - Every plan the server returned for this device
+     * @returns Promise that resolves when missing plans are processed
+     */
+    async detectDeletedPlans(serverPlans) {
+        try {
+            const serverPlanNames = new Set(serverPlans.map(plan => plan.name));
+            const localPlans = await this.planRepo.find({ where: { is_deleted: 0 } });
+            const deletedPlans = localPlans.filter(plan => plan.is_from_local !== 1 && !serverPlanNames.has(plan.name));
+            for (const plan of deletedPlans) {
+                logger_1.logger.info(this.node, `Marking schedule plan ${plan.name} (${plan.label}) as deleted: not on the server`);
+                plan.is_deleted = 1;
+                plan.modified = (0, helper_1.adjustToUTC7)(new Date());
+                await this.planRepo.save(plan);
+                this.syncStats.plansUpdated++;
+                const schedules = await this.scheduleRepo.find({ where: { schedule_plan_id: plan.name, is_deleted: 0 } });
+                for (const schedule of schedules) {
+                    schedule.is_deleted = 1;
+                    schedule.modified = (0, helper_1.adjustToUTC7)(new Date());
+                    await this.scheduleRepo.save(schedule);
+                    this.syncStats.schedulesUpdated++;
+                }
+            }
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            logger_1.logger.error(this.node, `Failed to detect deleted schedule plans: ${errorMessage}`);
             throw error;
         }
     }

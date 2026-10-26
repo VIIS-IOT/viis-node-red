@@ -27,6 +27,7 @@ import { classifyCoils, impliedFinishPumpCommands } from "./schedule-coil-classi
 import { writeAndVerifyKey, KeyWriterDeps } from "./schedule-key-writer";
 import { ExecutionStepBuffer } from "./schedule-execution-buffer";
 import { buildScheduleLogIctDateTime } from "../../ultils/schedule-log-ict-time";
+import { DUE_SCHEDULE_CONDITION, isScheduleRunnable } from "./schedule-eligibility";
 import {
     ExecutionReport,
     ExecutionStep,
@@ -494,11 +495,9 @@ export class ScheduleService {
             const schedules = await repository
                 .createQueryBuilder("schedule")
                 .leftJoin("tabiot_device", "device", "schedule.device_id = device.name")
-                .leftJoin("schedule.schedulePlan", "schedulePlan")
+                .leftJoinAndSelect("schedule.schedulePlan", "schedulePlan")
                 .addSelect("device.label", "device_label")
-                .where("schedule.enable = :enable", { enable: 1 })
-                .andWhere("schedulePlan.enable = :planEnable", { planEnable: 1 })
-                .andWhere("schedule.is_deleted = :isDeleted", { isDeleted: 0 })
+                .where(DUE_SCHEDULE_CONDITION)
                 .andWhere("schedule.device_id = :deviceId", { deviceId: deviceId })
                 .printSql()
                 .getMany();
@@ -521,8 +520,8 @@ export class ScheduleService {
                 return false;
             }
 
-            if (schedule.enable !== 1) {
-                this.debugLog(`Schedule ${schedule.name} is not enabled`);
+            if (!isScheduleRunnable(schedule)) {
+                this.debugLog(`Schedule ${schedule.name} is disabled or deleted, or so is its plan`);
                 return false;
             }
 
