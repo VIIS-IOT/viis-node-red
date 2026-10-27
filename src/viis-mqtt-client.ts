@@ -3,6 +3,7 @@ import { sendTelemetryByHttp } from "./core/device";
 import ClientRegistry from "./core/client-registry";
 import { MqttConfig } from "./core/mqtt-client";
 import { GlobalContextHelper } from "./ultils/global-context-helper";
+import { matchTopic, MAX_PENDING_MESSAGES } from "./core/mqtt-topic-matcher";
 import dayjs from "dayjs";
 
 interface MyNodeDef extends NodeDef {
@@ -28,30 +29,6 @@ const MQTT_CONFIG = {
   CREDENTIAL_MAX_RETRIES: 30,
 };
 
-/**
- * Match MQTT topic with wildcard support (+ and #)
- * + matches exactly one level
- * # matches zero or more levels (must be last)
- */
-function matchTopic(pattern: string, topic: string): boolean {
-  const patternParts = pattern.split('/');
-  const topicParts = topic.split('/');
-
-  for (let i = 0; i < patternParts.length; i++) {
-    if (patternParts[i] === '#') {
-      return true;
-    }
-    if (i >= topicParts.length) {
-      return false;
-    }
-    if (patternParts[i] !== '+' && patternParts[i] !== topicParts[i]) {
-      return false;
-    }
-  }
-
-  return patternParts.length === topicParts.length;
-}
-
 module.exports = function (RED: NodeAPI) {
   function ViisMqttClient(this: Node, config: MyNodeDef) {
     RED.nodes.createNode(this, config);
@@ -71,7 +48,9 @@ module.exports = function (RED: NodeAPI) {
     let mqttReady = false;
     let isSubscribed = false;
     let statusHandler: ((data: any) => void) | null = null;
+    let messageHandler: ((event: any) => void) | null = null;
     const pendingMessages: any[] = [];
+    const backupLimit = config.backupLimit;
 
     // Determine topic based on mode and configuration
     const topic = config.mode === "publish"
@@ -148,7 +127,8 @@ module.exports = function (RED: NodeAPI) {
                 }
               };
 
-              mqttClient.on("mqtt-message", handleMessage);
+              messageHandler = handleMessage;
+              mqttClient.on("mqtt-message", messageHandler);
 
               await mqttClient.subscribe(topic);
               isSubscribed = true;
@@ -239,12 +219,26 @@ module.exports = function (RED: NodeAPI) {
       }, MQTT_CONFIG.CREDENTIAL_RETRY_INTERVAL_MS);
     }
 
+    // Prune oldest backups when limit is exceeded
+    function pruneBackups(): void {
+      if (backupLimit < 0) return; // unlimited
+      const keys = node.context().keys().filter((k: string) => k.startsWith('backup_')).sort();
+      while (keys.length >= backupLimit) {
+        const oldestKey = keys.shift()!;
+        node.context().set(oldestKey, undefined);
+      }
+    }
+
     // Handle input messages
     node.on("input", async function (msg: any) {
       if (config.protocol === "MQTT") {
         if (!mqttReady || !mqttClient) {
           // Queue message while MQTT is initializing
           node.warn("MQTT client not ready, queuing message");
+          if (pendingMessages.length >= MAX_PENDING_MESSAGES) {
+            pendingMessages.shift();
+            node.warn("Pending message queue full, dropping oldest message");
+          }
           pendingMessages.push(msg);
           return;
         }
@@ -267,6 +261,7 @@ module.exports = function (RED: NodeAPI) {
 
           if (config.enableBackup) {
             const backupKey = `backup_${Date.now()}`;
+            pruneBackups();
             node.context().set(backupKey, {
               ts: dayjs().valueOf(),
               data: msg.payload,
@@ -310,6 +305,7 @@ module.exports = function (RED: NodeAPI) {
 
           if (config.enableBackup) {
             const backupKey = `backup_${Date.now()}`;
+            pruneBackups();
             node.context().set(backupKey, {
               ts: dayjs().valueOf(),
               data: msg.payload,
@@ -333,10 +329,14 @@ module.exports = function (RED: NodeAPI) {
     // Cleanup on node close
     node.on("close", async (done: () => void) => {
       try {
-        // Remove status handler from mqttClient
+        // Remove event listeners from mqttClient
         if (statusHandler && mqttClient) {
           mqttClient.removeListener("mqtt-status", statusHandler);
           statusHandler = null;
+        }
+        if (messageHandler && mqttClient) {
+          mqttClient.removeListener("mqtt-message", messageHandler);
+          messageHandler = null;
         }
 
         if (mqttClient && isSubscribed) {

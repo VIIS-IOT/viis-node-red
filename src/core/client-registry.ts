@@ -37,6 +37,10 @@ class ClientRegistry {
     private static referenceCount = { modbus: 0, thingsboard: 0, local: 0, mysql: 0 };
     private static boardReferenceCount: Map<string, number> = new Map();
 
+    // Connection limiter — max TCP connections per host:port (ESP32 4-client limit)
+    private static hostConnectionCount: Map<string, number> = new Map();
+    private static readonly MAX_CONNECTIONS_PER_HOST = 2; // 1 active + 1 buffer for reconnect transient
+
     private static activeConnections = {
         modbus: 0,
         thingsboardMqtt: 0,
@@ -363,6 +367,18 @@ class ClientRegistry {
                 }
 
                 try {
+                    // Connection limiter — enforce max connections per host:port (ESP32 4-client limit)
+                    if (boardConfig.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                        const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                        const currentCount = this.hostConnectionCount.get(hostKey) || 0;
+                        if (currentCount >= this.MAX_CONNECTIONS_PER_HOST) {
+                            throw new Error(
+                                `[MODBUS-CONNECTION-LIMIT] Max ${this.MAX_CONNECTIONS_PER_HOST} connections to ${hostKey}. Current: ${currentCount}. ` +
+                                `ESP32 board limit is 4 clients.`
+                            );
+                        }
+                    }
+
                     // Log connection type for debugging
                     if (boardConfig.type === 'RTU') {
                         //node.warn(`[MODBUS-MULTI] Creating RTU connection for board: ${targetBoardId} (${boardConfig.serialPort}@${boardConfig.baudRate})`);
@@ -373,6 +389,12 @@ class ClientRegistry {
                     // Create new connection for this board
                     const client = new ModbusClientCore(boardConfig, node);
                     this.modbusBoardPool.set(targetBoardId, client);
+
+                    // Increment host connection count for TCP
+                    if (boardConfig.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                        const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                        this.hostConnectionCount.set(hostKey, (this.hostConnectionCount.get(hostKey) || 0) + 1);
+                    }
 
                     // Track connections
                     if (!this.activeConnections.modbusBoards.has(targetBoardId)) {
@@ -600,6 +622,16 @@ class ClientRegistry {
                     // Disconnect and remove board connection
                     const client = this.modbusBoardPool.get(boardId);
                     if (client) {
+                        // Decrement host connection count for TCP boards
+                        const boardConfig = this.modbusBoardConfigs.get(boardId);
+                        if (boardConfig?.type === 'TCP' && boardConfig.host && boardConfig.tcpPort) {
+                            const hostKey = `${boardConfig.host}:${boardConfig.tcpPort}`;
+                            const currentCount = this.hostConnectionCount.get(hostKey) || 0;
+                            if (currentCount > 0) {
+                                this.hostConnectionCount.set(hostKey, currentCount - 1);
+                            }
+                        }
+
                         client.disconnect();
                         this.modbusBoardPool.delete(boardId);
                         this.activeConnections.modbusBoards.delete(boardId);
@@ -685,6 +717,18 @@ class ClientRegistry {
             users: Array.from(this.clientUsers.modbus),
             config: this.modbusConfig
         };
+    }
+
+    /**
+     * Get connection count per host:port for monitoring
+     * Used to verify ESP32 4-client limit compliance
+     */
+    static getHostConnectionCounts(): Record<string, number> {
+        const counts: Record<string, number> = {};
+        this.hostConnectionCount.forEach((count, hostKey) => {
+            counts[hostKey] = count;
+        });
+        return counts;
     }
 
     /**

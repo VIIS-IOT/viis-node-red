@@ -402,6 +402,10 @@ export class ScheduleHandler {
                 // Continue with the update even if Modbus fails
                 payload.status = 'finished';
                 payload.enable = 0;
+            } finally {
+                // Release all acquired clients to prevent ref count leaks
+                ClientRegistry.releaseClient('thingsboard', this.node);
+                ClientRegistry.releaseClient('local', this.node);
             }
         }
 

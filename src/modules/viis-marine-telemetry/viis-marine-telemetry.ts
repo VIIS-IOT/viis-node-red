@@ -410,11 +410,11 @@ module.exports = function (RED: NodeAPI) {
                     }
                 }
 
-                // Disconnect ThingsBoard MQTT
+                // Disconnect ThingsBoard MQTT via registry (not direct)
                 if (thingsboardMqttClient) {
                     try {
-                        thingsboardMqttClient.disconnect();
-                        node.log('[Marine] ThingsBoard MQTT disconnected');
+                        ClientRegistry.releaseClient('thingsboard', node);
+                        node.log('[Marine] ThingsBoard MQTT released');
                     } catch (mqttError) {
                         node.warn(`[Marine] MQTT cleanup warning: ${(mqttError as Error).message}`);
                     }
