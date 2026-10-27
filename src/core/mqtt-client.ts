@@ -68,6 +68,7 @@ export class MqttClientCore extends EventEmitter {
     private healthCheckTimer: NodeJS.Timeout | null = null;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private circuitBreakerTimer: NodeJS.Timeout | null = null;
+    private monitoredClientId: string = '';
 
     // Event listeners for cleanup
     private eventListeners: Map<string, (...args: any[]) => void> = new Map();
@@ -102,8 +103,8 @@ export class MqttClientCore extends EventEmitter {
 
         // Register with connection monitor for automatic recovery
         const monitor = ConnectionMonitor.getInstance();
-        const clientId = this.config.clientId || `nodered_${Math.random().toString(16).substring(2, 8)}`;
-        monitor.registerClient(clientId, this, node);
+        this.monitoredClientId = this.config.clientId || `nodered_${Math.random().toString(16).substring(2, 8)}`;
+        monitor.registerClient(this.monitoredClientId, this, node);
     }
 
     // Enhanced MQTT client initialization with proper error handling
@@ -545,7 +546,7 @@ export class MqttClientCore extends EventEmitter {
         });
     }
 
-    // Publish message, chỉ khi đã kết nối
+    // Publish message only when connected
     public async publish(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
         if (!this.client) throw new Error("MQTT client not initialized");
         if (!this.client.connected) {
@@ -574,7 +575,6 @@ export class MqttClientCore extends EventEmitter {
                         // Not JSON, use as is
                     }
 
-                    // this.node.log(`Published to topic: ${topic} | Message: ${displayMsg}`);
                     resolve();
                 }
             });
@@ -583,7 +583,7 @@ export class MqttClientCore extends EventEmitter {
 
 
 
-    // Resubscribe tất cả các topic khi reconnect
+    // Resubscribe all topics on reconnect
     private resubscribeTopics(): void {
         if (!this.client) return;
 
@@ -608,6 +608,9 @@ export class MqttClientCore extends EventEmitter {
     // Enhanced disconnect with proper resource cleanup
     public async disconnect(): Promise<void> {
         this.node.log("Initiating MQTT client disconnect...");
+
+        // Unregister from connection monitor
+        ConnectionMonitor.getInstance().unregisterClient(this.monitoredClientId);
 
         // Clear all timers
         this.clearTimers();
@@ -647,16 +650,14 @@ export class MqttClientCore extends EventEmitter {
             });
         }
 
-        // Reset state
-        this.connectionState.isConnected = false;
-        this.connectionState.isConnecting = false;
-        this.messageQueue = [];
-        this.subscribedTopics.clear();
     }
 
     // Force disconnect for emergency situations
     public forceDisconnect(): void {
         this.node.warn("Force disconnecting MQTT client");
+
+        // Unregister from connection monitor
+        ConnectionMonitor.getInstance().unregisterClient(this.monitoredClientId);
 
         this.clearTimers();
         if (this.healthCheckTimer) {
@@ -677,26 +678,9 @@ export class MqttClientCore extends EventEmitter {
         this.eventListeners.clear();
     }
 
-    // Kiểm tra trạng thái kết nối
+    // Check connection status
     public isConnected(): boolean {
         return this.client?.connected ?? false;
     }
 }
 
-// // Ví dụ tích hợp vào custom node
-// export function registerMqttConfigNode(RED: NodeAPI) {
-//     function MqttConfigNode(this: Node, config: MqttConfig) {
-//         RED.nodes.createNode(this, config);
-//         const mqttClient = new MqttClientCore(config, this);
-
-//         // Đăng ký sự kiện để custom node khác sử dụng
-//         this.on("close", () => {
-//             mqttClient.disconnect();
-//         });
-
-//         // Lưu mqttClient vào node để các node khác truy cập
-//         (this as any).mqttClient = mqttClient;
-//     }
-
-//     RED.nodes.registerType("mqtt-config", MqttConfigNode);
-// }

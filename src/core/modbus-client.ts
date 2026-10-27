@@ -62,7 +62,7 @@ export class ModbusClientCore extends EventEmitter {
     private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
     private stateHistory: Array<{ state: ConnectionState; timestamp: number }> = [];
     private lastStateChangeAt: number = 0;
-    private readonly MIN_RECONNECT_INTERVAL = 5000; // Minimum 5s between reconnects
+    private readonly MIN_RECONNECT_INTERVAL = 15000; // Minimum 15s between reconnects (ESP32 4-client limit)
     private readonly SERVER_CLEANUP_TIME = 120000; // 120s for TCP TIME_WAIT cleanup
 
     // USB Serial Port Recovery (URB -32 / EPIPE errors)
@@ -877,8 +877,8 @@ export class ModbusClientCore extends EventEmitter {
         // FSM: Transition to RECONNECTING state
         this.transitionTo(ConnectionState.RECONNECTING);
 
-        // STM32 cần thời gian recovery ngắn hơn nhưng ổn định
-        const quickReconnectTime = 5000; // 5 giây cho STM32 (tăng từ 2s)
+        // STM32/ESP32 cần thời gian recovery ổn định
+        const quickReconnectTime = 15000; // 15 giây - matches TCP TIME_WAIT for ESP32 4-client limit
         const standardReconnectTime = Math.max(this.config.reconnectInterval || 30000, 30000); // 30s
 
         //this.node.log(`[STM32-RECONNECT] Scheduling quick reconnect in ${quickReconnectTime}ms`);
@@ -965,8 +965,12 @@ export class ModbusClientCore extends EventEmitter {
                 this.circuitBreakerOpen = false;
                 this.failedConnectionCount = 0;
                 this.disconnectStartTime = null;
-                this.node.warn("[CIRCUIT-BREAKER] Reset, attempting recovery");
-                this.scheduleReconnect();
+                // Add jitter to avoid synchronized reconnect with native modbus system
+                const jitter = Math.floor(Math.random() * 10000);
+                this.node.warn(`[CIRCUIT-BREAKER] Reset, reconnecting in ${jitter}ms (jitter)`);
+                setTimeout(() => {
+                    this.scheduleReconnect();
+                }, jitter);
             }, 60000); // 1 minute (reduced from 5 minutes)
             
             return;
@@ -1011,7 +1015,9 @@ export class ModbusClientCore extends EventEmitter {
                 // Skip nếu đang initialize hoặc reconnecting - tránh race condition
                 if (this.isInitializing ||
                     this.connectionState === ConnectionState.CONNECTING ||
-                    this.connectionState === ConnectionState.RECONNECTING) {
+                    this.connectionState === ConnectionState.RECONNECTING ||
+                    this.connectionState === ConnectionState.ERROR ||
+                    this.connectionState === ConnectionState.CIRCUIT_BREAKER_OPEN) {
                     return;
                 }
 
@@ -1164,8 +1170,12 @@ export class ModbusClientCore extends EventEmitter {
                 this.circuitBreakerOpen = false;
                 this.failedConnectionCount = 0;
                 this.disconnectStartTime = null;
-                this.node.warn("[CIRCUIT-BREAKER] Reset, attempting recovery");
-                this.scheduleReconnect();
+                // Add jitter to avoid synchronized reconnect with native modbus system
+                const jitter = Math.floor(Math.random() * 10000);
+                this.node.warn(`[CIRCUIT-BREAKER] Reset, reconnecting in ${jitter}ms (jitter)`);
+                setTimeout(() => {
+                    this.scheduleReconnect();
+                }, jitter);
             }, 60000); // 1 minute (reduced from 5 minutes)
             
             return;
@@ -1402,15 +1412,18 @@ export class ModbusClientCore extends EventEmitter {
                         this.emit("modbus-status", { status: "disconnected" });
                     }
                     this.node.log("[MODBUS-CLEANUP] Client connection closed");
+                    // Remove all event listeners AFTER close callback fires
+                    this.removeAllListeners();
                 });
+            } else {
+                // No client to close, clean up listeners immediately
+                this.removeAllListeners();
             }
         } catch (error) {
             // Silently handle close errors during cleanup
             this.node.warn(`[MODBUS-CLEANUP] Error during close: ${(error as Error).message}`);
+            this.removeAllListeners();
         }
-
-        // Remove all event listeners to prevent memory leaks
-        this.removeAllListeners();
 
         // 🆕 Reset circuit breaker state
         this.failedConnectionCount = 0;
