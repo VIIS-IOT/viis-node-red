@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const device_1 = require("./core/device");
 const client_registry_1 = __importDefault(require("./core/client-registry"));
 const global_context_helper_1 = require("./ultils/global-context-helper");
+const mqtt_topic_matcher_1 = require("./core/mqtt-topic-matcher");
 const dayjs_1 = __importDefault(require("dayjs"));
 const MQTT_CONFIG = {
     THINGSBOARD: {
@@ -20,27 +21,6 @@ const MQTT_CONFIG = {
     CREDENTIAL_RETRY_INTERVAL_MS: 2000,
     CREDENTIAL_MAX_RETRIES: 30,
 };
-/**
- * Match MQTT topic with wildcard support (+ and #)
- * + matches exactly one level
- * # matches zero or more levels (must be last)
- */
-function matchTopic(pattern, topic) {
-    const patternParts = pattern.split('/');
-    const topicParts = topic.split('/');
-    for (let i = 0; i < patternParts.length; i++) {
-        if (patternParts[i] === '#') {
-            return true;
-        }
-        if (i >= topicParts.length) {
-            return false;
-        }
-        if (patternParts[i] !== '+' && patternParts[i] !== topicParts[i]) {
-            return false;
-        }
-    }
-    return patternParts.length === topicParts.length;
-}
 module.exports = function (RED) {
     function ViisMqttClient(config) {
         RED.nodes.createNode(this, config);
@@ -57,7 +37,9 @@ module.exports = function (RED) {
         let mqttReady = false;
         let isSubscribed = false;
         let statusHandler = null;
+        let messageHandler = null;
         const pendingMessages = [];
+        const backupLimit = config.backupLimit;
         // Determine topic based on mode and configuration
         const topic = config.mode === "publish"
             ? (config.topic || MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC)
@@ -103,7 +85,7 @@ module.exports = function (RED) {
                                     if (!msgTopic)
                                         return;
                                     // Check if message matches this node's topic
-                                    if (matchTopic(topic, msgTopic)) {
+                                    if ((0, mqtt_topic_matcher_1.matchTopic)(topic, msgTopic)) {
                                         let payload;
                                         if (typeof rawMessage === 'string') {
                                             try {
@@ -131,7 +113,8 @@ module.exports = function (RED) {
                                     node.error(`Error handling MQTT message: ${error.message}`);
                                 }
                             };
-                            mqttClient.on("mqtt-message", handleMessage);
+                            messageHandler = handleMessage;
+                            mqttClient.on("mqtt-message", messageHandler);
                             await mqttClient.subscribe(topic);
                             isSubscribed = true;
                             node.log(`Subscribed to topic: ${topic}`);
@@ -220,12 +203,26 @@ module.exports = function (RED) {
                 }
             }, MQTT_CONFIG.CREDENTIAL_RETRY_INTERVAL_MS);
         }
+        // Prune oldest backups when limit is exceeded
+        function pruneBackups() {
+            if (backupLimit < 0)
+                return; // unlimited
+            const keys = node.context().keys().filter((k) => k.startsWith('backup_')).sort();
+            while (keys.length >= backupLimit) {
+                const oldestKey = keys.shift();
+                node.context().set(oldestKey, undefined);
+            }
+        }
         // Handle input messages
         node.on("input", async function (msg) {
             if (config.protocol === "MQTT") {
                 if (!mqttReady || !mqttClient) {
                     // Queue message while MQTT is initializing
                     node.warn("MQTT client not ready, queuing message");
+                    if (pendingMessages.length >= mqtt_topic_matcher_1.MAX_PENDING_MESSAGES) {
+                        pendingMessages.shift();
+                        node.warn("Pending message queue full, dropping oldest message");
+                    }
                     pendingMessages.push(msg);
                     return;
                 }
@@ -246,6 +243,7 @@ module.exports = function (RED) {
                     node.error(errorMsg);
                     if (config.enableBackup) {
                         const backupKey = `backup_${Date.now()}`;
+                        pruneBackups();
                         node.context().set(backupKey, {
                             ts: (0, dayjs_1.default)().valueOf(),
                             data: msg.payload,
@@ -283,6 +281,7 @@ module.exports = function (RED) {
                     const errorMsg = "HTTP upload error";
                     if (config.enableBackup) {
                         const backupKey = `backup_${Date.now()}`;
+                        pruneBackups();
                         node.context().set(backupKey, {
                             ts: (0, dayjs_1.default)().valueOf(),
                             data: msg.payload,
@@ -304,10 +303,14 @@ module.exports = function (RED) {
         // Cleanup on node close
         node.on("close", async (done) => {
             try {
-                // Remove status handler from mqttClient
+                // Remove event listeners from mqttClient
                 if (statusHandler && mqttClient) {
                     mqttClient.removeListener("mqtt-status", statusHandler);
                     statusHandler = null;
+                }
+                if (messageHandler && mqttClient) {
+                    mqttClient.removeListener("mqtt-message", messageHandler);
+                    messageHandler = null;
                 }
                 if (mqttClient && isSubscribed) {
                     try {

@@ -57,7 +57,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
     describe('verifyModbusWrite - When Verification Enabled', () => {
         let service;
         beforeEach(() => {
-            service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true); // Enable verification
+            service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true, false, false); // Enable verification, don't skip coils
         });
         test('should verify coil write and return true when values match', async () => {
             const commands = [
@@ -146,7 +146,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
     describe('verifyModbusWrite - When Verification Disabled', () => {
         let service;
         beforeEach(() => {
-            service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false); // Disable verification
+            service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false, false, false); // Disable verification, don't skip coils
         });
         test('should still verify coils even when verification disabled', async () => {
             const commands = [
@@ -236,7 +236,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled();
         });
         test('should handle mixed valid and unknown function codes when verification enabled', async () => {
-            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true, false, false);
             const commands = [
                 { key: 'pump', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
                 { key: 'unknown', value: 123, fc: 99, unitid: 1, address: 30, quantity: 1 }
@@ -273,7 +273,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(mockModbusClient.readHoldingRegisters).toHaveBeenCalled();
         });
         test('should always verify coils even with mixed commands and verification disabled', async () => {
-            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false, false, false);
             const commands = [
                 { key: 'pump', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }, // Coil - will be verified
                 { key: 'scaled_value', value: 1000, fc: 6, unitid: 1, address: 40, quantity: 1 } // Holding - skipped
@@ -285,7 +285,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(mockModbusClient.readHoldingRegisters).not.toHaveBeenCalled(); // Holding skipped
         });
         test('should handle transient read errors for coils when verification enabled', async () => {
-            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true);
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, true, false, false);
             const commands = [
                 { key: 'pump', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }
             ];
@@ -295,7 +295,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(mockNode.warn).toHaveBeenCalledWith(expect.stringContaining('❌ VERIFICATION ERROR'));
         });
         test('should handle transient read errors for coils even when verification disabled', async () => {
-            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false, false, false);
             const commands = [
                 { key: 'pump', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 }
             ];
@@ -307,7 +307,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
     });
     describe('Performance and Behavior Tests', () => {
         test('verification disabled should skip holding registers but still verify coils', async () => {
-            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false, false, false);
             const commands = [
                 { key: 'pump1', value: true, fc: 5, unitid: 1, address: 10, quantity: 1 },
                 { key: 'pump2', value: true, fc: 5, unitid: 1, address: 11, quantity: 1 },
@@ -327,7 +327,7 @@ describe('ScheduleService - Verify After Write Toggle', () => {
             expect(duration).toBeLessThan(100); // Should be fast (only 2 coil reads)
         });
         test('should log appropriate message count when holding register verification skipped', async () => {
-            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false);
+            const service = new viis_schedule_executor_service_1.ScheduleService(mockNode, false, false, false);
             const holdingCommands = Array.from({ length: 10 }, (_, i) => ({
                 key: `setpoint${i}`,
                 value: i * 100,

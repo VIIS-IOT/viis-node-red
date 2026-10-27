@@ -3,7 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ModbusClientCore = exports.ConnectionState = void 0;
+exports.ModbusClientCore = exports.CIRCUIT_BREAKER_RECOVERY_MS = exports.ConnectionState = void 0;
+exports.isRetryableModbusWriteError = isRetryableModbusWriteError;
 const modbus_serial_1 = __importDefault(require("modbus-serial"));
 const events_1 = require("events");
 // Connection state machine for managing connection lifecycle
@@ -16,6 +17,15 @@ var ConnectionState;
     ConnectionState["ERROR"] = "error";
     ConnectionState["CIRCUIT_BREAKER_OPEN"] = "circuit_breaker_open";
 })(ConnectionState || (exports.ConnectionState = ConnectionState = {}));
+/**
+ * How long the circuit breaker stays open before a reconnect is retried.
+ * Single source for the timer, the log line and the `recoveryAt` event field.
+ */
+exports.CIRCUIT_BREAKER_RECOVERY_MS = 60000;
+function isRetryableModbusWriteError(message) {
+    const text = message.toLowerCase();
+    return text.includes("timeout") || text.includes("timed out");
+}
 // Core Modbus Client
 class ModbusClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -34,7 +44,7 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.connectionState = ConnectionState.DISCONNECTED;
         this.stateHistory = [];
         this.lastStateChangeAt = 0;
-        this.MIN_RECONNECT_INTERVAL = 5000; // Minimum 5s between reconnects
+        this.MIN_RECONNECT_INTERVAL = 15000; // Minimum 15s between reconnects (ESP32 4-client limit)
         this.SERVER_CLEANUP_TIME = 120000; // 120s for TCP TIME_WAIT cleanup
         // USB Serial Port Recovery (URB -32 / EPIPE errors)
         this.consecutiveErrors = 0;
@@ -716,6 +726,21 @@ class ModbusClientCore extends events_1.EventEmitter {
         this.client = new modbus_serial_1.default();
         this.isConnected = false;
     }
+    /**
+     * Reconnect timers can fire after the connection was already restored elsewhere
+     * (e.g. ensureConnected on an incoming RPC). Tearing that connection down would
+     * waste one of the ESP32's 4 TCP client slots, so skip the attempt instead.
+     */
+    skipReconnectIfConnected() {
+        if (this.isShuttingDown || (this.isConnected && this.client.isOpen)) {
+            this.reconnectTimer = undefined;
+            if (!this.isShuttingDown && this.connectionState !== ConnectionState.CONNECTED) {
+                this.transitionTo(ConnectionState.CONNECTED);
+            }
+            return true;
+        }
+        return false;
+    }
     scheduleReconnect() {
         // Don't schedule reconnect if shutting down
         if (this.isShuttingDown) {
@@ -726,6 +751,10 @@ class ModbusClientCore extends events_1.EventEmitter {
             //this.node.log(`[STM32-RECONNECT] Already scheduled, skipping`);
             return;
         }
+        // Connection may already have been restored elsewhere (e.g. ensureConnected on an RPC)
+        if (this.isConnected && this.client.isOpen) {
+            return;
+        }
         // FSM: Check minimum interval since last state change
         const timeSinceLastChange = Date.now() - this.lastStateChangeAt;
         if (timeSinceLastChange < this.MIN_RECONNECT_INTERVAL) {
@@ -734,19 +763,24 @@ class ModbusClientCore extends events_1.EventEmitter {
             // Schedule after the minimum interval
             this.reconnectTimer = setTimeout(() => {
                 this.reconnectTimer = undefined;
-                this.transitionTo(ConnectionState.RECONNECTING);
+                // Do NOT call transitionTo() here: it resets lastStateChangeAt, so the
+                // re-entry below would always land in this wait branch again and the
+                // real reconnect would never run (endless 15s wait loop while the state
+                // stays RECONNECTING, which also suppresses startConnectionCheck).
                 this.scheduleReconnect();
             }, waitTime);
             return;
         }
         // FSM: Transition to RECONNECTING state
         this.transitionTo(ConnectionState.RECONNECTING);
-        // STM32 cần thời gian recovery ngắn hơn nhưng ổn định
-        const quickReconnectTime = 5000; // 5 giây cho STM32 (tăng từ 2s)
+        // STM32/ESP32 cần thời gian recovery ổn định
+        const quickReconnectTime = 15000; // 15 giây - matches TCP TIME_WAIT for ESP32 4-client limit
         const standardReconnectTime = Math.max(this.config.reconnectInterval || 30000, 30000); // 30s
         //this.node.log(`[STM32-RECONNECT] Scheduling quick reconnect in ${quickReconnectTime}ms`);
         // Thử kết nối lại nhanh
         this.reconnectTimer = setTimeout(async () => {
+            if (this.skipReconnectIfConnected())
+                return;
             try {
                 // Ensure old connection is fully cleaned up before creating new one
                 await this.ensureCleanConnection();
@@ -768,6 +802,8 @@ class ModbusClientCore extends events_1.EventEmitter {
                 // Lên lịch thử lại với thời gian dài hơn cho STM32
                 //this.node.log(`[STM32-RECONNECT] Scheduling standard reconnect in ${standardReconnectTime}ms`);
                 this.reconnectTimer = setTimeout(async () => {
+                    if (this.skipReconnectIfConnected())
+                        return;
                     try {
                         // Ensure clean connection before retry
                         await this.ensureCleanConnection();
@@ -801,27 +837,33 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.disconnectStartTime = Date.now();
             // FSM: Transition to CIRCUIT_BREAKER_OPEN
             this.transitionTo(ConnectionState.CIRCUIT_BREAKER_OPEN);
-            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${maxAttempts} failed attempts, waiting 5 minutes`);
+            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${maxAttempts} failed attempts, waiting ${exports.CIRCUIT_BREAKER_RECOVERY_MS / 1000}s`);
             // Emit event cho alert handling
             this.emit("modbus-status", {
                 status: "circuit-breaker-open",
                 error: `${maxAttempts} failed connection attempts`,
-                recoveryAt: Date.now() + 300000,
+                recoveryAt: Date.now() + exports.CIRCUIT_BREAKER_RECOVERY_MS,
                 failedCount: maxAttempts
             });
             this.circuitBreakerTimer = setTimeout(() => {
                 this.circuitBreakerOpen = false;
                 this.failedConnectionCount = 0;
                 this.disconnectStartTime = null;
-                this.node.warn("[CIRCUIT-BREAKER] Reset, attempting recovery");
-                this.scheduleReconnect();
-            }, 60000); // 1 minute (reduced from 5 minutes)
+                // Add jitter to avoid synchronized reconnect with native modbus system
+                const jitter = Math.floor(Math.random() * 10000);
+                this.node.warn(`[CIRCUIT-BREAKER] Reset, reconnecting in ${jitter}ms (jitter)`);
+                setTimeout(() => {
+                    this.scheduleReconnect();
+                }, jitter);
+            }, exports.CIRCUIT_BREAKER_RECOVERY_MS);
             return;
         }
         // Exponential backoff: 10s, 20s, 40s, 60s, 60s...
         const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
         //this.node.log(`[STM32-RECONNECT] Scheduling backoff reconnect attempt ${attempt}/${maxAttempts} in ${delay}ms`);
         this.reconnectTimer = setTimeout(async () => {
+            if (this.skipReconnectIfConnected())
+                return;
             try {
                 await this.ensureCleanConnection();
                 await this.initializeClient();
@@ -850,7 +892,9 @@ class ModbusClientCore extends events_1.EventEmitter {
                 // Skip nếu đang initialize hoặc reconnecting - tránh race condition
                 if (this.isInitializing ||
                     this.connectionState === ConnectionState.CONNECTING ||
-                    this.connectionState === ConnectionState.RECONNECTING) {
+                    this.connectionState === ConnectionState.RECONNECTING ||
+                    this.connectionState === ConnectionState.ERROR ||
+                    this.connectionState === ConnectionState.CIRCUIT_BREAKER_OPEN) {
                     return;
                 }
                 // Kiểm tra cả trạng thái isConnected và client.isOpen
@@ -970,21 +1014,25 @@ class ModbusClientCore extends events_1.EventEmitter {
             this.disconnectStartTime = Date.now();
             // FSM: Transition to CIRCUIT_BREAKER_OPEN
             this.transitionTo(ConnectionState.CIRCUIT_BREAKER_OPEN);
-            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${this.failedConnectionCount} failed attempts, waiting 5 minutes`);
+            this.node.error(`[CIRCUIT-BREAKER] Triggered! ${this.failedConnectionCount} failed attempts, waiting ${exports.CIRCUIT_BREAKER_RECOVERY_MS / 1000}s`);
             // Emit event cho alert handling
             this.emit("modbus-status", {
                 status: "circuit-breaker-open",
                 error: `${this.failedConnectionCount} failed connection attempts`,
-                recoveryAt: Date.now() + 300000,
+                recoveryAt: Date.now() + exports.CIRCUIT_BREAKER_RECOVERY_MS,
                 failedCount: this.failedConnectionCount
             });
             this.circuitBreakerTimer = setTimeout(() => {
                 this.circuitBreakerOpen = false;
                 this.failedConnectionCount = 0;
                 this.disconnectStartTime = null;
-                this.node.warn("[CIRCUIT-BREAKER] Reset, attempting recovery");
-                this.scheduleReconnect();
-            }, 60000); // 1 minute (reduced from 5 minutes)
+                // Add jitter to avoid synchronized reconnect with native modbus system
+                const jitter = Math.floor(Math.random() * 10000);
+                this.node.warn(`[CIRCUIT-BREAKER] Reset, reconnecting in ${jitter}ms (jitter)`);
+                setTimeout(() => {
+                    this.scheduleReconnect();
+                }, jitter);
+            }, exports.CIRCUIT_BREAKER_RECOVERY_MS);
             return;
         }
         // Continue với normal reconnect
@@ -1092,7 +1140,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     const err = error;
                     retryCount++;
                     // Check if this is a timeout error and we have retries left
-                    if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                    if (isRetryableModbusWriteError(err.message) && retryCount <= maxRetries) {
                         this.node.warn(`[${boardType}-WRITE] Write register ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
                         await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
                         continue;
@@ -1129,7 +1177,7 @@ class ModbusClientCore extends events_1.EventEmitter {
                     const err = error;
                     retryCount++;
                     // Check if this is a timeout error and we have retries left
-                    if (err.message.includes('timeout') && retryCount <= maxRetries) {
+                    if (isRetryableModbusWriteError(err.message) && retryCount <= maxRetries) {
                         this.node.warn(`[${boardType}-WRITE] Write coil ${address} timeout on attempt ${retryCount}/${maxRetries + 1}, retrying in ${retryCount * 1000}ms...`);
                         await new Promise(resolve => setTimeout(resolve, retryCount * 1000)); // Exponential backoff
                         continue;
@@ -1182,15 +1230,20 @@ class ModbusClientCore extends events_1.EventEmitter {
                         this.emit("modbus-status", { status: "disconnected" });
                     }
                     this.node.log("[MODBUS-CLEANUP] Client connection closed");
+                    // Remove all event listeners AFTER close callback fires
+                    this.removeAllListeners();
                 });
+            }
+            else {
+                // No client to close, clean up listeners immediately
+                this.removeAllListeners();
             }
         }
         catch (error) {
             // Silently handle close errors during cleanup
             this.node.warn(`[MODBUS-CLEANUP] Error during close: ${error.message}`);
+            this.removeAllListeners();
         }
-        // Remove all event listeners to prevent memory leaks
-        this.removeAllListeners();
         // 🆕 Reset circuit breaker state
         this.failedConnectionCount = 0;
         this.circuitBreakerOpen = false;

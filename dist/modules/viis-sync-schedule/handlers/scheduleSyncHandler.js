@@ -364,10 +364,12 @@ class ScheduleSyncHandler {
                 logger_1.logger.info(this.node, `No local schedules found for plan ${planName}`);
                 return;
             }
-            // Create a map of server schedule names for fast lookup
+            // The server sends the schedule key as `id` (its `name` is the label). Keying on `name` marked every local
+            // schedule deleted on each sync until syncSchedule restored it, so a running one looked deleted mid-run.
             const serverScheduleMap = new Map();
             serverSchedules.forEach(schedule => {
-                serverScheduleMap.set(schedule.name, true);
+                var _a;
+                serverScheduleMap.set((_a = schedule.id) !== null && _a !== void 0 ? _a : schedule.name, true);
             });
             // Find schedules that exist locally but not on server
             const deletedSchedules = localSchedules.filter(localSchedule => !serverScheduleMap.has(localSchedule.name));
