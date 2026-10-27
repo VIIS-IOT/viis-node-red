@@ -9,6 +9,7 @@ const validation_1 = require("../utils/validation");
 const schedulePlan_dto_1 = require("../dto/schedulePlan.dto");
 const SyncScheduleService_1 = require("../../../services/syncSchedule/SyncScheduleService");
 const helper_2 = require("../../../ultils/helper");
+const mysqlDate_1 = require("../utils/mysqlDate");
 class SchedulePlanHandler {
     constructor(dbService, node) {
         this.node = node;
@@ -169,7 +170,9 @@ class SchedulePlanHandler {
         }
         try {
             const dto = await (0, validation_1.validateDto)(schedulePlan_dto_1.TabiotSchedulePlanDto, payload);
-            let name = (0, helper_1.generateHashKey)(dto.label, (_a = dto.schedule_count) !== null && _a !== void 0 ? _a : 0, dto.status, 0, 1, dto.device_id, dto.start_date, dto.end_date);
+            const startDate = (0, mysqlDate_1.toMysqlDate)(dto.start_date);
+            const endDate = (0, mysqlDate_1.toMysqlDate)(dto.end_date);
+            let name = (0, helper_1.generateHashKey)(dto.label, (_a = dto.schedule_count) !== null && _a !== void 0 ? _a : 0, dto.status, 0, 1, dto.device_id, startDate, endDate);
             const planData = {
                 name,
                 label: dto.label,
@@ -177,8 +180,8 @@ class SchedulePlanHandler {
                 status: dto.status || 'active',
                 enable: dto.enable ? 1 : 0,
                 device_id: dto.device_id,
-                start_date: dto.start_date,
-                end_date: dto.end_date,
+                start_date: startDate,
+                end_date: endDate,
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,
@@ -273,8 +276,8 @@ class SchedulePlanHandler {
                 status: dto.status || 'active',
                 enable: dto.enable ? 1 : 0,
                 device_id: dto.device_id,
-                start_date: dto.start_date,
-                end_date: dto.end_date,
+                start_date: (0, mysqlDate_1.toMysqlDate)(dto.start_date),
+                end_date: (0, mysqlDate_1.toMysqlDate)(dto.end_date),
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,

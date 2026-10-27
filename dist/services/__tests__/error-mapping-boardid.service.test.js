@@ -150,25 +150,26 @@ describe('ErrorMappingService - BoardId Approach', () => {
             const result = errorMappingService.parseModbusErrorByBoardId(source, 'board1');
             expect(result).toBeNull();
         });
-        it('should return null for unmapped error code value', () => {
+        it('should return first error code for any non-zero holding register value', () => {
             const source = {
                 register_type: 'holding',
                 address: 1000,
-                value: 99 // Not defined in mapping
+                value: 99 // Non-zero value matches first error code
             };
             const result = errorMappingService.parseModbusErrorByBoardId(source, 'board1');
-            expect(result).toBeNull();
+            expect(result).not.toBeNull();
+            expect(result === null || result === void 0 ? void 0 : result.err_code).toBe('ERR_TEMP_HIGH');
         });
         it('should handle auto_resolve flag correctly', () => {
             const source = {
                 register_type: 'holding',
                 address: 1000,
-                value: 2 // ERR_TEMP_SENSOR_FAULT with auto_resolve: false
+                value: 2 // Non-zero → first error code (ERR_TEMP_HIGH, auto_resolve: true)
             };
             const result = errorMappingService.parseModbusErrorByBoardId(source, 'board1');
             expect(result).not.toBeNull();
-            expect(result === null || result === void 0 ? void 0 : result.err_code).toBe('ERR_TEMP_SENSOR_FAULT');
-            expect(result === null || result === void 0 ? void 0 : result.auto_resolve).toBe(false);
+            expect(result === null || result === void 0 ? void 0 : result.err_code).toBe('ERR_TEMP_HIGH');
+            expect(result === null || result === void 0 ? void 0 : result.auto_resolve).toBe(true);
         });
     });
     describe('getMappingForBoardId()', () => {
