@@ -5,6 +5,8 @@ import { GlobalContextHelper } from "../ultils/global-context-helper";
 import * as fs from "fs";
 import * as path from "path";
 
+import { entityFiles } from "./entity-files";
+
 function resolveCommonJsonPath(): string {
     const containerPath = path.resolve(__dirname, "../../../../app/env/configs/common.json");
     const hostPath = path.resolve(__dirname, "../../../../../env/configs/common.json");
@@ -92,7 +94,7 @@ export class DataSourceManager {
             username: cfg.username,
             password: cfg.password,
             database: cfg.database,
-            entities: [__dirname + "/entities/**/*.{js,ts}"],
+            entities: entityFiles(path.join(__dirname, "entities")),
             migrations: [__dirname + "/migrations/**/*.{js,ts}"],
             synchronize: false,
             logging: false,
@@ -148,7 +150,7 @@ export const AppDataSource = new DataSource({
     username: cfg.username,
     password: cfg.password,
     database: cfg.database,
-    entities: [__dirname + "/entities/**/*.{js,ts}"],
+    entities: entityFiles(path.join(__dirname, "entities")),
     migrations: [__dirname + "/migrations/**/*.{js,ts}"],
     synchronize: false,
     logging: false,
