@@ -14,6 +14,7 @@ import { TabiotSchedulePlanDto } from '../dto/schedulePlan.dto';
 import { SyncScheduleService } from '../../../services/syncSchedule/SyncScheduleService';
 import Container from 'typedi';
 import { adjustToUTC7 } from '../../../ultils/helper'
+import { toMysqlDate } from '../utils/mysqlDate';
 
 export class SchedulePlanHandler {
     private planRepo: Repository<TabiotSchedulePlan>;
@@ -198,6 +199,8 @@ export class SchedulePlanHandler {
 
         try {
             const dto = await validateDto(TabiotSchedulePlanDto, payload);
+            const startDate = toMysqlDate(dto.start_date);
+            const endDate = toMysqlDate(dto.end_date);
 
             let name = generateHashKey(
                 dto.label!,
@@ -206,8 +209,8 @@ export class SchedulePlanHandler {
                 0,
                 1,
                 dto.device_id!,
-                dto.start_date!,
-                dto.end_date!,
+                startDate!,
+                endDate!,
             );
 
             const planData: Partial<TabiotSchedulePlan> = {
@@ -217,8 +220,8 @@ export class SchedulePlanHandler {
                 status: dto.status || 'active',
                 enable: dto.enable ? 1 : 0,
                 device_id: dto.device_id,
-                start_date: dto.start_date,
-                end_date: dto.end_date,
+                start_date: startDate,
+                end_date: endDate,
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,
@@ -328,8 +331,8 @@ export class SchedulePlanHandler {
                 status: dto.status || 'active',
                 enable: dto.enable ? 1 : 0,
                 device_id: dto.device_id,
-                start_date: dto.start_date,
-                end_date: dto.end_date,
+                start_date: toMysqlDate(dto.start_date),
+                end_date: toMysqlDate(dto.end_date),
                 is_deleted: 0,
                 is_synced: 0,
                 is_from_local: 1,
