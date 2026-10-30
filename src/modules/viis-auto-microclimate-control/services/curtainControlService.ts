@@ -19,16 +19,19 @@ import {
     MODBUS_FUNCTION_CODES
 } from "../constants";
 import { Logger } from "../utils/logger";
+import { resolveCoilMapping } from "../utils/coilMapping";
 import { minutesToMs, hasTimeElapsed, getCurrentTimestamp } from "../utils/timeUtils";
 
 export class CurtainControlService implements ICurtainControlService {
     private flowContext: any;
     private globalContext: any;
+    private boardId?: string;
     private logger: ILogger;
 
     constructor(options: ServiceOptions) {
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new Logger(options.node, options.nodeId);
     }
 
@@ -362,13 +365,7 @@ export class CurtainControlService implements ICurtainControlService {
      * Get coil mapping from global context or fallback to constants
      */
     private getCoilMapping(): Record<string, number> {
-        const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-
-        // Merge with default mappings
-        return {
-            ...CURTAIN_CONFIG.COIL_MAPPING,
-            ...globalCoils
-        };
+        return resolveCoilMapping(this.globalContext, CURTAIN_CONFIG.COIL_MAPPING, this.boardId);
     }
 
     /**

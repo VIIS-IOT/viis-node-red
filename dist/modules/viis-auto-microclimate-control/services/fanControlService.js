@@ -9,12 +9,14 @@ const types_1 = require("../interfaces/types");
 const constants_1 = require("../constants");
 const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const logger_1 = require("../utils/logger");
+const coilMapping_1 = require("../utils/coilMapping");
 const groupUtils_1 = require("../utils/groupUtils");
 const timeUtils_1 = require("../utils/timeUtils");
 class FanControlService {
     constructor(options) {
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new logger_1.Logger(options.node, options.nodeId);
     }
     /**
@@ -448,9 +450,7 @@ class FanControlService {
      * Get coil mapping from global context or fallback to constants
      */
     getCoilMapping() {
-        const globalCoils = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        // Merge with default mappings
-        return Object.assign(Object.assign(Object.assign({}, constants_1.FAN_CONFIG.COIL_MAPPING), constants_1.FAN_DAO_CONFIG.COIL_MAPPING), globalCoils);
+        return (0, coilMapping_1.resolveCoilMapping)(this.globalContext, Object.assign(Object.assign({}, constants_1.FAN_CONFIG.COIL_MAPPING), constants_1.FAN_DAO_CONFIG.COIL_MAPPING), this.boardId);
     }
     /**
      * Get current active fan count from device status

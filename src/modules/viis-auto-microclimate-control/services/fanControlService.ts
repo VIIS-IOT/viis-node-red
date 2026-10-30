@@ -24,6 +24,7 @@ import {
 } from "../constants";
 import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { Logger } from "../utils/logger";
+import { resolveCoilMapping } from "../utils/coilMapping";
 import {
     getFanGroups,
     getNextGroupIndex,
@@ -39,11 +40,13 @@ import { minutesToMs, hasTimeElapsed, getCurrentTimestamp } from "../utils/timeU
 export class FanControlService implements IFanControlService {
     private flowContext: any;
     private globalContext: any;
+    private boardId?: string;
     private logger: ILogger;
 
     constructor(options: ServiceOptions) {
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new Logger(options.node, options.nodeId);
     }
 
@@ -552,14 +555,11 @@ export class FanControlService implements IFanControlService {
      * Get coil mapping from global context or fallback to constants
      */
     private getCoilMapping(): Record<string, number> {
-        const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-
-        // Merge with default mappings
-        return {
-            ...FAN_CONFIG.COIL_MAPPING,
-            ...FAN_DAO_CONFIG.COIL_MAPPING,
-            ...globalCoils
-        };
+        return resolveCoilMapping(
+            this.globalContext,
+            { ...FAN_CONFIG.COIL_MAPPING, ...FAN_DAO_CONFIG.COIL_MAPPING },
+            this.boardId
+        );
     }
 
     /**

@@ -8,10 +8,12 @@ exports.ModbusService = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
 const timeUtils_1 = require("../utils/timeUtils");
+const coilMapping_1 = require("../utils/coilMapping");
 class ModbusService {
     constructor(options, modbusClient) {
         this.modbusClient = modbusClient;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new logger_1.Logger(options.node, options.nodeId);
         this.environmentConfig = options.environmentConfig;
     }
@@ -97,23 +99,9 @@ class ModbusService {
      * Find coil address for a device key
      */
     findCoilAddress(deviceKey) {
-        // Check environment config first
-        const modbusCoils = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        if (modbusCoils[deviceKey] !== undefined) {
-            return modbusCoils[deviceKey];
-        }
-        // Fallback to hardcoded mappings
-        if (constants_1.FAN_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
-            return constants_1.FAN_CONFIG.COIL_MAPPING[deviceKey];
-        }
-        if (constants_1.FAN_DAO_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
-            return constants_1.FAN_DAO_CONFIG.COIL_MAPPING[deviceKey];
-        }
-        if (constants_1.WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
-            return constants_1.WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey];
-        }
-        if (constants_1.CURTAIN_CONFIG.COIL_MAPPING[deviceKey] !== undefined) {
-            return constants_1.CURTAIN_CONFIG.COIL_MAPPING[deviceKey];
+        const coilMapping = (0, coilMapping_1.resolveCoilMapping)(this.globalContext, Object.assign(Object.assign(Object.assign(Object.assign({}, constants_1.FAN_CONFIG.COIL_MAPPING), constants_1.FAN_DAO_CONFIG.COIL_MAPPING), constants_1.WATER_PUMP_CONFIG.COIL_MAPPING), constants_1.CURTAIN_CONFIG.COIL_MAPPING), this.boardId);
+        if (coilMapping[deviceKey] !== undefined) {
+            return coilMapping[deviceKey];
         }
         this.logger.warn(`No coil address found for device key: ${deviceKey}`);
         return null;

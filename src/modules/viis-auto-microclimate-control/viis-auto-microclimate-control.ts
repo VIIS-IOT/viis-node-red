@@ -170,7 +170,8 @@ module.exports = function (RED: NodeAPI) {
                     flowContext: flowContext,
                     globalContext: globalContext,
                     nodeId: node.id,
-                    environmentConfig: environmentConfig
+                    environmentConfig: environmentConfig,
+                    boardId: isMultiBoardMode ? (currentBoardId || configData.defaultBoard) : currentBoardId
                 };
 
                 // Initialize services

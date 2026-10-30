@@ -141,7 +141,8 @@ module.exports = function (RED) {
                     flowContext: flowContext,
                     globalContext: globalContext,
                     nodeId: node.id,
-                    environmentConfig: environmentConfig
+                    environmentConfig: environmentConfig,
+                    boardId: isMultiBoardMode ? (currentBoardId || configData.defaultBoard) : currentBoardId
                 };
                 // Initialize services
                 const configService = new configService_1.ConfigService(serviceOptions);

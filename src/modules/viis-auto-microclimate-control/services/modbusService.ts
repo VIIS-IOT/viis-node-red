@@ -23,16 +23,19 @@ import {
 } from "../constants";
 import { Logger } from "../utils/logger";
 import { delay } from "../utils/timeUtils";
+import { resolveCoilMapping } from "../utils/coilMapping";
 
 export class ModbusService implements IModbusService {
     private modbusClient: any;
     private globalContext: any;
     private logger: ILogger;
     private environmentConfig: EnvironmentConfig;
+    private boardId?: string;
 
     constructor(options: ServiceOptions, modbusClient: any) {
         this.modbusClient = modbusClient;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new Logger(options.node, options.nodeId);
         this.environmentConfig = options.environmentConfig;
     }
@@ -131,27 +134,18 @@ export class ModbusService implements IModbusService {
      * Find coil address for a device key
      */
     findCoilAddress(deviceKey: string): number | null {
-        // Check environment config first
-        const modbusCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        if (modbusCoils[deviceKey] !== undefined) {
-            return modbusCoils[deviceKey];
-        }
-
-        // Fallback to hardcoded mappings
-        if (FAN_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_CONFIG.COIL_MAPPING] !== undefined) {
-            return FAN_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_CONFIG.COIL_MAPPING];
-        }
-
-        if (FAN_DAO_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_DAO_CONFIG.COIL_MAPPING] !== undefined) {
-            return FAN_DAO_CONFIG.COIL_MAPPING[deviceKey as keyof typeof FAN_DAO_CONFIG.COIL_MAPPING];
-        }
-
-        if (WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey as keyof typeof WATER_PUMP_CONFIG.COIL_MAPPING] !== undefined) {
-            return WATER_PUMP_CONFIG.COIL_MAPPING[deviceKey as keyof typeof WATER_PUMP_CONFIG.COIL_MAPPING];
-        }
-
-        if (CURTAIN_CONFIG.COIL_MAPPING[deviceKey as keyof typeof CURTAIN_CONFIG.COIL_MAPPING] !== undefined) {
-            return CURTAIN_CONFIG.COIL_MAPPING[deviceKey as keyof typeof CURTAIN_CONFIG.COIL_MAPPING];
+        const coilMapping = resolveCoilMapping(
+            this.globalContext,
+            {
+                ...FAN_CONFIG.COIL_MAPPING,
+                ...FAN_DAO_CONFIG.COIL_MAPPING,
+                ...WATER_PUMP_CONFIG.COIL_MAPPING,
+                ...CURTAIN_CONFIG.COIL_MAPPING
+            },
+            this.boardId
+        );
+        if (coilMapping[deviceKey] !== undefined) {
+            return coilMapping[deviceKey];
         }
 
         this.logger.warn(`No coil address found for device key: ${deviceKey}`);
