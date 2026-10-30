@@ -263,6 +263,8 @@ export interface ServiceOptions {
     globalContext: any;
     nodeId: string;
     environmentConfig: EnvironmentConfig;
+    /** Modbus board the node writes to; selects modbusMappings[boardId].coils */
+    boardId?: string;
 }
 
 // Config service interface

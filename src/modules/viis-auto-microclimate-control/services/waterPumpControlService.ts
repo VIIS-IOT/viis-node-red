@@ -18,15 +18,18 @@ import {
     MODBUS_FUNCTION_CODES
 } from "../constants";
 import { Logger } from "../utils/logger";
+import { resolveCoilMapping } from "../utils/coilMapping";
 
 export class WaterPumpControlService implements IWaterPumpControlService {
     private flowContext: any;
     private globalContext: any;
+    private boardId?: string;
     private logger: ILogger;
 
     constructor(options: ServiceOptions) {
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new Logger(options.node, options.nodeId);
     }
 
@@ -226,13 +229,7 @@ export class WaterPumpControlService implements IWaterPumpControlService {
      * Get coil mapping from global context or fallback to constants
      */
     private getCoilMapping(): Record<string, number> {
-        const globalCoils = this.globalContext.get(CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-
-        // Merge with default mappings
-        return {
-            ...WATER_PUMP_CONFIG.COIL_MAPPING,
-            ...globalCoils
-        };
+        return resolveCoilMapping(this.globalContext, WATER_PUMP_CONFIG.COIL_MAPPING, this.boardId);
     }
 
     /**

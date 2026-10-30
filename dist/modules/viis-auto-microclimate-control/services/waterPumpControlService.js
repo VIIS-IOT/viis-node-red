@@ -7,10 +7,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.WaterPumpControlService = void 0;
 const constants_1 = require("../constants");
 const logger_1 = require("../utils/logger");
+const coilMapping_1 = require("../utils/coilMapping");
 class WaterPumpControlService {
     constructor(options) {
         this.flowContext = options.flowContext;
         this.globalContext = options.globalContext;
+        this.boardId = options.boardId;
         this.logger = new logger_1.Logger(options.node, options.nodeId);
     }
     /**
@@ -158,9 +160,7 @@ class WaterPumpControlService {
      * Get coil mapping from global context or fallback to constants
      */
     getCoilMapping() {
-        const globalCoils = this.globalContext.get(constants_1.CONTEXT_KEYS.GLOBAL_MODBUS_COILS) || {};
-        // Merge with default mappings
-        return Object.assign(Object.assign({}, constants_1.WATER_PUMP_CONFIG.COIL_MAPPING), globalCoils);
+        return (0, coilMapping_1.resolveCoilMapping)(this.globalContext, constants_1.WATER_PUMP_CONFIG.COIL_MAPPING, this.boardId);
     }
     /**
      * Get reason string for pump control action
