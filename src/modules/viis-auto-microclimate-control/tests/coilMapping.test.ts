@@ -1,6 +1,7 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, jest } from "@jest/globals";
 import { CURTAIN_CONFIG, FAN_CONFIG, FAN_DAO_CONFIG } from "../constants";
 import { resolveCoilMapping } from "../utils/coilMapping";
+import { FanControlService } from "../services/fanControlService";
 
 function globalContextWith(values: Record<string, unknown>) {
     return { get: (key: string) => values[key] };
@@ -40,5 +41,36 @@ describe("resolveCoilMapping", () => {
         });
         const mapping = resolveCoilMapping(ctx, CURTAIN_CONFIG.COIL_MAPPING, "board2");
         expect(mapping).toEqual({ luoi_1_thu: 40, luoi_1_dai: 42 });
+    });
+});
+
+describe("fan dao runs while the main fans are manual", () => {
+    it("toggles fan dao with set_mode_fan = 0, using board addresses", async () => {
+        const store: Record<string, any> = {
+            fanRotationState_dao_sync: { isOn: false, lastToggleTime: Date.now() - 31 * 60 * 1000 },
+        };
+        const flowContext = { get: (k: string) => store[k], set: (k: string, v: any) => { store[k] = v; } };
+        const globalContext = globalContextWith({
+            modbusMappings: { board1: { coils: { ...BOARD1_COILS, quat_dao_1: 30, quat_dao_2: 31, quat_dao_3: 32 } } },
+        });
+        const service = new FanControlService({
+            node: { status: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+            nodeId: "test",
+            flowContext,
+            globalContext,
+            environmentConfig: {} as any,
+        });
+
+        const actions = await service.processFanControl(
+            { set_mode_fan: 0, set_mode_fan_dao: 1, set_auto_mode_fan_dao: 1, set_time_fan_dao_on: 5, set_time_fan_dao_off: 30 } as any,
+            {} as any,
+            {} as any
+        );
+
+        expect(actions.map(a => [a.deviceKey, a.address, a.value])).toEqual([
+            ["quat_dao_1", 30, true],
+            ["quat_dao_2", 31, true],
+            ["quat_dao_3", 32, true],
+        ]);
     });
 });

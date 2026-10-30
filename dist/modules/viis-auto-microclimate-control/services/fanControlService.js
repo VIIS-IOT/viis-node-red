@@ -28,10 +28,8 @@ class FanControlService {
             // Check if fan control is enabled
             if (config.set_mode_fan !== 1) {
                 this.logger.debug("Fan control is disabled");
-                // Turn off all fans if control is disabled
-                // return this.createTurnOffAllFansActions("Fan control disabled");
-                // Do nothing
-                return [];
+                // Leave the main fans alone, but fan dao has its own mode and still runs
+                return this.processFanDaoControl(config);
             }
             // First, process any ongoing fan group transitions
             const transitionActions = await this.processFanGroupTransition(config);
