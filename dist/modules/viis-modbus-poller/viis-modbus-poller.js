@@ -23,7 +23,7 @@ const DEFAULT_POLLER_OPTIONS = {
     publishFullSnapshotOnFirstRead: true,
     enableDiagnostics: true,
     fullSnapshotIntervalMs: 300000,
-    minPublishIntervalMs: 30000,
+    minPublishIntervalMs: 60000,
 };
 function toPositiveNumber(value, fallback) {
     const parsed = Number(value);

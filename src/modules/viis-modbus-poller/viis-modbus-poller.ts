@@ -56,7 +56,7 @@ const DEFAULT_POLLER_OPTIONS: PollerOptions = {
   publishFullSnapshotOnFirstRead: true,
   enableDiagnostics: true,
   fullSnapshotIntervalMs: 300000,
-  minPublishIntervalMs: 30000,
+  minPublishIntervalMs: 60000,
 };
 
 function toPositiveNumber(value: unknown, fallback: number): number {
