@@ -10,8 +10,12 @@ import { resolvePollerConfig } from "./services/config-resolver";
 import { validateResolvedConfig } from "./services/config-validator";
 import { getPollTargets, mergeBoardMappings, mergePollTickResults } from "./services/multi-board-poll";
 import { runPollTick } from "./services/poll-runner";
+import { deriveLuoiStates, luoiKeysFromCoils } from "./services/luoi-state";
 import { BoardMappings, PollingConfig, ResolvedPollerConfig } from "./types";
 import { buildDeviceTelemetryTopic } from "../../core/demeter-mqtt-topics";
+
+/** Last known curtain direction per `luoi_N`, kept across restarts (see services/luoi-state). */
+const LUOI_LAST_STATE_KEY = "luoiLastState";
 
 interface ViisModbusPollerNodeDef extends NodeDef {
   name: string;
@@ -505,6 +509,21 @@ module.exports = function registerViisModbusPoller(RED: NodeAPI) {
             },
             result.latestData,
           );
+        }
+
+        const luoiKeys = luoiKeysFromCoils(
+          Object.keys(mergeBoardMappings(targets.map((board) => board.mappings)).coils ?? {}),
+        );
+        if (luoiKeys.length > 0 && latestCount > 0) {
+          const globalContext = node.context().global;
+          const lastStates = (globalContext.get(LUOI_LAST_STATE_KEY) as Record<string, number> | undefined) ?? {};
+          const states = deriveLuoiStates(luoiKeys, { ...publishedState, ...result.latestData }, lastStates);
+          let stateMoved = false;
+          for (const [luoiKey, state] of Object.entries(states)) {
+            if (publishedState[luoiKey] !== state) result.changedData[luoiKey] = state;
+            if (lastStates[luoiKey] !== state) stateMoved = true;
+          }
+          if (stateMoved) globalContext.set(LUOI_LAST_STATE_KEY, { ...lastStates, ...states });
         }
 
         const changedCount = Object.keys(result.changedData).length;

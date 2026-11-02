@@ -11,7 +11,10 @@ const config_resolver_1 = require("./services/config-resolver");
 const config_validator_1 = require("./services/config-validator");
 const multi_board_poll_1 = require("./services/multi-board-poll");
 const poll_runner_1 = require("./services/poll-runner");
+const luoi_state_1 = require("./services/luoi-state");
 const demeter_mqtt_topics_1 = require("../../core/demeter-mqtt-topics");
+/** Last known curtain direction per `luoi_N`, kept across restarts (see services/luoi-state). */
+const LUOI_LAST_STATE_KEY = "luoiLastState";
 const DEFAULT_POLLER_OPTIONS = {
     maxGap: 5,
     maxCoilsPerRead: 64,
@@ -246,6 +249,7 @@ module.exports = function registerViisModbusPoller(RED) {
         }
         node.status({ fill: "grey", shape: "ring", text: "Waiting for inject" });
         node.on("input", async (msg, send, done) => {
+            var _a, _b;
             const nodeSend = send || ((messages) => node.send(messages));
             const startedAt = Date.now();
             if (pollInProgress && startedAt - pollInProgress < options.staleLockMs) {
@@ -324,6 +328,21 @@ module.exports = function registerViisModbusPoller(RED) {
                 if (latestCount > 0) {
                     firstSuccessfulRead = false;
                     writeLatestGlobalState(node.context().global, Object.assign(Object.assign({}, resolvedConfig), { mappings: (0, multi_board_poll_1.mergeBoardMappings)(targets.map((board) => board.mappings)) }), result.latestData);
+                }
+                const luoiKeys = (0, luoi_state_1.luoiKeysFromCoils)(Object.keys((_a = (0, multi_board_poll_1.mergeBoardMappings)(targets.map((board) => board.mappings)).coils) !== null && _a !== void 0 ? _a : {}));
+                if (luoiKeys.length > 0 && latestCount > 0) {
+                    const globalContext = node.context().global;
+                    const lastStates = (_b = globalContext.get(LUOI_LAST_STATE_KEY)) !== null && _b !== void 0 ? _b : {};
+                    const states = (0, luoi_state_1.deriveLuoiStates)(luoiKeys, Object.assign(Object.assign({}, publishedState), result.latestData), lastStates);
+                    let stateMoved = false;
+                    for (const [luoiKey, state] of Object.entries(states)) {
+                        if (publishedState[luoiKey] !== state)
+                            result.changedData[luoiKey] = state;
+                        if (lastStates[luoiKey] !== state)
+                            stateMoved = true;
+                    }
+                    if (stateMoved)
+                        globalContext.set(LUOI_LAST_STATE_KEY, Object.assign(Object.assign({}, lastStates), states));
                 }
                 const changedCount = Object.keys(result.changedData).length;
                 if (changedCount === 0) {
