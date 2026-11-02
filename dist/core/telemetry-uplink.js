@@ -16,8 +16,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TelemetryUplink = void 0;
 exports.parseTelemetryPayload = parseTelemetryPayload;
+const crypto_1 = require("crypto");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+/** Stable id for a record spooled before event_id existed, so its own retries still dedup. */
+function legacyEventId(record) {
+    const hex = (0, crypto_1.createHash)("sha1").update(`${record.topic}|${record.ts}|${JSON.stringify(record.values)}`).digest("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+function wireMessage(record) {
+    return JSON.stringify({ ts: record.ts, event_id: record.event_id, values: record.values });
+}
 const DEFAULTS = {
     coalesceMs: 500,
     maxSpoolBytes: 50 * 1024 * 1024,
@@ -264,7 +273,7 @@ class TelemetryUplink {
         if (records.length === 0)
             return Promise.resolve();
         if (this.closed) {
-            records.forEach((record) => this.spool.append(Object.assign({ topic }, record), now));
+            records.forEach((record) => this.spool.append(Object.assign(Object.assign({ topic }, record), { event_id: (0, crypto_1.randomUUID)() }), now));
             return Promise.resolve();
         }
         return Promise.all(records.map((record) => this.addRecord(topic, record))).then(() => undefined);
@@ -304,14 +313,14 @@ class TelemetryUplink {
             return;
         this.pending.delete(topic);
         clearTimeout(batch.timer);
-        const record = { ts: batch.ts, values: batch.values };
+        const record = { ts: batch.ts, event_id: (0, crypto_1.randomUUID)(), values: batch.values };
         const done = () => batch.waiters.forEach((resolve) => resolve());
         void this.sendLive(topic, record).then(done, done);
     }
     async sendLive(topic, record) {
         if (this.options.isConnected()) {
             try {
-                await this.options.publish(topic, JSON.stringify(record));
+                await this.options.publish(topic, wireMessage(record));
                 return;
             }
             catch (error) {
@@ -320,12 +329,13 @@ class TelemetryUplink {
         }
         this.spool.append(Object.assign({ topic }, record), this.options.now());
     }
-    /** Replay one batch of spooled records; called on a timer, at most one message in flight. */
+    /** Replay the oldest spooled record; called on a timer, at most one message in flight. */
     async replayOnce() {
+        var _a;
         const now = this.options.now();
         if (this.replayInFlight || now < this.nextReplayAt || !this.options.isConnected())
             return;
-        let batch = this.spool.peek(this.options.replayBatchSize);
+        const batch = this.spool.peek(this.options.replayBatchSize);
         if (batch.length === 0)
             return;
         const expired = batch.findIndex((record) => now - record.ts <= this.options.maxSpoolAgeMs);
@@ -335,14 +345,11 @@ class TelemetryUplink {
             this.options.warn(`Dropped ${drop} spooled telemetry record(s) older than ${this.options.maxSpoolAgeMs}ms`);
             return;
         }
-        const topic = batch[0].topic;
-        const sameTopic = batch.findIndex((record) => record.topic !== topic);
-        if (sameTopic > 0)
-            batch = batch.slice(0, sameTopic);
+        const record = batch[0];
         this.replayInFlight = true;
         try {
-            await this.options.publish(topic, JSON.stringify(batch.map(({ ts, values }) => ({ ts, values }))));
-            this.spool.ack(batch.length);
+            await this.options.publish(record.topic, wireMessage(Object.assign(Object.assign({}, record), { event_id: (_a = record.event_id) !== null && _a !== void 0 ? _a : legacyEventId(record) })));
+            this.spool.ack(1);
         }
         catch (error) {
             this.nextReplayAt = now + REPLAY_RETRY_MS;
@@ -364,7 +371,7 @@ class TelemetryUplink {
         for (const [topic, batch] of Array.from(this.pending.entries())) {
             clearTimeout(batch.timer);
             this.pending.delete(topic);
-            this.spool.append({ topic, ts: batch.ts, values: batch.values }, this.options.now());
+            this.spool.append({ topic, ts: batch.ts, event_id: (0, crypto_1.randomUUID)(), values: batch.values }, this.options.now());
             batch.waiters.forEach((resolve) => resolve());
         }
     }

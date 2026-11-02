@@ -7,11 +7,13 @@ const TOPIC = "v1/device/dev-1/telemetry";
 
 function makeUplink(overrides: { connected?: boolean; spoolDir?: string | null; failPublish?: boolean } = {}) {
     const published: Array<{ topic: string; payload: any }> = [];
+    const attempts: string[] = [];
     let connected = overrides.connected ?? true;
     let failPublish = overrides.failPublish ?? false;
     let clock = 1_793_000_000_000;
     const uplink = new TelemetryUplink({
         publish: async (topic, payload) => {
+            attempts.push(payload);
             if (failPublish) throw new Error("boom");
             published.push({ topic, payload: JSON.parse(payload) });
         },
@@ -26,6 +28,7 @@ function makeUplink(overrides: { connected?: boolean; spoolDir?: string | null; 
     return {
         uplink,
         published,
+        attempts,
         setConnected: (value: boolean) => (connected = value),
         setFailPublish: (value: boolean) => (failPublish = value),
         advance: (ms: number) => (clock += ms),
@@ -45,6 +48,8 @@ describe("parseTelemetryPayload", () => {
     });
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 describe("TelemetryUplink", () => {
     it("merges telemetry published within the window into one {ts, values} message", async () => {
         const { uplink, published, now } = makeUplink();
@@ -53,9 +58,13 @@ describe("TelemetryUplink", () => {
             uplink.enqueue(TOPIC, JSON.stringify({ iri_time: 300 })),
             uplink.enqueue(TOPIC, JSON.stringify({ logs: { from: "DEVICE_EXE_SCHEDULE" } })),
         ]);
-        expect(published).toEqual([
-            { topic: TOPIC, payload: { ts: now(), values: { valve_5: true, iri_time: 300, logs: { from: "DEVICE_EXE_SCHEDULE" } } } },
-        ]);
+        expect(published).toHaveLength(1);
+        expect(published[0].topic).toBe(TOPIC);
+        expect(published[0].payload).toEqual({
+            ts: now(),
+            event_id: expect.stringMatching(UUID),
+            values: { valve_5: true, iri_time: 300, logs: { from: "DEVICE_EXE_SCHEDULE" } },
+        });
         uplink.close();
     });
 
@@ -87,9 +96,13 @@ describe("TelemetryUplink", () => {
 
         setConnected(true);
         await uplink.replayOnce();
-        expect(published).toEqual([
-            { topic: TOPIC, payload: [{ ts: first, values: { current_ec: 1.8 } }, { ts: first + 60_000, values: { current_ec: 2.1 } }] },
+        // One record per message: the ingest dedups by the message-level event_id.
+        expect(published.map((p) => p.payload)).toEqual([
+            { ts: first, event_id: expect.stringMatching(UUID), values: { current_ec: 1.8 } },
         ]);
+        await uplink.replayOnce();
+        expect(published[1].payload).toEqual({ ts: first + 60_000, event_id: expect.stringMatching(UUID), values: { current_ec: 2.1 } });
+        expect(published[0].payload.event_id).not.toBe(published[1].payload.event_id);
         expect(uplink.hasBacklog()).toBe(false);
         uplink.close();
     });
@@ -102,20 +115,25 @@ describe("TelemetryUplink", () => {
 
         const after = makeUplink({ connected: true, spoolDir: dir });
         await after.uplink.replayOnce();
-        expect(after.published.map((p) => p.payload)).toEqual([[{ ts: before.now(), values: { a: 1 } }]]);
+        expect(after.published.map((p) => p.payload)).toEqual([
+            { ts: before.now(), event_id: expect.stringMatching(UUID), values: { a: 1 } },
+        ]);
         after.uplink.close();
     });
 
     it("spools a live message whose publish fails and keeps it until a replay succeeds", async () => {
-        const { uplink, published, setFailPublish, advance } = makeUplink({ failPublish: true });
+        const { uplink, published, setFailPublish, advance, attempts } = makeUplink({ failPublish: true });
         await uplink.enqueue(TOPIC, JSON.stringify({ a: 1 }));
         await uplink.replayOnce();
+        const attempted = [...attempts];
         expect(uplink.hasBacklog()).toBe(true);
 
         setFailPublish(false);
         advance(10_000);
         await uplink.replayOnce();
         expect(published).toHaveLength(1);
+        // The resend after a failed (maybe delivered) publish keeps the event_id, so the server stores it once.
+        expect(published[0].payload.event_id).toBe(JSON.parse(attempted[0]).event_id);
         expect(uplink.hasBacklog()).toBe(false);
         uplink.close();
     });

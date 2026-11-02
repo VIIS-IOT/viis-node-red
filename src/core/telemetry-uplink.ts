@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -8,13 +9,27 @@ import path from "path";
  *   `iri_time`, `actuator_owners` and `logs` from different nodes) leaves as one `{ts, values}` message. A key that
  *   changes value inside the window flushes the pending message first, so no intermediate state is lost.
  * - Store-and-forward: a message that cannot be published (offline, publish error or timeout) is appended to an
- *   on-disk spool and replayed oldest-first, with its original `ts`, as `[{ts, values}, ...]` batches at most
- *   one message per `replayIntervalMs`. Live telemetry is never queued behind the backlog.
+ *   on-disk spool and replayed oldest-first, with its original `ts`, at most one message per `replayIntervalMs`.
+ *   Live telemetry is never queued behind the backlog.
+ * - Every message carries an `event_id` (uuid) minted when it is formed and kept in the spool, so a resend after a
+ *   lost PUBACK or a publish timeout is stored once by the ingest (`ON CONFLICT (event_id)`). The ingest reads only
+ *   the message-level `event_id`, so the spool is replayed one record per message, not as arrays.
  */
 
 export interface TelemetryRecord {
     ts: number;
+    event_id?: string;
     values: Record<string, unknown>;
+}
+
+/** Stable id for a record spooled before event_id existed, so its own retries still dedup. */
+function legacyEventId(record: SpooledRecord): string {
+    const hex = createHash("sha1").update(`${record.topic}|${record.ts}|${JSON.stringify(record.values)}`).digest("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function wireMessage(record: TelemetryRecord): string {
+    return JSON.stringify({ ts: record.ts, event_id: record.event_id, values: record.values });
 }
 
 interface SpooledRecord extends TelemetryRecord {
@@ -289,7 +304,7 @@ export class TelemetryUplink {
         if (records === null) return false;
         if (records.length === 0) return Promise.resolve();
         if (this.closed) {
-            records.forEach((record) => this.spool.append({ topic, ...record }, now));
+            records.forEach((record) => this.spool.append({ topic, ...record, event_id: randomUUID() }, now));
             return Promise.resolve();
         }
         return Promise.all(records.map((record) => this.addRecord(topic, record))).then(() => undefined);
@@ -328,7 +343,7 @@ export class TelemetryUplink {
         if (!batch) return;
         this.pending.delete(topic);
         clearTimeout(batch.timer);
-        const record: TelemetryRecord = { ts: batch.ts, values: batch.values };
+        const record: TelemetryRecord = { ts: batch.ts, event_id: randomUUID(), values: batch.values };
         const done = () => batch.waiters.forEach((resolve) => resolve());
         void this.sendLive(topic, record).then(done, done);
     }
@@ -336,7 +351,7 @@ export class TelemetryUplink {
     private async sendLive(topic: string, record: TelemetryRecord): Promise<void> {
         if (this.options.isConnected()) {
             try {
-                await this.options.publish(topic, JSON.stringify(record));
+                await this.options.publish(topic, wireMessage(record));
                 return;
             } catch (error) {
                 this.options.warn(`Telemetry publish failed, spooled for replay: ${(error as Error).message}`);
@@ -345,11 +360,11 @@ export class TelemetryUplink {
         this.spool.append({ topic, ...record }, this.options.now());
     }
 
-    /** Replay one batch of spooled records; called on a timer, at most one message in flight. */
+    /** Replay the oldest spooled record; called on a timer, at most one message in flight. */
     async replayOnce(): Promise<void> {
         const now = this.options.now();
         if (this.replayInFlight || now < this.nextReplayAt || !this.options.isConnected()) return;
-        let batch = this.spool.peek(this.options.replayBatchSize);
+        const batch = this.spool.peek(this.options.replayBatchSize);
         if (batch.length === 0) return;
 
         const expired = batch.findIndex((record) => now - record.ts <= this.options.maxSpoolAgeMs);
@@ -359,14 +374,12 @@ export class TelemetryUplink {
             this.options.warn(`Dropped ${drop} spooled telemetry record(s) older than ${this.options.maxSpoolAgeMs}ms`);
             return;
         }
-        const topic = batch[0].topic;
-        const sameTopic = batch.findIndex((record) => record.topic !== topic);
-        if (sameTopic > 0) batch = batch.slice(0, sameTopic);
+        const record = batch[0];
 
         this.replayInFlight = true;
         try {
-            await this.options.publish(topic, JSON.stringify(batch.map(({ ts, values }) => ({ ts, values }))));
-            this.spool.ack(batch.length);
+            await this.options.publish(record.topic, wireMessage({ ...record, event_id: record.event_id ?? legacyEventId(record) }));
+            this.spool.ack(1);
         } catch (error) {
             this.nextReplayAt = now + REPLAY_RETRY_MS;
             this.options.warn(`Telemetry replay failed, retrying later: ${(error as Error).message}`);
@@ -387,7 +400,7 @@ export class TelemetryUplink {
         for (const [topic, batch] of Array.from(this.pending.entries())) {
             clearTimeout(batch.timer);
             this.pending.delete(topic);
-            this.spool.append({ topic, ts: batch.ts, values: batch.values }, this.options.now());
+            this.spool.append({ topic, ts: batch.ts, event_id: randomUUID(), values: batch.values }, this.options.now());
             batch.waiters.forEach((resolve) => resolve());
         }
     }
