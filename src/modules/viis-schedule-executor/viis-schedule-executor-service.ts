@@ -124,6 +124,7 @@ export class ScheduleService {
         luoi_1: { thu: "luoi_1_thu", dai: "luoi_1_dai" },
         luoi_2: { thu: "luoi_2_thu", dai: "luoi_2_dai" },
         luoi_3: { thu: "luoi_3_thu", dai: "luoi_3_dai" },
+        luoi_4: { thu: "luoi_4_thu", dai: "luoi_4_dai" },
     };
 
     private syncScheduleService: SyncScheduleService;

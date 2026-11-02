@@ -22,13 +22,15 @@ export class LuoiMappingHandler {
     private readonly luoiMapping = {
         "luoi_1": { thu: "luoi_1_thu", dai: "luoi_1_dai" },
         "luoi_2": { thu: "luoi_2_thu", dai: "luoi_2_dai" },
-        "luoi_3": { thu: "luoi_3_thu", dai: "luoi_3_dai" }
+        "luoi_3": { thu: "luoi_3_thu", dai: "luoi_3_dai" },
+        "luoi_4": { thu: "luoi_4_thu", dai: "luoi_4_dai" }
     };
 
     private readonly coilPairs = [
         { key1: "luoi_1_thu", key2: "luoi_1_dai" },
         { key1: "luoi_2_thu", key2: "luoi_2_dai" },
-        { key1: "luoi_3_thu", key2: "luoi_3_dai" }
+        { key1: "luoi_3_thu", key2: "luoi_3_dai" },
+        { key1: "luoi_4_thu", key2: "luoi_4_dai" }
     ];
 
     private readonly keysToMulByTen = ["set_ph"];
@@ -58,7 +60,7 @@ export class LuoiMappingHandler {
         this.flowContext.set("rpcBody", rpcBody);
         let hasLuoiMapping = false;
 
-        // Only process luoi_1, luoi_2, luoi_3 parameters
+        // Only process luoi_1..luoi_4 parameters
         for (let key in rpcBody) {
             if (!rpcBody.hasOwnProperty(key)) continue;
 
