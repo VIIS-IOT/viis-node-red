@@ -91,7 +91,7 @@ describe("viis-modbus-poller publishing", () => {
 
   it("publishes a value whose drift since the last publish reaches the threshold, even when each poll moves less", async () => {
     (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([10, 13, 16]));
-    const poll = createPollerNode({}, sensorGlobals(5));
+    const poll = createPollerNode({ minPublishIntervalSec: 0 }, sensorGlobals(5));
 
     expect((await poll())?.[0].payload.volume_1).toBe(10);
     expect(await poll()).toBeNull();
@@ -129,17 +129,81 @@ describe("viis-modbus-poller publishing", () => {
     expect(local.payload).toEqual({ volume_1: 10, ts: expect.any(Number) });
   });
 
-  it("adds _poll_duration_ms only when diagnostics are enabled", async () => {
+  it("adds _poll_duration_ms to the local message only, never to the cloud", async () => {
     (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([10]));
     const withDiagnostics = await createPollerNode({ enableDiagnostics: true }, sensorGlobals(5))();
 
     expect(withDiagnostics?.[0].payload._poll_duration_ms).toEqual(expect.any(Number));
-    expect(withDiagnostics?.[1].payload.values._poll_duration_ms).toEqual(expect.any(Number));
+    expect(withDiagnostics?.[1].payload.values).not.toHaveProperty("_poll_duration_ms");
 
     (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([10]));
     const withoutDiagnostics = await createPollerNode({ enableDiagnostics: false }, sensorGlobals(5))();
 
     expect(withoutDiagnostics?.[0].payload).not.toHaveProperty("_poll_duration_ms");
     expect(withoutDiagnostics?.[1].payload.values).not.toHaveProperty("_poll_duration_ms");
+  });
+
+  it("holds back a small analog change inside the minimum interval and sends it once the interval has passed", async () => {
+    (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([10, 16, 16, 16]));
+    const poll = createPollerNode({ minPublishIntervalSec: 30, fullSnapshotIntervalSec: 0 }, sensorGlobals(5));
+
+    expect((await poll())?.[1].payload.values).toEqual({ volume_1: 10 });
+    expect(await poll()).toBeNull();
+
+    clock += 30_000;
+    expect((await poll())?.[1].payload.values).toEqual({ volume_1: 16 });
+  });
+
+  it("sends a change of at least five deadbands at once", async () => {
+    (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([10, 40]));
+    const poll = createPollerNode({ minPublishIntervalSec: 30, fullSnapshotIntervalSec: 0 }, sensorGlobals(5));
+
+    await poll();
+    expect((await poll())?.[1].payload.values).toEqual({ volume_1: 40 });
+  });
+
+  it("sends analog keys that drift at different moments together, once per interval", async () => {
+    let tick = 0;
+    (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue({
+      readHoldingRegisters: jest.fn(async (address: number) => {
+        tick++;
+        // tick 1: both start; tick 2: a moves; tick 3: b moves; tick 4: after the interval.
+        return { address, data: tick <= 1 ? [10, 20] : tick === 2 ? [16, 20] : [16, 26] };
+      }),
+      readCoils: jest.fn(),
+      readInputRegisters: jest.fn(),
+    });
+    const poll = createPollerNode({ minPublishIntervalSec: 30, fullSnapshotIntervalSec: 0 }, {
+      device_id: "device-1",
+      modbusMappings: { board1: { holdingRegisters: { a: 0, b: 1 }, inputRegisters: {}, coils: {} } },
+      modbusPollGroups: { sensors: { interval: 1, holding: ["a", "b"] } },
+      modbusPublishThresholds: { a: 5, b: 5 },
+    });
+
+    await poll();
+    expect(await poll()).toBeNull();
+    expect(await poll()).toBeNull();
+    clock += 30_000;
+    expect((await poll())?.[1].payload.values).toEqual({ a: 16, b: 26 });
+  });
+
+  it("never holds back a state key (deadband 0)", async () => {
+    (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([0, 1]));
+    const poll = createPollerNode({ minPublishIntervalSec: 30, fullSnapshotIntervalSec: 0 }, sensorGlobals(0));
+
+    await poll();
+    expect((await poll())?.[1].payload.values).toEqual({ volume_1: 1 });
+  });
+
+  it("re-sends the latest value of every key on the snapshot interval", async () => {
+    (ClientRegistry.getModbusClientV2 as jest.Mock).mockResolvedValue(holdingClient([10, 12, 12]));
+    const poll = createPollerNode({ fullSnapshotIntervalSec: 300, enableDiagnostics: false }, sensorGlobals(5));
+
+    await poll();
+    expect(await poll()).toBeNull();
+
+    clock += 300_000;
+    expect((await poll())?.[1].payload.values).toEqual({ volume_1: 12 });
+    expect(await poll()).toBeNull();
   });
 });

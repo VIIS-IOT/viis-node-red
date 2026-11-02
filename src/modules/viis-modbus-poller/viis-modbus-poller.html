@@ -11,6 +11,8 @@
       staleLockMs: { value: "5000", validate: RED.validators.number() },
       publishFullSnapshotOnFirstRead: { value: true },
       enableDiagnostics: { value: true },
+      fullSnapshotIntervalSec: { value: "300", validate: RED.validators.number() },
+      minPublishIntervalSec: { value: "30", validate: RED.validators.number() },
       scaleConfigOverrides: {
         value: "[]",
         validate: function (value) {
@@ -87,6 +89,18 @@
     <span style="margin-left: 5px;">Enable third output</span>
   </div>
 
+  <div class="form-row">
+    <label for="node-input-fullSnapshotIntervalSec"><i class="fa fa-heartbeat"></i> Snapshot (s)</label>
+    <input type="number" id="node-input-fullSnapshotIntervalSec" min="0" step="1" style="width: 120px;">
+    <span style="margin-left: 5px;">Re-send every key, 0 = off</span>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-minPublishIntervalSec"><i class="fa fa-hourglass-half"></i> Analog gap (s)</label>
+    <input type="number" id="node-input-minPublishIntervalSec" min="0" step="1" style="width: 120px;">
+    <span style="margin-left: 5px;">Min gap between analog updates, 0 = off</span>
+  </div>
+
   <details style="margin: 12px 0 8px;">
     <summary style="cursor: pointer; font-weight: 600;">Advanced read tuning</summary>
 
@@ -139,5 +153,6 @@
   </ol>
 
   <h3>Configuration</h3>
+  <p><b>Snapshot</b> re-sends the latest value of every key (coils included) on this interval, so the platform always has the full state and the device stays online when nothing changes. <b>Analog gap</b> sends small analog changes (deadband &gt; 0) at most once per this many seconds for the whole device, all keys together; a change of at least 5 deadbands goes at once and state keys (deadband 0) are never held back.</p>
   <p>Boards, mappings, poll groups, thresholds, and scale come from global context loaded from <code>device1.json</code> (<code>modbusBoards</code>, <code>modbusPollGroups</code>, <code>modbusMappings</code>, <code>modbusPublishThresholds</code>, <code>scaleConfigs</code>). Poll groups and thresholds stay global; each key must belong to exactly one board mapping. The editor Board ID field is unused when <code>modbusBoards</code> is present.</p>
 </script>

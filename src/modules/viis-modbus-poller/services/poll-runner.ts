@@ -25,6 +25,9 @@ export interface RunPollTickInput {
     maxCoilsPerRead: number;
     maxRegistersPerRead: number;
     publishFullSnapshot: boolean;
+    /** See DetectChangedDataInput.minPublishIntervalMs. */
+    minPublishIntervalMs?: number;
+    lastAnalogPublishAt?: number;
   };
 }
 
@@ -186,6 +189,8 @@ export async function runPollTick(input: RunPollTickInput): Promise<PollTickResu
       previous: input.previousState,
       thresholds: input.config.thresholds,
       publishFullSnapshot: input.options.publishFullSnapshot,
+      minPublishIntervalMs: input.options.minPublishIntervalMs,
+      lastAnalogPublishAt: input.options.lastAnalogPublishAt,
     }),
     diagnostics: finalizePollerDiagnostics(diagnostics),
   };

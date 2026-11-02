@@ -22,10 +22,18 @@ const DEFAULT_POLLER_OPTIONS = {
     staleLockMs: 5000,
     publishFullSnapshotOnFirstRead: true,
     enableDiagnostics: true,
+    fullSnapshotIntervalMs: 300000,
+    minPublishIntervalMs: 30000,
 };
 function toPositiveNumber(value, fallback) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+function toNonNegativeNumber(value, fallback) {
+    if (value === undefined || value === null || value === "")
+        return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 function parseOptions(config) {
     return {
@@ -35,6 +43,8 @@ function parseOptions(config) {
         staleLockMs: toPositiveNumber(config.staleLockMs, DEFAULT_POLLER_OPTIONS.staleLockMs),
         publishFullSnapshotOnFirstRead: config.publishFullSnapshotOnFirstRead !== false,
         enableDiagnostics: config.enableDiagnostics !== false,
+        fullSnapshotIntervalMs: toNonNegativeNumber(config.fullSnapshotIntervalSec, DEFAULT_POLLER_OPTIONS.fullSnapshotIntervalMs / 1000) * 1000,
+        minPublishIntervalMs: toNonNegativeNumber(config.minPublishIntervalSec, DEFAULT_POLLER_OPTIONS.minPublishIntervalMs / 1000) * 1000,
     };
 }
 function parseJsonMaybe(value, label) {
@@ -177,15 +187,17 @@ function writeLatestGlobalState(globalContext, config, latestData) {
 }
 /**
  * Local EMQX keeps the flat `{...values, ts}` shape its consumers read. The cloud message gets `{ts, values}`, so `ts`
- * is the sample time and not a telemetry key. `_poll_duration_ms` is a diagnostic and only rides along when enabled.
+ * is the sample time and not a telemetry key. `_poll_duration_ms` is a diagnostic: it rides along on the local message
+ * when enabled and never goes to the cloud, where it is not a device profile key.
  */
 function buildTelemetryMessages(config, changedData, pollDurationMs) {
     const ts = Date.now();
-    const values = pollDurationMs === null ? Object.assign({}, changedData) : Object.assign(Object.assign({}, changedData), { _poll_duration_ms: pollDurationMs });
+    const values = Object.assign({}, changedData);
+    const localValues = pollDurationMs === null ? values : Object.assign(Object.assign({}, values), { _poll_duration_ms: pollDurationMs });
     return [
         {
             topic: (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(config.deviceId),
-            payload: Object.assign(Object.assign({}, values), { ts }),
+            payload: Object.assign(Object.assign({}, localValues), { ts }),
             qos: 0,
             retain: false,
         },
@@ -204,6 +216,10 @@ module.exports = function registerViisModbusPoller(RED) {
         const options = parseOptions(config);
         // Change thresholds compare against the last published value, so a slow drift is published once it adds up.
         const publishedState = {};
+        let lastAnalogPublishAt;
+        // Last value read for every key, so the periodic snapshot carries the current state and not a held-back one.
+        const latestState = {};
+        let lastFullSnapshotAt = Date.now();
         const lastPollTimes = {};
         const emittedWarnings = new Set();
         let firstSuccessfulRead = true;
@@ -249,7 +265,7 @@ module.exports = function registerViisModbusPoller(RED) {
         }
         node.status({ fill: "grey", shape: "ring", text: "Waiting for inject" });
         node.on("input", async (msg, send, done) => {
-            var _a, _b;
+            var _a, _b, _c;
             const nodeSend = send || ((messages) => node.send(messages));
             const startedAt = Date.now();
             if (pollInProgress && startedAt - pollInProgress < options.staleLockMs) {
@@ -320,13 +336,18 @@ module.exports = function registerViisModbusPoller(RED) {
                             maxCoilsPerRead: options.maxCoilsPerRead,
                             maxRegistersPerRead: options.maxRegistersPerRead,
                             publishFullSnapshot: firstSuccessfulRead && options.publishFullSnapshotOnFirstRead,
+                            minPublishIntervalMs: options.minPublishIntervalMs,
+                            lastAnalogPublishAt,
                         },
                     }));
                 }
                 const result = (0, multi_board_poll_1.mergePollTickResults)(tickResults);
                 const latestCount = Object.keys(result.latestData).length;
                 if (latestCount > 0) {
+                    if (firstSuccessfulRead)
+                        lastFullSnapshotAt = startedAt;
                     firstSuccessfulRead = false;
+                    Object.assign(latestState, result.latestData);
                     writeLatestGlobalState(node.context().global, Object.assign(Object.assign({}, resolvedConfig), { mappings: (0, multi_board_poll_1.mergeBoardMappings)(targets.map((board) => board.mappings)) }), result.latestData);
                 }
                 const luoiKeys = (0, luoi_state_1.luoiKeysFromCoils)(Object.keys((_a = (0, multi_board_poll_1.mergeBoardMappings)(targets.map((board) => board.mappings)).coils) !== null && _a !== void 0 ? _a : {}));
@@ -336,6 +357,7 @@ module.exports = function registerViisModbusPoller(RED) {
                     const states = (0, luoi_state_1.deriveLuoiStates)(luoiKeys, Object.assign(Object.assign({}, publishedState), result.latestData), lastStates);
                     let stateMoved = false;
                     for (const [luoiKey, state] of Object.entries(states)) {
+                        latestState[luoiKey] = state;
                         if (publishedState[luoiKey] !== state)
                             result.changedData[luoiKey] = state;
                         if (lastStates[luoiKey] !== state)
@@ -343,6 +365,12 @@ module.exports = function registerViisModbusPoller(RED) {
                     }
                     if (stateMoved)
                         globalContext.set(LUOI_LAST_STATE_KEY, Object.assign(Object.assign({}, lastStates), states));
+                }
+                if (options.fullSnapshotIntervalMs > 0 &&
+                    Object.keys(latestState).length > 0 &&
+                    startedAt - lastFullSnapshotAt >= options.fullSnapshotIntervalMs) {
+                    lastFullSnapshotAt = startedAt;
+                    result.changedData = Object.assign(Object.assign({}, latestState), result.changedData);
                 }
                 const changedCount = Object.keys(result.changedData).length;
                 if (changedCount === 0) {
@@ -357,6 +385,10 @@ module.exports = function registerViisModbusPoller(RED) {
                     return;
                 }
                 Object.assign(publishedState, result.changedData);
+                const thresholds = (_c = resolvedConfig.thresholds) !== null && _c !== void 0 ? _c : {};
+                if (Object.keys(result.changedData).some((key) => Number(thresholds[key]) > 0)) {
+                    lastAnalogPublishAt = startedAt;
+                }
                 const [localMessage, thingsboardMessage] = buildTelemetryMessages(resolvedConfig, result.changedData, options.enableDiagnostics ? Date.now() - startedAt : null);
                 const statusText = result.diagnostics.errorCount > 0
                     ? `Published ${changedCount} keys, ${result.diagnostics.errorCount} errors`

@@ -120,6 +120,8 @@ async function runPollTick(input) {
             previous: input.previousState,
             thresholds: input.config.thresholds,
             publishFullSnapshot: input.options.publishFullSnapshot,
+            minPublishIntervalMs: input.options.minPublishIntervalMs,
+            lastAnalogPublishAt: input.options.lastAnalogPublishAt,
         }),
         diagnostics: (0, diagnostics_1.finalizePollerDiagnostics)(diagnostics),
     };
