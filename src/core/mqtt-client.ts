@@ -2,6 +2,7 @@ import { Node } from "node-red";
 import mqtt, { MqttClient, IClientOptions, IClientPublishOptions } from "mqtt";
 import { EventEmitter } from "events";
 import { ConnectionMonitor } from "./connection-monitor";
+import { TelemetryUplink } from "./telemetry-uplink";
 import {
     buildDeviceLifecycleTopic,
     buildDeviceTelemetryTopic,
@@ -31,9 +32,17 @@ export interface MqttConfig {
      * of hanging its caller forever.
      */
     publishTimeoutMs?: number;
+    /**
+     * Route publishes to this device's telemetry topic through {@link TelemetryUplink} (coalescing + on-disk
+     * store-and-forward). Only the cloud client sets this.
+     */
+    telemetryUplink?: boolean;
+    /** Spool directory for the uplink; defaults to VIIS_TELEMETRY_SPOOL_DIR or /data/telemetry-spool. */
+    telemetrySpoolDir?: string | null;
 }
 
 const DEFAULT_PUBLISH_TIMEOUT_MS = 35000;
+const DEFAULT_TELEMETRY_SPOOL_DIR = "/data/telemetry-spool";
 
 export interface MqttMessage {
     topic: string;
@@ -85,6 +94,7 @@ export class MqttClientCore extends EventEmitter {
     private reconnectTimer: NodeJS.Timeout | null = null;
     private circuitBreakerTimer: NodeJS.Timeout | null = null;
     private monitoredClientId: string = '';
+    private uplink: TelemetryUplink | null = null;
 
     // Event listeners for cleanup
     private eventListeners: Map<string, (...args: any[]) => void> = new Map();
@@ -114,6 +124,18 @@ export class MqttClientCore extends EventEmitter {
             totalReconnects: 0,
             circuitBreakerOpen: false
         };
+
+        if (this.config.telemetryUplink && this.config.deviceId) {
+            this.uplink = new TelemetryUplink({
+                publish: (topic, payload) => this.publishDirect(topic, payload, { qos: 1, retain: false }),
+                isConnected: () => this.connectionState.isConnected && !!this.client?.connected,
+                warn: (message) => this.node.warn(message),
+                log: (message) => this.node.log(message),
+                spoolDir: this.config.telemetrySpoolDir !== undefined
+                    ? this.config.telemetrySpoolDir
+                    : process.env.VIIS_TELEMETRY_SPOOL_DIR || DEFAULT_TELEMETRY_SPOOL_DIR,
+            });
+        }
 
         this.initializeClient();
         this.startHealthCheck();
@@ -462,7 +484,7 @@ export class MqttClientCore extends EventEmitter {
 
         const healthData = {
             heartbeat: Date.now(),
-            uptime: process.uptime(),
+            uptime: Math.round(process.uptime()),
             memory: process.memoryUsage().heapUsed
         };
 
@@ -481,6 +503,9 @@ export class MqttClientCore extends EventEmitter {
 
     // Alias for publish method to maintain consistency
     private async publishMessage(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
+        if (this.isUplinkTelemetry(topic)) {
+            return this.publish(topic, message, options);
+        }
         if (!this.connectionState.isConnected) {
             // Queue message if offline
             const queuedMessage: QueuedMessage = {
@@ -592,8 +617,24 @@ export class MqttClientCore extends EventEmitter {
         });
     }
 
-    // Publish message only when connected
+    private isUplinkTelemetry(topic: string): boolean {
+        return !!this.uplink && !!this.config.deviceId && topic === buildDeviceTelemetryTopic(this.config.deviceId);
+    }
+
+    /**
+     * Publish a message. Telemetry for this device goes through the uplink when enabled: it resolves once the
+     * message is published or spooled for replay, and never rejects.
+     */
     public async publish(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
+        if (this.isUplinkTelemetry(topic)) {
+            const queued = this.uplink!.enqueue(topic, message);
+            if (queued !== false) return queued;
+        }
+        return this.publishDirect(topic, message, options);
+    }
+
+    // Publish message only when connected
+    private async publishDirect(topic: string, message: string | Buffer, options?: IClientPublishOptions): Promise<void> {
         const timeoutMs = this.config.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
         let rejectPending: (error: Error) => void = () => {};
         let timer: NodeJS.Timeout | undefined;
@@ -686,6 +727,7 @@ export class MqttClientCore extends EventEmitter {
     // Enhanced disconnect with proper resource cleanup
     public async disconnect(): Promise<void> {
         this.node.log("Initiating MQTT client disconnect...");
+        this.uplink?.close();
 
         // Unregister from connection monitor
         ConnectionMonitor.getInstance().unregisterClient(this.monitoredClientId);
@@ -733,6 +775,7 @@ export class MqttClientCore extends EventEmitter {
     // Force disconnect for emergency situations
     public forceDisconnect(): void {
         this.node.warn("Force disconnecting MQTT client");
+        this.uplink?.close();
 
         // Unregister from connection monitor
         ConnectionMonitor.getInstance().unregisterClient(this.monitoredClientId);

@@ -107,7 +107,8 @@ class ClientRegistry {
         await this.withLock('thingsboard', async () => {
             if (this.thingsboardMqttInstance)
                 return;
-            this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
+            // Cloud telemetry is coalesced and spooled to disk while offline (see core/telemetry-uplink).
+            this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(Object.assign({ telemetryUplink: true }, config), node);
             try {
                 await this.thingsboardMqttInstance.waitForConnection();
                 this.activeConnections.thingsboardMqtt++;

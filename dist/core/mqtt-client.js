@@ -7,8 +7,10 @@ exports.MqttClientCore = void 0;
 const mqtt_1 = __importDefault(require("mqtt"));
 const events_1 = require("events");
 const connection_monitor_1 = require("./connection-monitor");
+const telemetry_uplink_1 = require("./telemetry-uplink");
 const demeter_mqtt_topics_1 = require("./demeter-mqtt-topics");
 const DEFAULT_PUBLISH_TIMEOUT_MS = 35000;
+const DEFAULT_TELEMETRY_SPOOL_DIR = "/data/telemetry-spool";
 // Enhanced MQTT Client with Google IoT standards compliance
 class MqttClientCore extends events_1.EventEmitter {
     constructor(config, node) {
@@ -30,6 +32,7 @@ class MqttClientCore extends events_1.EventEmitter {
         this.reconnectTimer = null;
         this.circuitBreakerTimer = null;
         this.monitoredClientId = '';
+        this.uplink = null;
         // Event listeners for cleanup
         this.eventListeners = new Map();
         this.config = Object.assign({ reconnectPeriod: 0, connectTimeout: 10000, keepalive: 30, maxReconnectAttempts: this.CIRCUIT_BREAKER_MAX_ATTEMPTS, reconnectBackoffMultiplier: this.RECONNECT_INTERVAL_MULTIPLIER, maxReconnectDelay: this.RECONNECT_INTERVAL_MAX, healthCheckInterval: this.HEALTH_CHECK_INTERVAL, messageQueueSize: 100, enableCircuitBreaker: true, publishTimeoutMs: DEFAULT_PUBLISH_TIMEOUT_MS }, config);
@@ -42,6 +45,17 @@ class MqttClientCore extends events_1.EventEmitter {
             totalReconnects: 0,
             circuitBreakerOpen: false
         };
+        if (this.config.telemetryUplink && this.config.deviceId) {
+            this.uplink = new telemetry_uplink_1.TelemetryUplink({
+                publish: (topic, payload) => this.publishDirect(topic, payload, { qos: 1, retain: false }),
+                isConnected: () => { var _a; return this.connectionState.isConnected && !!((_a = this.client) === null || _a === void 0 ? void 0 : _a.connected); },
+                warn: (message) => this.node.warn(message),
+                log: (message) => this.node.log(message),
+                spoolDir: this.config.telemetrySpoolDir !== undefined
+                    ? this.config.telemetrySpoolDir
+                    : process.env.VIIS_TELEMETRY_SPOOL_DIR || DEFAULT_TELEMETRY_SPOOL_DIR,
+            });
+        }
         this.initializeClient();
         this.startHealthCheck();
         // Register with connection monitor for automatic recovery
@@ -333,7 +347,7 @@ class MqttClientCore extends events_1.EventEmitter {
             return;
         const healthData = {
             heartbeat: Date.now(),
-            uptime: process.uptime(),
+            uptime: Math.round(process.uptime()),
             memory: process.memoryUsage().heapUsed
         };
         if (!this.config.deviceId)
@@ -347,6 +361,9 @@ class MqttClientCore extends events_1.EventEmitter {
     }
     // Alias for publish method to maintain consistency
     async publishMessage(topic, message, options) {
+        if (this.isUplinkTelemetry(topic)) {
+            return this.publish(topic, message, options);
+        }
         if (!this.connectionState.isConnected) {
             // Queue message if offline
             const queuedMessage = {
@@ -450,8 +467,23 @@ class MqttClientCore extends events_1.EventEmitter {
             });
         });
     }
-    // Publish message only when connected
+    isUplinkTelemetry(topic) {
+        return !!this.uplink && !!this.config.deviceId && topic === (0, demeter_mqtt_topics_1.buildDeviceTelemetryTopic)(this.config.deviceId);
+    }
+    /**
+     * Publish a message. Telemetry for this device goes through the uplink when enabled: it resolves once the
+     * message is published or spooled for replay, and never rejects.
+     */
     async publish(topic, message, options) {
+        if (this.isUplinkTelemetry(topic)) {
+            const queued = this.uplink.enqueue(topic, message);
+            if (queued !== false)
+                return queued;
+        }
+        return this.publishDirect(topic, message, options);
+    }
+    // Publish message only when connected
+    async publishDirect(topic, message, options) {
         var _a;
         const timeoutMs = (_a = this.config.publishTimeoutMs) !== null && _a !== void 0 ? _a : DEFAULT_PUBLISH_TIMEOUT_MS;
         let rejectPending = () => { };
@@ -538,7 +570,9 @@ class MqttClientCore extends events_1.EventEmitter {
     }
     // Enhanced disconnect with proper resource cleanup
     async disconnect() {
+        var _a;
         this.node.log("Initiating MQTT client disconnect...");
+        (_a = this.uplink) === null || _a === void 0 ? void 0 : _a.close();
         // Unregister from connection monitor
         connection_monitor_1.ConnectionMonitor.getInstance().unregisterClient(this.monitoredClientId);
         // Clear all timers
@@ -581,7 +615,9 @@ class MqttClientCore extends events_1.EventEmitter {
     }
     // Force disconnect for emergency situations
     forceDisconnect() {
+        var _a;
         this.node.warn("Force disconnecting MQTT client");
+        (_a = this.uplink) === null || _a === void 0 ? void 0 : _a.close();
         // Unregister from connection monitor
         connection_monitor_1.ConnectionMonitor.getInstance().unregisterClient(this.monitoredClientId);
         this.clearTimers();
