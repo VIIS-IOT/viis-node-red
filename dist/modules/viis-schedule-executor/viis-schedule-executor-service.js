@@ -1111,10 +1111,11 @@ let ScheduleService = class ScheduleService {
                     this.debugLog(`Synced ${schedule.name} to server`);
                 }
                 catch (syncError) {
+                    // The row is saved (is_synced = 0) and retryUnsyncedStatuses re-posts it; rethrowing
+                    // only made the outer catch log a misleading "DATABASE ERROR".
                     if (this.node) {
-                        this.node.warn(`❌ SERVER SYNC FAILED: ${schedule.name} | Error: ${syncError.message}`);
+                        this.node.warn(`❌ SERVER SYNC FAILED: ${schedule.name} | Error: ${syncError.message} | kept unsynced, will retry`);
                     }
-                    throw syncError;
                 }
             }
             else {
