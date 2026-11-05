@@ -14,6 +14,8 @@ import { TabiotSchedule } from '../../../orm/entities/schedule/TabiotSchedule';
 import { SyncStateService, SyncResult } from '../services/syncStateService';
 import {
     localInstantFromServer,
+    pulledIsSynced,
+    pulledScheduleStatus,
     shouldSkipIncomingUpdate,
     shouldSoftDeleteLocalOnPull,
 } from './schedulePullPolicy';
@@ -337,7 +339,7 @@ export class ScheduleSyncHandler {
             newSchedule.name = serverSchedule.id || serverSchedule.name;
             newSchedule.label = serverSchedule.label || serverSchedule.name;
             newSchedule.device_id = serverSchedule.device_id;
-            newSchedule.status = (serverSchedule.status as 'running' | 'stopped' | 'finished' | '') || 'finished'; // Default to 'finished' if null/empty
+            newSchedule.status = pulledScheduleStatus(null); // run status is gateway-owned, never the server's
             newSchedule.action = typeof serverSchedule.action === 'object'
                 ? JSON.stringify(serverSchedule.action)
                 : serverSchedule.action;
@@ -390,7 +392,7 @@ export class ScheduleSyncHandler {
             Object.assign(localSchedule, {
                 label: serverSchedule.label || serverSchedule.name,
                 modified: incomingModified || localSchedule.modified,
-                status: (serverSchedule.status as 'running' | 'stopped' | 'finished' | '') || 'finished', // Default to 'finished' if null/empty
+                status: pulledScheduleStatus(localSchedule), // run status is gateway-owned, never the server's
                 action: typeof serverSchedule.action === 'object'
                     ? JSON.stringify(serverSchedule.action)
                     : serverSchedule.action,
@@ -402,7 +404,7 @@ export class ScheduleSyncHandler {
                 end_date: serverSchedule.end_date ? new Date(serverSchedule.end_date) : null,
                 type: '',
                 interval: serverSchedule.interval,
-                is_synced: 1, // Mark as synced
+                is_synced: pulledIsSynced(localSchedule), // a pending executor status stays unsynced
                 is_deleted: serverSchedule.is_deleted,
             });
 

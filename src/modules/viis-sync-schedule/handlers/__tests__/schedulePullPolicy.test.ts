@@ -1,5 +1,7 @@
 import {
     localInstantFromServer,
+    pulledIsSynced,
+    pulledScheduleStatus,
     shouldSkipIncomingUpdate,
     shouldSoftDeleteLocalOnPull,
 } from '../schedulePullPolicy';
@@ -30,5 +32,20 @@ describe('schedulePullPolicy', () => {
         expect(localInstantFromServer(undefined)).toBeNull();
         expect(localInstantFromServer('2026-08-21T04:54:13.000Z')?.toISOString())
             .toBe('2026-08-21T04:54:13.000Z');
+    });
+
+    it('never takes the run status from the server: keeps the local one, new rows start finished', () => {
+        expect(pulledScheduleStatus(null)).toBe('finished');
+        expect(pulledScheduleStatus(undefined)).toBe('finished');
+        expect(pulledScheduleStatus({ status: 'finished' })).toBe('finished');
+        expect(pulledScheduleStatus({ status: 'running' })).toBe('running');
+        expect(pulledScheduleStatus({ status: '' })).toBe('finished');
+    });
+
+    it('keeps a pending executor status unsynced so the executor retry still posts it', () => {
+        expect(pulledIsSynced({ is_from_local: 0, is_synced: 0 })).toBe(0);
+        expect(pulledIsSynced({ is_from_local: 0, is_synced: 1 })).toBe(1);
+        expect(pulledIsSynced({ is_from_local: 1, is_synced: 1 })).toBe(1);
+        expect(pulledIsSynced(null)).toBe(1);
     });
 });

@@ -161,6 +161,10 @@ describe('Schedule Server Sync Status Tests', () => {
             expect(mockNode.warn).toHaveBeenCalledWith(
                 expect.stringContaining('Network timeout')
             );
+            // The row was saved; a failed POST is not a database error
+            expect(mockNode.warn).not.toHaveBeenCalledWith(
+                expect.stringContaining('DATABASE ERROR')
+            );
         });
 
         it('should log SKIPPED when SyncScheduleService is not available', async () => {
