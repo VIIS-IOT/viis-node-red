@@ -263,7 +263,7 @@ class ScheduleSyncHandler {
             newSchedule.name = serverSchedule.id || serverSchedule.name;
             newSchedule.label = serverSchedule.label || serverSchedule.name;
             newSchedule.device_id = serverSchedule.device_id;
-            newSchedule.status = serverSchedule.status || 'finished'; // Default to 'finished' if null/empty
+            newSchedule.status = (0, schedulePullPolicy_1.pulledScheduleStatus)(null); // run status is gateway-owned, never the server's
             newSchedule.action = typeof serverSchedule.action === 'object'
                 ? JSON.stringify(serverSchedule.action)
                 : serverSchedule.action;
@@ -310,7 +310,7 @@ class ScheduleSyncHandler {
             Object.assign(localSchedule, {
                 label: serverSchedule.label || serverSchedule.name,
                 modified: incomingModified || localSchedule.modified,
-                status: serverSchedule.status || 'finished', // Default to 'finished' if null/empty
+                status: (0, schedulePullPolicy_1.pulledScheduleStatus)(localSchedule), // run status is gateway-owned, never the server's
                 action: typeof serverSchedule.action === 'object'
                     ? JSON.stringify(serverSchedule.action)
                     : serverSchedule.action,
@@ -322,7 +322,7 @@ class ScheduleSyncHandler {
                 end_date: serverSchedule.end_date ? new Date(serverSchedule.end_date) : null,
                 type: '',
                 interval: serverSchedule.interval,
-                is_synced: 1, // Mark as synced
+                is_synced: (0, schedulePullPolicy_1.pulledIsSynced)(localSchedule), // a pending executor status stays unsynced
                 is_deleted: serverSchedule.is_deleted,
             });
             await this.scheduleRepo.save(localSchedule);
