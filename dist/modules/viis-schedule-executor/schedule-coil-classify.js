@@ -24,10 +24,14 @@ function classifyCoils(commands) {
     return { powerCoils, pumpCoils, valveCoils, otherCoils };
 }
 /** Firmware often auto-starts main_pump on power. Finish must always stop mapped pumps. */
-function impliedFinishPumpCommands(commands, coilMap, unitid = 1) {
+function impliedFinishPumpCommands(commands, coilMap, unitid = 1, 
+/** Multi-board: board owning a key. Same address on another board is a different coil. */
+boardOf) {
+    const sameTarget = (cmd, key) => { var _a; return !boardOf || ((_a = cmd.boardId) !== null && _a !== void 0 ? _a : undefined) === boardOf(key); };
     return Object.entries(coilMap)
         .filter(([key]) => (0, exports.isPumpKey)(key))
-        .filter(([key, address]) => !commands.some(cmd => cmd.key === key || (cmd.fc === 5 && Number(cmd.address) === Number(address))))
+        .filter(([key, address]) => !commands.some(cmd => cmd.key === key
+        || (cmd.fc === 5 && Number(cmd.address) === Number(address) && sameTarget(cmd, key))))
         .map(([key, address]) => ({
         key,
         value: false,

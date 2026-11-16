@@ -39,10 +39,12 @@ import {
 import {
     buildValveProgramCommand,
     buildValveProgramOffCommand,
+    findValveProgramHoldingKey,
     isValveProgramHoldingKey,
     mergeHoldingMaps,
     numberedValveIndex,
 } from "./schedule-valve-program";
+import { buildKeyBoardIndex, KeyBoardIndex, parseBoards, withBoard } from "./schedule-board-routing";
 
 // require('dotenv').config();
 
@@ -124,6 +126,7 @@ export class ScheduleService {
     private readonly CONFIG_KEY_VALUES_UPDATED_AT = "configKeyValuesUpdatedAt";
     private readonly PUBLISHED_VALUE_CACHE_KEY = "scheduleExecutorPublishedValueCache";
     private protectionGate: ProtectionGateService | null = null;
+    private boardClientProvider: ((boardId: string) => Promise<ModbusClientCore>) | null = null;
 
     constructor(
         node?: Node,
@@ -154,6 +157,68 @@ export class ScheduleService {
 
     setProtectionGate(gate: ProtectionGateService): void {
         this.protectionGate = gate;
+    }
+
+    /** Multi-board mode: how to get the client of a board (e.g. ClientRegistry.getModbusClientV2). */
+    setBoardClientProvider(provider: (boardId: string) => Promise<ModbusClientCore>): void {
+        this.boardClientProvider = provider;
+    }
+
+    /** Key → owning board, from MODBUS_BOARDS and MODBUS_<BOARD>_COILS / _HOLDING_REGISTERS. */
+    private getKeyBoardIndex(): KeyBoardIndex | null {
+        if (!this.globalHelper) return null;
+        const boards = parseBoards(this.globalHelper.getEnvVar('MODBUS_BOARDS', null));
+        if (boards.length === 0) return null;
+        return buildKeyBoardIndex(boards, (name, def) => this.globalHelper.getJsonEnvVar(name, def));
+    }
+
+    /** Tag a command with the board that owns its key (no-op in single-board mode). */
+    public annotateBoard<T extends ModbusCmd>(cmd: T, index: KeyBoardIndex | null = this.getKeyBoardIndex()): T {
+        return index ? withBoard(cmd, index) : cmd;
+    }
+
+    public annotateBoards<T extends ModbusCmd>(cmds: T[]): T[] {
+        const index = this.getKeyBoardIndex();
+        return index ? cmds.map(cmd => withBoard(cmd, index)) : cmds;
+    }
+
+    /** Client for a command: its board's client in multi-board mode, else `fallback`. */
+    public async clientFor(cmd: { boardId?: string }, fallback: ModbusClientCore): Promise<ModbusClientCore> {
+        if (cmd.boardId && this.boardClientProvider) {
+            return this.boardClientProvider(cmd.boardId);
+        }
+        return fallback;
+    }
+
+    /** Two or more boards: keys may live on different devices that share addresses. */
+    private static isMultiBoard(index: KeyBoardIndex | null): index is KeyBoardIndex {
+        return !!index && Object.keys(index.holdingMaps).length > 1;
+    }
+
+    /**
+     * valve_program command. One board (legacy env or a single modbusBoards entry) keeps
+     * the legacy default (register 20). Two or more boards write it only when a board maps
+     * the key, and only to that board: a default register 20 on an arbitrary PLC would be
+     * a stray write.
+     */
+    private buildValveProgramForBoards(
+        actionObj: Record<string, unknown> | null,
+        index: KeyBoardIndex | null
+    ): ModbusCmd | null {
+        const build = (map: Record<string, number>) => actionObj
+            ? buildValveProgramCommand(actionObj, map)
+            : buildValveProgramOffCommand(map);
+        if (!ScheduleService.isMultiBoard(index)) {
+            const cmd = build(this.getMergedHoldingMaps());
+            return cmd ? this.annotateBoard(cmd, index) : null;
+        }
+        for (const [boardId, map] of Object.entries(index.holdingMaps)) {
+            if (findValveProgramHoldingKey(map) !== undefined) {
+                const cmd = build(map);
+                return cmd ? this.annotateBoard(cmd, index) : null;
+            }
+        }
+        return null;
     }
 
     // Helper function for conditional logging
@@ -467,7 +532,7 @@ export class ScheduleService {
     }
 
     public mergeValveProgramOffCommand(commands: ModbusCmd[]): ModbusCmd[] {
-        const off = buildValveProgramOffCommand(this.getMergedHoldingMaps());
+        const off = this.buildValveProgramForBoards(null, this.getKeyBoardIndex());
         if (!off || commands.some(cmd => isValveProgramHoldingKey(cmd.key))) {
             return commands;
         }
@@ -759,15 +824,19 @@ export class ScheduleService {
                 }
             }
 
-            const mergedHoldings = this.getMergedHoldingMaps();
-            const valveProgramCmd = buildValveProgramCommand(expandedActionObj, mergedHoldings);
+            const boardIndex = this.getKeyBoardIndex();
+            const valveProgramCmd = this.buildValveProgramForBoards(expandedActionObj, boardIndex);
             const hasNumberedValves = Object.keys(expandedActionObj)
                 .some(key => numberedValveIndex(key) !== null);
             if (valveProgramCmd && hasNumberedValves) {
                 holdingCommands = holdingCommands.filter(cmd => !isValveProgramHoldingKey(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
-            } else if (hasNumberedValves && !valveProgramCmd && !options.dryRun) {
+            } else if (hasNumberedValves && !valveProgramCmd && !ScheduleService.isMultiBoard(boardIndex) && !options.dryRun) {
                 this.node?.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
+            }
+            if (boardIndex) {
+                holdingCommands = holdingCommands.map(cmd => this.annotateBoard(cmd, boardIndex));
+                coilCommands.splice(0, coilCommands.length, ...coilCommands.map(cmd => this.annotateBoard(cmd, boardIndex)));
             }
         } catch (error) {
             console.error(`Error parsing action for schedule ${schedule.name}: ${(error as Error).message}`);
@@ -804,12 +873,14 @@ export class ScheduleService {
 
     private async writeCommandGroup(
         cmds: ModbusCmd[],
-        deps: KeyWriterDeps,
+        modbusClient: ModbusClientCore,
         phase: SchedulePhase,
         logAction: string
     ): Promise<KeyOutcome[]> {
         const outcomes: KeyOutcome[] = [];
         for (const cmd of cmds) {
+            // Each key goes to its own board's client (multi-board) or the default client.
+            const deps = this.makeKeyWriterDeps(await this.clientFor(cmd, modbusClient));
             const outcome = await writeAndVerifyKey(cmd, deps, {
                 phase,
                 verifyEnabled: this.verifyEnabledFor(cmd),
@@ -873,7 +944,6 @@ export class ScheduleService {
             'start',
             schedule?.name ?? 'unknown'
         );
-        const deps = this.makeKeyWriterDeps(modbusClient);
 
         if (this.node && (commands.holdingCommands.length > 0 || commands.coilCommands.length > 0)) {
             this.node.warn(`[MODBUS] EXEC ${schedule?.name || '?'}: ${commands.holdingCommands.length} registers + ${commands.coilCommands.length} coils`);
@@ -883,11 +953,11 @@ export class ScheduleService {
         const otherHoldingCmds = commands.holdingCommands.filter(cmd => !isValveProgramHoldingKey(cmd.key));
 
         if (valveProgramCmds.length > 0) {
-            const keys = await this.writeCommandGroup(valveProgramCmds, deps, 'set_valve_program', 'WRITE');
+            const keys = await this.writeCommandGroup(valveProgramCmds, modbusClient, 'set_valve_program', 'WRITE');
             buffer.pushPhase({ phase: 'set_valve_program', keys });
         }
         if (otherHoldingCmds.length > 0) {
-            const keys = await this.writeCommandGroup(otherHoldingCmds, deps, 'set_holding', 'WRITE');
+            const keys = await this.writeCommandGroup(otherHoldingCmds, modbusClient, 'set_holding', 'WRITE');
             buffer.pushPhase({ phase: 'set_holding', keys });
         }
 
@@ -900,11 +970,11 @@ export class ScheduleService {
             }
 
             if (valveCoils.length > 0) {
-                const keys = await this.writeCommandGroup(valveCoils, deps, 'open_valves', 'START');
+                const keys = await this.writeCommandGroup(valveCoils, modbusClient, 'open_valves', 'START');
                 buffer.pushPhase({ phase: 'open_valves', keys });
             }
             if (otherCoils.length > 0) {
-                const keys = await this.writeCommandGroup(otherCoils, deps, 'other_coils', 'START');
+                const keys = await this.writeCommandGroup(otherCoils, modbusClient, 'other_coils', 'START');
                 buffer.pushPhase({ phase: 'other_coils', keys });
             }
 
@@ -916,15 +986,15 @@ export class ScheduleService {
             }
 
             if (pumpCoils.length > 0) {
-                const keys = await this.writeCommandGroup(pumpCoils, deps, 'start_pumps', 'START');
+                const keys = await this.writeCommandGroup(pumpCoils, modbusClient, 'start_pumps', 'START');
                 buffer.pushPhase({ phase: 'start_pumps', keys });
             }
             if (powerCoils.length > 0) {
-                const keys = await this.writeCommandGroup(powerCoils, deps, 'system_power', 'START');
+                const keys = await this.writeCommandGroup(powerCoils, modbusClient, 'system_power', 'START');
                 buffer.pushPhase({ phase: 'system_power', keys });
             }
         } else if (commands.coilCommands.length > 0) {
-            const keys = await this.writeCommandGroup(commands.coilCommands, deps, 'other_coils', 'WRITE');
+            const keys = await this.writeCommandGroup(commands.coilCommands, modbusClient, 'other_coils', 'WRITE');
             buffer.pushPhase({ phase: 'other_coils', keys });
         }
 
@@ -960,10 +1030,10 @@ export class ScheduleService {
                 let readValue: number | boolean;
 
                 if (cmd.fc === 5) {
-                    const readResult = await modbusClient.readCoils(cmd.address, 1);
+                    const readResult = await (await this.clientFor(cmd, modbusClient)).readCoils(cmd.address, 1);
                     readValue = Boolean(readResult.data[0]);
                 } else if (cmd.fc === 6) {
-                    const readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                    const readResult = await (await this.clientFor(cmd, modbusClient)).readHoldingRegisters(cmd.address, 1);
                     readValue = this.scaleValue(cmd.key, Number(readResult.data[0]), 'read');
                 } else {
                     continue;
@@ -1377,7 +1447,7 @@ export class ScheduleService {
                     let currentValue: number | boolean;
 
                     if (cmd.fc === 5) {
-                        readResult = await modbusClient.readCoils(cmd.address, 1);
+                        readResult = await (await this.clientFor(cmd, modbusClient)).readCoils(cmd.address, 1);
                         currentValue = Boolean(readResult.data[0]);
                         // Device should be OFF (false)
                         if (currentValue !== false) {
@@ -1385,7 +1455,7 @@ export class ScheduleService {
                             this.debugLog(`⚠️ Device at coil ${cmd.address} is still ON (${currentValue})`);
                         }
                     } else if (cmd.fc === 6) {
-                        readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                        readResult = await (await this.clientFor(cmd, modbusClient)).readHoldingRegisters(cmd.address, 1);
                         currentValue = Number(readResult.data[0]);
                         // Device should be 0 or OFF value
                         if (currentValue !== 0 && currentValue !== cmd.value) {
@@ -1460,10 +1530,19 @@ export class ScheduleService {
             isFinishing || options?.unusedHoldingReset ? (options?.unusedHoldingReset ? 'start' : 'end') : 'end',
             schedule?.name ?? 'unknown'
         );
-        const deps = this.makeKeyWriterDeps(modbusClient);
+        const boardIndex = this.getKeyBoardIndex();
+        commands = boardIndex ? commands.map(cmd => this.annotateBoard(cmd, boardIndex)) : commands;
+        const implied = isFinishing
+            ? impliedFinishPumpCommands(
+                commands,
+                this.getAllModbusCoils(),
+                1,
+                boardIndex ? (key) => boardIndex.coils[key]?.boardId : undefined
+            )
+            : [];
         const coilCommands = [
             ...commands.filter(cmd => cmd.fc === 5),
-            ...(isFinishing ? impliedFinishPumpCommands(commands, this.getAllModbusCoils()) : []),
+            ...(boardIndex ? implied.map(cmd => this.annotateBoard(cmd, boardIndex)) : implied),
         ];
         const { powerCoils, pumpCoils, valveCoils, otherCoils } = classifyCoils(coilCommands);
         const holdingRegisters = commands.filter(cmd => cmd.fc === 6);
@@ -1478,17 +1557,17 @@ export class ScheduleService {
                 return;
             }
             const offHoldings = holdingRegisters.map(cmd => ({ ...cmd, value: 0 }));
-            const keys = await this.writeCommandGroup(offHoldings, deps, holdingPhase, 'RESET');
+            const keys = await this.writeCommandGroup(offHoldings, modbusClient, holdingPhase, 'RESET');
             buffer.pushPhase({ phase: holdingPhase, keys });
         };
 
         if (isFinishing) {
             if (pumpCoils.length > 0) {
-                const keys = await this.writeCommandGroup(pumpCoils.map(cmd => ({ ...cmd, value: false })), deps, 'stop_pumps', 'RESET');
+                const keys = await this.writeCommandGroup(pumpCoils.map(cmd => ({ ...cmd, value: false })), modbusClient, 'stop_pumps', 'RESET');
                 buffer.pushPhase({ phase: 'stop_pumps', keys });
             }
             if (otherCoils.length > 0) {
-                const keys = await this.writeCommandGroup(otherCoils.map(cmd => ({ ...cmd, value: false })), deps, 'other_coils', 'RESET');
+                const keys = await this.writeCommandGroup(otherCoils.map(cmd => ({ ...cmd, value: false })), modbusClient, 'other_coils', 'RESET');
                 buffer.pushPhase({ phase: 'other_coils', keys });
             }
             if (valveCoils.length > 0) {
@@ -1498,18 +1577,18 @@ export class ScheduleService {
                 buffer.pushPhase({ phase: 'water_hammer_delay', keys: [], ok: true, duration_ms: Date.now() - t0 });
             }
             if (valveCoils.length > 0) {
-                const keys = await this.writeCommandGroup(valveCoils.map(cmd => ({ ...cmd, value: false })), deps, 'close_valves', 'RESET');
+                const keys = await this.writeCommandGroup(valveCoils.map(cmd => ({ ...cmd, value: false })), modbusClient, 'close_valves', 'RESET');
                 buffer.pushPhase({ phase: 'close_valves', keys });
             }
             await resetHoldings();
             if (powerCoils.length > 0) {
-                const keys = await this.writeCommandGroup(powerCoils.map(cmd => ({ ...cmd, value: false })), deps, 'system_power', 'RESET');
+                const keys = await this.writeCommandGroup(powerCoils.map(cmd => ({ ...cmd, value: false })), modbusClient, 'system_power', 'RESET');
                 buffer.pushPhase({ phase: 'system_power', keys });
             }
         } else {
             await resetHoldings();
             if (coilCommands.length > 0) {
-                const keys = await this.writeCommandGroup(coilCommands.map(cmd => ({ ...cmd, value: false })), deps, 'other_coils', 'RESET');
+                const keys = await this.writeCommandGroup(coilCommands.map(cmd => ({ ...cmd, value: false })), modbusClient, 'other_coils', 'RESET');
                 buffer.pushPhase({ phase: 'other_coils', keys });
             }
         }
@@ -1573,7 +1652,7 @@ export class ScheduleService {
         const holdingCommandsToExecute: ModbusCmd[] = [];
         for (const cmd of holdingCommandsToCheck) {
             try {
-                const readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                const readResult = await (await this.clientFor(cmd, modbusClient)).readHoldingRegisters(cmd.address, 1);
                 const rawValue = Number(readResult.data[0]);
                 const currentValue = this.scaleValue(cmd.key, rawValue, 'read');
 
@@ -1593,7 +1672,7 @@ export class ScheduleService {
         const coilCommandsToExecute: ModbusCmd[] = [];
         for (const cmd of coilCommandsToCheck) {
             try {
-                const readResult = await modbusClient.readCoils(cmd.address, 1);
+                const readResult = await (await this.clientFor(cmd, modbusClient)).readCoils(cmd.address, 1);
                 const currentValue = Boolean(readResult.data[0]);
 
                 if (currentValue !== cmd.value) {
@@ -1646,11 +1725,12 @@ export class ScheduleService {
     }
 
     /**
-     * Retrieve active commands for a schedule
+     * Retrieve active commands for a schedule.
+     * Commands stored before multi-board routing have no boardId; tag them by key.
      */
     getActiveCommands(scheduleId: string): ModbusCmd[] {
         const activeModbusCommands: ActiveModbusCommands = this.node.context().global.get("activeModbusCommands") as ActiveModbusCommands || {};
-        return activeModbusCommands[scheduleId] || [];
+        return this.annotateBoards(activeModbusCommands[scheduleId] || []);
     }
 
     /**
