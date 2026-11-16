@@ -15,6 +15,7 @@ const global_context_helper_1 = require("../../../ultils/global-context-helper")
 const client_registry_1 = __importDefault(require("../../../core/client-registry"));
 const viis_telemetry_constants_1 = require("../../viis-telemetry/viis-telemetry-constants");
 const diagnostic_logger_1 = require("../../../core/observability/diagnostic-logger");
+const coil_command_registers_1 = require("../../../ultils/coil-command-registers");
 class ModbusService {
     constructor(options, modbusClient, scalingUtils) {
         this.defaultModbusClient = modbusClient;
@@ -274,7 +275,14 @@ class ModbusService {
                 // Note: Cache update removed from here - will be updated after read-back verification
             }
             else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
-                await modbusClient.writeCoil(mapping.address, writeValue, undefined, context);
+                // Where the PLC drives the coil from a D register, command it there (read-back stays on the coil).
+                const commandRegister = (0, coil_command_registers_1.coilCommandRegister)(key, mapping.boardId);
+                if (commandRegister !== undefined) {
+                    await modbusClient.writeRegister(commandRegister, writeValue ? 1 : 0, undefined, context);
+                }
+                else {
+                    await modbusClient.writeCoil(mapping.address, writeValue, undefined, context);
+                }
                 // Note: Cache update removed from here - will be updated after read-back verification
             }
             else {

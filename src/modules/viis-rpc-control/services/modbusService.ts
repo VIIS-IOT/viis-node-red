@@ -21,6 +21,7 @@ import ClientRegistry from "../../../core/client-registry";
 import { GLOBAL_CONTEXT_KEYS } from "../../viis-telemetry/viis-telemetry-constants";
 import { DiagnosticLogger } from "../../../core/observability/diagnostic-logger";
 import { OperationContext } from "../../../core/observability/types";
+import { coilCommandRegister } from "../../../ultils/coil-command-registers";
 
 export class ModbusService implements IModbusService {
     private defaultModbusClient: any; // Default client for single-board or fallback
@@ -342,7 +343,13 @@ export class ModbusService implements IModbusService {
                 await modbusClient.writeRegister(mapping.address, writeValue as number, undefined, context);
                 // Note: Cache update removed from here - will be updated after read-back verification
             } else if (mapping.fc === 5) { // WRITE_SINGLE_COIL
-                await modbusClient.writeCoil(mapping.address, writeValue as boolean, undefined, context);
+                // Where the PLC drives the coil from a D register, command it there (read-back stays on the coil).
+                const commandRegister = coilCommandRegister(key, mapping.boardId);
+                if (commandRegister !== undefined) {
+                    await modbusClient.writeRegister(commandRegister, writeValue ? 1 : 0, undefined, context);
+                } else {
+                    await modbusClient.writeCoil(mapping.address, writeValue as boolean, undefined, context);
+                }
                 // Note: Cache update removed from here - will be updated after read-back verification
             } else {
                 throw new Error(`Unsupported write function code: ${mapping.fc}`);

@@ -45,6 +45,7 @@ import {
     numberedValveIndex,
 } from "./schedule-valve-program";
 import { buildKeyBoardIndex, KeyBoardIndex, parseBoards, withBoard } from "./schedule-board-routing";
+import { coilCommandRegister } from "../../ultils/coil-command-registers";
 
 // require('dotenv').config();
 
@@ -919,8 +920,13 @@ export class ScheduleService {
             }
         }
 
-        // Write coil
-        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+        // Write coil, or its command register where the PLC drives the coil from a D register.
+        const commandRegister = coilCommandRegister(cmd.key, cmd.boardId);
+        if (commandRegister !== undefined) {
+            await modbusClient.writeRegister(commandRegister, Boolean(cmd.value) ? 1 : 0);
+        } else {
+            await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+        }
 
         // Update gate state after successful write
         if (this.protectionGate && cmd.fc === 5) {

@@ -66,6 +66,7 @@ const schedule_eligibility_1 = require("./schedule-eligibility");
 const schedule_execution_types_1 = require("./schedule-execution-types");
 const schedule_valve_program_1 = require("./schedule-valve-program");
 const schedule_board_routing_1 = require("./schedule-board-routing");
+const coil_command_registers_1 = require("../../ultils/coil-command-registers");
 // require('dotenv').config();
 /**
  * Configuration parameter keys that should be excluded from command overlap checking.
@@ -843,8 +844,14 @@ let ScheduleService = ScheduleService_1 = class ScheduleService {
                 return false;
             }
         }
-        // Write coil
-        await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+        // Write coil, or its command register where the PLC drives the coil from a D register.
+        const commandRegister = (0, coil_command_registers_1.coilCommandRegister)(cmd.key, cmd.boardId);
+        if (commandRegister !== undefined) {
+            await modbusClient.writeRegister(commandRegister, Boolean(cmd.value) ? 1 : 0);
+        }
+        else {
+            await modbusClient.writeCoil(cmd.address, Boolean(cmd.value));
+        }
         // Update gate state after successful write
         if (this.protectionGate && cmd.fc === 5) {
             this.protectionGate.updateState(cmd.key, Boolean(cmd.value));
