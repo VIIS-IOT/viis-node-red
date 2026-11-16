@@ -44,6 +44,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var ScheduleService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleService = exports.DEFAULT_WATER_HAMMER_DELAY_MS = exports.DEFAULT_WATER_HAMMER_DELAY_SEC = void 0;
 exports.resolveWaterHammerDelayMs = resolveWaterHammerDelayMs;
@@ -122,7 +123,7 @@ const CONFIG_PARAMETER_KEYS = new Set([
     'EC_max',
     'EC_min',
 ]);
-let ScheduleService = class ScheduleService {
+let ScheduleService = ScheduleService_1 = class ScheduleService {
     constructor(node, verifyAfterWrite = true, debugEnable = false, skipCoilVerify = true, waterHammerDelayMs = exports.DEFAULT_WATER_HAMMER_DELAY_MS) {
         this.luoiMapping = {
             luoi_1: { thu: "luoi_1_thu", dai: "luoi_1_dai" },
@@ -185,17 +186,23 @@ let ScheduleService = class ScheduleService {
         }
         return fallback;
     }
+    /** Two or more boards: keys may live on different devices that share addresses. */
+    static isMultiBoard(index) {
+        return !!index && Object.keys(index.holdingMaps).length > 1;
+    }
     /**
-     * valve_program command. Single-board keeps the legacy default (register 20).
-     * Multi-board writes it only when a board maps the key, and only to that board:
-     * a default register 20 on an arbitrary PLC would be a stray write.
+     * valve_program command. One board (legacy env or a single modbusBoards entry) keeps
+     * the legacy default (register 20). Two or more boards write it only when a board maps
+     * the key, and only to that board: a default register 20 on an arbitrary PLC would be
+     * a stray write.
      */
     buildValveProgramForBoards(actionObj, index) {
         const build = (map) => actionObj
             ? (0, schedule_valve_program_1.buildValveProgramCommand)(actionObj, map)
             : (0, schedule_valve_program_1.buildValveProgramOffCommand)(map);
-        if (!index) {
-            return build(this.getMergedHoldingMaps());
+        if (!ScheduleService_1.isMultiBoard(index)) {
+            const cmd = build(this.getMergedHoldingMaps());
+            return cmd ? this.annotateBoard(cmd, index) : null;
         }
         for (const [boardId, map] of Object.entries(index.holdingMaps)) {
             if ((0, schedule_valve_program_1.findValveProgramHoldingKey)(map) !== undefined) {
@@ -760,7 +767,7 @@ let ScheduleService = class ScheduleService {
                 holdingCommands = holdingCommands.filter(cmd => !(0, schedule_valve_program_1.isValveProgramHoldingKey)(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
             }
-            else if (hasNumberedValves && !valveProgramCmd && !boardIndex && !options.dryRun) {
+            else if (hasNumberedValves && !valveProgramCmd && !ScheduleService_1.isMultiBoard(boardIndex) && !options.dryRun) {
                 (_a = this.node) === null || _a === void 0 ? void 0 : _a.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
             }
             if (boardIndex) {
@@ -2329,7 +2336,7 @@ let ScheduleService = class ScheduleService {
     }
 };
 exports.ScheduleService = ScheduleService;
-exports.ScheduleService = ScheduleService = __decorate([
+exports.ScheduleService = ScheduleService = ScheduleService_1 = __decorate([
     (0, typedi_1.Service)(),
     __metadata("design:paramtypes", [Object, Boolean, Boolean, Boolean, Number])
 ], ScheduleService);

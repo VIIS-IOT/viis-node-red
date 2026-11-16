@@ -68,7 +68,7 @@ Khi có `MODBUS_BOARDS`, mỗi lệnh được gắn `boardId` + `unitid` của 
 - Thứ tự START/FINISH (van → delay → bơm → power) giữ nguyên dù van và bơm ở 2 board khác nhau.
 - So trùng lệnh dùng `board_fc_address` (`commandTargetKey`), không dùng `fc_address`; `impliedFinishPumpCommands` chỉ coi là trùng khi cùng board.
 - Lệnh active lưu từ trước (không có `boardId`) được gắn board theo key khi đọc lại (`getActiveCommands`).
-- `valve_program`: single-board giữ mặc định thanh ghi 20; multi-board chỉ ghi khi một board map key `valve_program`, và ghi vào đúng board đó.
+- `valve_program`: 1 board (env cũ hoặc `modbusBoards` chỉ có 1 board) giữ mặc định thanh ghi 20; từ 2 board trở lên chỉ ghi khi một board map key `valve_program`, và ghi vào đúng board đó.
 
 ### 2.4 Scale Value
 
@@ -307,7 +307,7 @@ Chạy trên mỗi input trigger, kiểm tra schedule bị stuck "running":
 - Verify is per-key immediately after that key's write (not a batch after the sequence)
 - Retry is that key only (max 3). Status `running`/`finished` is never gated by verify
 - Audit MQTT envelopes include `metadata.steps[]` and `metadata.run_id`
-- START writes derived `valve_program` (valve_0…15 bitmask) before coil `power` when address 20 is free (single-board) or when a board maps `valve_program` (multi-board, see 2.3.1)
+- START writes derived `valve_program` (valve_0…15 bitmask) before coil `power` when address 20 is free (single-board) or when a board maps `valve_program` (2+ boards, see 2.3.1)
 
 ---
 

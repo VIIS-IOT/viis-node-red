@@ -190,10 +190,16 @@ export class ScheduleService {
         return fallback;
     }
 
+    /** Two or more boards: keys may live on different devices that share addresses. */
+    private static isMultiBoard(index: KeyBoardIndex | null): index is KeyBoardIndex {
+        return !!index && Object.keys(index.holdingMaps).length > 1;
+    }
+
     /**
-     * valve_program command. Single-board keeps the legacy default (register 20).
-     * Multi-board writes it only when a board maps the key, and only to that board:
-     * a default register 20 on an arbitrary PLC would be a stray write.
+     * valve_program command. One board (legacy env or a single modbusBoards entry) keeps
+     * the legacy default (register 20). Two or more boards write it only when a board maps
+     * the key, and only to that board: a default register 20 on an arbitrary PLC would be
+     * a stray write.
      */
     private buildValveProgramForBoards(
         actionObj: Record<string, unknown> | null,
@@ -202,8 +208,9 @@ export class ScheduleService {
         const build = (map: Record<string, number>) => actionObj
             ? buildValveProgramCommand(actionObj, map)
             : buildValveProgramOffCommand(map);
-        if (!index) {
-            return build(this.getMergedHoldingMaps());
+        if (!ScheduleService.isMultiBoard(index)) {
+            const cmd = build(this.getMergedHoldingMaps());
+            return cmd ? this.annotateBoard(cmd, index) : null;
         }
         for (const [boardId, map] of Object.entries(index.holdingMaps)) {
             if (findValveProgramHoldingKey(map) !== undefined) {
@@ -824,7 +831,7 @@ export class ScheduleService {
             if (valveProgramCmd && hasNumberedValves) {
                 holdingCommands = holdingCommands.filter(cmd => !isValveProgramHoldingKey(cmd.key));
                 holdingCommands.unshift(valveProgramCmd);
-            } else if (hasNumberedValves && !valveProgramCmd && !boardIndex && !options.dryRun) {
+            } else if (hasNumberedValves && !valveProgramCmd && !ScheduleService.isMultiBoard(boardIndex) && !options.dryRun) {
                 this.node?.warn('[MODBUS] skip valve_program: address 20 occupied by another holding or unresolved');
             }
             if (boardIndex) {

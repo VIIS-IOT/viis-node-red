@@ -107,6 +107,26 @@ test('active commands stored without boardId are routed by key when read back', 
         { board: 'board2', fn: 'writeCoil', address: 1280, value: false },
     ]);
 });
+test('modbusBoards with one board keeps the default valve_program register 20', async () => {
+    const { service, log, defaultClient } = setup({
+        MODBUS_BOARDS: [{ id: 'board1', unitId: 1 }],
+        MODBUS_BOARD1_COILS: { valve_0: 9, main_pump: 0 },
+        MODBUS_BOARD1_HOLDING_REGISTERS: {},
+    });
+    const s = schedule({ valve_0: 'true', main_pump: 'true' });
+    const { holdingCommands, coilCommands } = service.mapScheduleToModbus(s, { dryRun: true });
+    expect(holdingCommands).toEqual([
+        expect.objectContaining({ key: 'valve_program', address: 20, value: 1 }),
+    ]);
+    await service.executeModbusCommands(defaultClient, { holdingCommands, coilCommands }, s);
+    expect(log.map(w => `${w.board}:${w.fn}@${w.address}`)).toEqual([
+        'board1:writeRegister@20',
+        'board1:writeCoil@9',
+        'board1:writeCoil@0',
+    ]);
+    const off = service.mergeValveProgramOffCommand([]);
+    expect(off).toEqual([expect.objectContaining({ key: 'valve_program', address: 20, value: 0 })]);
+});
 test('single-board mode keeps the default client and the default valve_program register', async () => {
     const { service, log, defaultClient } = setup({
         MODBUS_COILS: { valve_0: 9, main_pump: 0 },
