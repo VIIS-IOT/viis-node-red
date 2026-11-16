@@ -23,6 +23,7 @@ import {
 } from "./schedule-tick-guard";
 import { executeWithTimeout } from "./resilience-utils";
 import { isOrphanRunningSchedule } from "./schedule-eligibility";
+import { commandTargetKey } from "./schedule-board-routing";
 import { v4 as uuidv4 } from "uuid";
 
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
@@ -286,6 +287,8 @@ module.exports = function (RED: NodeAPI) {
                 boards: configData.boards
             };
             ClientRegistry.initializeMultiBoardConfig(multiConfig, node);
+            // Route every command to the board that owns its key (boards may share addresses).
+            scheduleService.setBoardClientProvider((boardId) => ClientRegistry.getModbusClientV2(boardId, node));
         } else {
             isMultiBoardMode = false;
             debugLog(`Single-board mode: ${configData.config.type} ${configData.config.host}:${configData.config.tcpPort}`);
@@ -431,9 +434,9 @@ module.exports = function (RED: NodeAPI) {
                                 address: Number(address),
                                 quantity: 1
                             }));
-                        const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
+                        const activeCmdKey = (cmd: any) => commandTargetKey(cmd);
                         const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
-                        const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                        const extraResetCommands = scheduleService.annotateBoards(extraResetKeys).filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = scheduleService.mergeValveProgramOffCommand(
                             [...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]
                         );
@@ -558,14 +561,14 @@ module.exports = function (RED: NodeAPI) {
                                     let currentValue: number | boolean;
 
                                     if (cmd.fc === 5) {
-                                        readResult = await modbusClient.readCoils(cmd.address, 1);
+                                        readResult = await (await scheduleService.clientFor(cmd, modbusClient)).readCoils(cmd.address, 1);
                                         currentValue = Boolean(readResult.data[0]);
                                         if (currentValue !== false) {
                                             confirmSuccess = false;
                                             node.warn(`⚠️ Device at coil ${cmd.address} (${cmd.key}) is still ON`);
                                         }
                                     } else if (cmd.fc === 6) {
-                                        readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                                        readResult = await (await scheduleService.clientFor(cmd, modbusClient)).readHoldingRegisters(cmd.address, 1);
                                         currentValue = Number(readResult.data[0]);
                                         if (currentValue !== 0) {
                                             confirmSuccess = false;
@@ -839,9 +842,9 @@ module.exports = function (RED: NodeAPI) {
                                 address: Number(address),
                                 quantity: 1
                             }));
-                        const activeCmdKey = (cmd: any) => `${cmd.fc}_${cmd.address}`;
+                        const activeCmdKey = (cmd: any) => commandTargetKey(cmd);
                         const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
-                        const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                        const extraResetCommands = scheduleService.annotateBoards(extraResetKeys).filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                         const allResetCommands = scheduleService.mergeValveProgramOffCommand(
                             [...activeCommands, ...extraResetCommands]
                         );

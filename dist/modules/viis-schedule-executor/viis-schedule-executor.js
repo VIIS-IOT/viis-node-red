@@ -11,6 +11,7 @@ const schedule_side_effects_1 = require("./schedule-side-effects");
 const schedule_tick_guard_1 = require("./schedule-tick-guard");
 const resilience_utils_1 = require("./resilience-utils");
 const schedule_eligibility_1 = require("./schedule-eligibility");
+const schedule_board_routing_1 = require("./schedule-board-routing");
 const uuid_1 = require("uuid");
 /** Longest a reporting side effect (notification, schedule log, telemetry, audit) may hold a tick. */
 const SIDE_EFFECT_TIMEOUT_MS = 15000;
@@ -243,6 +244,8 @@ module.exports = function (RED) {
                 boards: configData.boards
             };
             client_registry_1.default.initializeMultiBoardConfig(multiConfig, node);
+            // Route every command to the board that owns its key (boards may share addresses).
+            scheduleService.setBoardClientProvider((boardId) => client_registry_1.default.getModbusClientV2(boardId, node));
         }
         else {
             isMultiBoardMode = false;
@@ -373,9 +376,9 @@ module.exports = function (RED) {
                                 address: Number(address),
                                 quantity: 1
                             }));
-                            const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
+                            const activeCmdKey = (cmd) => (0, schedule_board_routing_1.commandTargetKey)(cmd);
                             const activeCmdSet = new Set([...activeCommands, ...holdingCommands, ...coilCommands].map(activeCmdKey));
-                            const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                            const extraResetCommands = scheduleService.annotateBoards(extraResetKeys).filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                             const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...holdingCommands, ...coilCommands, ...extraResetCommands]);
                             const rpcRunId = (0, uuid_1.v4)();
                             let rpcReport = {
@@ -469,7 +472,7 @@ module.exports = function (RED) {
                                         let readResult;
                                         let currentValue;
                                         if (cmd.fc === 5) {
-                                            readResult = await modbusClient.readCoils(cmd.address, 1);
+                                            readResult = await (await scheduleService.clientFor(cmd, modbusClient)).readCoils(cmd.address, 1);
                                             currentValue = Boolean(readResult.data[0]);
                                             if (currentValue !== false) {
                                                 confirmSuccess = false;
@@ -477,7 +480,7 @@ module.exports = function (RED) {
                                             }
                                         }
                                         else if (cmd.fc === 6) {
-                                            readResult = await modbusClient.readHoldingRegisters(cmd.address, 1);
+                                            readResult = await (await scheduleService.clientFor(cmd, modbusClient)).readHoldingRegisters(cmd.address, 1);
                                             currentValue = Number(readResult.data[0]);
                                             if (currentValue !== 0) {
                                                 confirmSuccess = false;
@@ -698,9 +701,9 @@ module.exports = function (RED) {
                                     address: Number(address),
                                     quantity: 1
                                 }));
-                                const activeCmdKey = (cmd) => `${cmd.fc}_${cmd.address}`;
+                                const activeCmdKey = (cmd) => (0, schedule_board_routing_1.commandTargetKey)(cmd);
                                 const activeCmdSet = new Set(activeCommands.map(activeCmdKey));
-                                const extraResetCommands = extraResetKeys.filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
+                                const extraResetCommands = scheduleService.annotateBoards(extraResetKeys).filter(cmd => !activeCmdSet.has(activeCmdKey(cmd)));
                                 const allResetCommands = scheduleService.mergeValveProgramOffCommand([...activeCommands, ...extraResetCommands]);
                                 const finishRunId = (0, uuid_1.v4)();
                                 let finishReport = {

@@ -21,14 +21,19 @@ export function classifyCoils<T extends { key: string }>(commands: T[]) {
 
 /** Firmware often auto-starts main_pump on power. Finish must always stop mapped pumps. */
 export function impliedFinishPumpCommands(
-    commands: Array<{ key: string; fc: number; address: number }>,
+    commands: Array<{ key: string; fc: number; address: number; boardId?: string }>,
     coilMap: Record<string, number>,
-    unitid: number = 1
+    unitid: number = 1,
+    /** Multi-board: board owning a key. Same address on another board is a different coil. */
+    boardOf?: (key: string) => string | undefined
 ): ModbusCmd[] {
+    const sameTarget = (cmd: { boardId?: string }, key: string) =>
+        !boardOf || (cmd.boardId ?? undefined) === boardOf(key);
     return Object.entries(coilMap)
         .filter(([key]) => isPumpKey(key))
         .filter(([key, address]) =>
-            !commands.some(cmd => cmd.key === key || (cmd.fc === 5 && Number(cmd.address) === Number(address)))
+            !commands.some(cmd => cmd.key === key
+                || (cmd.fc === 5 && Number(cmd.address) === Number(address) && sameTarget(cmd, key)))
         )
         .map(([key, address]) => ({
             key,

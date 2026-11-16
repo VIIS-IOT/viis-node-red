@@ -7,6 +7,8 @@ export interface ModbusCmd {
     unitid: number;
     address: number;
     quantity: number;
+    /** Multi-board only: board that owns `key`. Unset means the node's default client. */
+    boardId?: string;
 }
 
 export interface ScaleConfig {
