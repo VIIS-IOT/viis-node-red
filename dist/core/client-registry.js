@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const crypto_1 = require("crypto");
 const board_scoped_modbus_client_1 = require("./board-scoped-modbus-client");
 const modbus_client_1 = require("./modbus-client");
 const modbus_transport_1 = require("./modbus-transport");
@@ -7,6 +8,16 @@ const mqtt_client_1 = require("./mqtt-client");
 const mysql_client_1 = require("./mysql-client");
 const mqtt_recovery_manager_1 = require("./mqtt-recovery-manager");
 class ClientRegistry {
+    static mqttIdentityKey(config) {
+        const broker = new URL(config.broker || "mqtt://mqtt.viis.tech:1883");
+        if (broker.username || broker.password)
+            throw new Error("MQTT broker credentials must be supplied separately");
+        const port = broker.port || (broker.protocol === "mqtts:" ? "8883" : "1883");
+        return (0, crypto_1.createHash)("sha256").update(JSON.stringify([
+            broker.protocol, broker.hostname.toLowerCase(), port, broker.pathname || "/", broker.search,
+            config.username || "", config.password || ""
+        ])).digest("hex");
+    }
     static async withLock(type, fn) {
         let release;
         const next = new Promise(r => { release = r; });
@@ -67,19 +78,14 @@ class ClientRegistry {
     }
     // Perform health check and recovery
     static performHealthCheck() {
-        // Check ThingsBoard MQTT connection
-        if (this.thingsboardMqttInstance && this.referenceCount.thingsboard > 0) {
-            if (!this.thingsboardMqttInstance.isConnected()) {
-                console.warn("[RECOVERY] ThingsBoard MQTT client disconnected, attempting recovery");
+        // Recover each authenticated cloud identity independently.
+        for (const { client, users, ready } of this.thingsboardMqttPool.values()) {
+            if (users.size > 0 && !ready && !client.isConnected()) {
                 try {
-                    this.thingsboardMqttInstance.resetCircuitBreaker();
-                    // Trigger immediate recovery through manager if available
-                    if (this.recoveryManager) {
-                        this.recoveryManager.forceImmediateRecovery();
-                    }
+                    client.resetCircuitBreaker();
                 }
-                catch (error) {
-                    console.error("[RECOVERY] Failed to reset ThingsBoard circuit breaker:", error);
+                catch (_a) {
+                    console.error("[RECOVERY] Failed to reset cloud MQTT client circuit breaker");
                 }
             }
         }
@@ -104,35 +110,47 @@ class ClientRegistry {
      * Get ThingsBoard MQTT client with offline resilience
      */
     static async getThingsboardMqttClient(config, node, allowOffline = true) {
-        await this.withLock('thingsboard', async () => {
-            if (this.thingsboardMqttInstance)
-                return;
-            this.thingsboardMqttInstance = new mqtt_client_1.MqttClientCore(config, node);
-            try {
-                await this.thingsboardMqttInstance.waitForConnection();
-                this.activeConnections.thingsboardMqtt++;
-            }
-            catch (error) {
-                if (allowOffline) {
-                    //node.warn(`ThingsBoard MQTT offline - will auto-reconnect: ${(error as Error).message}`);
-                    this.activeConnections.thingsboardMqtt++;
-                }
-                else {
-                    this.thingsboardMqttInstance = null;
-                    throw error;
-                }
-            }
-        });
-        // Attempt recovery if disconnected
-        if (this.thingsboardMqttInstance && !this.thingsboardMqttInstance.isConnected()) {
-            await this.thingsboardMqttInstance.waitForConnection(10000).catch(() => { });
+        const key = this.mqttIdentityKey(config);
+        let owner = this.thingsboardOwners.get(node.id);
+        if (owner && owner.key !== key)
+            throw new Error("Release the existing cloud MQTT client before changing node identity");
+        let entry = this.thingsboardMqttPool.get(key);
+        if (!entry) {
+            const client = new mqtt_client_1.MqttClientCore(config, node);
+            entry = { client, users: new Set() };
+            this.thingsboardMqttPool.set(key, entry);
+            this.activeConnections.thingsboardMqtt++;
         }
-        this.referenceCount.thingsboard++;
+        if (!owner) {
+            owner = { key, cancelled: false };
+            this.thingsboardOwners.set(node.id, owner);
+        }
+        // Reserve ownership synchronously before waiting. Other identities never wait on this one.
+        entry.users.add(node.id);
         this.clientUsers.thingsboard.add(node.id);
-        if (this.referenceCount.thingsboard === 1) {
-            this.startRecoveryMechanism();
+        this.referenceCount.thingsboard = this.thingsboardOwners.size;
+        this.startRecoveryMechanism();
+        try {
+            if (!entry.client.isConnected() || !entry.ready && entry.users.size === 1) {
+                if (!entry.ready) {
+                    const connectingEntry = entry;
+                    connectingEntry.ready = Promise.resolve().then(() => connectingEntry.client.waitForConnection(10000))
+                        .finally(() => { connectingEntry.ready = undefined; });
+                }
+                await entry.ready;
+            }
         }
-        return this.thingsboardMqttInstance;
+        catch (error) {
+            if (owner.cancelled)
+                throw new Error("Cloud MQTT owner was closed during initialization");
+            if (!allowOffline) {
+                this.releaseClient("thingsboard", node);
+                throw error;
+            }
+        }
+        if (owner.cancelled)
+            throw new Error("Cloud MQTT owner was closed during initialization");
+        return entry.client;
     }
     static async getLocalMqttClient(config, node) {
         const failed = await this.withLock('local', async () => {
@@ -412,18 +430,26 @@ class ClientRegistry {
                 this.logActiveConnections(node);
             }
         }
-        else if (type === "thingsboard" && this.thingsboardMqttInstance) {
-            this.referenceCount.thingsboard--;
+        else if (type === "thingsboard") {
+            const owner = this.thingsboardOwners.get(node.id);
+            if (!owner)
+                return;
+            owner.cancelled = true;
+            const key = owner.key;
+            const entry = this.thingsboardMqttPool.get(key);
+            this.thingsboardOwners.delete(node.id);
             this.clientUsers.thingsboard.delete(node.id);
-            // //node.warn(`[THINGSBOARD-RELEASE] Node ${node.id} released ThingsBoard client, ref count: ${this.referenceCount.thingsboard}`);
-            if (this.referenceCount.thingsboard <= 0) {
-                this.thingsboardMqttInstance.disconnect();
-                this.activeConnections.thingsboardMqtt--;
-                this.thingsboardMqttInstance = null;
-                this.clientUsers.thingsboard.clear();
-                node.log("Disconnected and cleared Thingsboard MqttClientCore instance");
-                this.logActiveConnections(node);
+            this.referenceCount.thingsboard = this.thingsboardOwners.size;
+            if (entry) {
+                entry.users.delete(node.id);
+                if (entry.users.size === 0) {
+                    entry.client.disconnect();
+                    this.thingsboardMqttPool.delete(key);
+                    this.activeConnections.thingsboardMqtt--;
+                }
             }
+            if (this.thingsboardOwners.size === 0 && this.referenceCount.local <= 0)
+                this.stopRecoveryMechanism();
         }
         else if (type === "local" && this.localMqttInstance) {
             this.referenceCount.local--;
@@ -438,6 +464,8 @@ class ClientRegistry {
                 this.activeConnections.localMqtt--;
                 this.localMqttInstance = null;
                 this.clientUsers.local.clear();
+                if (this.thingsboardOwners.size === 0)
+                    this.stopRecoveryMechanism();
                 node.log("Disconnected and cleared Local MqttClientCore instance");
                 this.logActiveConnections(node);
             }
@@ -658,6 +686,14 @@ class ClientRegistry {
         };
     }
     static resetForTests() {
+        this.stopRecoveryMechanism();
+        this.thingsboardMqttPool.forEach(entry => entry.client.disconnect());
+        this.thingsboardMqttPool.clear();
+        this.thingsboardOwners.forEach(owner => { owner.cancelled = true; });
+        this.thingsboardOwners.clear();
+        this.clientUsers.thingsboard.clear();
+        this.referenceCount.thingsboard = 0;
+        this.activeConnections.thingsboardMqtt = 0;
         this.modbusBoardPool.clear();
         this.modbusBoardConfigs.clear();
         this.transportPool.forEach((transport) => transport.disconnect());
@@ -691,7 +727,8 @@ ClientRegistry.transportLocks = new Map();
 ClientRegistry.modbusMode = 'single';
 ClientRegistry.defaultBoardId = null;
 // Other client instances
-ClientRegistry.thingsboardMqttInstance = null;
+ClientRegistry.thingsboardMqttPool = new Map();
+ClientRegistry.thingsboardOwners = new Map();
 ClientRegistry.localMqttInstance = null;
 ClientRegistry.mysqlInstance = null;
 // Reference counting with board support

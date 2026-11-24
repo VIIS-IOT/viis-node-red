@@ -256,10 +256,10 @@ module.exports = function (RED: NodeAPI) {
                     };
 
                 // Define MQTT topics
-                // Always use wildcard for RPC requests to receive all RPC commands
+                // Cloud suffixes are request IDs; local legacy suffixes are device IDs.
                 const subscribeTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC  // "v1/devices/me/rpc/request/+"
-                    : MQTT_CONFIG.THINGSBOARD.SUBSCRIBE_TOPIC; // Also use wildcard for local MQTT
+                    : `v1/devices/me/rpc/request/${deviceId}`;
                 const publishTopic = config.mqttBroker === "thingsboard"
                     ? MQTT_CONFIG.THINGSBOARD.PUBLISH_TOPIC
                     : `v1/devices/me/telemetry/${deviceId}`;
@@ -650,8 +650,7 @@ module.exports = function (RED: NodeAPI) {
                         configService.clearNodeConfigs();
                         detachMqttMessageHandler();
 
-                        // Disconnect clients
-                        mqttClient.disconnect();
+                        // Registry owns the shared socket; detach only this node and release below.
 
                         // Release Modbus client (multi-board aware)
                         if (isMultiBoardMode && currentBoardId) {

@@ -131,11 +131,13 @@ module.exports = function (RED: NodeAPI) {
 
                 // Initialize ThingsBoard MQTT client + subscription, retrying until the broker is reachable
                 let mqttClient: any = null;
+                let closed = false;
                 const mqttInit = new MqttInitRetry({
                     attempt: async () => {
                         if (!mqttClient) {
                             logger.log("Initializing ThingsBoard MQTT client from ClientRegistry...");
                             mqttClient = await ClientRegistry.getThingsboardMqttClient(mqttConfig, node);
+                            if (closed) return;
                             if (!mqttClient) {
                                 throw new Error("Failed to get MQTT client from registry");
                             }
@@ -166,13 +168,12 @@ module.exports = function (RED: NodeAPI) {
                 node.on("close", (done: () => void) => {
                     try {
                         logger.log("Closing automation node");
+                        closed = true;
                         mqttInit.stop();
                         automationHandler.cleanup();
 
                         // Release ThingsBoard MQTT client
-                        if (mqttClient) {
-                            ClientRegistry.releaseClient("thingsboard", node);
-                        }
+                        ClientRegistry.releaseClient("thingsboard", node);
 
                         done();
                     } catch (error) {

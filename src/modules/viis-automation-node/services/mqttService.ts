@@ -16,6 +16,8 @@ export class MqttAutomationService {
     private logger: Logger;
     private mqttClient: MqttClientCore | null = null;
     private subscribeTopic: string = "";
+    private disposed = false;
+    private ingressListener?: (data: {message: any}) => void;
     private messageHandler: ((message: any) => void) | null = null;
 
     constructor(options: ServiceOptions) {
@@ -34,18 +36,22 @@ export class MqttAutomationService {
         messageHandler: (message: any) => void
     ): Promise<void> {
         try {
+            if (this.disposed) throw new Error("Automation MQTT service is disposed");
+            this.disconnect();
             this.mqttClient = mqttClient;
             this.subscribeTopic = subscribeTopic;
             this.messageHandler = messageHandler;
 
             // Wait for connection
             await this.mqttClient.waitForConnection(15000);
+            if (this.disposed) throw new Error("Automation MQTT service is disposed");
             this.logger.log("MQTT client connected");
 
             // Subscribe to topic
             await this.subscribe();
 
             // Set up message handler
+            if (this.disposed) throw new Error("Automation MQTT service is disposed");
             this.setupMessageHandler();
 
             this.logger.log(`MQTT service initialized, subscribed to: ${subscribeTopic}`);
@@ -80,7 +86,7 @@ export class MqttAutomationService {
             return;
         }
 
-        this.mqttClient.on("mqtt-message", (data: { message: any }) => {
+        this.ingressListener = (data: { message: any }) => {
             try {
                 this.logger.debug("Received MQTT message", data.message);
 
@@ -105,7 +111,8 @@ export class MqttAutomationService {
             } catch (error) {
                 this.logger.error(`Error handling MQTT message: ${(error as Error).message}`);
             }
-        });
+        };
+        this.mqttClient.on("mqtt-message", this.ingressListener);
 
         this.logger.log("MQTT message handler registered");
     }
@@ -145,7 +152,8 @@ export class MqttAutomationService {
     disconnect(): void {
         if (this.mqttClient) {
             this.logger.log("Disconnecting MQTT");
-            this.mqttClient.disconnect();
+            if (this.ingressListener) this.mqttClient.removeListener("mqtt-message", this.ingressListener);
+            this.ingressListener = undefined;
             this.mqttClient = null;
         }
     }
@@ -154,6 +162,7 @@ export class MqttAutomationService {
      * Cleanup resources
      */
     cleanup(): void {
+        this.disposed = true;
         this.disconnect();
         this.messageHandler = null;
         this.logger.log("MQTT service cleanup complete");

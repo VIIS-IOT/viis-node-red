@@ -304,7 +304,9 @@ export class MessageHandler implements IMessageHandler {
                 return null;
             }
 
-            if (!message.topic.startsWith(cleanExpectedPrefix)) {
+            const wrongLocalDevice = this.brokerRole === "local" &&
+                message.topic !== `v1/devices/me/rpc/request/${this.deviceId}`;
+            if (wrongLocalDevice || !message.topic.startsWith(cleanExpectedPrefix)) {
                 this.diagnostic.emit("warn", "rpc.rejected", { ...context, reason: "topic_mismatch" });
                 return null;
             }
