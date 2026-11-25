@@ -32,7 +32,8 @@
     "migration:generate": "npm run typeorm -- migration:generate src/orm/migrations/migrate -d src/orm/dataSource.ts",
     "migration:run": "npm run typeorm -- migration:run -d src/orm/dataSource.ts",
     "migration:create": "npm run typeorm -- migration:create -d src/orm/dataSource.ts",
-    "migration:revert": "npm run typeorm -- migration:revert -d src/orm/dataSource.ts"
+    "migration:revert": "npm run typeorm -- migration:revert -d src/orm/dataSource.ts",
+    "test:host36-schedule-sync": "node maintenance/host36/datetime-run.cjs"
   },
   "keywords": [],
   "author": "VIIS - Viet Nam IoT Solution",
