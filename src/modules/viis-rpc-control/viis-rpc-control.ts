@@ -61,6 +61,7 @@ module.exports = function (RED: NodeAPI) {
         let currentModbusConfig: any = null;
         let configCheckInterval: NodeJS.Timeout | null = null;
         let currentBoardId: string | undefined = config.boardId;
+        let acquiredBoardId: string | undefined;
         let isMultiBoardMode: boolean = false;
         let modbusClient: any;
         let mqttClient: any;
@@ -272,6 +273,7 @@ module.exports = function (RED: NodeAPI) {
                     // Determine which client to get based on mode and configuration
                     if (isMultiBoardMode) {
                         const boardToUse = currentBoardId || configData.defaultBoard;
+                        acquiredBoardId = boardToUse;
                         logger.log(`Getting client for board: ${boardToUse}`);
                         modbusClient = await ClientRegistry.getModbusClientV2(boardToUse, node);
                     } else {
@@ -281,23 +283,27 @@ module.exports = function (RED: NodeAPI) {
                     // Wait a moment for Modbus connection to establish
                     await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for connection
                     if (!modbusClient.isConnectedCheck()) {
-                        throw new Error("Modbus client failed to connect - check device connection and configuration");
+                        // The shared transport reconnects independently. Keep building RPC ingress
+                        // so a board that starts later does not leave control permanently uninitialized.
+                        logger.warn("Modbus is not connected yet; RPC will initialize while the transport reconnects");
+                        diagnostic.emit("warn", "node.modbus_waiting", { nodeInstanceId, boardId: acquiredBoardId });
                     }
 
-                    logger.log("Modbus client initialized successfully");
+                    logger.log("Modbus client acquired; connection is monitored independently");
                 } catch (error) {
+                    initPhase = "failed";
                     const errorMsg = `Modbus initialization failed: ${(error as Error).message}`;
                     logger.error(errorMsg);
                     diagnostic.emit("error", "node.init_failed", { nodeInstanceId, phase: "modbus_initialization", error: { message: (error as Error).message } });
                     if (modbusClient) {
-                        if (isMultiBoardMode && currentBoardId) ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                        if (isMultiBoardMode && acquiredBoardId) ClientRegistry.releaseClientV2("modbus-board", node, acquiredBoardId);
                         else ClientRegistry.releaseClientV2("modbus", node);
                     }
                     node.status({ fill: "red", shape: "ring", text: "Modbus connection failed" });
                     return;
                 }
                 if (initPhase === "closed") {
-                    if (isMultiBoardMode && currentBoardId) ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                    if (isMultiBoardMode && acquiredBoardId) ClientRegistry.releaseClientV2("modbus-board", node, acquiredBoardId);
                     else ClientRegistry.releaseClientV2("modbus", node);
                     return;
                 }
@@ -311,11 +317,12 @@ module.exports = function (RED: NodeAPI) {
                         ? await ClientRegistry.getThingsboardMqttClient(mqttConfig, node)
                         : await ClientRegistry.getLocalMqttClient(mqttConfig, node);
                 } catch (error) {
+                    initPhase = "failed";
                     const errorMsg = `MQTT initialization failed: ${(error as Error).message}`;
                     logger.error(errorMsg);
                     diagnostic.emit("error", "node.init_failed", { nodeInstanceId, phase: "mqtt_initialization", error: { message: (error as Error).message } });
                     if (modbusClient) {
-                        if (isMultiBoardMode && currentBoardId) ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                        if (isMultiBoardMode && acquiredBoardId) ClientRegistry.releaseClientV2("modbus-board", node, acquiredBoardId);
                         else ClientRegistry.releaseClientV2("modbus", node);
                     }
                     node.status({ fill: "red", shape: "ring", text: "MQTT connection failed" });
@@ -326,7 +333,7 @@ module.exports = function (RED: NodeAPI) {
                         if (config.mqttBroker === "thingsboard") ClientRegistry.releaseClient("thingsboard", node);
                         else ClientRegistry.releaseClient("local", node);
                     }
-                    if (isMultiBoardMode && currentBoardId) ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                    if (isMultiBoardMode && acquiredBoardId) ClientRegistry.releaseClientV2("modbus-board", node, acquiredBoardId);
                     else ClientRegistry.releaseClientV2("modbus", node);
                     return;
                 }
@@ -653,8 +660,8 @@ module.exports = function (RED: NodeAPI) {
                         // Registry owns the shared socket; detach only this node and release below.
 
                         // Release Modbus client (multi-board aware)
-                        if (isMultiBoardMode && currentBoardId) {
-                            ClientRegistry.releaseClientV2("modbus-board", node, currentBoardId);
+                        if (isMultiBoardMode && acquiredBoardId) {
+                            ClientRegistry.releaseClientV2("modbus-board", node, acquiredBoardId);
                         } else {
                             ClientRegistry.releaseClientV2("modbus", node);
                         }
