@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isValveKey = exports.isNumberedValveKey = exports.isPumpKey = exports.isChannelPowerKey = exports.isSystemPowerKey = void 0;
+exports.isAutoStartPumpKey = exports.isValveKey = exports.isNumberedValveKey = exports.isPumpKey = exports.isChannelPowerKey = exports.isSystemPowerKey = void 0;
 exports.classifyCoils = classifyCoils;
 exports.impliedFinishPumpCommands = impliedFinishPumpCommands;
 /** `power` or `…_power`, but not `power_1` / `fertigation_control_power_1`. */
@@ -23,13 +23,24 @@ function classifyCoils(commands) {
     const otherCoils = commands.filter(cmd => !(0, exports.isSystemPowerKey)(cmd.key) && !(0, exports.isChannelPowerKey)(cmd.key) && !(0, exports.isPumpKey)(cmd.key) && !(0, exports.isValveKey)(cmd.key));
     return { powerCoils, pumpCoils, valveCoils, otherCoils };
 }
-/** Firmware often auto-starts main_pump on power. Finish must always stop mapped pumps. */
+/** Fertigation main pumps (`main_pump`, `input_pump`, prefixed or not): the board can start them on power. */
+const isAutoStartPumpKey = (key) => /(?:^|_)(main_pump|input_pump)$/i.test(key);
+exports.isAutoStartPumpKey = isAutoStartPumpKey;
+/**
+ * Pumps a finishing schedule must also stop although it never wrote them: the firmware often auto-starts the
+ * main pump when the system power turns on, so a schedule that switched the system power stops the mapped
+ * main/input pumps. Nothing else: other pumps (sub/water pumps run by their own schedules) and pump status/error
+ * coils are left alone. Stopping every coil named "pump" cut a running sub pump at the end of each unrelated
+ * irrigation (Fertigation-VIIS-RS485-007, 2026-10-29 and 2026-11-26).
+ */
 function impliedFinishPumpCommands(commands, coilMap, unitid = 1, 
 /** Multi-board: board owning a key. Same address on another board is a different coil. */
 boardOf) {
+    if (!commands.some(cmd => (0, exports.isSystemPowerKey)(cmd.key)))
+        return [];
     const sameTarget = (cmd, key) => { var _a; return !boardOf || ((_a = cmd.boardId) !== null && _a !== void 0 ? _a : undefined) === boardOf(key); };
     return Object.entries(coilMap)
-        .filter(([key]) => (0, exports.isPumpKey)(key))
+        .filter(([key]) => (0, exports.isAutoStartPumpKey)(key))
         .filter(([key, address]) => !commands.some(cmd => cmd.key === key
         || (cmd.fc === 5 && Number(cmd.address) === Number(address) && sameTarget(cmd, key))))
         .map(([key, address]) => ({
