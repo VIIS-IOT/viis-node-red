@@ -19,7 +19,16 @@ export function classifyCoils<T extends { key: string }>(commands: T[]) {
     return { powerCoils, pumpCoils, valveCoils, otherCoils };
 }
 
-/** Firmware often auto-starts main_pump on power. Finish must always stop mapped pumps. */
+/** Fertigation main pumps (`main_pump`, `input_pump`, prefixed or not): the board can start them on power. */
+export const isAutoStartPumpKey = (key: string): boolean => /(?:^|_)(main_pump|input_pump)$/i.test(key);
+
+/**
+ * Pumps a finishing schedule must also stop although it never wrote them: the firmware often auto-starts the
+ * main pump when the system power turns on, so a schedule that switched the system power stops the mapped
+ * main/input pumps. Nothing else: other pumps (sub/water pumps run by their own schedules) and pump status/error
+ * coils are left alone. Stopping every coil named "pump" cut a running sub pump at the end of each unrelated
+ * irrigation (Fertigation-VIIS-RS485-007, 2026-10-29 and 2026-11-26).
+ */
 export function impliedFinishPumpCommands(
     commands: Array<{ key: string; fc: number; address: number; boardId?: string }>,
     coilMap: Record<string, number>,
@@ -27,10 +36,11 @@ export function impliedFinishPumpCommands(
     /** Multi-board: board owning a key. Same address on another board is a different coil. */
     boardOf?: (key: string) => string | undefined
 ): ModbusCmd[] {
+    if (!commands.some(cmd => isSystemPowerKey(cmd.key))) return [];
     const sameTarget = (cmd: { boardId?: string }, key: string) =>
         !boardOf || (cmd.boardId ?? undefined) === boardOf(key);
     return Object.entries(coilMap)
-        .filter(([key]) => isPumpKey(key))
+        .filter(([key]) => isAutoStartPumpKey(key))
         .filter(([key, address]) =>
             !commands.some(cmd => cmd.key === key
                 || (cmd.fc === 5 && Number(cmd.address) === Number(address) && sameTarget(cmd, key)))
